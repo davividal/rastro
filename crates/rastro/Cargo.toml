@@ -1,0 +1,21 @@
+[package]
+name = "rastro"
+description = "Emits a canonical, diffable fingerprint of a Linux host's state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["fingerprint", "drift", "state", "sysadmin", "devops"]
+categories = ["command-line-utilities"]
+publish = false
+
+[dependencies]
+rastro-collector = { workspace = true }
+rastro-fingerprint = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+# Tests read the rendered document back to assert on its shape.
+serde_json = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "rastro-collector"
+description = "The contract a rastro collector fulfils, and how a set of them becomes a fingerprint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rastro-fingerprint = { workspace = true }
+thiserror = { workspace = true }
