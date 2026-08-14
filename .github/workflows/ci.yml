@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No job writes anything. Stated explicitly so the grant survives a change to
+# the repository or organisation default.
+permissions:
+  contents: read
+
+# A superseded push has nothing worth finishing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Actions are pinned by commit rather than by tag, because a tag can be moved.
+# dtolnay/rust-toolchain is pinned to a `master` commit and given the channel as
+# an input: its branch names *are* the channel, so pinning `@stable` by SHA
+# would freeze the Rust version instead of the action.
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      # Doc links are only checked when the docs are built, which is what makes
+      # `deny(rustdoc::broken_intra_doc_links)` in lib.rs bite. Without this a
+      # rename can leave a dangling path behind indefinitely.
+      - run: cargo doc --no-deps
+
+  msrv:
+    name: check the declared MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Read from Cargo.toml rather than repeated here, so the two cannot drift.
+      # A second copy of the MSRV would be the same bug this job exists to catch.
+      # `cargo metadata` rather than a grep: it is TOML-aware, so quoting style
+      # and table context cannot break it.
+      #
+      # There is currently no headroom. clap pins `rust-version = 1.85`, exactly
+      # rastro's own floor, so the first `cargo update` that picks up a
+      # dependency with a raised MSRV fails this job for a reason that has
+      # nothing to do with rastro's code. That is the job working, not a
+      # regression: either raise the floor in Cargo.toml or pin the dependency.
+      - id: msrv
+        run: |
+          # A virtual workspace has several packages, so take the highest
+          # floor. `sort -V` rather than jq's `max`, which compares strings and
+          # would put 1.9 above 1.10.
+          # `select(. != null)` first: a member without `rust-version` would
+          # otherwise sort as the literal "null", after every real version.
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].rust_version | select(. != null)' | sort -V | tail -1)
+          test -n "$version" -a "$version" != null || { echo "no rust-version in Cargo.toml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo check --all-targets
+
+  static-binary:
+    name: musl static build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the musl linker
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target x86_64-unknown-linux-musl -p rastro
+      # The single static binary is the product's core promise, so CI asserts it
+      # rather than trusting the target triple.
+      - name: Assert the binary is statically linked
+        run: |
+          file target/x86_64-unknown-linux-musl/release/rastro
+          file target/x86_64-unknown-linux-musl/release/rastro | grep -q 'static'
+      - run: ./target/x86_64-unknown-linux-musl/release/rastro --version
+      # Keeps the binary downloadable from the run that built it, so it can be
+      # scp'd to a box without waiting for a release pipeline.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rastro-x86_64-unknown-linux-musl
+          path: target/x86_64-unknown-linux-musl/release/rastro
+          if-no-files-found: error

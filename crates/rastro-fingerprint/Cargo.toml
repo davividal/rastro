@@ -1,0 +1,17 @@
+[package]
+name = "rastro-fingerprint"
+description = "The rastro fingerprint document: what one is, and its canonical JSON form"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Fixed-shape objects are written entry by entry, in a declared order.
+serde = { workspace = true }
+# The default (non-`preserve_order`) Map is a BTreeMap, which is what makes
+# sorted keys structural rather than a convention. See src/json.rs.
+serde_json = { workspace = true }
+thiserror = { workspace = true }
