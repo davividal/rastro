@@ -14,7 +14,8 @@ All entries below date from the initial design, 2026-08-13.
 | [v1 scope](#v1-scope-generate-only-current-box) | generate only, current box, stdout or file |
 | [Output](#output-json-only-in-v1) | JSON only in v1, canonical, rendering as a decorator |
 | [No diff verb](#no-diff-verb-in-v1) | out of v1; the format is contractually diffable instead |
-| [Config](#configuration-is-mandatory) | mandatory config file, loud failure without one |
+| [Config](#configuration-is-mandatory) | mandatory config file. **Superseded** |
+| [Config, revised](#superseded-config-is-optional-opt-in-and-exclusion-only) | optional, opt-in, exclusion-only; everything runs by default |
 | [Secrets](#secrets-hashed-by-default) | sensitive values hashed by default, `--raw` opts out |
 | [v1 collectors](#v1-collectors-layers-1-and-2-plus-three-layer-3-starters) | Layer 1 and Layer 2 complete, plus nginx, postgres, docker |
 | [Licence](#licence-agpl-30-only) | AGPL-3.0-only |
@@ -361,3 +362,49 @@ dependency, `rastro-collector`, which is asserted rather than claimed.
 `facet`, `observation` and `volatile` mean one thing everywhere. rastro is a
 single bounded context, and the split above is modularity for contributors, not
 strategic DDD.
+
+## Superseded: config is optional, opt-in and exclusion-only
+
+Supersedes [Configuration is mandatory](#configuration-is-mandatory).
+
+`rastro` with no arguments collects everything. `--config <path>` can only
+narrow that, and there is no way to say which collectors *do* run.
+
+**The old entry contradicted the project's founding disqualifier.**
+`docs/research.md` rules out any tool that "requires you to declare *what to
+watch*", because if you could enumerate what changes you would not need the
+diff. That is what disqualified AIDE and configsnap. Refusing to run without a
+config file is the same disqualifier one level up.
+
+It was also internally inconsistent with this file's own "exclusions, never
+inclusions", which presupposes a default scope to exclude *from*.
+
+**What the old entry was reaching for was never explicit input.** It is that a
+fingerprint records what produced it, so two runs under different scope cannot
+be diffed by accident. That is the envelope self-description invariant, and it
+works better with defaults: the effective config reaches the `invocation` facet
+whether it came from a file or from nothing at all. Explicitness belongs in the
+output, not in the input, where it would fall on the one person who by
+definition cannot supply it.
+
+Three rules, each because the alternative is silent:
+
+- an unknown collector name is an error: a typo'd `mount` would otherwise leave
+  `mounts` running while the operator believed it was switched off;
+- excluding a metadata collector is an error, since they cannot be switched off
+  at all;
+- an unknown key or table is an error, because a misspelled `excludes` that
+  quietly does nothing is the same failure one level up.
+
+No auto-discovery either. A `config.toml` picked up silently from beside the
+binary is exactly how a stale file narrows a run and poisons a diff, so the
+path is always given.
+
+**Cost, accepted knowingly:** every built-in collector is opt-out rather than
+opt-in, so a mistake in a new one runs on every box at the next release without
+being asked for, and the bar for adding to `built_in()` rises accordingly.
+Layer 3 collectors shell out (`nginx -T`, `pg_dumpall --globals-only`,
+`docker inspect`), which means dropping the binary on a production box will
+spawn those processes unasked. All are read-only and cheap, so this is accepted
+for v1, to be revisited if a collector ever wants to do something genuinely
+expensive.
