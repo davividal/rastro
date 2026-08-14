@@ -1,5 +1,7 @@
 //! The command line as the operator meets it.
 
+use std::path::{Path, PathBuf};
+
 use clap::Parser;
 
 use rastro_fingerprint::View;
@@ -16,9 +18,21 @@ pub struct Cli {
     /// cleanly is the problem rastro exists to solve.
     #[arg(long)]
     include_volatile: bool,
+
+    /// Narrow this run with a config file.
+    ///
+    /// Optional and explicit: with no `--config` every collector runs, because
+    /// the premise is a box nobody documented. There is no auto-discovery, so a
+    /// stale file lying beside the binary cannot quietly narrow a run.
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 impl Cli {
+    pub fn config_path(&self) -> Option<&Path> {
+        self.config.as_deref()
+    }
+
     /// Which view the operator asked for.
     ///
     /// The flag is named for what it *does*, the view for what it *is*. Calling

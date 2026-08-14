@@ -14,23 +14,21 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct InvocationCollector {
     name: FacetName,
     identity: CollectorIdentity,
+    effective_config: Observation,
 }
 
 impl InvocationCollector {
-    pub fn new() -> Self {
+    /// Takes the effective config rather than reading one, so the document's
+    /// self-description is whatever the composition root actually resolved.
+    pub fn new(effective_config: Observation) -> Self {
         Self {
+            effective_config,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
                 CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
         }
-    }
-}
-
-impl Default for InvocationCollector {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -57,6 +55,7 @@ impl Collector for InvocationCollector {
 
         Ok(Observation::object([
             ("rastro_version", Observation::text(RASTRO_VERSION)),
+            ("config", self.effective_config.clone()),
             ("started_at", Observation::integer(started_at).volatile()),
         ]))
     }

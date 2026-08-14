@@ -13,12 +13,11 @@ fingerprints and a plain diff.
 
 **Current status: it runs.** `./rastro` emits a real fingerprint. Three
 collectors ship: `host` and `invocation` (metadata) and `mounts` (state). Both
-views work, and `tests/cli.rs` enforces the determinism contract end to end
-through the built binary.
+views work, config narrows a run, and `crates/rastro/tests/cli.rs` enforces the
+determinism contract end to end through the built binary.
 
-Not built yet: the config layer (so the mandatory-config decision is not yet
-honoured), the Layer 1 walker, the remaining Layer 2 collectors, Layer 3, the
-exec contract, and redaction of `sensitive` values.
+Not built yet: the Layer 1 walker, the remaining Layer 2 collectors, Layer 3,
+the exec contract, and redaction of `sensitive` values.
 
 ```sh
 cargo test                                    # the whole workspace
@@ -71,9 +70,12 @@ musl-native, so it also exercises the shipping target). It writes a root-owned
   WARN on stderr. Failures are loud in the output, never silent.
 - **Envelope self-description:** invocation metadata carries the rastro binary
   version and the full *effective* config (defaults + file + flags resolved).
-- **Config is mandatory:** no config file → loud error pointing at
-  `--generate-config`. rastro's own files are excluded via explicit config
-  entries, not built-in magic.
+- **Config is optional, opt-in and exclusion-only.** With no `--config` every
+  collector runs, because the premise is a box nobody documented. A config can
+  only narrow; there is no way to name the collectors that *do* run. No
+  auto-discovery. An unknown collector name, an attempt to exclude a metadata
+  collector, an unknown key, or an unreadable `--config` path all fail the run
+  rather than being ignored.
 - **Secrets:** sensitive values hashed by default, `--raw` opts out. Redaction
   is a per-collector responsibility, documented as an option, not a guarantee.
 - **stdout carries only the fingerprint**; diagnostics go to stderr/log.
@@ -151,6 +153,13 @@ three exclusions above are.
   change must keep it green.
 - TDD: Test-driven development is the default workflow. New features must be
   accompanied by a test that fails before the feature is implemented, and passes after.
+- **Commit at every green.** A red-green cycle is one commit. The boundary is
+  already there, because work starts with a failing test; taking it keeps each
+  commit to one behaviour and stops boundaries being found afterwards by
+  archaeology, which is how a change ends up too big to describe.
+- **A commit message is a subject line.** Imperative, under 50 characters, no
+  full stop. Needing a body to explain the commit means the commit is too big:
+  split it rather than write the essay.
 - DDD: Domain-driven design is the default workflow. New features must be
   accompanied by a domain model that captures the relevant concepts and
   relationships, and the code must reflect that model.

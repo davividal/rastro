@@ -118,11 +118,30 @@ pattern that exec-contract authors will copy.
 
 ## Configuration
 
-**Planned, not yet built.** rastro currently runs with no config file at all.
+Optional, opt-in and explicit. With no `--config`, every collector runs.
 
-rastro runs as `./rastro` or `./rastro --config=/path/to/config.toml`. Without
-the flag it looks for `config.toml` beside the binary. With no config found at
-all it fails loudly and points the operator at `--generate-config`.
+```toml
+[collectors]
+exclude = ["mounts"]
+```
+
+**Exclusions only.** There is no way to name the collectors that *do* run, so a
+config can never hide a state surface the operator did not know to ask for.
+
+An excluded collector is **omitted from the document entirely**, with a warning
+on stderr. It is not recorded `absent`: absence is something observed about the
+host, exclusion is something the operator chose, and conflating the two would
+put a decision into the state.
+
+Refused rather than ignored: a collector name that does not exist, an attempt to
+exclude a metadata collector, an unknown key or table, and a `--config` path
+that cannot be read. There is no auto-discovery, because a `config.toml` picked
+up silently from beside the binary is how a stale file narrows a run and poisons
+a diff.
+
+The effective config is recorded in the `invocation` facet whether it came from
+a file or from the defaults, so two runs under different scope cannot be diffed
+without the difference showing.
 
 ## Output format, the real contract
 
@@ -201,8 +220,8 @@ went wrong without parsing JSON.
 ## Security posture
 
 Of the following, only the `unsafe`-free build and the absence of network I/O
-are true today. Redaction, the output-file mode and the root requirement arrive
-with the collectors and the config layer that need them.
+are true today. Redaction and the output-file mode arrive with the collectors
+that need them; the root requirement arrives with Layer 1.
 
 - **Requires root.** It reads `/etc`, user crontabs and firewall state.
   Degrading gracefully without root is roadmap, not v1.

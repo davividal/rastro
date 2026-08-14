@@ -6,7 +6,7 @@
 
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
 
@@ -136,4 +136,122 @@ fn stderr_stays_empty_on_a_successful_run() {
         "diagnostics belong on stderr, but a clean run has none: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// A config file in the temp dir, named per test so parallel runs cannot clash.
+fn config_file(name: &str, contents: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rastro-{name}.toml"));
+    std::fs::write(&path, contents).expect("the temp directory should be writable");
+    path
+}
+
+#[test]
+fn a_run_with_no_config_collects_everything() {
+    // Act
+    let document = document(&[]);
+
+    // Assert: the premise is a box nobody documented, so the default cannot ask
+    // the operator which collectors they want.
+    let invocation = facet(&document, "metadata", "invocation").clone();
+    assert_eq!(
+        invocation["data"]["config"]["excluded_collectors"],
+        json!([])
+    );
+    assert_eq!(invocation["data"]["config"]["source"], Value::Null);
+    assert!(!document["facets"].as_array().expect("facets").is_empty());
+}
+
+#[test]
+fn an_excluded_collector_is_omitted_rather_than_recorded_absent() {
+    // Arrange
+    let path = config_file("exclude-mounts", "[collectors]\nexclude = [\"mounts\"]\n");
+
+    // Act
+    let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
+    let document: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should carry a document");
+
+    // Assert: absence is something observed about the host; exclusion is
+    // something the operator chose, and the two must not be conflated.
+    assert!(output.status.success());
+    let names: Vec<&str> = document["facets"]
+        .as_array()
+        .expect("facets")
+        .iter()
+        .filter_map(|facet| facet["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"mounts"), "got {names:?}");
+}
+
+#[test]
+fn an_exclusion_is_announced_on_stderr() {
+    // Arrange
+    let path = config_file("warn-mounts", "[collectors]\nexclude = [\"mounts\"]\n");
+
+    // Act
+    let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
+
+    // Assert: the only trace in the document is the effective config, so the
+    // operator has to be told directly.
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(stderr.contains("mounts"), "got {stderr:?}");
+}
+
+#[test]
+fn the_effective_config_reaches_the_document() {
+    // Arrange
+    let path = config_file("effective", "[collectors]\nexclude = [\"mounts\"]\n");
+
+    // Act
+    let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
+    let document: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should carry a document");
+
+    // Assert: two runs under different scope must not be diffable without the
+    // difference showing.
+    let config = facet(&document, "metadata", "invocation")["data"]["config"].clone();
+    assert_eq!(config["excluded_collectors"], json!(["mounts"]));
+    assert_eq!(config["source"], json!(path.display().to_string()));
+}
+
+#[test]
+fn a_config_path_that_cannot_be_read_fails_the_run() {
+    // Act: falling back to the defaults would silently widen the run.
+    let output = run(&["--config", "/nonexistent/rastro.toml"]);
+
+    // Assert
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty(), "stdout carries only fingerprints");
+    assert!(!output.stderr.is_empty());
+}
+
+#[test]
+fn excluding_a_collector_that_does_not_exist_fails_the_run() {
+    // Arrange
+    let path = config_file("typo", "[collectors]\nexclude = [\"mount\"]\n");
+
+    // Act
+    let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
+
+    // Assert: a typo would otherwise leave `mounts` running while the operator
+    // believed it was switched off.
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(stderr.contains("mount"), "got {stderr:?}");
+}
+
+#[test]
+fn excluding_a_metadata_collector_fails_the_run() {
+    // Arrange
+    let path = config_file(
+        "no-invocation",
+        "[collectors]\nexclude = [\"invocation\"]\n",
+    );
+
+    // Act
+    let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
+
+    // Assert
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
 }
