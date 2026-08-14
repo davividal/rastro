@@ -75,6 +75,7 @@ installed on it. CI asserts it really is static.
 
 | document                               | contents                                          |
 | -------------------------------------- | ------------------------------------------------- |
+| [docs/config.md](docs/config.md)       | the config file: format, options, refusals        |
 | [docs/design.md](docs/design.md)       | architecture, collector contract, output format   |
 | [docs/decisions.md](docs/decisions.md) | what was chosen, why, and what it costs           |
 | [docs/research.md](docs/research.md)   | prior art, and why the alternatives were rejected |
