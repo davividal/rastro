@@ -20,5 +20,6 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+rastro-fingerprint = { workspace = true }
 # Tests read the rendered document back to assert on its shape.
 serde_json = { workspace = true }

@@ -198,10 +198,10 @@ the state they described has moved on. That is acceptable only because volatile
 is by definition the noise floor rather than meaningful state, and because
 someone who wants to eyeball PIDs knows they are eyeballing.
 
-**Open:** the chosen view is not recorded in the document, so diffing a complete
-against a diffable one produces nonsense with no warning. It resolves itself
-when the config layer lands: the view is a CLI flag, flags are part of the
-effective config, and the `invocation` facet already promises to carry that.
+**Closed by the config layer.** The chosen view is recorded in the `invocation`
+facet's effective config, because a view is a flag and flags are part of it.
+Diffing a complete document against a diffable one now shows `"view"` changing
+at the top rather than pages of unexplained removals.
 
 ## Keys are declared where the shape is known, sorted where it is not
 
@@ -376,8 +376,8 @@ watch*", because if you could enumerate what changes you would not need the
 diff. That is what disqualified AIDE and configsnap. Refusing to run without a
 config file is the same disqualifier one level up.
 
-It was also internally inconsistent with this file's own "exclusions, never
-inclusions", which presupposes a default scope to exclude *from*.
+It was also internally inconsistent with the project's own "exclusions, never
+inclusions" (`CLAUDE.md`), which presupposes a default scope to exclude *from*.
 
 **What the old entry was reaching for was never explicit input.** It is that a
 fingerprint records what produced it, so two runs under different scope cannot

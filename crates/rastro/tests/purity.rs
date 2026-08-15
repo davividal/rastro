@@ -96,3 +96,25 @@ fn collectors_reach_the_document_model_only_through_the_port() {
         "add the missing type to `rastro-collector`'s re-exports instead",
     );
 }
+
+#[test]
+fn the_config_knows_nothing_about_what_it_configures() {
+    // Act & Assert: a third sibling, added when the config layer landed. It
+    // reads settings; deciding what they mean is the registry's job.
+    assert_module_never_mentions(
+        "config",
+        &["crate::collectors", "crate::cli", "rastro::collectors"],
+        "what a setting does is decided where the collectors are, not here",
+    );
+}
+
+#[test]
+fn the_config_is_a_plain_settings_type() {
+    // Act & Assert: shaping the effective config into an observation belongs to
+    // the collector that reports it, so this type has no document model at all.
+    assert_module_never_mentions(
+        "config",
+        &["rastro_fingerprint", "rastro_collector"],
+        "assembling a facet's tree is the collector's job",
+    );
+}

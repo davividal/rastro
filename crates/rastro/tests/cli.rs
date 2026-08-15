@@ -157,7 +157,7 @@ fn a_run_with_no_config_collects_everything() {
         invocation["data"]["config"]["excluded_collectors"],
         json!([])
     );
-    assert_eq!(invocation["data"]["config"]["source"], Value::Null);
+    assert_eq!(invocation["data"]["config"]["view"], json!("diffable"));
     assert!(!document["facets"].as_array().expect("facets").is_empty());
 }
 
@@ -211,7 +211,7 @@ fn the_effective_config_reaches_the_document() {
     // difference showing.
     let config = facet(&document, "metadata", "invocation")["data"]["config"].clone();
     assert_eq!(config["excluded_collectors"], json!(["mounts"]));
-    assert_eq!(config["source"], json!(path.display().to_string()));
+    assert_eq!(config["view"], json!("diffable"));
 }
 
 #[test]

@@ -80,6 +80,7 @@ Clean Code wins where they conflict. Three Clean Code positions are wrong here:
 ## Working conventions
 
 - Debian/systemd first; choices must not need breaking changes to generalise.
+- **Planned, not built:** a tag-triggered release job with checksums.
 - **Separation is enforced by cargo.** `rastro-fingerprint` (the document)
   depends on nothing of ours; `rastro-collector` (the port, and what an outside
   contributor depends on) depends on it; `rastro` (the tool) on both. Neither

@@ -29,6 +29,7 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// The config file the operator named, if any. `None` runs everything.
     pub fn config_path(&self) -> Option<&Path> {
         self.config.as_deref()
     }
