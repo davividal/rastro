@@ -5,21 +5,44 @@ mod invocation;
 mod mounts;
 
 pub use host::HostCollector;
-pub use invocation::{InvocationCollector, seconds_since_epoch};
+pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use mounts::{MountsCollector, parse_mount_table};
 
 use rastro_collector::{Collector, CollectorCategory};
 
-use crate::config::{Config, ConfigError};
+use thiserror::Error;
+
+use rastro_collector::Observation;
+
+use crate::config::Config;
+
+/// The config named a collector that cannot be excluded.
+///
+/// Separate from `ConfigError`, which is about reading the file: whether a
+/// collector exists is a fact about this registry, not about TOML.
+#[derive(Debug, Error)]
+pub enum SelectionError {
+    #[error(
+        "no collector is named {name:?}, so excluding it would do nothing; available: {available}"
+    )]
+    UnknownCollector { name: String, available: String },
+
+    #[error(
+        "{name:?} is a metadata collector and cannot be excluded: without it one \
+         fingerprint cannot be told apart from another"
+    )]
+    MetadataCollector { name: String },
+}
 
 /// Every built-in collector, in the order they are registered.
 ///
-/// Order is irrelevant to the document, which sorts facets by name, and this is
-/// the list the composition root hands to the use case.
-pub fn built_in(config: &Config) -> Vec<Box<dyn Collector>> {
+/// Order is irrelevant to the document, which sorts facets by name. The
+/// effective config is a parameter only because one collector reports it; no
+/// other registration reads it.
+pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(HostCollector::new()),
-        Box::new(InvocationCollector::new(config.as_observation())),
+        Box::new(InvocationCollector::new(effective_config)),
         Box::new(MountsCollector::new()),
     ]
 }
@@ -49,6 +72,7 @@ impl std::fmt::Debug for Selection {
 }
 
 impl Selection {
+    /// The collectors that survived the config, ready for the use case.
     pub fn running(&self) -> &[Box<dyn Collector>] {
         &self.running
     }
@@ -63,20 +87,23 @@ impl Selection {
 ///
 /// Only ever narrows. There is no way to say which collectors run, so a config
 /// can never hide a state surface the operator did not know to ask for.
-pub fn selected(config: &Config) -> Result<Selection, ConfigError> {
-    let all = built_in(config);
+pub fn selected(
+    config: &Config,
+    effective_config: Observation,
+) -> Result<Selection, SelectionError> {
+    let all = built_in(effective_config);
 
     for name in config.excluded() {
         let collector = all
             .iter()
             .find(|collector| collector.name().as_str() == name)
-            .ok_or_else(|| ConfigError::UnknownCollector {
+            .ok_or_else(|| SelectionError::UnknownCollector {
                 name: name.clone(),
                 available: names_of(&all).join(", "),
             })?;
 
         if collector.category() == CollectorCategory::Metadata {
-            return Err(ConfigError::MetadataCollector { name: name.clone() });
+            return Err(SelectionError::MetadataCollector { name: name.clone() });
         }
     }
 

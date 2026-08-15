@@ -34,7 +34,7 @@ use thiserror::Error;
 /// machinery than the regression is worth.
 pub use rastro_fingerprint::{
     CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion, Content, FacetName,
-    FingerprintError, Observation, Scalar, Sensitivity, Volatility,
+    FingerprintError, Observation, Scalar, Sensitivity, View, Volatility,
 };
 
 /// Whether a collector's subject is on this host.

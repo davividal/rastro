@@ -2,10 +2,15 @@
 
 use rastro::collectors;
 use rastro::config::Config;
+use rastro_fingerprint::{Observation, View};
+
+fn effective(config: &Config) -> Observation {
+    collectors::effective_config(config, View::Diffable)
+}
 
 fn names(config: &str) -> Vec<String> {
     let config = Config::parse(config).expect("this config is well formed");
-    collectors::selected(&config)
+    collectors::selected(&config, effective(&config))
         .expect("this config is acceptable")
         .running()
         .iter()
@@ -22,7 +27,7 @@ fn every_collector_runs_when_nothing_is_excluded() {
     // nobody documented.
     assert_eq!(
         running.len(),
-        collectors::built_in(&Config::default()).len()
+        collectors::built_in(Observation::null()).len()
     );
 }
 
@@ -35,7 +40,7 @@ fn an_excluded_collector_does_not_run() {
     assert!(!running.contains(&"mounts".to_owned()));
     assert_eq!(
         running.len(),
-        collectors::built_in(&Config::default()).len() - 1
+        collectors::built_in(Observation::null()).len() - 1
     );
 }
 
@@ -45,7 +50,7 @@ fn selected_reports_what_it_excluded_so_the_operator_can_be_told() {
     let config = Config::parse("[collectors]\nexclude = [\"mounts\"]\n").expect("well formed");
 
     // Act
-    let selection = collectors::selected(&config).expect("acceptable");
+    let selection = collectors::selected(&config, effective(&config)).expect("acceptable");
 
     // Assert: omitted from the document entirely, so the only trace is the
     // warning and the effective config in the envelope.
@@ -59,7 +64,7 @@ fn selected_refuses_a_collector_name_that_does_not_exist() {
     let config = Config::parse("[collectors]\nexclude = [\"mount\"]\n").expect("well formed");
 
     // Act
-    let result = collectors::selected(&config);
+    let result = collectors::selected(&config, effective(&config));
 
     // Assert
     let failure = result.expect_err("an unknown collector must not be ignored");
@@ -77,7 +82,7 @@ fn selected_refuses_to_exclude_a_metadata_collector() {
     let config = Config::parse("[collectors]\nexclude = [\"invocation\"]\n").expect("well formed");
 
     // Act
-    let result = collectors::selected(&config);
+    let result = collectors::selected(&config, effective(&config));
 
     // Assert: without it a fingerprint cannot be told apart from another, so
     // asking is a config mistake rather than something to quietly ignore.
@@ -91,5 +96,5 @@ fn the_host_collector_cannot_be_excluded_either() {
     let config = Config::parse("[collectors]\nexclude = [\"host\"]\n").expect("well formed");
 
     // Act & Assert
-    assert!(collectors::selected(&config).is_err());
+    assert!(collectors::selected(&config, effective(&config)).is_err());
 }

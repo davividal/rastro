@@ -7,7 +7,7 @@
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, Content, FacetName, FingerprintError, Observation, Presence, Scalar,
-    Sensitivity, Volatility,
+    Sensitivity, View, Volatility,
 };
 
 struct OutOfTreeCollector {
@@ -79,4 +79,8 @@ fn a_collector_can_be_written_against_this_crate_alone() {
         entries["stable"].content(),
         &Content::Scalar(Scalar::Text("value".to_owned()))
     );
+
+    // A collector that reports which view produced the document needs `View`
+    // too, so the re-export is guarded like the rest.
+    assert!(observation.in_view(View::Diffable).is_some());
 }

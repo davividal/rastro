@@ -8,10 +8,13 @@
 //! There is deliberately no way to say which collectors *do* run. Exclusions
 //! can only narrow, so a config can never hide a state surface the operator did
 //! not know to ask for.
+//!
+//! A plain settings type. It knows nothing of the document model: shaping the
+//! effective config into an observation belongs to the collector that reports
+//! it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use rastro_collector::Observation;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -21,11 +24,6 @@ use thiserror::Error;
 pub struct Config {
     #[serde(default)]
     collectors: Collectors,
-
-    /// Where this came from, carried so the document can say. `None` is the
-    /// default config, which is what runs when no `--config` was given.
-    #[serde(skip)]
-    source: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -35,7 +33,10 @@ struct Collectors {
     exclude: Vec<String>,
 }
 
-/// The config could not be read as one.
+/// The config file could not be read as one.
+///
+/// Both variants name the file. An operator with a broken `/etc/rastro.toml`
+/// should not have to guess which of their configs the parser was looking at.
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("could not read {path}: {source}")]
@@ -45,29 +46,31 @@ pub enum ConfigError {
         source: std::io::Error,
     },
 
-    #[error("{0}")]
-    Malformed(#[from] toml::de::Error),
-
-    #[error(
-        "no collector is named {name:?}, so excluding it would do nothing; available: {available}"
-    )]
-    UnknownCollector { name: String, available: String },
-
-    #[error(
-        "{name:?} is a metadata collector and cannot be excluded: without it one \
-         fingerprint cannot be told apart from another"
-    )]
-    MetadataCollector { name: String },
+    #[error("could not parse {path}: {source}")]
+    Malformed {
+        path: String,
+        #[source]
+        source: toml::de::Error,
+    },
 }
 
 impl Config {
     /// Reads a config from TOML.
     ///
+    /// Exclusions are sorted and deduplicated here, so that two configs meaning
+    /// the same thing produce the same document. The effective config is in the
+    /// envelope precisely so runs can be compared; it must not differ because
+    /// someone listed the same collector twice.
+    ///
     /// Unknown keys and tables are refused rather than ignored: a misspelled
     /// `excludes` that silently does nothing would leave the operator believing
     /// a collector was switched off when it was still running.
-    pub fn parse(toml: &str) -> Result<Self, ConfigError> {
-        Ok(toml::from_str(toml)?)
+    pub fn parse(toml: &str) -> Result<Self, toml::de::Error> {
+        let mut config: Self = toml::from_str(toml)?;
+        config.collectors.exclude.sort_unstable();
+        config.collectors.exclude.dedup();
+
+        Ok(config)
     }
 
     /// Reads a config from a file.
@@ -81,42 +84,15 @@ impl Config {
             source,
         })?;
 
-        let mut config = Self::parse(&toml)?;
-        config.source = Some(path.to_path_buf());
-
-        Ok(config)
+        Self::parse(&toml).map_err(|source| ConfigError::Malformed {
+            path: path.display().to_string(),
+            source,
+        })
     }
 
-    /// The collectors the operator asked not to run.
+    /// The collectors the operator asked not to run, sorted and without
+    /// duplicates.
     pub fn excluded(&self) -> &[String] {
         &self.collectors.exclude
-    }
-
-    pub fn source(&self) -> Option<&Path> {
-        self.source.as_deref()
-    }
-
-    /// How this config appears in the `invocation` facet.
-    ///
-    /// Recorded whether it came from a file or from the defaults, so two runs
-    /// under different scope cannot be diffed without the difference showing.
-    pub fn as_observation(&self) -> Observation {
-        Observation::object([
-            (
-                "excluded_collectors",
-                Observation::list(
-                    self.excluded()
-                        .iter()
-                        .map(|name| Observation::text(name.as_str())),
-                ),
-            ),
-            (
-                "source",
-                match self.source() {
-                    Some(path) => Observation::text(path.display().to_string()),
-                    None => Observation::null(),
-                },
-            ),
-        ])
     }
 }

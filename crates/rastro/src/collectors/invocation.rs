@@ -2,6 +2,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use rastro_collector::View;
+
+use crate::config::Config;
+
 // One import, because `rastro-collector` re-exports what an author needs. A
 // collector written outside this repo looks exactly like this.
 use rastro_collector::{
@@ -10,6 +14,41 @@ use rastro_collector::{
 };
 
 const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The settings this run resolved to, as the `invocation` facet reports them.
+///
+/// Shaped here rather than on `Config`, because assembling a facet's tree is
+/// the collector's job and `Config` is a plain settings type.
+///
+/// The view is in here because it *is* part of the effective config: it is a
+/// flag, and it is the single most diff-corrupting one rastro has. Diffing a
+/// complete document against a diffable one would otherwise produce pages of
+/// spurious removals with nothing to explain them.
+///
+/// The config file's path is deliberately absent. A fingerprint is made to be
+/// shared, and `/home/alice/.config/rastro/prod.toml` would carry a username
+/// and a deployment layout off the box for no diff signal that the exclusion
+/// list does not already carry.
+pub fn effective_config(config: &Config, view: View) -> Observation {
+    Observation::object([
+        (
+            "excluded_collectors",
+            Observation::list(
+                config
+                    .excluded()
+                    .iter()
+                    .map(|name| Observation::text(name.as_str())),
+            ),
+        ),
+        (
+            "view",
+            Observation::text(match view {
+                View::Diffable => "diffable",
+                View::Complete => "complete",
+            }),
+        ),
+    ])
+}
 
 pub struct InvocationCollector {
     name: FacetName,
