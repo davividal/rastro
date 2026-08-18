@@ -33,13 +33,14 @@ view, because both change what is in the document:
 ```json
 "config": {
   "excluded_collectors": ["mounts"],
+  "source": "/etc/rastro.toml",
   "view": "diffable"
 }
 ```
 
 so two runs under different scope cannot be diffed without the difference
-showing. The config file's path is deliberately not recorded: a fingerprint is
-made to be shared, and a path carries a username and a deployment layout.
+showing. `source` is `null` when no `--config` was given, and a path that is not
+valid UTF-8 is refused rather than recorded lossily.
 
 Exclusions are sorted and deduplicated, so two configs meaning the same thing
 produce the same document.

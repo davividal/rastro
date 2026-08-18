@@ -25,10 +25,10 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// complete document against a diffable one would otherwise produce pages of
 /// spurious removals with nothing to explain them.
 ///
-/// The config file's path is deliberately absent. A fingerprint is made to be
-/// shared, and `/home/alice/.config/rastro/prod.toml` would carry a username
-/// and a deployment layout off the box for no diff signal that the exclusion
-/// list does not already carry.
+/// The config file's path is recorded, unannotated. It is provenance, not a
+/// secret: hashing it as `sensitive` would destroy the only thing it is for,
+/// and omitting it for privacy would be incoherent in a tool that fingerprints
+/// `/home` and the user accounts anyway.
 pub fn effective_config(config: &Config, view: View) -> Observation {
     Observation::object([
         (
@@ -39,6 +39,13 @@ pub fn effective_config(config: &Config, view: View) -> Observation {
                     .iter()
                     .map(|name| Observation::text(name.as_str())),
             ),
+        ),
+        (
+            "source",
+            match config.source() {
+                Some(path) => Observation::text(path),
+                None => Observation::null(),
+            },
         ),
         (
             "view",

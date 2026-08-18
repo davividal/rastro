@@ -107,3 +107,46 @@ fn a_malformed_config_names_the_file_it_could_not_parse() {
         "the message must name the file, got: {failure}"
     );
 }
+
+#[test]
+fn load_records_the_path_it_read() {
+    // Arrange
+    let path = std::env::temp_dir().join("rastro-source.toml");
+    std::fs::write(&path, "[collectors]\n").expect("the temp dir should be writable");
+
+    // Act
+    let config = Config::load(&path).expect("this config is well formed");
+
+    // Assert: provenance. Which file configured a run is a real difference
+    // between two runs, and it is not a secret.
+    assert_eq!(
+        config.source(),
+        Some(path.to_str().expect("a UTF-8 temp path"))
+    );
+}
+
+#[test]
+fn the_default_config_has_no_source() {
+    // Act & Assert
+    assert_eq!(Config::default().source(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn load_refuses_a_path_it_could_not_record_faithfully() {
+    // Arrange: a legal path that is not valid UTF-8.
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::path::PathBuf::from(OsStr::from_bytes(b"/tmp/rastro-\xff.toml"));
+
+    // Act
+    let result = Config::load(&path);
+
+    // Assert: recording it lossily would put a path into the document that was
+    // never on the box, in a document whose point is exactness.
+    let failure = result.expect_err("an unrecordable path must not be guessed at");
+    assert!(
+        failure.to_string().contains("UTF-8"),
+        "the message must say why, got: {failure}"
+    );
+}

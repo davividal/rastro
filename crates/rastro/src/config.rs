@@ -24,6 +24,15 @@ use thiserror::Error;
 pub struct Config {
     #[serde(default)]
     collectors: Collectors,
+
+    /// The file this was read from, if any. Recorded in the document as
+    /// provenance: which file configured a run is a real difference between two
+    /// runs, and a path is not a secret. `None` is the default config.
+    ///
+    /// Held as a `String` because it was validated as UTF-8 at load, so nothing
+    /// downstream has to convert it lossily.
+    #[serde(skip)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -52,6 +61,11 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
+
+    /// Refused rather than recorded lossily. A document whose point is
+    /// exactness must not contain a path that was never on the box.
+    #[error("cannot record a config path that is not valid UTF-8: {path}")]
+    UnrecordablePath { path: String },
 }
 
 impl Config {
@@ -79,20 +93,35 @@ impl Config {
     /// silent fall back to the defaults: the run would then be wider than the
     /// operator asked for, and the diff would not say so.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let toml = std::fs::read_to_string(path).map_err(|source| ConfigError::Unreadable {
-            path: path.display().to_string(),
-            source,
+        let source = path
+            .to_str()
+            .ok_or_else(|| ConfigError::UnrecordablePath {
+                path: path.to_string_lossy().into_owned(),
+            })?
+            .to_owned();
+
+        let toml = std::fs::read_to_string(path).map_err(|error| ConfigError::Unreadable {
+            path: source.clone(),
+            source: error,
         })?;
 
-        Self::parse(&toml).map_err(|source| ConfigError::Malformed {
-            path: path.display().to_string(),
-            source,
-        })
+        let mut config = Self::parse(&toml).map_err(|error| ConfigError::Malformed {
+            path: source.clone(),
+            source: error,
+        })?;
+        config.source = Some(source);
+
+        Ok(config)
     }
 
     /// The collectors the operator asked not to run, sorted and without
     /// duplicates.
     pub fn excluded(&self) -> &[String] {
         &self.collectors.exclude
+    }
+
+    /// The file this was read from, or `None` for the defaults.
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 }
