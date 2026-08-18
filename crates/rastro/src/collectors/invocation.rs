@@ -2,16 +2,14 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rastro_collector::View;
-
-use crate::config::Config;
-
 // One import, because `rastro-collector` re-exports what an author needs. A
 // collector written outside this repo looks exactly like this.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, Observation, Presence, View,
 };
+
+use crate::config::Config;
 
 const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 
