@@ -97,6 +97,59 @@ fn collectors_reach_the_document_model_only_through_the_port() {
     );
 }
 
+/// Every `model` and `value` directory under `collectors`, whichever collector they
+/// belong to, so a new collector is covered without touching this file.
+fn domain_sources_of_every_collector() -> Vec<PathBuf> {
+    sources_of("collectors")
+        .into_iter()
+        .filter(|path| {
+            path.parent()
+                .and_then(Path::file_name)
+                .is_some_and(|directory| directory == "model" || directory == "value")
+        })
+        .collect()
+}
+
+#[test]
+fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
+    // Arrange
+    let domain = domain_sources_of_every_collector();
+    assert!(!domain.is_empty(), "no collector has a domain to check");
+
+    // Act & Assert: the anti-corruption boundary. A source holds one host
+    // interface's spelling, so the moment the model reaches back into it, adding a
+    // second interface reporting the same concepts stops being a local change.
+    for file in domain {
+        let code = code_of(&file);
+        for needle in ["source", "Proc", "Query", "Database"] {
+            assert!(
+                !code.contains(needle),
+                "{} mentions {needle:?}: the model is what rastro means, not how one \
+                 host spells it. Map it in the source instead",
+                file.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into() {
+    // Act & Assert: `value` holds the facet's leaves and `model` its structure, so
+    // the arrow runs model to value. Reversing it would make a leaf unusable in any
+    // other shape.
+    for file in domain_sources_of_every_collector() {
+        if file.parent().and_then(Path::file_name) != Some("value".as_ref()) {
+            continue;
+        }
+        assert!(
+            !code_of(&file).contains("model"),
+            "{} mentions `model`: a leaf value is composed *by* a shape, never aware \
+             of one",
+            file.display()
+        );
+    }
+}
+
 #[test]
 fn the_config_knows_nothing_about_what_it_configures() {
     // Act & Assert: a third sibling, added when the config layer landed. It

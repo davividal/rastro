@@ -1,12 +1,12 @@
 //! The collectors that ship inside the binary.
 
-mod host;
-mod invocation;
-mod mounts;
+pub mod host;
+pub mod invocation;
+pub mod mounts;
 
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
-pub use mounts::{MountsCollector, parse_mount_table};
+pub use mounts::MountsCollector;
 
 use rastro_collector::{Collector, CollectorCategory};
 
