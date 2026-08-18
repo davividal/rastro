@@ -8,7 +8,10 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.85"
+# A consequence of the dependencies, not a support promise. Rust ships every six
+# weeks and maintains only the latest release, so no older version is "supported"
+# by anyone. `subprocess` uses let-chains, stable since 1.88.
+rust-version = "1.88"
 license = "AGPL-3.0-only"
 repository = "https://github.com/davividal/rastro"
 
@@ -19,7 +22,9 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 serde_json = "1"
+subprocess = "1"
 thiserror = "2"
+which = "8"
 
 [profile.release]
 strip = true

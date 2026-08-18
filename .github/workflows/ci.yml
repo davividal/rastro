@@ -51,11 +51,18 @@ jobs:
       # `cargo metadata` rather than a grep: it is TOML-aware, so quoting style
       # and table context cannot break it.
       #
-      # There is currently no headroom. clap pins `rust-version = 1.85`, exactly
-      # rastro's own floor, so the first `cargo update` that picks up a
-      # dependency with a raised MSRV fails this job for a reason that has
-      # nothing to do with rastro's code. That is the job working, not a
-      # regression: either raise the floor in Cargo.toml or pin the dependency.
+      # The floor is a *fact about the dependencies*, never a support promise:
+      # Rust ships every six weeks and maintains only the latest release, so no
+      # older version is supported by anyone. This job therefore checks that the
+      # declared floor is still true, not that an old compiler is blessed. A
+      # `cargo update` that picks up a raised MSRV fails it by design; the fix is
+      # to raise the floor here or pin that dependency, deliberately either way.
+      #
+      # There is no headroom, and one caveat comes with that: the workspace
+      # declares a single floor and the step below takes the highest across
+      # members, so `rastro`'s tool dependencies set the floor for
+      # `rastro-collector` too. That is backwards, since the port is the crate a
+      # third-party collector compiles against. Splitting it per member is open.
       - id: msrv
         run: |
           # A virtual workspace has several packages, so take the highest

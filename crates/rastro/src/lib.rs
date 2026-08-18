@@ -7,6 +7,7 @@
 #![deny(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod canonical_tool;
 pub mod cli;
 pub mod collectors;
 pub mod config;
