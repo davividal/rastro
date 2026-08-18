@@ -97,15 +97,15 @@ fn collectors_reach_the_document_model_only_through_the_port() {
     );
 }
 
-/// Every `model` and `value` directory under `collectors`, whichever collector they
-/// belong to, so a new collector is covered without touching this file.
+/// Every `model` and `value_objects` directory under `collectors`, whichever collector
+/// they belong to, so a new collector is covered without touching this file.
 fn domain_sources_of_every_collector() -> Vec<PathBuf> {
     sources_of("collectors")
         .into_iter()
         .filter(|path| {
             path.parent()
                 .and_then(Path::file_name)
-                .is_some_and(|directory| directory == "model" || directory == "value")
+                .is_some_and(|directory| directory == "model" || directory == "value_objects")
         })
         .collect()
 }
@@ -134,11 +134,11 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
 
 #[test]
 fn a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into() {
-    // Act & Assert: `value` holds the facet's leaves and `model` its structure, so
-    // the arrow runs model to value. Reversing it would make a leaf unusable in any
-    // other shape.
+    // Act & Assert: `value_objects` holds the facet's leaves and `model` its structure,
+    // so the arrow runs model to value_objects. Reversing it would make a leaf
+    // unusable in any other shape.
     for file in domain_sources_of_every_collector() {
-        if file.parent().and_then(Path::file_name) != Some("value".as_ref()) {
+        if file.parent().and_then(Path::file_name) != Some("value_objects".as_ref()) {
             continue;
         }
         assert!(

@@ -2,7 +2,7 @@
 //!
 //! The structure of the facet: types that render as a node composed of other
 //! domain types, as opposed to the leaf fields in
-//! [`value`](super::value). Nothing here knows which host interface the
+//! [`value_objects`](super::value_objects). Nothing here knows which host interface the
 //! values came from.
 
 mod mount;

@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::mounts::value::{Device, FilesystemType, MountOptions, MountPoint};
+use crate::collectors::mounts::value_objects::{Device, FilesystemType, MountOptions, MountPoint};
 
 /// One mount, in rastro's terms rather than any one host interface's.
 ///

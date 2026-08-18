@@ -7,7 +7,7 @@
 use rastro_collector::CollectionError;
 
 use crate::collectors::mounts::model::Mount;
-use crate::collectors::mounts::value::{
+use crate::collectors::mounts::value_objects::{
     Device, FilesystemType, MountOption, MountOptions, MountPoint,
 };
 

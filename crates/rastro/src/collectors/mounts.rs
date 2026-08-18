@@ -1,16 +1,16 @@
 //! What is mounted where, and how.
 //!
 //! Three layers, and the dependency arrows only point one way:
-//! [`source`] knows [`model`], `model` knows [`value`], and neither of the last two
+//! [`source`] knows [`model`], `model` knows [`value_objects`], and neither of the last two
 //! knows a host interface exists.
 
 pub mod model;
 pub mod source;
-pub mod value;
+pub mod value_objects;
 
 pub use model::{Mount, MountTable};
 pub use source::{ProcMounts, ProcMountsLine};
-pub use value::{Device, FilesystemType, MountOption, MountOptions, MountPoint};
+pub use value_objects::{Device, FilesystemType, MountOption, MountOptions, MountPoint};
 
 // One import, because `rastro-collector` re-exports what an author needs. A
 // collector written outside this repo looks exactly like this.
