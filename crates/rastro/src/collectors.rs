@@ -88,11 +88,9 @@ impl Selection {
 /// Only ever narrows. There is no way to say which collectors run, so a config
 /// can never hide a state surface the operator did not know to ask for.
 pub fn selected(
+    all: Vec<Box<dyn Collector>>,
     config: &Config,
-    effective_config: Observation,
 ) -> Result<Selection, SelectionError> {
-    let all = built_in(effective_config);
-
     for name in config.excluded() {
         let collector = all
             .iter()
