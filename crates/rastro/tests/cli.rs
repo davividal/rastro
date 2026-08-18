@@ -90,6 +90,33 @@ fn a_bare_run_reports_the_mount_table_as_state() {
 }
 
 #[test]
+fn a_bare_run_reports_the_loaded_modules_as_state() {
+    // Act
+    let modules = facet(&document(&[]), "facets", "modules").clone();
+
+    // Assert: `absent` is a legitimate answer, from a kernel built without
+    // `CONFIG_MODULES`, so the status is not asserted to be `ok`. What must hold is
+    // that the facet is there and did not fail.
+    assert_ne!(modules["status"], "error", "got {modules:?}");
+}
+
+#[test]
+fn no_kernel_pointer_reaches_the_document() {
+    // Act: the complete view is the one that keeps volatile values, so a load address
+    // that was merely annotated rather than dropped would surface here.
+    let rendered = String::from_utf8(run(&["--include-volatile"]).stdout)
+        .expect("stdout should carry a UTF-8 document");
+
+    // Assert: `/proc/modules` publishes each module's kernel text address. It changes
+    // every boot, so it is noise, and it leaks a KASLR offset into a document that gets
+    // copied off the box and stored.
+    assert!(
+        !rendered.contains("0xffff"),
+        "a kernel pointer reached stdout"
+    );
+}
+
+#[test]
 fn including_volatile_values_carries_the_run_timestamp() {
     // Act
     let invocation = facet(&document(&["--include-volatile"]), "metadata", "invocation").clone();

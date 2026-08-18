@@ -9,7 +9,9 @@
 //! Nothing here reads the host, which `tests/purity.rs` enforces.
 
 mod absolute_path;
+mod byte_size;
 mod non_empty_text;
 
 pub use absolute_path::AbsolutePath;
+pub use byte_size::ByteSize;
 pub use non_empty_text::NonEmptyText;
