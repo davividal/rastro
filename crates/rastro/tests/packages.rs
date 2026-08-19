@@ -8,7 +8,7 @@ use rastro::collectors::packages::{
     PackagesCollector,
 };
 use rastro_collector::{Collector, Presence};
-use rastro_fingerprint::{Content, Observation};
+use rastro_fingerprint::{Content, Observation, Scalar};
 
 /// Six tab-separated fields, the format rastro asks dpkg for.
 const DPKG_OUTPUT: &str = "\
@@ -213,21 +213,29 @@ fn apk_names_the_database_it_could_not_open() {
 }
 
 #[test]
-fn presence_is_undetermined_when_no_manager_rastro_reads_is_present() {
-    // Arrange
+fn a_host_with_no_manager_rastro_reads_is_state_not_a_failure() {
+    // Arrange: a RHEL, SUSE, Arch or Slackware box. rastro reading neither manager is a limit
+    // of rastro, so it must not become an error the operator sees in every diff forever.
     let collector = PackagesCollector::reading(Vec::new());
 
     // Act
-    let presence = collector.presence();
+    let observation = collector
+        .collect()
+        .expect("finding no manager is not a failure");
 
-    // Assert: not `Absent`. rastro reads dpkg and apk, so on a RHEL or Arch box it finds
-    // neither and `absent` would assert that a host with fifteen hundred packages has none.
-    // What it knows is only that these two are missing.
-    let Presence::Undetermined { reason } = presence else {
-        panic!("expected undetermined, got {presence:?}");
+    // Assert: every manager rastro reads is named, each reported as not here. That is a fact
+    // about the host, where a bare `absent` would have claimed it has no packages at all.
+    assert_eq!(collector.presence(), Presence::Present);
+    let Content::Object(managers) = observation.content() else {
+        panic!("the inventory renders as an object keyed by manager");
     };
-    assert!(reason.contains("apk"), "got {reason:?}");
-    assert!(reason.contains("dpkg"), "got {reason:?}");
+    assert_eq!(
+        managers.keys().map(String::as_str).collect::<Vec<&str>>(),
+        ["apk", "dpkg"]
+    );
+    for manager in managers.values() {
+        assert_eq!(manager.content(), &Content::Scalar(Scalar::Null));
+    }
 }
 
 #[test]
@@ -250,13 +258,22 @@ fn the_inventory_is_keyed_by_manager() {
     // Act
     let observation = collector.collect().expect("this fixture is well formed");
 
-    // Assert
+    // Assert: both managers named, the one that is here carrying its packages and the one
+    // that is not carrying null, so installing a manager shows up as a change.
     let Content::Object(managers) = observation.content() else {
         panic!("the inventory renders as an object keyed by manager");
     };
     assert_eq!(
         managers.keys().map(String::as_str).collect::<Vec<&str>>(),
-        [PackageManager::Apk.as_str()]
+        [PackageManager::Apk.as_str(), PackageManager::Dpkg.as_str()]
+    );
+    assert!(matches!(
+        managers[PackageManager::Apk.as_str()].content(),
+        Content::Object(_)
+    ));
+    assert_eq!(
+        managers[PackageManager::Dpkg.as_str()].content(),
+        &Content::Scalar(Scalar::Null)
     );
 }
 

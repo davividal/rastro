@@ -105,22 +105,12 @@ fn a_bare_run_reports_the_installed_packages_as_state() {
     // Act
     let packages = facet(&document(&[]), "facets", "packages").clone();
 
-    // Assert: on a host with a manager rastro reads, `ok` and keyed by that manager. On one
-    // without, `error` carrying the reason, because rastro cannot tell whether such a host
-    // manages packages at all. Both are honest; silently claiming it has none is not.
-    match packages["status"].as_str() {
-        Some("ok") => assert!(
-            packages["data"]["dpkg"].is_object() || packages["data"]["apk"].is_object(),
-            "got {packages:?}"
-        ),
-        Some("error") => assert!(
-            packages["error"]
-                .as_str()
-                .is_some_and(|reason| reason.contains("dpkg") && reason.contains("apk")),
-            "got {packages:?}"
-        ),
-        other => panic!("unexpected packages status {other:?}"),
-    }
+    // Assert: always `ok`, on every host. rastro can always report the state of the managers
+    // it reads, and both are always named, so a box with neither is described rather than
+    // reported as a failure.
+    assert_eq!(packages["status"], "ok", "got {packages:?}");
+    assert!(packages["data"].get("apk").is_some(), "got {packages:?}");
+    assert!(packages["data"].get("dpkg").is_some(), "got {packages:?}");
 }
 
 #[test]

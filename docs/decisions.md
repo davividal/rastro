@@ -553,7 +553,29 @@ One collector rather than one per manager, because two collectors claiming the
 facet name `packages` would fail the run: an absent facet is still a facet with
 that name. Keyed by manager rather than merged, because a box carrying two then
 needs no arbitrary precedence, and the shapes may differ honestly, since only dpkg
-reports a desired state and packages that are not installed.
+reports a desired state.
+
+**Every manager rastro reads is a key, and one that is not on the host is `null`.** The
+facet is `ok` either way, and `presence` is always `Present`, because the subject is the
+managers rastro can read and it can always report on those.
+
+Neither of the other two answers is right, and both were tried. `Absent` claims the host
+has no packages, which two negative probes cannot establish: a RHEL box has fifteen
+hundred rpms, and rastro reads dpkg and apk. `Undetermined` maps to a facet `error`, and
+rastro not shipping an rpm collector is a limit of rastro rather than a fault of the
+host, so it would plant a permanent false alarm in every diff of that box. Slackware
+makes the point from the other side: having no package manager is a legitimate state of a
+host, not an error condition.
+
+`null` rather than the word `absent` for one format reason: a key whose value is
+sometimes text and sometimes an object is awkward for every consumer, and `null` is
+already a leaf type the format admits. Installing a manager therefore shows up as `null`
+becoming an object, which is the direction that matters in a diff.
+
+There is no standard file naming a host's package manager, so nothing is inferred. The
+closest marker is `ID` and `ID_LIKE` in `/etc/os-release`, which belongs in the `host`
+facet as an observation; concluding "this box uses rpm" from it is the operator's
+inference to draw, not rastro's to assert.
 
 **dpkg is read through its tool, apk from its database**, and the inconsistency is
 deliberate. `dpkg-query -f` makes the output format rastro's own, where

@@ -69,43 +69,38 @@ impl Collector for PackagesCollector {
         CollectorCategory::State
     }
 
-    /// Undetermined, not absent, when rastro finds no manager it can read.
+    /// Always present, because the subject is the managers rastro can read, and it can always
+    /// report on those.
     ///
-    /// This was `Absent`, and that was a confident lie. rastro reads dpkg and apk; on a RHEL,
-    /// SUSE, Arch or NixOS box it finds neither and would have reported "this host has no
-    /// packages" about a host with fifteen hundred of them. What rastro actually knows is
-    /// narrower: dpkg and apk are not here. Whether the host manages packages by some other
-    /// means is exactly what it cannot tell, which is what the third answer is for.
+    /// Deliberately not `Absent` and not `Undetermined`. `Absent` would say the host has no
+    /// packages, which rastro cannot establish from two negative probes: a RHEL box has
+    /// fifteen hundred rpms. `Undetermined` maps to a facet `error`, and rastro not shipping a
+    /// collector for rpm is a limit of rastro, not a fault of the host, so an error would be a
+    /// permanent false alarm sitting in every diff of that box forever.
     ///
-    /// A true `Absent` would need a probe for every manager rastro does *not* read, and a
-    /// list like that goes stale silently. Saying "I could not tell, and here is what I
-    /// looked for" needs no such list and is never wrong.
+    /// What rastro does know goes in the data instead: a key per manager it reads, null for
+    /// the ones that are not here. That is a fact about the host, it is diffable, and it
+    /// leaves the operator to draw their own conclusion from it.
     fn presence(&self) -> Presence {
-        if !self.sources.is_empty() {
-            return Presence::Present;
-        }
-
-        let looked_for: Vec<&str> = PackageSource::known_managers()
-            .iter()
-            .map(PackageManager::as_str)
-            .collect();
-
-        Presence::Undetermined {
-            reason: format!(
-                "none of the package managers rastro can read is present ({}), so whether \
-                 this host manages packages cannot be told",
-                looked_for.join(", ")
-            ),
-        }
+        Presence::Present
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let sets = self
-            .sources
-            .iter()
-            .map(|source| Ok((source.manager(), source.read()?)))
-            .collect::<Result<Vec<_>, CollectionError>>()?;
+        let mut reported = Vec::new();
 
-        Ok(Observation::from(&PackageInventory::new(sets)))
+        for manager in PackageSource::known_managers() {
+            let found = self
+                .sources
+                .iter()
+                .find(|source| source.manager() == manager);
+            let set = match found {
+                Some(source) => Some(source.read()?),
+                None => None,
+            };
+
+            reported.push((manager, set));
+        }
+
+        Ok(Observation::from(&PackageInventory::new(reported)))
     }
 }
