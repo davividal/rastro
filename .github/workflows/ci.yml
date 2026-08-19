@@ -35,6 +35,15 @@ jobs:
       # `deny(rustdoc::broken_intra_doc_links)` in lib.rs bite.
       - run: cargo doc --locked --no-deps
 
+  supply-chain:
+    name: advisories, licences, sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Policy lives in `deny.toml`. The action is pinned to the commit its v2.1.1 tag
+      # dereferences to, not to the annotated tag object, which would not resolve.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
   static-binary:
     name: musl static build
     runs-on: ubuntu-latest

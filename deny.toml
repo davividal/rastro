@@ -1,0 +1,51 @@
+# Supply-chain policy, checked in CI.
+#
+# rastro ships as one static binary that an operator runs as root on a production
+# box, so what ends up linked into it is worth an automated check rather than a
+# manual reading of `cargo tree`.
+
+[advisories]
+# A known vulnerability in anything reachable fails the build. This is the one
+# category worth being strict about, and it carries a known cost: a new advisory
+# published against an existing dependency will fail a pull request that had
+# nothing to do with it. That is the check working, and the fix is to deal with the
+# advisory, not to weaken this.
+yanked = "deny"
+
+# `licenses`, spelled the way cargo-deny's schema spells it.
+[licenses]
+# AGPL-3.0-only for rastro's own crates, and permissive for everything linked into
+# the binary. Anything outside this list fails, which is the point: a copyleft
+# dependency incompatible with distributing the binary must not arrive unnoticed.
+#
+# This list is exactly what the tree contains today, verified with `cargo metadata`,
+# rather than a generous guess. A new licence is a decision, so it should fail until
+# somebody makes it.
+allow = [
+  "AGPL-3.0-only",
+  "Apache-2.0",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions of one crate are allowed. They are a size and compile-time
+# annoyance rather than a correctness or licence problem, and denying them turns an
+# upstream's transitive choice into rastro's build failure.
+multiple-versions = "allow"
+# A dependency pinned to `*` from a registry is a real supply-chain hole: any future
+# release satisfies it. rastro's own crates depend on each other by path and have no
+# version, which cargo-deny reads the same way, so those are exempted rather than the
+# check being switched off.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Nothing from a git remote or a private registry: every dependency comes from
+# crates.io, so a source that is not crates.io is a supply-chain question rather
+# than a routine update.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
