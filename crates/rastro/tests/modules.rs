@@ -411,3 +411,30 @@ fn presence_is_undetermined_when_procfs_is_not_mounted() {
     };
     assert!(reason.contains("not mounted"), "got {reason:?}");
 }
+
+#[test]
+fn parse_reports_removability_as_unknown_when_the_kernel_cannot_unload() {
+    // Arrange: `CONFIG_MODULE_UNLOAD=n` compiles out the code that prints `[permanent]`, and
+    // its stub writes `-` for the count and the dependants both. So the marker being absent
+    // there means the opposite of what it means on a normal kernel.
+    let table = parsed("ext4 962560 - - Live 0x0000000000000000\n");
+
+    // Assert: answering `removable` would be a confident lie about every module on the box,
+    // since nothing on such a kernel can ever be unloaded.
+    let module = module(&table, "ext4");
+    assert_eq!(module.removability, Removability::Unknown);
+    assert_eq!(module.reference_count, ReferenceCount::NotTracked);
+}
+
+#[test]
+fn parse_still_reports_removable_when_the_kernel_does_track_unloading() {
+    // Arrange: a counted reference means the kernel tracks unloading, so the absence of
+    // `[permanent]` genuinely means removable.
+    let table = parsed("nft_ct 24576 2 - Live 0x0000000000000000\n");
+
+    // Assert
+    assert_eq!(
+        module(&table, "nft_ct").removability,
+        Removability::Removable
+    );
+}

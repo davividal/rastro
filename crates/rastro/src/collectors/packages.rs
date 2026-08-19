@@ -101,6 +101,6 @@ impl Collector for PackagesCollector {
             reported.push((manager, set));
         }
 
-        Ok(Observation::from(&PackageInventory::new(reported)))
+        Ok(Observation::from(&PackageInventory::new(reported)?))
     }
 }

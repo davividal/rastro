@@ -292,3 +292,38 @@ fn parse_keeps_one_entry_when_an_option_is_repeated() {
     // Assert
     assert_eq!(options_of(first(&table)), ["relatime", "rw"]);
 }
+
+#[test]
+fn parse_keeps_a_mount_point_containing_unicode_whitespace() {
+    // Arrange: the kernel escapes exactly space, tab, newline and backslash, so every other
+    // whitespace character arrives unescaped inside the value. U+00A0 reaches a mount point
+    // from a Windows share name via CIFS. Splitting on Unicode whitespace found a seventh
+    // column here and lost the entire table to one oddly named directory.
+    let table = parsed("/dev/sda1 /mnt/My\u{a0}Drive ext4 rw,relatime 0 0\n");
+
+    // Assert
+    assert_eq!(first(&table).mount_point.as_str(), "/mnt/My\u{a0}Drive");
+}
+
+#[test]
+fn parse_keeps_a_carriage_return_inside_a_column() {
+    // Arrange: a legal byte in a filename, and not one the kernel escapes.
+    let table = parsed("/dev/sda1 /mnt/od\rd ext4 rw 0 0\n");
+
+    // Assert
+    assert_eq!(first(&table).mount_point.as_str(), "/mnt/od\rd");
+}
+
+#[test]
+fn parse_keeps_unicode_whitespace_in_the_device_and_the_ideographic_space() {
+    // Arrange: the other two forms the kernel leaves alone.
+    let by_device = parsed("/dev/loop0\u{a0}x /mnt ext4 rw 0 0\n");
+    let ideographic = parsed("/dev/sda1 /mnt/\u{3000}share ext4 rw 0 0\n");
+
+    // Assert
+    assert_eq!(first(&by_device).device.as_str(), "/dev/loop0\u{a0}x");
+    assert_eq!(
+        first(&ideographic).mount_point.as_str(),
+        "/mnt/\u{3000}share"
+    );
+}

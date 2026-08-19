@@ -139,6 +139,10 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
     // entirely while every needle about `source` stayed satisfied.
     for file in domain {
         let code = code_of(&file);
+        // The last four are the set `rastro-collector`'s own purity test uses. Without them
+        // the guard rests on a naming convention nobody wrote down: a future source called
+        // `EtcPasswd` or `NetlinkSockets` matches none of the names above, and neither does
+        // the shortest route around the boundary, a `model/` file reading `/proc` itself.
         for needle in [
             "source",
             "Proc",
@@ -146,6 +150,10 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
             "Database",
             "canonical_tool",
             "CanonicalTool",
+            "std::fs",
+            "std::process",
+            "std::net",
+            "std::env",
         ] {
             assert!(
                 !code.contains(needle),

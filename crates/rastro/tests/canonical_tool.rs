@@ -14,7 +14,7 @@ use rastro::collectors::canonical_tool::{CanonicalTool, RunLimits};
 const SHELL: &str = "sh";
 
 fn shell() -> CanonicalTool {
-    CanonicalTool::resolve(SHELL).expect("a POSIX shell is on every host rastro targets")
+    CanonicalTool::located(SHELL).expect("a POSIX shell is on every host rastro targets")
 }
 
 /// Short bounds so the hardening can be proven in milliseconds rather than in the
@@ -24,20 +24,25 @@ fn shell_within(time: Duration, output: usize) -> CanonicalTool {
 }
 
 #[test]
-fn resolve_finds_a_tool_that_is_installed() {
+fn located_finds_a_tool_in_a_system_directory() {
     // Act
     let tool = shell();
 
-    // Assert: the resolved path is absolute, which is the guarantee that what was
-    // detected is what will run.
+    // Assert: the resolved path is absolute, which is the guarantee that what was detected is
+    // what will run, and it comes from a system directory rather than from `PATH`.
     assert!(tool.path().is_absolute(), "got {:?}", tool.path());
+    assert!(
+        tool.path().starts_with("/bin") || tool.path().starts_with("/usr/bin"),
+        "got {:?}",
+        tool.path()
+    );
     assert_eq!(tool.program(), SHELL);
 }
 
 #[test]
-fn resolve_reports_a_tool_that_is_not_installed() {
+fn located_reports_a_tool_that_is_not_installed() {
     // Act
-    let tool = CanonicalTool::resolve("rastro-tool-that-does-not-exist");
+    let tool = CanonicalTool::located("rastro-tool-that-does-not-exist");
 
     // Assert: an ordinary answer, not a failure. A box without dpkg-query is a box
     // that does not use dpkg, which is state.
@@ -60,7 +65,7 @@ fn run_clears_the_environment_apart_from_the_locale() {
     // Arrange: `env` rather than `sh -c env`, because a shell sets `PWD` itself on
     // startup and that would read as an inherited variable when it is not one.
     let environment =
-        CanonicalTool::resolve("env").expect("coreutils and busybox both provide env");
+        CanonicalTool::located("env").expect("coreutils and busybox both provide env");
 
     // Act
     let output = environment.run(&[]).expect("env succeeds");
@@ -182,10 +187,10 @@ fn run_kills_what_the_tool_started_too() {
 }
 
 #[test]
-fn located_prefers_a_well_known_absolute_path() {
+fn located_prefers_a_named_directory_over_the_path() {
     // Arrange: rastro runs as root, so leaving the choice to a `PATH` search invites
     // shadowing. Debian and Alpine both keep a shell at `/bin/sh`.
-    let tool = CanonicalTool::located(SHELL, &["/bin/sh"]).expect("/bin/sh exists");
+    let tool = CanonicalTool::located_in(SHELL, &["/bin"]).expect("/bin/sh exists");
 
     // Assert
     assert_eq!(tool.path(), std::path::Path::new("/bin/sh"));
@@ -193,23 +198,20 @@ fn located_prefers_a_well_known_absolute_path() {
 
 #[test]
 fn located_falls_back_to_searching_the_path() {
-    // Arrange: a tool installed somewhere unusual must still be found. Reporting it
-    // absent because rastro did not guess its directory would be a lie about the host.
-    let tool = CanonicalTool::located(SHELL, &["/nowhere/at/all/sh"]).expect("sh is on PATH");
+    // Arrange: a tool installed somewhere unusual must still be found. Reporting it absent
+    // because rastro did not guess its directory would be a lie about the host.
+    let tool = CanonicalTool::located_in(SHELL, &["/nowhere/at/all"]).expect("sh is on PATH");
 
     // Assert
     assert!(tool.path().is_absolute(), "got {:?}", tool.path());
 }
 
 #[test]
-fn located_reports_a_tool_that_is_neither_well_known_nor_on_the_path() {
+fn located_reports_a_tool_that_is_in_neither() {
     // Act & Assert
     assert!(
-        CanonicalTool::located(
-            "rastro-tool-that-does-not-exist",
-            &["/nowhere/at/all/rastro-tool-that-does-not-exist"]
-        )
-        .is_none()
+        CanonicalTool::located_in("rastro-tool-that-does-not-exist", &["/nowhere/at/all"])
+            .is_none()
     );
 }
 

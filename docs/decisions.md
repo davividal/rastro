@@ -586,6 +586,13 @@ reimplementing apk's name-version splitting grammar; `/lib/apk/db/installed` is
 one field per line and unambiguous. The principle is not "always shell out", it is
 "prefer the source that is unambiguous".
 
+dpkg reports partially-installed packages and rastro keeps them: `config-files` for one
+removed without purging, `half-configured` for one caught mid-operation. It does **not**
+report every state, and the limit was measured rather than assumed: `dpkg-query -W` without
+a pattern omits `not-installed` rows, so purging a package removes its key rather than
+showing it as absent. Still diffable, and the alternative would be claiming a guarantee the
+query does not give.
+
 dpkg's status is asked for as three words (`${db:Status-Want}`,
 `${db:Status-Status}`, `${db:Status-Eflag}`) rather than as the packed
 `${db:Status-Abbrev}`, so dpkg decodes its own vocabulary, rastro maintains no

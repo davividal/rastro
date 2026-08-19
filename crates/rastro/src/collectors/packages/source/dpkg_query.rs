@@ -10,9 +10,6 @@ use crate::collectors::packages::value_objects::{
 
 const PROGRAM: &str = "dpkg-query";
 
-/// Where dpkg keeps its tool, tried before a `PATH` search because rastro runs as root.
-const WELL_KNOWN: [&str; 2] = ["/usr/bin/dpkg-query", "/bin/dpkg-query"];
-
 /// The output format, which rastro chooses rather than accepts.
 ///
 /// This is why dpkg is queried through its tool instead of by reading
@@ -35,7 +32,7 @@ pub struct DpkgQuery {
 impl DpkgQuery {
     /// Finds dpkg's query tool, or reports that this host does not use dpkg.
     pub fn detect() -> Option<Self> {
-        CanonicalTool::located(PROGRAM, &WELL_KNOWN).map(|tool| Self { tool })
+        CanonicalTool::located(PROGRAM).map(|tool| Self { tool })
     }
 
     /// Asks dpkg for every package it knows, and translates the answer.
@@ -48,9 +45,14 @@ impl DpkgQuery {
     /// Separate from [`Self::read`] so the whole grammar is exercised from a fixture, with
     /// no dpkg to run.
     ///
-    /// Packages dpkg knows but has not installed are kept, `un` and `rc` alike: absence is
-    /// state, and purged versus removed-but-configured is a real difference between two
-    /// runs.
+    /// Packages dpkg knows but has not fully installed are kept: `config-files` for one
+    /// removed without purging, `half-installed` and `half-configured` for one caught mid
+    /// operation. Those are real differences between two runs, and the interesting ones.
+    ///
+    /// Not every state, though, and the difference was measured rather than assumed:
+    /// `dpkg-query -W` with no pattern silently omits `not-installed` rows, so purging a
+    /// package removes its key from the facet instead of showing it as not installed. Still
+    /// diffable, and claiming otherwise would be a guarantee this query does not give.
     pub fn parse(output: &str) -> Result<PackageSet, CollectionError> {
         let packages = output
             .lines()

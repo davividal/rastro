@@ -50,6 +50,9 @@ impl ProcModulesLine {
     /// A line that is not what this interface promises is refused rather than skipped:
     /// reporting a table rastro half-understood as complete is the one failure this
     /// project will not accept.
+    /// Whitespace is a safe separator here, unlike in the mount table: every column the
+    /// kernel writes for a module is generated ASCII, so no unescaped Unicode space can reach
+    /// it from a name a user chose.
     pub fn parse(line: &str) -> Result<Self, CollectionError> {
         let columns: Vec<&str> = line.split_whitespace().collect();
 
@@ -145,7 +148,17 @@ impl ProcModulesLine {
         Ok(Dependants::new(dependants))
     }
 
+    /// Reads removability, or the fact that this kernel cannot answer.
+    ///
+    /// The untracked reference count is the signal: `print_unload_info` is compiled out with
+    /// `CONFIG_MODULE_UNLOAD`, and its stub writes `-` for both the count and the dependants.
+    /// It is the same stub that makes `[permanent]` unprintable, so a missing marker there
+    /// means "unknowable" rather than "removable".
     fn to_removability(&self) -> Removability {
+        if self.reference_count == NOTHING {
+            return Removability::Unknown;
+        }
+
         if self
             .dependant_elements()
             .any(|element| element == PERMANENT)

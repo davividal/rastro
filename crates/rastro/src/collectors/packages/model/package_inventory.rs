@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rastro_collector::Observation;
+use rastro_collector::{CollectionError, Observation};
 
 use super::package_set::PackageSet;
 use crate::collectors::packages::value_objects::PackageManager;
@@ -21,8 +21,27 @@ use crate::collectors::packages::value_objects::PackageManager;
 pub struct PackageInventory(BTreeMap<PackageManager, Option<PackageSet>>);
 
 impl PackageInventory {
-    pub fn new(sets: impl IntoIterator<Item = (PackageManager, Option<PackageSet>)>) -> Self {
-        Self(sets.into_iter().collect())
+    /// Files each manager's report under its name.
+    ///
+    /// A repeated manager is refused rather than overwritten, which is the rule the other two
+    /// keyed collections already follow. Nothing can produce one today, and that is the point:
+    /// if it ever does, one manager's packages would vanish from a document claiming to be
+    /// complete.
+    pub fn new(
+        sets: impl IntoIterator<Item = (PackageManager, Option<PackageSet>)>,
+    ) -> Result<Self, CollectionError> {
+        let mut inventory = BTreeMap::new();
+
+        for (manager, set) in sets {
+            if inventory.insert(manager, set).is_some() {
+                return Err(CollectionError::new(format!(
+                    "the {} package manager was reported twice",
+                    manager.as_str()
+                )));
+            }
+        }
+
+        Ok(Self(inventory))
     }
 
     pub fn sets(&self) -> &BTreeMap<PackageManager, Option<PackageSet>> {

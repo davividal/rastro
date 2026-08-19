@@ -120,13 +120,19 @@ fn no_kernel_pointer_reaches_the_document() {
     let rendered = String::from_utf8(run(&["--include-volatile"]).stdout)
         .expect("stdout should carry a UTF-8 document");
 
-    // Assert: `/proc/modules` publishes each module's kernel text address. It changes
-    // every boot, so it is noise, and it leaks a KASLR offset into a document that gets
-    // copied off the box and stored.
-    assert!(
-        !rendered.contains("0xffff"),
-        "a kernel pointer reached stdout"
-    );
+    // Assert: `/proc/modules` publishes each module's kernel text address. It changes every
+    // boot, so it is noise, and it leaks a KASLR offset into a document that gets copied off
+    // the box and stored.
+    //
+    // Both forms, because a reader without `CAP_SYSLOG` sees zeros rather than a real
+    // pointer, which is exactly the case in a container. Asserting only the real form left
+    // this test unable to fail in the environment it runs in.
+    for pointer in ["0xffff", "0x00000000"] {
+        assert!(
+            !rendered.contains(pointer),
+            "a kernel address reached stdout as {pointer}"
+        );
+    }
 }
 
 #[test]

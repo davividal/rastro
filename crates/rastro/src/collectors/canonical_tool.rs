@@ -56,6 +56,14 @@ use subprocess::{Exec, ExecExt, ExitStatus, Job, JobExt, Redirection};
 /// How much of a failing tool's stderr is quoted back.
 const STDERR_QUOTED: usize = 512;
 
+/// Where a system tool lives on the hosts rastro targets.
+///
+/// Owned here rather than passed in by each collector. A caller that had to supply the list
+/// could supply the wrong one, or reach for the bare `PATH` search instead, and both mistakes
+/// are silent. Five more shelling collectors are planned, so this is the difference between
+/// one place to be right and six.
+const SYSTEM_DIRECTORIES: [&str; 4] = ["/usr/bin", "/usr/sbin", "/bin", "/sbin"];
+
 /// A tool found on this host, ready to run.
 ///
 /// Holding the resolved path is the point: construction is the detection, so a
@@ -69,39 +77,41 @@ pub struct CanonicalTool {
 }
 
 impl CanonicalTool {
-    /// Locates a tool by name, or reports that this host does not have it.
+    /// Locates a system tool, or reports that this host does not have it.
     ///
-    /// `None` is an ordinary answer rather than a failure: a box with no `dpkg-query` is
-    /// a box that does not use dpkg, which is state, not an error.
-    pub fn resolve(program: &str) -> Option<Self> {
-        which::which(program).ok().map(|path| Self {
-            program: program.to_owned(),
-            path,
-            limits: RunLimits::default(),
-        })
+    /// The only way in, so the hardening cannot be opted out of. `None` is an ordinary answer
+    /// rather than a failure: a box with no `dpkg-query` is a box that does not use dpkg,
+    /// which is state.
+    pub fn located(program: &str) -> Option<Self> {
+        Self::located_in(program, &SYSTEM_DIRECTORIES)
     }
 
-    /// Locates a tool, preferring paths known to be owned by the system.
+    /// The same, over directories the caller names, which is what [`Self::located`] is.
     ///
-    /// `resolve` searches `PATH`, and rastro runs as root. A directory on root's `PATH`
-    /// that is not root-owned lets an attacker shadow a system tool, and rastro would
-    /// then execute the plant with full privilege. Trying the well-known absolute paths
-    /// first removes that in the ordinary case, and the `PATH` search stays as the wider,
-    /// deliberately documented fallback so a tool installed somewhere unusual is still
-    /// found rather than reported absent, which would be a lie.
-    pub fn located(program: &str, candidates: &[&str]) -> Option<Self> {
-        for candidate in candidates {
-            let path = PathBuf::from(candidate);
+    /// Preferring absolute paths matters because rastro runs as root: a directory on root's
+    /// `PATH` that is not root-owned lets an attacker shadow a system tool, and rastro would
+    /// execute the plant with full privilege. The `PATH` search remains as the wider,
+    /// deliberately documented fallback, so a tool installed somewhere unusual is still found
+    /// rather than reported absent, which would be a lie about the host.
+    pub fn located_in(program: &str, directories: &[&str]) -> Option<Self> {
+        for directory in directories {
+            let path = Path::new(directory).join(program);
             if path.is_file() {
-                return Some(Self {
-                    program: program.to_owned(),
-                    path,
-                    limits: RunLimits::default(),
-                });
+                return Some(Self::at(program, path));
             }
         }
 
-        Self::resolve(program)
+        which::which(program)
+            .ok()
+            .map(|path| Self::at(program, path))
+    }
+
+    fn at(program: &str, path: PathBuf) -> Self {
+        Self {
+            program: program.to_owned(),
+            path,
+            limits: RunLimits::default(),
+        }
     }
 
     /// The same tool, held to different bounds.

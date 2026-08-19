@@ -27,14 +27,23 @@ pub struct ProcMountsLine {
 }
 
 impl ProcMountsLine {
-    /// Splits one line into its columns.
+    /// Splits one line into its columns, on the separator the kernel actually writes.
     ///
-    /// Tokenising on whitespace is safe precisely because the kernel escapes
-    /// whitespace inside the values. Reporting a table rastro half-understood as
-    /// complete is the one failure this project will not accept, so a line that is
-    /// not what this interface promises is refused rather than skipped.
+    /// A single space, not "whitespace". The kernel escapes exactly space, tab, newline and
+    /// backslash, so every *other* whitespace character reaches this function unescaped and
+    /// inside a value: U+00A0 from a Windows share name, a bare carriage return, a vertical
+    /// tab, U+3000. `split_whitespace` splits on the full Unicode `White_Space` set and would
+    /// find a seventh column, failing the exact-six check and losing the whole mount table to
+    /// one oddly named directory.
+    ///
+    /// Reporting a table rastro half-understood as complete is the one failure this project
+    /// will not accept, so a line that is not what this interface promises is still refused
+    /// rather than skipped.
     pub fn parse(line: &str) -> Result<Self, CollectionError> {
-        let columns: Vec<&str> = line.split_whitespace().collect();
+        let columns: Vec<&str> = line
+            .split(' ')
+            .filter(|column| !column.is_empty())
+            .collect();
         let [
             device,
             mount_point,

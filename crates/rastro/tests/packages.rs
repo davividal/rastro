@@ -15,7 +15,7 @@ const DPKG_OUTPUT: &str = "\
 apt\t3.0.3\tarm64\tinstall\tinstalled\tok
 debconf\t1.5.91\tall\tinstall\tinstalled\tok
 oldconf\t1.0\tarm64\tdeinstall\tconfig-files\tok
-gone\t2.0\tarm64\tpurge\tnot-installed\tok
+halfconf\t2.0\tarm64\tinstall\thalf-configured\tok
 ";
 
 /// Two stanzas, trimmed to the three fields rastro reads out of the dozen apk writes.
@@ -83,22 +83,26 @@ fn dpkg_reads_the_status_as_three_words() {
 }
 
 #[test]
-fn dpkg_keeps_a_package_it_knows_but_has_not_installed() {
+fn dpkg_keeps_a_package_it_has_not_fully_installed() {
     // Act
     let set = dpkg(DPKG_OUTPUT);
 
-    // Assert: absence is state. Removed-but-configured and purged are a real difference
-    // between two runs, so neither is dropped for not being installed.
+    // Assert: a package removed without purging, and one caught mid-configure. Both are real
+    // states dpkg reports and both are a genuine difference between two runs.
+    //
+    // Deliberately no `not-installed` case: `dpkg-query -W` without a pattern omits those
+    // rows, measured against dpkg 1.22.22, so a fixture containing one would describe output
+    // dpkg does not produce.
     let removed = package(&set, "oldconf")
         .status
         .as_ref()
         .expect("dpkg reports a status");
     assert_eq!(removed.state.as_str(), "config-files");
-    let purged = package(&set, "gone")
+    let half = package(&set, "halfconf")
         .status
         .as_ref()
         .expect("dpkg reports a status");
-    assert_eq!(purged.state.as_str(), "not-installed");
+    assert_eq!(half.state.as_str(), "half-configured");
 }
 
 #[test]
@@ -112,7 +116,7 @@ fn dpkg_keys_the_set_by_name() {
             .keys()
             .map(PackageName::as_str)
             .collect::<Vec<&str>>(),
-        ["apt", "debconf", "gone", "oldconf"]
+        ["apt", "debconf", "halfconf", "oldconf"]
     );
 }
 
