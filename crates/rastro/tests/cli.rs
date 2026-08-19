@@ -101,6 +101,16 @@ fn a_bare_run_reports_the_loaded_modules_as_state() {
 }
 
 #[test]
+fn a_bare_run_reports_the_installed_packages_as_state() {
+    // Act
+    let packages = facet(&document(&[]), "facets", "packages").clone();
+
+    // Assert: `absent` is a legitimate answer on a host with neither dpkg nor apk, which
+    // is how this holds off Linux. What must never happen is a failure.
+    assert_ne!(packages["status"], "error", "got {packages:?}");
+}
+
+#[test]
 fn no_kernel_pointer_reaches_the_document() {
     // Act: the complete view is the one that keeps volatile values, so a load address
     // that was merely annotated rather than dropped would surface here.

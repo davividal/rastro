@@ -7,11 +7,13 @@ mod host;
 mod invocation;
 pub mod modules;
 pub mod mounts;
+pub mod packages;
 
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
+pub use packages::PackagesCollector;
 
 use rastro_collector::{Collector, CollectorCategory};
 
@@ -50,6 +52,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(InvocationCollector::new(effective_config)),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
+        Box::new(PackagesCollector::new()),
     ]
 }
 
