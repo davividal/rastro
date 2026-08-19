@@ -4,7 +4,8 @@
 //! `/lib/apk/db/installed` from `alpine:latest` (apk-tools 3.0.6).
 
 use rastro::collectors::packages::{
-    ApkDatabase, DpkgQuery, Package, PackageManager, PackageName, PackageSet, PackagesCollector,
+    ApkDatabase, DpkgQuery, Package, PackageManager, PackageName, PackageSet, PackageSource,
+    PackagesCollector,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation};
@@ -31,6 +32,13 @@ P:busybox
 V:1.37.0-r18
 A:aarch64
 ";
+
+/// A fixture on disk, named per test so parallel runs cannot clash.
+fn fixture(name: &str, contents: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rastro-packages-{name}"));
+    std::fs::write(&path, contents).expect("the temp directory should be writable");
+    path
+}
 
 fn dpkg(output: &str) -> PackageSet {
     DpkgQuery::parse(output).expect("this output is well formed")
@@ -176,8 +184,7 @@ fn apk_refuses_a_stanza_with_no_version() {
 #[test]
 fn apk_reads_a_database_on_disk() {
     // Arrange
-    let path = std::env::temp_dir().join("rastro-apk-installed");
-    std::fs::write(&path, APK_DATABASE).expect("the temp directory should be writable");
+    let path = fixture("installed", APK_DATABASE);
 
     // Act
     let set = ApkDatabase::at(&path)
@@ -191,7 +198,7 @@ fn apk_reads_a_database_on_disk() {
 #[test]
 fn apk_names_the_database_it_could_not_open() {
     // Arrange
-    let path = std::env::temp_dir().join("rastro-apk-absent");
+    let path = std::env::temp_dir().join("rastro-packages-absent");
 
     // Act
     let failure = ApkDatabase::at(&path)
@@ -208,7 +215,7 @@ fn apk_names_the_database_it_could_not_open() {
 #[test]
 fn presence_is_absent_when_the_host_has_no_manager_rastro_can_read() {
     // Arrange
-    let collector = PackagesCollector::reading(None, None);
+    let collector = PackagesCollector::reading(Vec::new());
 
     // Act & Assert: the first genuine `absent` rastro produces. A box with neither manager
     // is a box whose packages are not managed by either, which is state, not a failure.
@@ -218,11 +225,10 @@ fn presence_is_absent_when_the_host_has_no_manager_rastro_can_read() {
 #[test]
 fn presence_is_present_when_one_manager_is_found() {
     // Arrange
-    let path = std::env::temp_dir().join("rastro-apk-present");
-    std::fs::write(&path, APK_DATABASE).expect("the temp directory should be writable");
+    let path = fixture("present", APK_DATABASE);
 
     // Act & Assert
-    let collector = PackagesCollector::reading(None, Some(ApkDatabase::at(&path)));
+    let collector = PackagesCollector::reading(vec![PackageSource::Apk(ApkDatabase::at(&path))]);
     assert_eq!(collector.presence(), Presence::Present);
 }
 
@@ -230,9 +236,8 @@ fn presence_is_present_when_one_manager_is_found() {
 fn the_inventory_is_keyed_by_manager() {
     // Arrange: a box carrying both needs no arbitrary precedence, and the two shapes differ
     // honestly because only dpkg reports a status.
-    let path = std::env::temp_dir().join("rastro-apk-both");
-    std::fs::write(&path, APK_DATABASE).expect("the temp directory should be writable");
-    let collector = PackagesCollector::reading(None, Some(ApkDatabase::at(&path)));
+    let path = fixture("keyed", APK_DATABASE);
+    let collector = PackagesCollector::reading(vec![PackageSource::Apk(ApkDatabase::at(&path))]);
 
     // Act
     let observation = collector.collect().expect("this fixture is well formed");
@@ -282,4 +287,24 @@ fn a_package_with_no_status_omits_the_key_rather_than_nulling_it() {
         entries.keys().map(String::as_str).collect::<Vec<&str>>(),
         ["architecture", "version"]
     );
+}
+
+#[test]
+fn dpkg_refuses_a_field_that_is_present_but_empty() {
+    // Act: the field count is right, so this is not the malformed-line case. An empty
+    // version is the other way a line can be wrong, and it reaches a different check.
+    let result = DpkgQuery::parse("apt\t\tarm64\tinstall\tinstalled\tok\n");
+
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn apk_refuses_a_field_that_is_present_but_empty() {
+    // Act: `V:` is there, with nothing after it, which is not the same as `V:` being
+    // absent.
+    let result = ApkDatabase::parse("P:busybox\nV:\nA:aarch64\n");
+
+    // Assert
+    assert!(result.is_err());
 }

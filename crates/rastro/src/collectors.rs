@@ -1,8 +1,7 @@
 //! The collectors that ship inside the binary.
 
 pub mod canonical_tool;
-// Private again: nothing outside this crate reaches into either, and the tests import
-// the collectors through the flat re-exports below.
+// Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
 pub mod modules;

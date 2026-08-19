@@ -28,8 +28,7 @@ impl From<&Package> for Observation {
             ),
         ];
 
-        // Omitted rather than null: a key that is absent says "this manager does not
-        // report one", where a null would read as "reported, and empty".
+        // Omitted, not nulled: absent means "not reported", null would mean "reported, empty".
         if let Some(status) = &package.status {
             entries.push(("status", Observation::from(status)));
         }

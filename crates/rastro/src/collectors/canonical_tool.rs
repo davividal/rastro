@@ -127,8 +127,7 @@ impl CanonicalTool {
             .start()
             .map_err(|error| self.failure(format!("could not be started: {error}")))?;
 
-        // Read first, then wait unconditionally, so a child this killed is reaped
-        // rather than left as a zombie for the rest of the run.
+        // Waited for unconditionally, so a killed child is reaped rather than left a zombie.
         let captured = self.capture(&mut job);
         let status = job
             .wait()
@@ -156,9 +155,7 @@ impl CanonicalTool {
             .stdin("")
             .stdout(Redirection::Pipe)
             .stderr(Redirection::Pipe)
-            // The child leads its own process group, which is what lets the whole tree be
-            // signalled below. The two belong together and neither is safe alone: without
-            // this, a group kill would target rastro's own process group.
+            // Paired with the group kill below, which without this would signal rastro's own.
             .setpgid()
     }
 

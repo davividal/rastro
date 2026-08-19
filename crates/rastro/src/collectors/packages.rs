@@ -9,7 +9,7 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{InstallationStatus, Package, PackageInventory, PackageSet};
-pub use source::{ApkDatabase, DpkgQuery};
+pub use source::{ApkDatabase, DpkgQuery, PackageSource};
 pub use value_objects::{
     Architecture, ErrorFlag, InstallationState, PackageManager, PackageName, PackageVersion,
     SelectionState,
@@ -25,8 +25,7 @@ use rastro_collector::{
 pub struct PackagesCollector {
     name: FacetName,
     identity: CollectorIdentity,
-    dpkg: Option<DpkgQuery>,
-    apk: Option<ApkDatabase>,
+    sources: Vec<PackageSource>,
 }
 
 impl PackagesCollector {
@@ -35,19 +34,18 @@ impl PackagesCollector {
     /// Detecting here rather than inside `presence` is what stops the two disagreeing: what
     /// was found is the very thing `collect` will read.
     pub fn new() -> Self {
-        Self::reading(DpkgQuery::detect(), ApkDatabase::detect())
+        Self::reading(PackageSource::detect_all())
     }
 
     /// The same collector over sources the caller chose.
-    pub fn reading(dpkg: Option<DpkgQuery>, apk: Option<ApkDatabase>) -> Self {
+    pub fn reading(sources: Vec<PackageSource>) -> Self {
         Self {
             name: FacetName::new("packages").expect("`packages` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("packages").expect("`packages` is a legal collector id"),
                 CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
-            dpkg,
-            apk,
+            sources,
         }
     }
 }
@@ -78,22 +76,19 @@ impl Collector for PackagesCollector {
     /// is state. Which manager was found is then reported in the data, so the difference
     /// between "no manager" and "a manager with nothing installed" survives a diff.
     fn presence(&self) -> Presence {
-        if self.dpkg.is_some() || self.apk.is_some() {
-            return Presence::Present;
+        if self.sources.is_empty() {
+            return Presence::Absent;
         }
 
-        Presence::Absent
+        Presence::Present
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let mut sets = Vec::new();
-
-        if let Some(dpkg) = &self.dpkg {
-            sets.push((PackageManager::Dpkg, dpkg.read()?));
-        }
-        if let Some(apk) = &self.apk {
-            sets.push((PackageManager::Apk, apk.read()?));
-        }
+        let sets = self
+            .sources
+            .iter()
+            .map(|source| Ok((source.manager(), source.read()?)))
+            .collect::<Result<Vec<_>, CollectionError>>()?;
 
         Ok(Observation::from(&PackageInventory::new(sets)))
     }

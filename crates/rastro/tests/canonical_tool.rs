@@ -176,10 +176,9 @@ fn run_kills_what_the_tool_started_too() {
 
     // Assert: wait past the helper's own delay, then check it never got to write.
     std::thread::sleep(Duration::from_secs(4));
-    assert!(
-        !marker.exists(),
-        "a descendant outlived the kill and kept running"
-    );
+    let survived = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(!survived, "a descendant outlived the kill and kept running");
 }
 
 #[test]

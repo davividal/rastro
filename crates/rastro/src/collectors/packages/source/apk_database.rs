@@ -78,8 +78,7 @@ impl ApkDatabase {
         let package = Package {
             version: PackageVersion::new(Self::field(stanza, VERSION)?)?,
             architecture: Architecture::new(Self::field(stanza, ARCHITECTURE)?)?,
-            // apk's database lists what is installed and nothing else, so there is no
-            // desired-versus-actual state to report and none is invented.
+            // apk records only what is installed, so there is no desired state to report.
             status: None,
         };
 

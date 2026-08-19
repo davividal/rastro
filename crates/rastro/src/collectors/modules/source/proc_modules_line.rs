@@ -180,8 +180,7 @@ impl ProcModulesLine {
                 ))
             })?;
 
-        // `-` and `+` mark a module going or coming, which the state column already
-        // reports, so they are markers rather than taints.
+        // `-` and `+` mark going or coming, which the state column already reports.
         let flags = letters
             .chars()
             .filter(|letter| *letter != '-' && *letter != '+')
