@@ -57,6 +57,12 @@ use subprocess::{Exec, ExecExt, ExitStatus, Job, JobExt, Redirection};
 /// How much of a failing tool's stderr is quoted back.
 const STDERR_QUOTED: usize = 512;
 
+/// What to say when a tool failed and said nothing, which is how many signal by status alone.
+///
+/// Something rather than nothing: the alternative reaches the document as a message ending in a
+/// colon, which reads like text that went missing.
+const NOTHING_ON_STDERR: &str = "and wrote nothing to stderr";
+
 /// Where a system tool lives on the hosts rastro targets.
 ///
 /// Owned here rather than passed in by each collector. A caller that had to supply the list
@@ -301,16 +307,25 @@ impl CanonicalTool {
 /// and this text reaches the document just the same. Lossy decoding still applies to input that
 /// was already invalid, which is a different thing from making it invalid by cutting.
 fn quoted_tail(stderr: &[u8]) -> String {
-    let text = String::from_utf8_lossy(stderr);
+    let lossy = String::from_utf8_lossy(stderr);
+
+    // Trimmed before the bound is applied, not after. A tool that writes its reason and then six
+    // hundred newlines would otherwise have the whole reason cut away and a screen of blank space
+    // quoted in its place.
+    let text = lossy.trim();
 
     // Measured from the end, so a message already within the bound comes back whole. Comparing
     // start indices against the bound instead dropped the last character of every message, and
     // the whole of a one-character one.
+    if text.is_empty() {
+        return NOTHING_ON_STDERR.to_owned();
+    }
+
     let start = text
         .char_indices()
         .map(|(index, _)| index)
         .find(|index| text.len() - index <= STDERR_QUOTED)
         .unwrap_or(0);
 
-    text[start..].trim().to_owned()
+    text[start..].to_owned()
 }

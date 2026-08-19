@@ -330,3 +330,38 @@ fn a_one_character_stderr_is_not_swallowed() {
     // Assert
     assert!(failure.to_string().ends_with('x'), "got {failure}");
 }
+
+#[test]
+fn a_reason_followed_by_whitespace_is_not_cut_away() {
+    // Arrange: a tool that writes its reason and then floods stderr with newlines. Bounding
+    // before trimming kept six hundred blank bytes and discarded the reason entirely.
+    let flood = "{ printf 'fatal: the database is locked'; head -c 600 /dev/zero | tr '\\0' '\\n'; } >&2; exit 3";
+
+    // Act
+    let failure = shell()
+        .run(&["-c", flood])
+        .expect_err("a non-zero exit is a failure");
+
+    // Assert
+    assert!(
+        failure
+            .to_string()
+            .ends_with("fatal: the database is locked"),
+        "got {failure}"
+    );
+}
+
+#[test]
+fn a_tool_that_fails_silently_says_so() {
+    // Arrange: signalling by exit status alone is common, and the message reached the document
+    // ending in a colon, which reads like text that went missing.
+    let failure = shell()
+        .run(&["-c", "exit 3"])
+        .expect_err("a non-zero exit is a failure");
+
+    // Assert
+    assert!(
+        failure.to_string().ends_with("wrote nothing to stderr"),
+        "got {failure}"
+    );
+}
