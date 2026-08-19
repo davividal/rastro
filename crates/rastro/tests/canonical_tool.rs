@@ -263,14 +263,32 @@ fn a_timeout_reports_the_bound_it_actually_had() {
 }
 
 #[test]
-fn a_failing_tools_stderr_is_quoted_without_inventing_characters() {
-    // Arrange: more stderr than the quoted bound, with a two-byte character straddling the cut.
-    // Slicing on the byte offset and decoding lossily would substitute U+FFFD, which is the
-    // operation this file refuses for stdout, and the text reaches the document just the same.
-    let flood = concat!(
-        "{ head -c 511 /dev/zero | tr '\\0' a; printf '\\303\\251'; ",
-        "head -c 200 /dev/zero | tr '\\0' b; } >&2; exit 3"
+fn a_failing_tools_stderr_keeps_the_end_not_the_beginning() {
+    // Arrange: more stderr than the quoted bound, marked at both ends. A tool writes its
+    // warnings first and its fatal line last, so the end is the half worth keeping.
+    let flood = "{ printf FIRST; head -c 600 /dev/zero | tr '\\0' a; printf LAST; } >&2; exit 3";
+
+    // Act
+    let failure = shell()
+        .run(&["-c", flood])
+        .expect_err("a non-zero exit is a failure");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(message.ends_with("LAST"), "got {message}");
+    assert!(
+        !message.contains("FIRST"),
+        "the beginning should be dropped"
     );
+}
+
+#[test]
+fn a_multibyte_character_on_the_cut_is_not_split() {
+    // Arrange: 513 bytes, with a two-byte character at the very front, so the cut at byte one
+    // falls inside it. Slicing on the byte offset would substitute U+FFFD, which is the
+    // operation this module refuses for stdout, and this text reaches the document too.
+    let flood =
+        "{ printf '\\303\\251'; head -c 507 /dev/zero | tr '\\0' a; printf LAST; } >&2; exit 3";
 
     // Act
     let failure = shell()
@@ -281,7 +299,34 @@ fn a_failing_tools_stderr_is_quoted_without_inventing_characters() {
     let message = failure.to_string();
     assert!(
         !message.contains('\u{fffd}'),
-        "a replacement character reached the message"
+        "a replacement character reached the message: {message}"
     );
-    assert!(message.contains("aaa"), "the tail should still be quoted");
+    assert!(message.ends_with("LAST"), "got {message}");
+}
+
+#[test]
+fn a_short_stderr_is_quoted_whole() {
+    // Arrange: the bound compared start indices against the limit, which dropped the last
+    // character of every message and all of a one-character one.
+    let failure = shell()
+        .run(&["-c", "printf 'permission denied' >&2; exit 1"])
+        .expect_err("a non-zero exit is a failure");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(
+        message.ends_with("permission denied"),
+        "the whole message should survive: {message}"
+    );
+}
+
+#[test]
+fn a_one_character_stderr_is_not_swallowed() {
+    // Act
+    let failure = shell()
+        .run(&["-c", "printf x >&2; exit 1"])
+        .expect_err("a non-zero exit is a failure");
+
+    // Assert
+    assert!(failure.to_string().ends_with('x'), "got {failure}");
 }

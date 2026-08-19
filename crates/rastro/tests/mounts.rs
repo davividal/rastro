@@ -168,7 +168,7 @@ fn parse_decodes_escapes_in_the_device_too() {
 
 #[test]
 fn parse_decodes_tab_newline_and_backslash() {
-    // Arrange: the four sequences the kernel actually emits.
+    // Arrange: four of the sequences the kernel emits.
     let table = parsed("dev /a\\011b\\012c\\134d ext4 rw 0 0\n");
 
     // Assert
@@ -177,8 +177,8 @@ fn parse_decodes_tab_newline_and_backslash() {
 
 #[test]
 fn parse_leaves_a_backslash_alone_when_it_is_not_an_escape() {
-    // Arrange: only the four sequences the kernel writes are escapes, so `\061`
-    // is three octal digits and is deliberately left alone too.
+    // Arrange: a backslash only escapes when three octal digits follow it, so neither of
+    // these is one.
     let table = parsed("dev /a\\b\\9 ext4 rw 0 0\n");
 
     // Assert
@@ -349,4 +349,62 @@ fn parse_leaves_a_hash_alone_when_the_kernel_did_not_escape_it() {
 
     // Assert
     assert_eq!(first(&table).mount_point.as_str(), "/mnt/a#b");
+}
+
+#[test]
+fn parse_keeps_every_option_when_a_value_contains_a_stray_quote() {
+    // Arrange: a real line from a 6.x kernel. A quote is a legal path character and
+    // `seq_show_option` does not escape it, so an overlay whose lower directory contains one
+    // used to desynchronise the quote tracking and fuse every later option into one value:
+    // seven options became four, and `upperdir`, `workdir` and `uuid` ceased to exist.
+    let table = parsed(concat!(
+        "overlay /merged overlay ",
+        "rw,seclabel,relatime,lowerdir=/base/a\"b/lower,upperdir=/base/up,",
+        "workdir=/base/work,uuid=on",
+        " 0 0\n"
+    ));
+
+    // Assert
+    assert_eq!(
+        options_of(first(&table)),
+        [
+            "lowerdir=/base/a\"b/lower",
+            "relatime",
+            "rw",
+            "seclabel",
+            "upperdir=/base/up",
+            "uuid=on",
+            "workdir=/base/work"
+        ]
+    );
+}
+
+#[test]
+fn parse_decodes_an_escaped_comma_in_an_option_value() {
+    // Arrange: `seq_show_option` escapes a comma as `\054`, so a btrfs subvolume whose name
+    // contains one arrives escaped. Leaving it literal half-decoded the value, since a space in
+    // the same value was already being decoded.
+    let table = parsed("/dev/sda1 /mnt btrfs rw,subvol=/a\\054b 0 0\n");
+
+    // Assert
+    assert_eq!(options_of(first(&table)), ["rw", "subvol=/a,b"]);
+}
+
+#[test]
+fn parse_decodes_an_escaped_equals_in_an_option_name() {
+    // Arrange: an option *name* is escaped with a wider set than its value, including `=`.
+    let table = parsed("/dev/sda1 /mnt ext4 rw,od\\075d=1 0 0\n");
+
+    // Assert
+    assert_eq!(options_of(first(&table)), ["od=d=1", "rw"]);
+}
+
+#[test]
+fn parse_leaves_an_octal_escape_the_kernel_does_not_use_alone() {
+    // Arrange: values at or above 0o200 are single bytes of a UTF-8 sequence rather than
+    // characters, so reassembling them is not attempted and they stay as they are.
+    let table = parsed("/dev/sda1 /mnt/a\\303b ext4 rw 0 0\n");
+
+    // Assert
+    assert_eq!(first(&table).mount_point.as_str(), "/mnt/a\\303b");
 }

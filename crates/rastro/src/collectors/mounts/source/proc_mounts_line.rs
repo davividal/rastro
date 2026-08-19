@@ -90,34 +90,39 @@ impl ProcMountsLine {
     }
 }
 
-/// The five sequences the kernel writes, and nothing else.
-///
-/// Not one set but two, and the difference is easy to miss. In `fs/proc_namespace.c` the mount
-/// point goes through `seq_path_root(..., " \t\n\\")`, four characters, while the device name
-/// and the filesystem type go through `mangle`, which is `seq_escape(m, s, " \t\n\\#")` and
-/// escapes a fifth: `#`, because `/etc/mtab` treats it as a comment.
-///
-/// All five are decoded from every column rather than keeping two tables. That is safe because
-/// a literal backslash is itself always escaped, as `\134`, so a bare `\043` cannot reach the
-/// mount-point column and there is nothing there to mis-decode.
-///
-/// Decoding any three-digit octal escape would still be wrong: values above 127 are raw bytes
-/// of a UTF-8 sequence, not characters, and the kernel never emits them anyway.
-const KERNEL_ESCAPES: [(&str, char); 5] = [
-    ("\\040", ' '),
-    ("\\011", '\t'),
-    ("\\012", '\n'),
-    ("\\043", '#'),
-    ("\\134", '\\'),
-];
+/// The length of a `\NNN` sequence, backslash included.
+const ESCAPE_LENGTH: usize = 4;
 
-/// Undoes the kernel's escaping of whitespace in a column.
+/// The first value the kernel does not escape this way.
 ///
-/// The escape is a transport encoding, not the state of the host: a filesystem
-/// mounted at `/mnt/My Drive` is recorded under that name, not under
-/// `/mnt/My\040Drive`.
+/// Above this a byte is part of a UTF-8 sequence rather than a character of its own, and
+/// reassembling those would need byte-level handling this does not do. The kernel does not emit
+/// them for these columns.
+const HIGHEST_ESCAPED: u32 = 0o200;
+
+/// Undoes the kernel's octal escaping of a column.
 ///
-/// A backslash that does not begin one of the four sequences is kept as it is.
+/// This decodes the *encoding*, not a list of the kernel's call sites, and the difference
+/// matters because there are four of them and they do not agree on the alphabet:
+///
+/// | written by | escapes |
+/// | --- | --- |
+/// | `seq_path_root`, for the mount point | `" \t\n\\"` |
+/// | `mangle`, for the device and filesystem type | `" \t\n\\#"` |
+/// | `seq_show_option`, for an option name | `",= \t\n\\"` |
+/// | `seq_show_option`, for an option value | `", \t\n\\"` |
+/// | `show_sid` in SELinux, for a context | `"\"\n\\"` |
+///
+/// A table of those sets was wrong twice on this branch alone, first missing `\043` and then
+/// `\054`, `\075` and `\042`. So the rule is the encoding itself: a backslash and three octal
+/// digits below [`HIGHEST_ESCAPED`]. A new escaping call site then costs nothing.
+///
+/// **What makes one rule safe for every column:** every one of those paths escapes the backslash
+/// itself, as `\134`. A bare `\NNN` therefore cannot occur in any column except as a genuine
+/// escape, so decoding sequences a particular column never emits cannot corrupt it.
+///
+/// The escape is a transport encoding, not the state of the host: a filesystem mounted at
+/// `/mnt/My Drive` is recorded under that name, not under `/mnt/My\040Drive`.
 fn unescape(column: &str) -> String {
     let mut decoded = String::with_capacity(column.len());
     let mut rest = column;
@@ -126,13 +131,10 @@ fn unescape(column: &str) -> String {
         decoded.push_str(&rest[..backslash]);
         let candidate = &rest[backslash..];
 
-        match KERNEL_ESCAPES
-            .iter()
-            .find(|(escape, _)| candidate.starts_with(escape))
-        {
-            Some((escape, character)) => {
-                decoded.push(*character);
-                rest = &candidate[escape.len()..];
+        match octal_escape(candidate) {
+            Some(character) => {
+                decoded.push(character);
+                rest = &candidate[ESCAPE_LENGTH..];
             }
             None => {
                 decoded.push('\\');
@@ -145,25 +147,53 @@ fn unescape(column: &str) -> String {
     decoded
 }
 
-/// Splits the option column on the commas that separate options, not on the ones
-/// inside a quoted value.
+/// The character a `\NNN` sequence stands for, if the candidate is one.
 ///
-/// SELinux writes `context="system_u:object_r:container_file_t:s0:c132,c369"`, and
-/// splitting that naively invents two options that were never mounted.
+/// All three digits are checked against `0` to `7` by hand rather than left to
+/// `from_str_radix`, which accepts a leading sign and would read `\+12` as an escape.
+fn octal_escape(candidate: &str) -> Option<char> {
+    let digits = candidate.get(1..ESCAPE_LENGTH)?;
+    if !digits.bytes().all(|digit| (b'0'..=b'7').contains(&digit)) {
+        return None;
+    }
+
+    let value = u32::from_str_radix(digits, 8).ok()?;
+    if value >= HIGHEST_ESCAPED {
+        return None;
+    }
+
+    char::from_u32(value)
+}
+
+/// Splits the option column on the commas that separate options, not on the ones inside a
+/// quoted value.
+///
+/// SELinux writes `context="system_u:object_r:container_file_t:s0:c132,c369"`, and splitting
+/// that naively invents two options that were never mounted.
+///
+/// A quote only opens a quoted region when it directly follows `=`, which is how `show_sid`
+/// writes the one form this exists for. Toggling on *any* quote was a real defect: a quote is a
+/// legal path character that `seq_show_option` does not escape, so an overlay whose lower
+/// directory contained one desynchronised the rest of the line and silently fused every option
+/// after it into a single bogus value.
 fn split_options(options: &str) -> Vec<&str> {
     let mut split = Vec::new();
     let mut option_start = 0;
     let mut inside_quotes = false;
+    let mut previous = char::default();
 
     for (index, character) in options.char_indices() {
         match character {
-            '"' => inside_quotes = !inside_quotes,
+            '"' if inside_quotes => inside_quotes = false,
+            '"' if previous == '=' => inside_quotes = true,
             ',' if !inside_quotes => {
                 split.push(&options[option_start..index]);
                 option_start = index + 1;
             }
             _ => {}
         }
+
+        previous = character;
     }
     split.push(&options[option_start..]);
 

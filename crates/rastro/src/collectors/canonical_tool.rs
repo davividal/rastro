@@ -94,20 +94,27 @@ pub struct CanonicalTool {
 impl CanonicalTool {
     /// Locates a system tool, or reports that this host does not have it.
     ///
-    /// The only way in, so the hardening cannot be opted out of. `None` is an ordinary answer
-    /// rather than a failure: a box with no `dpkg-query` is a box that does not use dpkg,
-    /// which is state.
+    /// Searches directories a distribution keeps root-owned, and nowhere else. rastro does not
+    /// verify that ownership, so the list is a proxy for it rather than a check of it. What it
+    /// buys is a set that is fixed and auditable, which root's inherited `PATH` is not.
+    ///
+    /// `None` is an ordinary answer rather than a failure: a box with no `dpkg-query` is a box
+    /// that does not use dpkg, which is state.
     pub fn located(program: &str) -> Option<Self> {
         Self::located_in(program, &SYSTEM_DIRECTORIES)
     }
 
     /// The same, over directories the caller names, which is what [`Self::located`] is.
     ///
-    /// Preferring absolute paths matters because rastro runs as root: a directory on root's
-    /// `PATH` that is not root-owned lets an attacker shadow a system tool, and rastro would
-    /// execute the plant with full privilege. The `PATH` search remains as the wider,
-    /// deliberately documented fallback, so a tool installed somewhere unusual is still found
-    /// rather than reported absent, which would be a lie about the host.
+    /// There is no `PATH` fallback, and its absence is the point. An earlier version had one, on
+    /// the argument that reporting a tool absent would be a lie about the host. That argument
+    /// loses to this one: rastro runs as root, so searching root's inherited `PATH` lets the
+    /// first directory on it that is not root-owned decide which binary runs with full
+    /// privilege.
+    ///
+    /// Naming directories is the one guarantee a caller can widen. It cannot weaken the other
+    /// five: whatever is found still runs from an absolute path, with no shell, a cleared
+    /// environment, bounded time and output, and a group kill.
     pub fn located_in(program: &str, directories: &[&str]) -> Option<Self> {
         directories
             .iter()
@@ -185,11 +192,9 @@ impl CanonicalTool {
     /// running satisfies the read and then blocks an unbounded `Job::wait` forever. The
     /// whole claim that a wedged tool cannot hang a run rests on this being `wait_timeout`.
     fn reap(&self, job: &Job, started: Instant) -> Result<ExitStatus, CollectionError> {
-        let waited = job
-            .wait_timeout(self.remaining(started))
-            .map_err(|error| self.failure(format!("could not be waited for: {error}")))?;
-
-        if let Some(status) = waited {
+        // An error here, not only a timeout, has to reach `detach` below: `Job`'s own `drop`
+        // waits untimed, so returning early would put the unbounded wait straight back.
+        if let Ok(Some(status)) = job.wait_timeout(self.remaining(started)) {
             return Ok(status);
         }
 
@@ -285,19 +290,27 @@ impl CanonicalTool {
     }
 }
 
-/// A failing tool's stderr, bounded and decoded without inventing characters.
+/// The end of a failing tool's stderr, bounded and cut on a character boundary.
 ///
-/// Cut on a character boundary rather than a byte offset. Slicing mid-sequence and letting
-/// `from_utf8_lossy` substitute `U+FFFD` is the very operation refused for stdout, and this
-/// text reaches the document just the same.
+/// The **end**, which is what the name says and what the previous version did not do. A tool
+/// writes its warnings first and its fatal line last, so truncating from the front keeps the
+/// noise and discards the reason.
+///
+/// Cut on a character boundary rather than a byte offset, because slicing mid-sequence and
+/// letting `from_utf8_lossy` substitute `U+FFFD` is the operation this module refuses for stdout,
+/// and this text reaches the document just the same. Lossy decoding still applies to input that
+/// was already invalid, which is a different thing from making it invalid by cutting.
 fn quoted_tail(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
-    let boundary = text
+
+    // Measured from the end, so a message already within the bound comes back whole. Comparing
+    // start indices against the bound instead dropped the last character of every message, and
+    // the whole of a one-character one.
+    let start = text
         .char_indices()
         .map(|(index, _)| index)
-        .take_while(|index| *index <= STDERR_QUOTED)
-        .last()
+        .find(|index| text.len() - index <= STDERR_QUOTED)
         .unwrap_or(0);
 
-    text[..boundary].trim().to_owned()
+    text[start..].trim().to_owned()
 }
