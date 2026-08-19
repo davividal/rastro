@@ -15,6 +15,10 @@ publish = false
 rastro-collector = { workspace = true }
 rastro-fingerprint = { workspace = true }
 clap = { workspace = true }
+# Killing a hung tool's whole process group. `subprocess` can put the child in its
+# own group but exposes no way to signal that group, and `#![deny(unsafe_code)]`
+# rules out calling `killpg` through `libc` directly.
+nix = { workspace = true }
 serde = { workspace = true }
 # Shelling out to a canonical tool, hardened: `which` resolves an absolute path
 # before exec, `subprocess` caps both the time and the output of a run.

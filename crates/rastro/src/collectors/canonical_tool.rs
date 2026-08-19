@@ -20,7 +20,11 @@
 //! - **Immediate end of input.** A tool that decides to prompt gets EOF rather than a
 //!   terminal, so it cannot wait for an operator who is not there.
 //! - **A time bound and an output bound**, from [`RunLimits`]. A wedged tool cannot
-//!   hang the run and a runaway one cannot exhaust the box's memory.
+//!   hang the run and a runaway one cannot exhaust the box's memory. Breaching either
+//!   kills the tool's whole **process group**, not just the tool, so a helper it
+//!   backgrounded does not outlive the failure. A descendant that puts itself in a new
+//!   group with `setsid` escapes that, which is the one gap left and is not reachable by
+//!   any tool rastro ships a collector for.
 //! - **Exit status success, or nothing.** A non-zero exit is a failure carrying its
 //!   status and a bounded tail of stderr, never partial output treated as an answer.
 //! - **Strictly valid UTF-8.** Invalid bytes are refused rather than replaced with
@@ -46,8 +50,10 @@ pub use run_limits::RunLimits;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use nix::sys::signal::{Signal, killpg};
+use nix::unistd::Pid;
 use rastro_collector::CollectionError;
-use subprocess::{Exec, Job, Redirection};
+use subprocess::{Exec, ExecExt, Job, Redirection};
 
 /// How much of a failing tool's stderr is quoted back.
 const STDERR_QUOTED: usize = 512;
@@ -77,13 +83,27 @@ impl CanonicalTool {
         })
     }
 
-    /// A tool at a path chosen by the caller.
-    pub fn at(program: &str, path: impl Into<PathBuf>) -> Self {
-        Self {
-            program: program.to_owned(),
-            path: path.into(),
-            limits: RunLimits::default(),
+    /// Locates a tool, preferring paths known to be owned by the system.
+    ///
+    /// `resolve` searches `PATH`, and rastro runs as root. A directory on root's `PATH`
+    /// that is not root-owned lets an attacker shadow a system tool, and rastro would
+    /// then execute the plant with full privilege. Trying the well-known absolute paths
+    /// first removes that in the ordinary case, and the `PATH` search stays as the wider,
+    /// deliberately documented fallback so a tool installed somewhere unusual is still
+    /// found rather than reported absent, which would be a lie.
+    pub fn located(program: &str, candidates: &[&str]) -> Option<Self> {
+        for candidate in candidates {
+            let path = PathBuf::from(candidate);
+            if path.is_file() {
+                return Some(Self {
+                    program: program.to_owned(),
+                    path,
+                    limits: RunLimits::default(),
+                });
+            }
         }
+
+        Self::resolve(program)
     }
 
     /// The same tool, held to different bounds.
@@ -98,10 +118,6 @@ impl CanonicalTool {
 
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    pub fn limits(&self) -> RunLimits {
-        self.limits
     }
 
     /// Runs the tool and returns everything it wrote to stdout.
@@ -140,6 +156,33 @@ impl CanonicalTool {
             .stdin("")
             .stdout(Redirection::Pipe)
             .stderr(Redirection::Pipe)
+            // The child leads its own process group, which is what lets the whole tree be
+            // signalled below. The two belong together and neither is safe alone: without
+            // this, a group kill would target rastro's own process group.
+            .setpgid()
+    }
+
+    /// Kills the tool and whatever it started.
+    ///
+    /// `Job::kill` signals only the pids it tracks, so a tool that backgrounds a helper
+    /// would leave that helper running unbounded after rastro had already reported the
+    /// failure and moved on. `subprocess` names this case and offers
+    /// `ProcessExt::send_signal_group` for it, but a `Job` exposes no `Process`, so the
+    /// group signal comes from outside the crate.
+    ///
+    /// Skipped once the job has exited, because a reaped pid can be recycled as another
+    /// process's group id and rastro must not signal a stranger.
+    fn kill_the_group(&self, job: &Job) {
+        if job.poll().is_some() {
+            return;
+        }
+
+        // Not `as i32`: a lossy cast is how a wrong pid would be signalled silently.
+        if let Ok(group) = i32::try_from(job.pid()) {
+            let _ = killpg(Pid::from_raw(group), Signal::SIGKILL);
+        }
+
+        let _ = job.kill();
     }
 
     /// Reads both streams under the bounds, killing the child if either is breached.
@@ -156,7 +199,7 @@ impl CanonicalTool {
             .read();
 
         let (stdout, stderr) = outcome.map_err(|error| {
-            let _ = job.kill();
+            self.kill_the_group(job);
 
             match error.kind() {
                 ErrorKind::TimedOut => self.failure(format!(
@@ -169,7 +212,7 @@ impl CanonicalTool {
 
         // The bound is on both streams together, which is how `limit_size` counts.
         if stdout.len() + stderr.len() > self.limits.output() {
-            let _ = job.kill();
+            self.kill_the_group(job);
 
             return Err(self.failure(format!(
                 "wrote more than {} bytes, so its answer would have been truncated",

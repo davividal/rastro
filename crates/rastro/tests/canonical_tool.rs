@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use rastro::canonical_tool::{CanonicalTool, RunLimits};
+use rastro::collectors::canonical_tool::{CanonicalTool, RunLimits};
 
 /// Present on Debian and on Alpine's busybox alike.
 const SHELL: &str = "sh";
@@ -158,4 +158,58 @@ fn run_refuses_output_that_is_not_valid_utf8() {
     // Assert: replacing the bytes with U+FFFD would put text into a fingerprint that
     // was never on the box.
     assert!(failure.to_string().contains("UTF-8"), "got {failure}");
+}
+
+#[test]
+fn run_kills_what_the_tool_started_too() {
+    // Arrange: a tool that backgrounds a helper and then hangs. Killing only the direct
+    // child leaves the helper running on the box, unbounded, after rastro has already
+    // reported a failure and moved on.
+    let marker = std::env::temp_dir().join("rastro-descendant-marker");
+    let _ = std::fs::remove_file(&marker);
+    let script = format!("(sleep 2; echo alive > {}) & sleep 30", marker.display());
+    let tool = shell_within(Duration::from_millis(300), 1024);
+
+    // Act
+    tool.run(&["-c", &script])
+        .expect_err("a hung tool is a failure");
+
+    // Assert: wait past the helper's own delay, then check it never got to write.
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        !marker.exists(),
+        "a descendant outlived the kill and kept running"
+    );
+}
+
+#[test]
+fn located_prefers_a_well_known_absolute_path() {
+    // Arrange: rastro runs as root, so leaving the choice to a `PATH` search invites
+    // shadowing. Debian and Alpine both keep a shell at `/bin/sh`.
+    let tool = CanonicalTool::located(SHELL, &["/bin/sh"]).expect("/bin/sh exists");
+
+    // Assert
+    assert_eq!(tool.path(), std::path::Path::new("/bin/sh"));
+}
+
+#[test]
+fn located_falls_back_to_searching_the_path() {
+    // Arrange: a tool installed somewhere unusual must still be found. Reporting it
+    // absent because rastro did not guess its directory would be a lie about the host.
+    let tool = CanonicalTool::located(SHELL, &["/nowhere/at/all/sh"]).expect("sh is on PATH");
+
+    // Assert
+    assert!(tool.path().is_absolute(), "got {:?}", tool.path());
+}
+
+#[test]
+fn located_reports_a_tool_that_is_neither_well_known_nor_on_the_path() {
+    // Act & Assert
+    assert!(
+        CanonicalTool::located(
+            "rastro-tool-that-does-not-exist",
+            &["/nowhere/at/all/rastro-tool-that-does-not-exist"]
+        )
+        .is_none()
+    );
 }
