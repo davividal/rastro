@@ -327,3 +327,26 @@ fn parse_keeps_unicode_whitespace_in_the_device_and_the_ideographic_space() {
         "/mnt/\u{3000}share"
     );
 }
+
+#[test]
+fn parse_decodes_an_escaped_hash_in_the_device_and_the_filesystem_type() {
+    // Arrange: the device name and the filesystem type go through the kernel's `mangle`, which
+    // escapes a fifth character the mount point's own escaping does not: `#`, because
+    // `/etc/mtab` treats it as a comment. Missing it left a raw `\043` in the value.
+    let table = parsed("/dev/disk/by-label/a\\043b /mnt fuse.od\\043d rw 0 0\n");
+
+    // Assert
+    let mount = first(&table);
+    assert_eq!(mount.device.as_str(), "/dev/disk/by-label/a#b");
+    assert_eq!(mount.filesystem.as_str(), "fuse.od#d");
+}
+
+#[test]
+fn parse_leaves_a_hash_alone_when_the_kernel_did_not_escape_it() {
+    // Arrange: the mount point is escaped by `seq_path_root`, which does not escape `#`, so a
+    // literal one arrives raw and must survive as itself.
+    let table = parsed("/dev/sda1 /mnt/a#b ext4 rw 0 0\n");
+
+    // Assert
+    assert_eq!(first(&table).mount_point.as_str(), "/mnt/a#b");
+}

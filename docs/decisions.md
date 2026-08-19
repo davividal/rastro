@@ -36,7 +36,8 @@ All entries below date from the initial design, 2026-08-13.
 | [No MSRV floor](#no-msrv-floor-the-toolchain-is-pinned-by-mise) | only the latest Rust is maintained, and a floor constrained resolution |
 | [Unclassified error text](#a-facets-error-text-is-not-classified-yet) | revisits when redaction exists to classify against |
 | [Fingerprints are sensitive](#a-fingerprint-is-sensitive-operational-data-until-redaction-exists) | a package inventory is a target-selection aid, so handle the document accordingly |
-| [Signalling by pid](#accepted-residual-risk-signalling-by-pid) | a pid-reuse window remains, accepted, needs `pidfd` to close |
+| [Signalling by pid](#accepted-residual-risk-signalling-by-pid) | a pid-reuse window remains, accepted. **Superseded** |
+| [Unconditional group signal](#superseded-the-group-signal-is-unconditional) | the guard that created the window was hiding the leak it was meant to guard |
 
 ## Native collectors, no external tool as a dependency
 
@@ -664,3 +665,33 @@ receive a stray `SIGKILL`.
 This is inherent to signalling by pid on Unix rather than anything rastro
 introduces, and closing it properly needs `pidfd`. Accepted, and recorded here so it
 is a known residual rather than an oversight.
+
+## Superseded: the group signal is unconditional
+
+Supersedes [Accepted residual risk: signalling by pid](#accepted-residual-risk-signalling-by-pid),
+which described a `poll` call that no longer exists.
+
+That entry accepted a window between polling the job and signalling its group, on the grounds
+that a reaped pid could be recycled. A challenge round then showed the guard was not merely
+imperfect, it was actively hiding the bug it sat next to: a tool that backgrounds a helper and
+exits at once leaves the helper holding the pipes open, `poll` reports the direct child gone, and
+the early return spared exactly the descendant the group kill exists to reach. The test that
+covered the area used a parent that was still alive at kill time, so it exercised the branch that
+worked and never the one that did not.
+
+The signal is now sent unconditionally, and the window the old entry accepted does not arise. A
+group with living members cannot have its leader's pid recycled, because each member holds that
+`struct pid` as its group id, and a group with nothing left in it simply yields `ESRCH`. This was
+checked against `subprocess`'s own `WNOWAIT` rationale rather than assumed.
+
+**What remains, and it is a different shape.** `send_signal_group` no-ops once the crate has
+cached an exit status, so the unconditional signal only helps because nothing calls `wait` or
+`poll` before it. That dependency is real and nothing enforces it, so it is named in the code at
+the point where it would be broken, and
+`run_kills_a_descendant_of_a_tool_that_already_exited` is the test that would catch it.
+
+**Cost:** a residual risk that was recorded as accepted turns out to have been the wrong trade,
+and the entry recording it stood for four commits while describing code that had been deleted.
+The lesson is the one the `nix` reversal already taught: an entry justified by a mechanism needs
+re-reading whenever that mechanism changes, and neither of the two commits that touched this file
+afterwards did so.

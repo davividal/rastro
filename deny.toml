@@ -5,11 +5,14 @@
 # manual reading of `cargo tree`.
 
 [advisories]
-# A known vulnerability in anything reachable fails the build. This is the one
-# category worth being strict about, and it carries a known cost: a new advisory
-# published against an existing dependency will fail a pull request that had
-# nothing to do with it. That is the check working, and the fix is to deal with the
-# advisory, not to weaken this.
+# A known vulnerability fails the build, but not because of anything set here: cargo-deny
+# emits vulnerability advisories unconditionally, the configurable field having been removed
+# upstream, and `unmaintained` defaults to failing everywhere. Loosening either would mean
+# adding a key, not editing this one.
+#
+# `yanked` is a separate mechanism, covering versions withdrawn from the registry rather than
+# advisories. Denying it carries a known cost: an upstream yank fails a pull request that had
+# nothing to do with it. That is the check working, and the fix is to deal with the yank.
 yanked = "deny"
 
 # `licenses`, spelled the way cargo-deny's schema spells it.

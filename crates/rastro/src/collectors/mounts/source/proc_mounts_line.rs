@@ -90,16 +90,24 @@ impl ProcMountsLine {
     }
 }
 
-/// The four sequences the kernel writes, and nothing else.
+/// The five sequences the kernel writes, and nothing else.
 ///
-/// `fs/proc_namespace.c` escapes exactly `" \t\n\\"`, so this is the whole set.
-/// Decoding any three-digit octal escape would be wrong: values above 127 are raw
-/// bytes of a UTF-8 sequence, not characters, and the kernel never emits them
-/// anyway.
-const KERNEL_ESCAPES: [(&str, char); 4] = [
+/// Not one set but two, and the difference is easy to miss. In `fs/proc_namespace.c` the mount
+/// point goes through `seq_path_root(..., " \t\n\\")`, four characters, while the device name
+/// and the filesystem type go through `mangle`, which is `seq_escape(m, s, " \t\n\\#")` and
+/// escapes a fifth: `#`, because `/etc/mtab` treats it as a comment.
+///
+/// All five are decoded from every column rather than keeping two tables. That is safe because
+/// a literal backslash is itself always escaped, as `\134`, so a bare `\043` cannot reach the
+/// mount-point column and there is nothing there to mis-decode.
+///
+/// Decoding any three-digit octal escape would still be wrong: values above 127 are raw bytes
+/// of a UTF-8 sequence, not characters, and the kernel never emits them anyway.
+const KERNEL_ESCAPES: [(&str, char); 5] = [
     ("\\040", ' '),
     ("\\011", '\t'),
     ("\\012", '\n'),
+    ("\\043", '#'),
     ("\\134", '\\'),
 ];
 
