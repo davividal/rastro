@@ -101,13 +101,14 @@ impl ProcModulesLine {
     /// [`ModuleTable`](crate::collectors::modules::model::ModuleTable) is built from.
     pub fn to_entry(&self) -> Result<(ModuleName, KernelModule), CollectionError> {
         let name = ModuleName::new(&self.name)?;
+        let reference_count = self.to_reference_count()?;
         let module = KernelModule {
             size: self.to_size()?,
             state: ModuleState::parse(&self.state)?,
             dependants: self.to_dependants()?,
-            removability: self.to_removability(),
+            removability: self.to_removability(reference_count),
             taints: self.to_taints()?,
-            reference_count: self.to_reference_count()?,
+            reference_count,
         };
 
         Ok((name, module))
@@ -150,12 +151,13 @@ impl ProcModulesLine {
 
     /// Reads removability, or the fact that this kernel cannot answer.
     ///
-    /// The untracked reference count is the signal: `print_unload_info` is compiled out with
-    /// `CONFIG_MODULE_UNLOAD`, and its stub writes `-` for both the count and the dependants.
-    /// It is the same stub that makes `[permanent]` unprintable, so a missing marker there
-    /// means "unknowable" rather than "removable".
-    fn to_removability(&self) -> Removability {
-        if self.reference_count == NOTHING {
+    /// Derived from the reference count rather than by re-reading the sentinel, so the one fact
+    /// the two share is expressed once: `print_unload_info` is compiled out with
+    /// `CONFIG_MODULE_UNLOAD`, and the same stub that leaves the count untracked is the one that
+    /// makes `[permanent]` unprintable. A missing marker there means "unknowable", not
+    /// "removable".
+    fn to_removability(&self, reference_count: ReferenceCount) -> Removability {
+        if reference_count == ReferenceCount::NotTracked {
             return Removability::Unknown;
         }
 

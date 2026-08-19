@@ -43,6 +43,12 @@ jobs:
       # Policy lives in `deny.toml`. The action is pinned to the commit its v2.1.1 tag
       # dereferences to, not to the annotated tag object, which would not resolve.
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          # Root-level args, so they go here rather than in `command-arguments`, and the
+          # action's own `--all-features` default has to be restated to keep it. `--locked`
+          # matters most in this job of all: it is the one auditing the dependency graph, so
+          # it must audit the same graph the other jobs build.
+          arguments: --all-features --locked
 
   static-binary:
     name: musl static build

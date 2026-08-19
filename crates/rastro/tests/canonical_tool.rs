@@ -187,9 +187,8 @@ fn run_kills_what_the_tool_started_too() {
 }
 
 #[test]
-fn located_prefers_a_named_directory_over_the_path() {
-    // Arrange: rastro runs as root, so leaving the choice to a `PATH` search invites
-    // shadowing. Debian and Alpine both keep a shell at `/bin/sh`.
+fn located_finds_a_tool_in_a_named_directory() {
+    // Arrange: Debian and Alpine both keep a shell at `/bin/sh`.
     let tool = CanonicalTool::located_in(SHELL, &["/bin"]).expect("/bin/sh exists");
 
     // Assert
@@ -197,22 +196,15 @@ fn located_prefers_a_named_directory_over_the_path() {
 }
 
 #[test]
-fn located_falls_back_to_searching_the_path() {
-    // Arrange: a tool installed somewhere unusual must still be found. Reporting it absent
-    // because rastro did not guess its directory would be a lie about the host.
-    let tool = CanonicalTool::located_in(SHELL, &["/nowhere/at/all"]).expect("sh is on PATH");
+fn located_does_not_search_the_path() {
+    // Arrange: a shell is certainly on `PATH`, and that is deliberately not enough. rastro runs
+    // as root, so the first directory on root's inherited `PATH` that is not root-owned would
+    // otherwise decide which binary runs with full privilege.
+    let tool = CanonicalTool::located_in(SHELL, &["/nowhere/at/all"]);
 
-    // Assert
-    assert!(tool.path().is_absolute(), "got {:?}", tool.path());
-}
-
-#[test]
-fn located_reports_a_tool_that_is_in_neither() {
-    // Act & Assert
-    assert!(
-        CanonicalTool::located_in("rastro-tool-that-does-not-exist", &["/nowhere/at/all"])
-            .is_none()
-    );
+    // Assert: reported as not found, which is a narrower claim than a lie and a far better
+    // failure than executing the wrong thing.
+    assert!(tool.is_none());
 }
 
 #[test]
@@ -268,4 +260,28 @@ fn a_timeout_reports_the_bound_it_actually_had() {
     let message = failure.to_string();
     assert!(message.contains("250ms"), "got {message:?}");
     assert!(!message.contains("0 seconds"), "got {message:?}");
+}
+
+#[test]
+fn a_failing_tools_stderr_is_quoted_without_inventing_characters() {
+    // Arrange: more stderr than the quoted bound, with a two-byte character straddling the cut.
+    // Slicing on the byte offset and decoding lossily would substitute U+FFFD, which is the
+    // operation this file refuses for stdout, and the text reaches the document just the same.
+    let flood = concat!(
+        "{ head -c 511 /dev/zero | tr '\\0' a; printf '\\303\\251'; ",
+        "head -c 200 /dev/zero | tr '\\0' b; } >&2; exit 3"
+    );
+
+    // Act
+    let failure = shell()
+        .run(&["-c", flood])
+        .expect_err("a non-zero exit is a failure");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(
+        !message.contains('\u{fffd}'),
+        "a replacement character reached the message"
+    );
+    assert!(message.contains("aaa"), "the tail should still be quoted");
 }

@@ -54,9 +54,8 @@ impl From<&PackageInventory> for Observation {
         Observation::object(inventory.sets().iter().map(|(manager, set)| {
             let reported = match set {
                 Some(set) => Observation::from(set),
-                // `null` rather than the word "absent": a key whose value is sometimes text
-                // and sometimes an object is awkward for every consumer, and null is already
-                // a leaf type the format admits.
+                // `null`, not the word "absent": a key sometimes text and sometimes an object
+                // is awkward for every consumer.
                 None => Observation::null(),
             };
 

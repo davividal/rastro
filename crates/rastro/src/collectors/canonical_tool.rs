@@ -49,6 +49,7 @@ pub use run_limits::RunLimits;
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use rastro_collector::CollectionError;
 use subprocess::{Exec, ExecExt, ExitStatus, Job, JobExt, Redirection};
@@ -62,7 +63,21 @@ const STDERR_QUOTED: usize = 512;
 /// could supply the wrong one, or reach for the bare `PATH` search instead, and both mistakes
 /// are silent. Five more shelling collectors are planned, so this is the difference between
 /// one place to be right and six.
-const SYSTEM_DIRECTORIES: [&str; 4] = ["/usr/bin", "/usr/sbin", "/bin", "/sbin"];
+const SYSTEM_DIRECTORIES: [&str; 6] = [
+    "/usr/bin",
+    "/usr/sbin",
+    "/bin",
+    "/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+];
+
+/// How long a tool gets to die after `SIGKILL` before rastro stops waiting for it.
+///
+/// A signalled process normally goes in microseconds. One in uninterruptible sleep never goes
+/// at all, and a hung NFS mount is exactly how that happens, which is a host state rastro's own
+/// mount collector exists to surface. So even this wait is bounded.
+const REAP_GRACE: Duration = Duration::from_secs(2);
 
 /// A tool found on this host, ready to run.
 ///
@@ -94,15 +109,10 @@ impl CanonicalTool {
     /// deliberately documented fallback, so a tool installed somewhere unusual is still found
     /// rather than reported absent, which would be a lie about the host.
     pub fn located_in(program: &str, directories: &[&str]) -> Option<Self> {
-        for directory in directories {
-            let path = Path::new(directory).join(program);
-            if path.is_file() {
-                return Some(Self::at(program, path));
-            }
-        }
-
-        which::which(program)
-            .ok()
+        directories
+            .iter()
+            .map(|directory| Path::new(directory).join(program))
+            .find(|path| path.is_file())
             .map(|path| Self::at(program, path))
     }
 
@@ -137,8 +147,9 @@ impl CanonicalTool {
 
         // Both run before either is propagated, so the child is always reaped, and the read's
         // own diagnosis wins over the wait's when both fail.
-        let captured = self.capture(&mut job);
-        let reaped = self.reap(&job);
+        let started = Instant::now();
+        let captured = self.capture(&mut job, started);
+        let reaped = self.reap(&job, started);
         let (stdout, stderr) = captured?;
         let status = reaped?;
 
@@ -173,9 +184,9 @@ impl CanonicalTool {
     /// both pipes reach EOF, so a tool that writes its answer, closes its streams and keeps
     /// running satisfies the read and then blocks an unbounded `Job::wait` forever. The
     /// whole claim that a wedged tool cannot hang a run rests on this being `wait_timeout`.
-    fn reap(&self, job: &Job) -> Result<ExitStatus, CollectionError> {
+    fn reap(&self, job: &Job, started: Instant) -> Result<ExitStatus, CollectionError> {
         let waited = job
-            .wait_timeout(self.limits.time())
+            .wait_timeout(self.remaining(started))
             .map_err(|error| self.failure(format!("could not be waited for: {error}")))?;
 
         if let Some(status) = waited {
@@ -184,12 +195,18 @@ impl CanonicalTool {
 
         self.kill_the_group(job);
 
-        // Reaped so nothing is left a zombie, then reported as the bound it broke rather than
-        // as the signal: rastro sent that signal, so "exited unsuccessfully" would blame the
-        // tool for rastro's own action.
-        let _ = job.wait();
+        // Bounded too, and it gives up rather than becoming the hang it exists to prevent.
+        if job.wait_timeout(REAP_GRACE).ok().flatten().is_none() {
+            job.detach();
+        }
 
+        // Reported as the bound it broke, not as the signal rastro itself sent.
         Err(self.failure(format!("did not finish within {:?}", self.limits.time())))
+    }
+
+    /// What is left of the run's bound.
+    fn remaining(&self, started: Instant) -> Duration {
+        self.limits.time().saturating_sub(started.elapsed())
     }
 
     /// Kills the tool and whatever it started.
@@ -206,6 +223,12 @@ impl CanonicalTool {
     /// would spare exactly the descendant this is meant to reach. The pid cannot have been
     /// recycled while the group still has members, because each member holds the leader's
     /// `struct pid` as its group id, and a group with no members left simply yields `ESRCH`.
+    ///
+    /// One dependency worth naming because nothing enforces it: `send_signal_group` no-ops once
+    /// `subprocess` has cached an exit status, so this only helps because neither the read nor
+    /// the wait calls `wait` or `poll` before it. Adding such a call ahead of this would
+    /// silently restore the leak, and `run_kills_a_descendant_of_a_tool_that_already_exited`
+    /// is what would catch it.
     fn kill_the_group(&self, job: &Job) {
         let _ = job.send_signal_group(libc::SIGKILL);
     }
@@ -215,11 +238,15 @@ impl CanonicalTool {
     /// A tool still running when the clock runs out is killed here rather than left
     /// behind: `subprocess` deliberately keeps the child alive so that reading can
     /// resume, which is not what rastro wants from a tool that has already hung.
-    fn capture(&self, job: &mut Job) -> Result<(Vec<u8>, Vec<u8>), CollectionError> {
+    fn capture(
+        &self,
+        job: &mut Job,
+        started: Instant,
+    ) -> Result<(Vec<u8>, Vec<u8>), CollectionError> {
         let outcome = job
             .communicate()
             .map_err(|error| self.failure(format!("could not be communicated with: {error}")))?
-            .limit_time(self.limits.time())
+            .limit_time(self.remaining(started))
             .limit_size(self.limits.output().saturating_add(1))
             .read();
 
