@@ -28,6 +28,13 @@ All entries below date from the initial design, 2026-08-13.
 | [Presence is three-valued](#presence-is-three-valued-not-a-bool) | a collector that cannot tell says so, rather than reporting absence |
 | [Layering](#layered-domain-application-infrastructure-presentation) | hexagonal, dependencies inward. **Superseded** |
 | [Workspace](#superseded-a-cargo-workspace-replaces-the-hexagonal-layout) | three crates; cargo enforces what a test used to |
+| [Layered collectors](#a-collector-is-layered-source-model-value-objects) | one host interface's spelling stays out of the model |
+| [Keyed or listed](#keyed-where-the-name-is-unique-listed-where-it-is-not) | keyed loses nothing when names are unique, and removes ordering churn |
+| [No load address](#a-modules-load-address-is-not-recorded) | a kernel text pointer is noise and a KASLR leak |
+| [One execution seam](#shelling-out-goes-through-one-hardened-seam) | bounded, no shell, cleared environment, group-killed |
+| [One packages collector](#one-packages-collector-dispatching-over-the-managers-it-finds) | keyed by manager; dpkg and apk read from different sources |
+| [No MSRV floor](#no-msrv-floor-the-toolchain-is-pinned-by-mise) | only the latest Rust is maintained, and a floor constrained resolution |
+| [Unclassified error text](#a-facets-error-text-is-not-classified-yet) | revisits when redaction exists to classify against |
 
 ## Native collectors, no external tool as a dependency
 
@@ -408,3 +415,184 @@ Layer 3 collectors shell out (`nginx -T`, `pg_dumpall --globals-only`,
 spawn those processes unasked. All are read-only and cheap, so this is accepted
 for v1, to be revisited if a collector ever wants to do something genuinely
 expensive.
+
+---
+
+The entries below date from the Layer 2 work, 2026-08-19.
+
+## A collector is layered: source, model, value objects
+
+Every built-in collector splits three ways, and the dependency arrows only point
+one way.
+
+| layer | holds | knows |
+| --- | --- | --- |
+| `source/` | one host interface: where it lives, its column order, its escaping | the model |
+| `model/` | the types that render as a composed node | the value objects |
+| `value_objects/` | the types that render as a leaf, a scalar or a list of scalars | nothing of the collector |
+
+`source/` is an anti-corruption layer. `/proc/mounts` writes six positional
+columns and escapes whitespace into octal; `/proc/modules` puts `[permanent]`
+inside its dependants column and parenthesises taint letters; `dpkg-query` is
+asked for tab-separated fields. None of that is what rastro means by a mount, a
+module or a package, so none of it reaches the model. Adding
+`/proc/self/mountinfo` later is a second source, not a change to `Mount`.
+
+Two things make the split real rather than decorative. Each source names its own
+record type (`ProcMountsLine`, `ProcModulesLine`) and maps it across, which is
+also what caught a truncated-line bug that a slice pattern had been swallowing.
+And `crates/rastro/tests/purity.rs` enforces the arrows by scanning source text,
+including the layer aggregator files, so a model that reached back into a source
+or into the execution seam fails the suite.
+
+**Observations are produced by `From`**, not by an invented trait: it is the
+language's own vocabulary for the conversion, and the orphan rule permits
+`impl From<&Mount> for Observation` because the source type is local. A parser
+therefore returns domain types and the tests assert on those rather than digging
+through `Content::Object` maps. One test per collector pins the rendered key
+names, because those are the output contract.
+
+**Shared value objects live in `rastro-collector`**, beside `Presence`, which is
+already one. That is the crate an outside in-process collector depends on under
+the one-dependency promise, and a value it cannot reach is a value it will invent
+its own spelling for, leaving two facets in one document disagreeing about what a
+byte size looks like. `AbsolutePath` is built from `NonEmptyText` even though the
+leading `/` already implies non-emptiness, so that no value object in the tree is
+the exception that holds a bare primitive.
+
+**Cost:** a collector is a dozen small files instead of one. The alternative was a
+flat module per collector, which is what `mounts` originally was, and it put the
+kernel's escaping rules inside the value objects.
+
+## Keyed where the name is unique, listed where it is not
+
+`modules` and `packages` render as an object keyed by name. `mounts` renders as a
+list.
+
+The rule is whether keying can lose anything. The kernel enforces unique module
+names and a package manager enforces unique package names, so keying is lossless
+and buys two things: ordering becomes structural through a `BTreeMap`, and
+loading one module or installing one package shows up as a single added key. A
+mount point is not unique, because stacked and bind mounts are real, so keying
+would silently drop one of them and the kernel's own order is kept instead.
+
+Where keying is used, a repeated name is an error rather than an overwrite. No
+kernel and no package manager can produce one, so it means rastro misread the
+output, and keeping the last of two would drop an entry from a document claiming
+to be complete.
+
+## A module's load address is not recorded
+
+`/proc/modules` publishes each module's kernel text address. rastro drops it at
+the source boundary: it never enters `KernelModule`, so no view can resurrect it.
+
+Two reasons, and either would be enough. It changes on every boot, so it is pure
+noise in a document whose worth is that two unchanged runs are byte-identical.
+And it is a kernel pointer, so publishing it hands a KASLR offset to whoever
+reads a fingerprint that has been copied off the box and committed to a
+repository.
+
+Marking it `volatile` was the obvious alternative and is wrong: the complete view
+exists precisely to keep volatile values, so `--include-volatile` would print it.
+
+## Shelling out goes through one hardened seam
+
+Where parsing a canonical tool's output is more honest than reimplementing what
+it does, a collector's source shells out through `collectors::canonical_tool` and
+nothing else. rastro runs as root on production servers, so the seam guarantees,
+each with a test:
+
+- an absolute path resolved before exec, preferring well-known system paths over
+  a `PATH` search, because a directory on root's `PATH` that is not root-owned
+  would let a plant be executed with full privilege;
+- no shell, an explicit argument vector, and no argument sourced from config or
+  the command line;
+- a cleared environment plus `LC_ALL=C`, which is hardening and determinism both,
+  since a localised box would otherwise render different bytes for one state;
+- immediate end of input, so a tool that prompts cannot wait for an absent
+  operator;
+- a time bound and an output bound, breaching either of which kills the tool's
+  whole **process group**, so a helper it backgrounded does not outlive the
+  failure;
+- exit status checked, and stdout decoded as strict UTF-8 rather than lossily,
+  because substituting `U+FFFD` would put text into a fingerprint that was never
+  on the box.
+
+The output bound needed care that is worth recording. `subprocess` enforces its
+size limit by *stopping* the read and buffering the remainder, not by failing, so
+taking it at face value would have returned a quietly truncated answer, which is
+the exact configsnap defect that prompted this project. The limit is therefore set
+one byte above the bound and anything past it is a recorded failure.
+
+The seam cannot live in `rastro-collector`: that crate's `tests/purity.rs` forbids
+`std::process`, which is correct, because an exec-contract author gets the port,
+not the host.
+
+**Crate-first, with one exception.** `which` resolves the path, `subprocess` bounds
+the run, `nix` kills the group, because `subprocess` can put a child in its own
+group but exposes no way to signal that group and `#![deny(unsafe_code)]` rules
+out `libc`. The exception is `/proc/modules`: `procfs-core` parses it, but its
+`KernelModule` carries no taint field, so an out-of-tree unsigned module would
+stop being visible. A twenty-five line parser that keeps the state the tool exists
+to record beats a dependency that drops it.
+
+## One packages collector, dispatching over the managers it finds
+
+`packages` is one collector that reads every manager present, and its facet data
+is keyed by manager.
+
+One collector rather than one per manager, because two collectors claiming the
+facet name `packages` would fail the run: an absent facet is still a facet with
+that name. Keyed by manager rather than merged, because a box carrying two then
+needs no arbitrary precedence, and the shapes may differ honestly, since only dpkg
+reports a desired state and packages that are not installed.
+
+**dpkg is read through its tool, apk from its database**, and the inconsistency is
+deliberate. `dpkg-query -f` makes the output format rastro's own, where
+`/var/lib/dpkg/status` is a multi-line format dpkg's documentation says not to
+parse. apk 3 offers no machine-readable output at all and every text form it
+prints fuses name and version into one token, so using it would mean
+reimplementing apk's name-version splitting grammar; `/lib/apk/db/installed` is
+one field per line and unambiguous. The principle is not "always shell out", it is
+"prefer the source that is unambiguous".
+
+dpkg's status is asked for as three words (`${db:Status-Want}`,
+`${db:Status-Status}`, `${db:Status-Eflag}`) rather than as the packed
+`${db:Status-Abbrev}`, so dpkg decodes its own vocabulary, rastro maintains no
+alphabet of status letters, and a diff reads `installed` rather than `ii`. A
+package from apk carries no status rather than a fabricated one.
+
+## No MSRV floor, the toolchain is pinned by mise
+
+There is no `rust-version` in any manifest and no MSRV job in CI. `mise.toml` pins
+the version the project builds with, and CI reads the same file.
+
+A declared floor could never have been a support promise, because Rust ships every
+six weeks and maintains only the latest release. Worse, it was not inert: this
+workspace sets `resolver = "3"`, and cargo reports `Locking N packages to latest
+Rust <floor> compatible versions`, so a floor holds dependencies back to suit a
+compiler nobody runs. Nothing was being held back when it was removed, but the
+first dependency to raise its own floor would have been silently pinned.
+
+**Cost:** a contributor on a distribution's own rustc may need mise or rustup. That
+is already true of anyone building a static musl binary.
+
+Reintroduce a floor per crate, deliberately, if `rastro-collector` is ever
+published, since a third-party collector author is the only audience a floor has.
+
+## A facet's error text is not classified, yet
+
+A failing collector's message, including a bounded tail of a tool's stderr,
+reaches the document's `error` field without passing the `sensitive` and
+`volatile` classification that every observed value goes through. `CollectionError`
+is a bare string and the serialiser writes it verbatim.
+
+This is recorded as a known exception rather than designed around, because the
+mechanism it would participate in does not exist: the `sensitive` annotation is
+carried and nothing acts on it, and `--raw` is not built. Widening the port's
+error type now would be guessing at a shape that cannot be tested, inside a
+contract a third-party collector compiles against. The content at stake today is
+paths and hostnames, which rastro already publishes deliberately.
+
+**Revisit when redaction lands.** Deciding whether diagnostic text is an observed
+value is a prerequisite of that work, not an afterthought to it.
