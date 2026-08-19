@@ -4,8 +4,8 @@
 //! `/lib/apk/db/installed` from `alpine:latest` (apk-tools 3.0.6).
 
 use rastro::collectors::packages::{
-    ApkDatabase, DpkgQuery, Package, PackageManager, PackageName, PackageSet, PackageSource,
-    PackagesCollector,
+    ApkDatabase, DpkgQuery, Package, PackageInventory, PackageManager, PackageName, PackageSet,
+    PackageSource, PackagesCollector,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
@@ -333,6 +333,42 @@ fn apk_refuses_a_field_that_is_present_but_empty() {
     // Act: `V:` is there, with nothing after it, which is not the same as `V:` being
     // absent.
     let result = ApkDatabase::parse("P:busybox\nV:\nA:aarch64\n");
+
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn an_inventory_names_every_manager_even_from_a_partial_report() {
+    // Arrange: only one manager was found, which is the ordinary case on any real host.
+    let found = vec![(PackageManager::Apk, apk(APK_DATABASE))];
+
+    // Act
+    let inventory = PackageInventory::of(found).expect("one manager reported once");
+
+    // Assert: completeness is the type's own documented rule, so it is the type that produces
+    // it. A caller passing a subset cannot build an inventory that contradicts the doc.
+    let Content::Object(managers) = Observation::from(&inventory).content().clone() else {
+        panic!("the inventory renders as an object keyed by manager");
+    };
+    assert_eq!(
+        managers.keys().map(String::as_str).collect::<Vec<&str>>(),
+        ["apk", "dpkg"]
+    );
+    assert_eq!(
+        managers[PackageManager::Dpkg.as_str()].content(),
+        &Content::Scalar(Scalar::Null)
+    );
+}
+
+#[test]
+fn an_inventory_refuses_a_manager_reported_twice() {
+    // Act: nothing can produce this today, and that is the point. If it ever does, one
+    // manager's packages would vanish from a document claiming to be complete.
+    let result = PackageInventory::of(vec![
+        (PackageManager::Apk, apk(APK_DATABASE)),
+        (PackageManager::Apk, apk(APK_DATABASE)),
+    ]);
 
     // Assert
     assert!(result.is_err());

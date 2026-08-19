@@ -21,19 +21,24 @@ use crate::collectors::packages::value_objects::PackageManager;
 pub struct PackageInventory(BTreeMap<PackageManager, Option<PackageSet>>);
 
 impl PackageInventory {
-    /// Files each manager's report under its name.
+    /// Files what was found under each manager's name, and fills in the rest.
     ///
-    /// A repeated manager is refused rather than overwritten, which is the rule the other two
-    /// keyed collections already follow. Nothing can produce one today, and that is the point:
-    /// if it ever does, one manager's packages would vanish from a document claiming to be
-    /// complete.
-    pub fn new(
-        sets: impl IntoIterator<Item = (PackageManager, Option<PackageSet>)>,
+    /// The caller passes only the managers it found. Completeness is this type's job, because
+    /// this type is where it is documented: a constructor taking any subset would let a second
+    /// caller build an inventory that contradicts the paragraph above it, and nothing would
+    /// object.
+    ///
+    /// A repeated manager is refused rather than overwritten, the rule the other two keyed
+    /// collections already follow. Nothing can produce one today, and that is the point: if it
+    /// ever does, one manager's packages would vanish from a document claiming to be complete.
+    pub fn of(
+        found: impl IntoIterator<Item = (PackageManager, PackageSet)>,
     ) -> Result<Self, CollectionError> {
-        let mut inventory = BTreeMap::new();
+        let mut inventory: BTreeMap<PackageManager, Option<PackageSet>> =
+            PackageManager::ALL.into_iter().map(|m| (m, None)).collect();
 
-        for (manager, set) in sets {
-            if inventory.insert(manager, set).is_some() {
+        for (manager, set) in found {
+            if inventory.insert(manager, Some(set)).flatten().is_some() {
                 return Err(CollectionError::new(format!(
                     "the {} package manager was reported twice",
                     manager.as_str()

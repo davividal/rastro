@@ -531,9 +531,10 @@ The seam cannot live in `rastro-collector`: that crate's `tests/purity.rs` forbi
 `std::process`, which is correct, because an exec-contract author gets the port,
 not the host.
 
-**Crate-first, with one exception.** `which` resolves the path, `subprocess` bounds
-the run and kills the group through its own `JobExt::send_signal_group`, and `libc`
-supplies the `SIGKILL` constant and nothing else. The exception is `/proc/modules`:
+**Crate-first, with one exception.** `subprocess` bounds the run and kills the group
+through its own `JobExt::send_signal_group`, and `libc` supplies the `SIGKILL` constant
+and nothing else. A `which` dependency resolved the path until the `PATH` search itself
+was dropped, at which point it had nothing left to do. The exception is `/proc/modules`:
 `procfs-core` parses it, but its `KernelModule` carries no taint field, so an
 out-of-tree unsigned module would stop being visible. A twenty-five line parser that
 keeps the state the tool exists to record beats a dependency that drops it.
@@ -572,6 +573,15 @@ host, not an error condition.
 sometimes text and sometimes an object is awkward for every consumer, and `null` is
 already a leaf type the format admits. Installing a manager therefore shows up as `null`
 becoming an object, which is the direction that matters in a diff.
+
+**One failing manager costs the other's inventory**, and that follows from this shape rather
+than being independent of it. `collect` propagates the first failure, so on a box carrying both,
+a `dpkg-query` that times out makes the whole facet `error` and apk's packages go unreported.
+The alternative is a per-manager error object in the data, which collides with the argument two
+paragraphs down: a key whose value is sometimes an object of packages and sometimes an object
+describing a failure is the shape every consumer has to special-case. Loud and whole beats
+partial and ambiguous, and the port's `collect` is all-or-nothing by design. Recorded because it
+is a consequence somebody will meet, not because it is in doubt.
 
 There is no standard file naming a host's package manager, so nothing is inferred. The
 closest marker is `ID` and `ID_LIKE` in `/etc/os-release`, which belongs in the `host`

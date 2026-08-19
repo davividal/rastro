@@ -74,6 +74,18 @@ Violating one is a plan change, not a detail.
 - **stdout carries only the fingerprint.**
 - v1 boundaries: single box, generate-only, no network I/O, JSON only.
 
+## Comment scope
+
+The core conventions cap an inline `//` comment at one line. Applied here that means **one
+non-obvious thought, stated fully**, which is occasionally two lines and is not licence for a
+paragraph. Doc comments (`///`, `//!`) are the opposite: they are expected to carry the *why*,
+including the mechanism in another crate or in the kernel that a reader cannot infer.
+
+Test `// Arrange:` comments are doc comments in spirit. They state the host or crate behaviour a
+fixture stands for, and trimming them to fit a line for production code would delete the reason
+the fixture looks the way it does. Two reviewers have raised the literal one-line rule against
+this file's own practice, so it is written down rather than re-litigated.
+
 ## Guiding principles
 
 PEP 20 and Clean Code, neither to the letter, with Rust's idiom as the lens.

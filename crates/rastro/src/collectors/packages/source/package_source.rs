@@ -14,10 +14,10 @@ use crate::collectors::packages::value_objects::PackageManager;
 /// third arrives. Adding a variant breaks [`Self::manager`] and [`Self::read`] until both
 /// are answered.
 ///
-/// This is also why the collector holds a list of these rather than one `Option` field per
-/// manager. With a field each, adding a manager and forgetting to extend `presence` would
-/// make a box that has it report `absent`, which is exactly the confident lie the
-/// three-valued `Presence` exists to prevent, and nothing would fail to compile.
+/// The collector holds a list of these rather than one `Option` field per manager, so that
+/// adding a manager touches no hand-written pairing. The original reason was stronger and no
+/// longer applies: `presence` used to consult the sources, so forgetting to extend it would
+/// have made a box that had a manager report `absent`. It is now unconditionally `Present`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageSource {
     Apk(ApkDatabase),
@@ -25,17 +25,9 @@ pub enum PackageSource {
 }
 
 impl PackageSource {
-    /// Every manager rastro knows how to read.
-    ///
-    /// One list, used both to detect and to say what was looked for when nothing is found,
-    /// so the two cannot disagree.
-    pub fn known_managers() -> [PackageManager; 2] {
-        [PackageManager::Apk, PackageManager::Dpkg]
-    }
-
     /// The managers this host actually has.
     pub fn detect_all() -> Vec<Self> {
-        Self::known_managers()
+        PackageManager::ALL
             .into_iter()
             .filter_map(Self::detect)
             .collect()

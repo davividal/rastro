@@ -17,8 +17,8 @@ clap = { workspace = true }
 # For `SIGKILL` alone, as a constant. Already in the tree under `subprocess`.
 libc = { workspace = true }
 serde = { workspace = true }
-# Shelling out to a canonical tool, hardened: `which` resolves an absolute path
-# before exec, `subprocess` caps both the time and the output of a run.
+# Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
+# output of a run and can signal the child's whole process group.
 subprocess = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }

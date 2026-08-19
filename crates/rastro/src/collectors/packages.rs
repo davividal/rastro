@@ -86,21 +86,12 @@ impl Collector for PackagesCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let mut reported = Vec::new();
+        let found = self
+            .sources
+            .iter()
+            .map(|source| Ok((source.manager(), source.read()?)))
+            .collect::<Result<Vec<_>, CollectionError>>()?;
 
-        for manager in PackageSource::known_managers() {
-            let found = self
-                .sources
-                .iter()
-                .find(|source| source.manager() == manager);
-            let set = match found {
-                Some(source) => Some(source.read()?),
-                None => None,
-            };
-
-            reported.push((manager, set));
-        }
-
-        Ok(Observation::from(&PackageInventory::new(reported)?))
+        Ok(Observation::from(&PackageInventory::of(found)?))
     }
 }
