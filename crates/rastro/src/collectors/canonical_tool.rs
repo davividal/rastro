@@ -51,7 +51,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use rastro_collector::CollectionError;
-use subprocess::{Exec, ExecExt, Job, JobExt, Redirection};
+use subprocess::{Exec, ExecExt, ExitStatus, Job, JobExt, Redirection};
 
 /// How much of a failing tool's stderr is quoted back.
 const STDERR_QUOTED: usize = 512;
@@ -125,17 +125,17 @@ impl CanonicalTool {
             .start()
             .map_err(|error| self.failure(format!("could not be started: {error}")))?;
 
-        // Waited for unconditionally, so a killed child is reaped rather than left a zombie.
+        // Both run before either is propagated, so the child is always reaped, and the read's
+        // own diagnosis wins over the wait's when both fail.
         let captured = self.capture(&mut job);
-        let status = job
-            .wait()
-            .map_err(|error| self.failure(format!("could not be waited for: {error}")))?;
+        let reaped = self.reap(&job);
         let (stdout, stderr) = captured?;
+        let status = reaped?;
 
         if !status.success() {
             return Err(self.failure(format!(
                 "exited unsuccessfully ({status:?}): {}",
-                String::from_utf8_lossy(&stderr[..stderr.len().min(STDERR_QUOTED)]).trim()
+                quoted_tail(&stderr)
             )));
         }
 
@@ -157,22 +157,46 @@ impl CanonicalTool {
             .setpgid()
     }
 
+    /// Waits for the tool, bounded, and kills its group if it outlasts the bound.
+    ///
+    /// The bounded read is not enough on its own. `Communicator::read` returns as soon as
+    /// both pipes reach EOF, so a tool that writes its answer, closes its streams and keeps
+    /// running satisfies the read and then blocks an unbounded `Job::wait` forever. The
+    /// whole claim that a wedged tool cannot hang a run rests on this being `wait_timeout`.
+    fn reap(&self, job: &Job) -> Result<ExitStatus, CollectionError> {
+        let waited = job
+            .wait_timeout(self.limits.time())
+            .map_err(|error| self.failure(format!("could not be waited for: {error}")))?;
+
+        if let Some(status) = waited {
+            return Ok(status);
+        }
+
+        self.kill_the_group(job);
+
+        // Reaped so nothing is left a zombie, then reported as the bound it broke rather than
+        // as the signal: rastro sent that signal, so "exited unsuccessfully" would blame the
+        // tool for rastro's own action.
+        let _ = job.wait();
+
+        Err(self.failure(format!("did not finish within {:?}", self.limits.time())))
+    }
+
     /// Kills the tool and whatever it started.
     ///
     /// `Job::kill` signals only the pids it tracks, so a tool that backgrounds a helper
     /// would otherwise keep running unbounded after rastro had reported the failure and
-    /// moved on. `JobExt::send_signal_group` is the crate's own answer to that, and it is
-    /// documented for exactly the pairing used here: a single process started with
-    /// `ExecExt::setpgid` has its whole group signalled.
+    /// moved on. `JobExt::send_signal_group` is the crate's own answer, documented for
+    /// exactly the pairing used here: a process started with `ExecExt::setpgid` has its whole
+    /// group signalled.
     ///
-    /// `poll` first, on purpose. It reaps the child if it has already exited, which is what
-    /// lets the crate's internal guard skip signalling a pid that could since have been
-    /// recycled as an unrelated process's group id.
+    /// Signalled unconditionally, including when the direct child has already exited. That is
+    /// the case the group kill exists for: a tool that backgrounds a helper and exits at once
+    /// leaves the helper holding the pipes open, and an early return on "the child is gone"
+    /// would spare exactly the descendant this is meant to reach. The pid cannot have been
+    /// recycled while the group still has members, because each member holds the leader's
+    /// `struct pid` as its group id, and a group with no members left simply yields `ESRCH`.
     fn kill_the_group(&self, job: &Job) {
-        if job.poll().is_some() {
-            return;
-        }
-
         let _ = job.send_signal_group(libc::SIGKILL);
     }
 
@@ -193,10 +217,9 @@ impl CanonicalTool {
             self.kill_the_group(job);
 
             match error.kind() {
-                ErrorKind::TimedOut => self.failure(format!(
-                    "did not finish within {} seconds",
-                    self.limits.time().as_secs()
-                )),
+                ErrorKind::TimedOut => {
+                    self.failure(format!("did not finish within {:?}", self.limits.time()))
+                }
                 _ => self.failure(format!("could not be read: {error}")),
             }
         })?;
@@ -223,4 +246,21 @@ impl CanonicalTool {
             self.path.display()
         ))
     }
+}
+
+/// A failing tool's stderr, bounded and decoded without inventing characters.
+///
+/// Cut on a character boundary rather than a byte offset. Slicing mid-sequence and letting
+/// `from_utf8_lossy` substitute `U+FFFD` is the very operation refused for stdout, and this
+/// text reaches the document just the same.
+fn quoted_tail(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let boundary = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= STDERR_QUOTED)
+        .last()
+        .unwrap_or(0);
+
+    text[..boundary].trim().to_owned()
 }

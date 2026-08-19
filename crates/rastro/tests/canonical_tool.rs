@@ -212,3 +212,58 @@ fn located_reports_a_tool_that_is_neither_well_known_nor_on_the_path() {
         .is_none()
     );
 }
+
+#[test]
+fn run_returns_when_a_tool_closes_its_streams_and_keeps_going() {
+    // Arrange: the bounded read is satisfied the moment both pipes reach EOF, so a tool that
+    // answers, closes its streams and carries on would leave an unbounded wait blocking
+    // forever. If this test hangs, the seam's central claim is false.
+    let tool = shell_within(Duration::from_millis(300), 4096);
+
+    // Act
+    let failure = tool
+        .run(&["-c", "printf hello; exec 1>&- 2>&-; sleep 60"])
+        .expect_err("a tool that outlasts its bound is a failure");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("did not finish"),
+        "got {failure}"
+    );
+}
+
+#[test]
+fn run_kills_a_descendant_of_a_tool_that_already_exited() {
+    // Arrange: the case the group kill exists for. The tool backgrounds a helper and exits at
+    // once, so the direct child is gone by kill time while the helper holds the pipes open.
+    let marker = std::env::temp_dir().join("rastro-orphan-marker");
+    let _ = std::fs::remove_file(&marker);
+    let script = format!("(sleep 2; echo alive > {}) & exit 0", marker.display());
+    let tool = shell_within(Duration::from_millis(400), 4096);
+
+    // Act
+    let _ = tool.run(&["-c", &script]);
+
+    // Assert
+    std::thread::sleep(Duration::from_secs(4));
+    let survived = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(!survived, "a descendant of an exited tool kept running");
+}
+
+#[test]
+fn a_timeout_reports_the_bound_it_actually_had() {
+    // Arrange: whole seconds truncate a sub-second bound to "0 seconds", and this string
+    // reaches the document's error field, so it is a wrong number in a stored artefact.
+    let tool = shell_within(Duration::from_millis(250), 4096);
+
+    // Act
+    let failure = tool
+        .run(&["-c", "sleep 30"])
+        .expect_err("a hung tool is a failure");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(message.contains("250ms"), "got {message:?}");
+    assert!(!message.contains("0 seconds"), "got {message:?}");
+}
