@@ -83,8 +83,7 @@ including the mechanism in another crate or in the kernel that a reader cannot i
 
 Test `// Arrange:` comments are doc comments in spirit. They state the host or crate behaviour a
 fixture stands for, and trimming them to fit a line for production code would delete the reason
-the fixture looks the way it does. Two reviewers have raised the literal one-line rule against
-this file's own practice, so it is written down rather than re-litigated.
+the fixture looks the way it does.
 
 ## Guiding principles
 

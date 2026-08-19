@@ -3,7 +3,7 @@
 Decisions that are settled. Each entry states the choice, the reasoning, and
 what it costs. Reversing one is a new entry, not an edit to an old one.
 
-All entries below date from the initial design, 2026-08-13.
+Entries are grouped by the work that produced them, and each group is dated where it begins.
 
 | decision | choice |
 | --- | --- |
