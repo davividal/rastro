@@ -105,9 +105,22 @@ fn a_bare_run_reports_the_installed_packages_as_state() {
     // Act
     let packages = facet(&document(&[]), "facets", "packages").clone();
 
-    // Assert: `absent` is a legitimate answer on a host with neither dpkg nor apk, which
-    // is how this holds off Linux. What must never happen is a failure.
-    assert_ne!(packages["status"], "error", "got {packages:?}");
+    // Assert: on a host with a manager rastro reads, `ok` and keyed by that manager. On one
+    // without, `error` carrying the reason, because rastro cannot tell whether such a host
+    // manages packages at all. Both are honest; silently claiming it has none is not.
+    match packages["status"].as_str() {
+        Some("ok") => assert!(
+            packages["data"]["dpkg"].is_object() || packages["data"]["apk"].is_object(),
+            "got {packages:?}"
+        ),
+        Some("error") => assert!(
+            packages["error"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("dpkg") && reason.contains("apk")),
+            "got {packages:?}"
+        ),
+        other => panic!("unexpected packages status {other:?}"),
+    }
 }
 
 #[test]

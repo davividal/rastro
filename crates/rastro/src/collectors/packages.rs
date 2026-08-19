@@ -69,18 +69,34 @@ impl Collector for PackagesCollector {
         CollectorCategory::State
     }
 
-    /// Absent when the host has no package manager rastro can read.
+    /// Undetermined, not absent, when rastro finds no manager it can read.
     ///
-    /// A genuine answer rather than a failure, and the first one rastro produces: a box
-    /// with neither dpkg nor apk is a box whose packages are not managed by either, which
-    /// is state. Which manager was found is then reported in the data, so the difference
-    /// between "no manager" and "a manager with nothing installed" survives a diff.
+    /// This was `Absent`, and that was a confident lie. rastro reads dpkg and apk; on a RHEL,
+    /// SUSE, Arch or NixOS box it finds neither and would have reported "this host has no
+    /// packages" about a host with fifteen hundred of them. What rastro actually knows is
+    /// narrower: dpkg and apk are not here. Whether the host manages packages by some other
+    /// means is exactly what it cannot tell, which is what the third answer is for.
+    ///
+    /// A true `Absent` would need a probe for every manager rastro does *not* read, and a
+    /// list like that goes stale silently. Saying "I could not tell, and here is what I
+    /// looked for" needs no such list and is never wrong.
     fn presence(&self) -> Presence {
-        if self.sources.is_empty() {
-            return Presence::Absent;
+        if !self.sources.is_empty() {
+            return Presence::Present;
         }
 
-        Presence::Present
+        let looked_for: Vec<&str> = PackageSource::known_managers()
+            .iter()
+            .map(PackageManager::as_str)
+            .collect();
+
+        Presence::Undetermined {
+            reason: format!(
+                "none of the package managers rastro can read is present ({}), so whether \
+                 this host manages packages cannot be told",
+                looked_for.join(", ")
+            ),
+        }
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {

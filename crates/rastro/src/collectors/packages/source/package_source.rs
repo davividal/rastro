@@ -25,19 +25,29 @@ pub enum PackageSource {
 }
 
 impl PackageSource {
-    /// Every manager rastro knows how to read, keeping the ones this host has.
+    /// Every manager rastro knows how to read.
     ///
-    /// Forgetting to add a manager here is a gap in coverage rather than a false report:
-    /// the facet still describes exactly what was found, and rastro never claims to know
-    /// every manager in existence.
+    /// One list, used both to detect and to say what was looked for when nothing is found,
+    /// so the two cannot disagree.
+    pub fn known_managers() -> [PackageManager; 2] {
+        [PackageManager::Apk, PackageManager::Dpkg]
+    }
+
+    /// The managers this host actually has.
     pub fn detect_all() -> Vec<Self> {
-        [
-            ApkDatabase::detect().map(Self::Apk),
-            DpkgQuery::detect().map(Self::Dpkg),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
+        Self::known_managers()
+            .into_iter()
+            .filter_map(Self::detect)
+            .collect()
+    }
+
+    /// The match is the mechanism: adding a `PackageManager` variant fails to compile until
+    /// the new manager is given something to detect.
+    fn detect(manager: PackageManager) -> Option<Self> {
+        match manager {
+            PackageManager::Apk => ApkDatabase::detect().map(Self::Apk),
+            PackageManager::Dpkg => DpkgQuery::detect().map(Self::Dpkg),
+        }
     }
 
     pub fn manager(&self) -> PackageManager {

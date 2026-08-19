@@ -321,6 +321,26 @@ fn missing(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("rastro-modules-absent-{name}"))
 }
 
+/// A directory that looks like a mounted procfs, because it has the one entry only procfs
+/// provides.
+///
+/// A plain directory will not do, and using one is what hid a bug: `/proc` exists as a
+/// directory on a Debian box whether or not procfs is mounted, so a test that passes any
+/// directory is asserting that a directory exists, not that kernel state is readable.
+fn mounted_procfs(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("rastro-procfs-{name}"));
+    std::fs::create_dir_all(root.join("self")).expect("the temp directory should be writable");
+    root
+}
+
+/// A directory with nothing procfs-specific in it, which is what a chroot without procfs
+/// looks like.
+fn unmounted_procfs(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("rastro-no-procfs-{name}"));
+    std::fs::create_dir_all(&root).expect("the temp directory should be writable");
+    root
+}
+
 #[test]
 fn read_translates_a_table_on_disk_into_the_model() {
     // Arrange: every other test goes through `parse`, which leaves the file reading and
@@ -355,7 +375,7 @@ fn read_names_the_file_it_could_not_open() {
 fn presence_is_present_when_the_interface_is_there() {
     // Arrange
     let path = fixture("present", "nft_ct 24576 2 - Live 0x0000000000000000\n");
-    let collector = ModulesCollector::reading(ProcModules::at(&path, std::env::temp_dir()));
+    let collector = ModulesCollector::reading(ProcModules::at(&path, mounted_procfs("present")));
 
     // Act & Assert
     assert_eq!(collector.presence(), Presence::Present);
@@ -363,10 +383,10 @@ fn presence_is_present_when_the_interface_is_there() {
 
 #[test]
 fn presence_is_absent_when_the_kernel_has_no_module_support() {
-    // Arrange: no `/proc/modules`, but `/proc` is mounted. That is a `CONFIG_MODULES=n`
-    // kernel, which genuinely has no modules.
+    // Arrange: no `/proc/modules`, but procfs really is mounted. That is a
+    // `CONFIG_MODULES=n` kernel, which genuinely has no modules.
     let collector =
-        ModulesCollector::reading(ProcModules::at(missing("absent"), std::env::temp_dir()));
+        ModulesCollector::reading(ProcModules::at(missing("absent"), mounted_procfs("absent")));
 
     // Act & Assert
     assert_eq!(collector.presence(), Presence::Absent);
@@ -374,12 +394,12 @@ fn presence_is_absent_when_the_kernel_has_no_module_support() {
 
 #[test]
 fn presence_is_undetermined_when_procfs_is_not_mounted() {
-    // Arrange: neither the file nor the filesystem. rastro cannot see kernel state at
-    // all here, so reporting "no modules" would be a confident lie, which is the one
-    // failure this project refuses.
+    // Arrange: no modules file, and a `/proc` that exists as a directory with nothing
+    // mounted on it, which is what a chroot looks like. Reporting "no modules" here would be
+    // a confident lie, and it is the case a plain-directory check gets wrong.
     let collector = ModulesCollector::reading(ProcModules::at(
         missing("undetermined"),
-        missing("undetermined-procfs"),
+        unmounted_procfs("undetermined"),
     ));
 
     // Act

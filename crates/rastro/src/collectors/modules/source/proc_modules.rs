@@ -18,6 +18,15 @@ const PROC_MODULES: &str = "/proc/modules";
 /// from a host whose `/proc` was never mounted.
 const PROC: &str = "/proc";
 
+/// The entry that proves a procfs is actually mounted rather than merely present.
+///
+/// `/proc` is a directory in Debian's base layout whether or not anything is mounted on it,
+/// so testing the directory answers "does this path exist", not "can rastro see kernel
+/// state". In a chroot or a container without procfs that difference is the whole question,
+/// and getting it wrong makes the collector assert the kernel has no modules. `self` is
+/// provided by procfs and by nothing else.
+const PROC_SELF: &str = "self";
+
 /// The kernel's module list as a source rastro can read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcModules {
@@ -55,12 +64,12 @@ impl ProcModules {
 
     /// Whether the interface's filesystem is mounted at all.
     ///
-    /// The distinction this draws is the whole reason it exists: no `/proc/modules` on
-    /// a mounted `/proc` means a kernel built without module support, which genuinely
-    /// has no modules, while no `/proc` at all means rastro cannot see kernel state and
-    /// must say so instead of reporting an empty truth.
+    /// The distinction this draws is the whole reason it exists: no `/proc/modules` on a
+    /// mounted `/proc` means a kernel built without module support, which genuinely has no
+    /// modules, while no procfs at all means rastro cannot see kernel state and must say so
+    /// instead of reporting an empty truth.
     pub fn filesystem_is_mounted(&self) -> bool {
-        self.procfs.is_dir()
+        self.procfs.join(PROC_SELF).exists()
     }
 
     /// Reads the interface and translates it into the model.

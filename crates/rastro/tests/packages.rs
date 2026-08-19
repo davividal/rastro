@@ -213,13 +213,21 @@ fn apk_names_the_database_it_could_not_open() {
 }
 
 #[test]
-fn presence_is_absent_when_the_host_has_no_manager_rastro_can_read() {
+fn presence_is_undetermined_when_no_manager_rastro_reads_is_present() {
     // Arrange
     let collector = PackagesCollector::reading(Vec::new());
 
-    // Act & Assert: the first genuine `absent` rastro produces. A box with neither manager
-    // is a box whose packages are not managed by either, which is state, not a failure.
-    assert_eq!(collector.presence(), Presence::Absent);
+    // Act
+    let presence = collector.presence();
+
+    // Assert: not `Absent`. rastro reads dpkg and apk, so on a RHEL or Arch box it finds
+    // neither and `absent` would assert that a host with fifteen hundred packages has none.
+    // What it knows is only that these two are missing.
+    let Presence::Undetermined { reason } = presence else {
+        panic!("expected undetermined, got {presence:?}");
+    };
+    assert!(reason.contains("apk"), "got {reason:?}");
+    assert!(reason.contains("dpkg"), "got {reason:?}");
 }
 
 #[test]
