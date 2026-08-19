@@ -113,9 +113,9 @@ const HIGHEST_ESCAPED: u32 = 0o200;
 /// | `seq_show_option`, for an option value | `", \t\n\\"` |
 /// | `show_sid` in SELinux, for a context | `"\"\n\\"` |
 ///
-/// A table of those sets was wrong twice on this branch alone, first missing `\043` and then
-/// `\054`, `\075` and `\042`. So the rule is the encoding itself: a backslash and three octal
-/// digits below [`HIGHEST_ESCAPED`]. A new escaping call site then costs nothing.
+/// So the rule is the encoding itself: a backslash and three octal digits below
+/// [`HIGHEST_ESCAPED`]. Enumerating the sets means being wrong each time one is added; decoding
+/// the encoding costs nothing when a new call site appears.
 ///
 /// **What makes one rule safe for every column:** every one of those paths escapes the backslash
 /// itself, as `\134`. A bare `\NNN` therefore cannot occur in any column except as a genuine
@@ -168,14 +168,17 @@ fn octal_escape(candidate: &str) -> Option<char> {
 /// Splits the option column on the commas that separate options, not on the ones inside a
 /// quoted value.
 ///
-/// SELinux writes `context="system_u:object_r:container_file_t:s0:c132,c369"`, and splitting
-/// that naively invents two options that were never mounted.
+/// SELinux writes `context="system_u:object_r:container_file_t:s0:c132,c369"`, and splitting that
+/// naively invents two options that were never mounted.
 ///
-/// A quote only opens a quoted region when it directly follows `=`, which is how `show_sid`
-/// writes the one form this exists for. Toggling on *any* quote was a real defect: a quote is a
-/// legal path character that `seq_show_option` does not escape, so an overlay whose lower
-/// directory contained one desynchronised the rest of the line and silently fused every option
-/// after it into a single bogus value.
+/// Quoting is treated as a **balanced** construct, not a latch, and that distinction is the whole
+/// of this function's history. Neither `=` nor `"` is in the escape set for an option value, so
+/// both arrive raw from any path a filesystem puts there. Opening on any quote let one directory
+/// named `a"b` swallow every option after it; opening on a quote after `=` let one named `a="b` do
+/// the same. A region therefore only opens when it also closes the way the only writer of a quoted
+/// value closes one: `show_sid` ends its context with a quote followed by a comma or the end of the
+/// column. An unmatched `="` degrades to a naive split of that one option, which is wrong about
+/// one value rather than silently wrong about every option that follows it.
 fn split_options(options: &str) -> Vec<&str> {
     let mut split = Vec::new();
     let mut option_start = 0;
@@ -185,7 +188,9 @@ fn split_options(options: &str) -> Vec<&str> {
     for (index, character) in options.char_indices() {
         match character {
             '"' if inside_quotes => inside_quotes = false,
-            '"' if previous == '=' => inside_quotes = true,
+            '"' if previous == '=' && closes_a_quoted_value(&options[index + 1..]) => {
+                inside_quotes = true;
+            }
             ',' if !inside_quotes => {
                 split.push(&options[option_start..index]);
                 option_start = index + 1;
@@ -198,4 +203,19 @@ fn split_options(options: &str) -> Vec<&str> {
     split.push(&options[option_start..]);
 
     split
+}
+
+/// Whether a quote closing a value appears in what is left of the column.
+///
+/// A closing quote is one followed by a comma or by nothing, which is how `show_sid` writes the end
+/// of a context. Requiring one before opening a region is what keeps an ordinary quote inside a
+/// path from consuming the rest of the line.
+fn closes_a_quoted_value(rest: &str) -> bool {
+    rest.char_indices().any(|(index, character)| {
+        character == '"'
+            && rest[index + 1..]
+                .chars()
+                .next()
+                .is_none_or(|following| following == ',')
+    })
 }

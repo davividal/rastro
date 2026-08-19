@@ -408,3 +408,42 @@ fn parse_leaves_an_octal_escape_the_kernel_does_not_use_alone() {
     // Assert
     assert_eq!(first(&table).mount_point.as_str(), "/mnt/a\\303b");
 }
+
+#[test]
+fn parse_keeps_every_option_when_a_value_contains_an_unclosed_quoted_opening() {
+    // Arrange: a directory named `a="b`. Neither `=` nor `"` is escaped in an option value, so
+    // both arrive raw. Opening a quoted region on any `="` fused every later option into one,
+    // which is the same silent loss as the bare-quote case with one character added.
+    let table = parsed(concat!(
+        "overlay /merged overlay ",
+        "rw,seclabel,relatime,lowerdir=/base/a=\"b/lower,upperdir=/base/up,",
+        "workdir=/base/work,uuid=on",
+        " 0 0\n"
+    ));
+
+    // Assert
+    assert_eq!(
+        options_of(first(&table)),
+        [
+            "lowerdir=/base/a=\"b/lower",
+            "relatime",
+            "rw",
+            "seclabel",
+            "upperdir=/base/up",
+            "uuid=on",
+            "workdir=/base/work"
+        ]
+    );
+}
+
+#[test]
+fn parse_keeps_every_option_when_a_value_starts_with_a_quote_and_never_closes_it() {
+    // Arrange: the other carrier of the same defect.
+    let table = parsed("overlay / overlay rw,lowerdir=\"/base/lower,upperdir=/base/up 0 0\n");
+
+    // Assert
+    assert_eq!(
+        options_of(first(&table)),
+        ["lowerdir=\"/base/lower", "rw", "upperdir=/base/up"]
+    );
+}
