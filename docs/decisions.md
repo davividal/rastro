@@ -35,6 +35,8 @@ All entries below date from the initial design, 2026-08-13.
 | [One packages collector](#one-packages-collector-dispatching-over-the-managers-it-finds) | keyed by manager; dpkg and apk read from different sources |
 | [No MSRV floor](#no-msrv-floor-the-toolchain-is-pinned-by-mise) | only the latest Rust is maintained, and a floor constrained resolution |
 | [Unclassified error text](#a-facets-error-text-is-not-classified-yet) | revisits when redaction exists to classify against |
+| [Fingerprints are sensitive](#a-fingerprint-is-sensitive-operational-data-until-redaction-exists) | a package inventory is a target-selection aid, so handle the document accordingly |
+| [Signalling by pid](#accepted-residual-risk-signalling-by-pid) | a pid-reuse window remains, accepted, needs `pidfd` to close |
 
 ## Native collectors, no external tool as a dependency
 
@@ -529,12 +531,18 @@ The seam cannot live in `rastro-collector`: that crate's `tests/purity.rs` forbi
 not the host.
 
 **Crate-first, with one exception.** `which` resolves the path, `subprocess` bounds
-the run, `nix` kills the group, because `subprocess` can put a child in its own
-group but exposes no way to signal that group and `#![deny(unsafe_code)]` rules
-out `libc`. The exception is `/proc/modules`: `procfs-core` parses it, but its
-`KernelModule` carries no taint field, so an out-of-tree unsigned module would
-stop being visible. A twenty-five line parser that keeps the state the tool exists
-to record beats a dependency that drops it.
+the run and kills the group through its own `JobExt::send_signal_group`, and `libc`
+supplies the `SIGKILL` constant and nothing else. The exception is `/proc/modules`:
+`procfs-core` parses it, but its `KernelModule` carries no taint field, so an
+out-of-tree unsigned module would stop being visible. A twenty-five line parser that
+keeps the state the tool exists to record beats a dependency that drops it.
+
+A `nix` dependency was briefly added here to kill the group, on the false premise
+that `subprocess` offered no way to signal one. It does, on `Job`, documented for
+exactly the `setpgid` pairing rastro uses. Recorded rather than quietly reverted,
+because the lesson generalises: a dependency justified by an absence in another
+crate needs that absence checked in the crate's source, not inferred from the parts
+of its API one happened to read.
 
 ## One packages collector, dispatching over the managers it finds
 
@@ -596,3 +604,34 @@ paths and hostnames, which rastro already publishes deliberately.
 
 **Revisit when redaction lands.** Deciding whether diagnostic text is an observed
 value is a prerequisite of that work, not an afterthought to it.
+
+## A fingerprint is sensitive operational data until redaction exists
+
+The document is not merely a description of a host, it is a target-selection aid.
+The `packages` facet emits a complete name-and-exact-version inventory, which turns
+CVE lookup into a filter, and `modules` names every loaded driver including
+out-of-tree and unsigned ones. Nothing marks any of it `sensitive`, and nothing
+would act on the annotation if it did.
+
+The existing stance, that redaction is "an option, not a guarantee" and that marking
+fields is the collector author's job, was written when the only collectors reported a
+hostname and a mount table. Package and module inventories are a different order of
+exposure, so the stance is unchanged but its consequence is now stated plainly:
+**a stored fingerprint should be handled as sensitive operational data**, not
+committed to a repository that is more widely readable than the box it describes.
+
+Whether `PackageVersion` and the module taint flags should carry the `sensitive`
+annotation is deferred to the same point as the previous entry, because an
+annotation nothing acts on would be decoration.
+
+## Accepted residual risk: signalling by pid
+
+`canonical_tool` calls `poll` before signalling a tool's process group, which reaps
+an already-exited child so the crate's own guard can skip the signal. Between that
+check and the signal there remains a window in which the pid could be reaped and
+recycled by an unrelated process that is itself a group leader, which would then
+receive a stray `SIGKILL`.
+
+This is inherent to signalling by pid on Unix rather than anything rastro
+introduces, and closing it properly needs `pidfd`. Accepted, and recorded here so it
+is a known residual rather than an oversight.

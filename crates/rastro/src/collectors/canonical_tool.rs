@@ -50,10 +50,8 @@ pub use run_limits::RunLimits;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use nix::sys::signal::{Signal, killpg};
-use nix::unistd::Pid;
 use rastro_collector::CollectionError;
-use subprocess::{Exec, ExecExt, Job, Redirection};
+use subprocess::{Exec, ExecExt, Job, JobExt, Redirection};
 
 /// How much of a failing tool's stderr is quoted back.
 const STDERR_QUOTED: usize = 512;
@@ -162,24 +160,20 @@ impl CanonicalTool {
     /// Kills the tool and whatever it started.
     ///
     /// `Job::kill` signals only the pids it tracks, so a tool that backgrounds a helper
-    /// would leave that helper running unbounded after rastro had already reported the
-    /// failure and moved on. `subprocess` names this case and offers
-    /// `ProcessExt::send_signal_group` for it, but a `Job` exposes no `Process`, so the
-    /// group signal comes from outside the crate.
+    /// would otherwise keep running unbounded after rastro had reported the failure and
+    /// moved on. `JobExt::send_signal_group` is the crate's own answer to that, and it is
+    /// documented for exactly the pairing used here: a single process started with
+    /// `ExecExt::setpgid` has its whole group signalled.
     ///
-    /// Skipped once the job has exited, because a reaped pid can be recycled as another
-    /// process's group id and rastro must not signal a stranger.
+    /// `poll` first, on purpose. It reaps the child if it has already exited, which is what
+    /// lets the crate's internal guard skip signalling a pid that could since have been
+    /// recycled as an unrelated process's group id.
     fn kill_the_group(&self, job: &Job) {
         if job.poll().is_some() {
             return;
         }
 
-        // Not `as i32`: a lossy cast is how a wrong pid would be signalled silently.
-        if let Ok(group) = i32::try_from(job.pid()) {
-            let _ = killpg(Pid::from_raw(group), Signal::SIGKILL);
-        }
-
-        let _ = job.kill();
+        let _ = job.send_signal_group(libc::SIGKILL);
     }
 
     /// Reads both streams under the bounds, killing the child if either is breached.
