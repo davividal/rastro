@@ -27,13 +27,19 @@ pub struct MountsCollector {
 
 impl MountsCollector {
     pub fn new() -> Self {
+        Self::reading(ProcMounts::new())
+    }
+
+    /// The same collector over a source the caller chose, so the failure path of
+    /// [`Self::collect`] is reachable from a test.
+    pub fn reading(table: ProcMounts) -> Self {
         Self {
             name: FacetName::new("mounts").expect("`mounts` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("mounts").expect("`mounts` is a legal collector id"),
                 CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
-            table: ProcMounts::new(),
+            table,
         }
     }
 }

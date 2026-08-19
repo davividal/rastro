@@ -5,9 +5,10 @@
 //! memory.
 
 use rastro::collectors::modules::{
-    KernelModule, ModuleName, ModuleState, ModuleTable, ProcModules, ReferenceCount, Removability,
-    TaintFlag,
+    KernelModule, ModuleName, ModuleState, ModuleTable, ModulesCollector, ProcModules,
+    ReferenceCount, Removability, TaintFlag,
 };
+use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
 
 const THREE_MODULES: &str = "\
@@ -306,4 +307,87 @@ fn the_load_address_is_not_recorded_at_all() {
         !rendered.contains("ffffffffc0a12000"),
         "the address reached the document: {rendered}"
     );
+}
+
+/// A fixture on disk, named per test so parallel runs cannot clash.
+fn fixture(name: &str, contents: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rastro-modules-{name}"));
+    std::fs::write(&path, contents).expect("the temp directory should be writable");
+    path
+}
+
+/// A path that is guaranteed not to exist, for the absent and unreadable cases.
+fn missing(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("rastro-modules-absent-{name}"))
+}
+
+#[test]
+fn read_translates_a_table_on_disk_into_the_model() {
+    // Arrange: every other test goes through `parse`, which leaves the file reading and
+    // its error path uncovered.
+    let path = fixture("read", "nft_ct 24576 2 - Live 0x0000000000000000\n");
+    let source = ProcModules::at(&path, "/proc");
+
+    // Act
+    let table = source.read().expect("this fixture is well formed");
+
+    // Assert
+    assert_eq!(table.modules().len(), 1);
+}
+
+#[test]
+fn read_names_the_file_it_could_not_open() {
+    // Arrange
+    let path = missing("read");
+    let source = ProcModules::at(&path, "/proc");
+
+    // Act
+    let failure = source.read().expect_err("a missing file is a failure");
+
+    // Assert: an operator reading stderr should not have to guess which file it was.
+    assert!(
+        failure.to_string().contains(&path.display().to_string()),
+        "got {failure}"
+    );
+}
+
+#[test]
+fn presence_is_present_when_the_interface_is_there() {
+    // Arrange
+    let path = fixture("present", "nft_ct 24576 2 - Live 0x0000000000000000\n");
+    let collector = ModulesCollector::reading(ProcModules::at(&path, std::env::temp_dir()));
+
+    // Act & Assert
+    assert_eq!(collector.presence(), Presence::Present);
+}
+
+#[test]
+fn presence_is_absent_when_the_kernel_has_no_module_support() {
+    // Arrange: no `/proc/modules`, but `/proc` is mounted. That is a `CONFIG_MODULES=n`
+    // kernel, which genuinely has no modules.
+    let collector =
+        ModulesCollector::reading(ProcModules::at(missing("absent"), std::env::temp_dir()));
+
+    // Act & Assert
+    assert_eq!(collector.presence(), Presence::Absent);
+}
+
+#[test]
+fn presence_is_undetermined_when_procfs_is_not_mounted() {
+    // Arrange: neither the file nor the filesystem. rastro cannot see kernel state at
+    // all here, so reporting "no modules" would be a confident lie, which is the one
+    // failure this project refuses.
+    let collector = ModulesCollector::reading(ProcModules::at(
+        missing("undetermined"),
+        missing("undetermined-procfs"),
+    ));
+
+    // Act
+    let presence = collector.presence();
+
+    // Assert
+    let Presence::Undetermined { reason } = presence else {
+        panic!("expected undetermined, got {presence:?}");
+    };
+    assert!(reason.contains("not mounted"), "got {reason:?}");
 }

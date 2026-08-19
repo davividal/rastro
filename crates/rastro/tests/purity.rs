@@ -97,16 +97,29 @@ fn collectors_reach_the_document_model_only_through_the_port() {
     );
 }
 
-/// Every `model` and `value_objects` directory under `collectors`, whichever collector
-/// they belong to, so a new collector is covered without touching this file.
+/// Whether a file belongs to one of a collector's domain layers.
+///
+/// Two ways to belong, and the second is easy to miss: a file inside the layer's
+/// directory, *or* the aggregator file declaring it, which sits beside that directory
+/// rather than in it. Testing only the parent directory would leave `model.rs` and
+/// `value_objects.rs` unscanned, and those are the one file per layer where a stray
+/// `pub use super::source::X` would be least conspicuous.
+fn belongs_to_layer(path: &Path, layer: &str) -> bool {
+    let inside_the_directory = path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|directory| directory == layer);
+    let is_the_aggregator = path.file_stem().is_some_and(|stem| stem == layer);
+
+    inside_the_directory || is_the_aggregator
+}
+
+/// Every domain file of every collector, so a new collector is covered without touching
+/// this file.
 fn domain_sources_of_every_collector() -> Vec<PathBuf> {
     sources_of("collectors")
         .into_iter()
-        .filter(|path| {
-            path.parent()
-                .and_then(Path::file_name)
-                .is_some_and(|directory| directory == "model" || directory == "value_objects")
-        })
+        .filter(|path| belongs_to_layer(path, "model") || belongs_to_layer(path, "value_objects"))
         .collect()
 }
 
@@ -119,9 +132,21 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
     // Act & Assert: the anti-corruption boundary. A source holds one host
     // interface's spelling, so the moment the model reaches back into it, adding a
     // second interface reporting the same concepts stops being a local change.
+    //
+    // `canonical_tool` is on the list because it is the *other* route to the host, and
+    // the one a future collector is most likely to take: sysctl, systemd units and
+    // nftables all shell out. A model calling it directly would bypass the source layer
+    // entirely while every needle about `source` stayed satisfied.
     for file in domain {
         let code = code_of(&file);
-        for needle in ["source", "Proc", "Query", "Database"] {
+        for needle in [
+            "source",
+            "Proc",
+            "Query",
+            "Database",
+            "canonical_tool",
+            "CanonicalTool",
+        ] {
             assert!(
                 !code.contains(needle),
                 "{} mentions {needle:?}: the model is what rastro means, not how one \
@@ -138,7 +163,7 @@ fn a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into() {
     // so the arrow runs model to value_objects. Reversing it would make a leaf
     // unusable in any other shape.
     for file in domain_sources_of_every_collector() {
-        if file.parent().and_then(Path::file_name) != Some("value_objects".as_ref()) {
+        if !belongs_to_layer(&file, "value_objects") {
             continue;
         }
         assert!(

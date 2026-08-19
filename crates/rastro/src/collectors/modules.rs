@@ -29,13 +29,21 @@ pub struct ModulesCollector {
 
 impl ModulesCollector {
     pub fn new() -> Self {
+        Self::reading(ProcModules::new())
+    }
+
+    /// The same collector over a source the caller chose.
+    ///
+    /// The seam that makes [`Self::presence`] testable: all three of its answers depend
+    /// on what is on the filesystem, and a test cannot unmount `/proc`.
+    pub fn reading(table: ProcModules) -> Self {
         Self {
             name: FacetName::new("modules").expect("`modules` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("modules").expect("`modules` is a legal collector id"),
                 CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
-            table: ProcModules::new(),
+            table,
         }
     }
 }

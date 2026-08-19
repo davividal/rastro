@@ -1,8 +1,9 @@
 //! Reading `/proc/mounts`, without needing a `/proc` to read it from.
 
 use rastro::collectors::mounts::{
-    Device, FilesystemType, Mount, MountOption, MountPoint, MountTable, ProcMounts,
+    Device, FilesystemType, Mount, MountOption, MountPoint, MountTable, MountsCollector, ProcMounts,
 };
+use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
 
 const TWO_MOUNTS: &str = "\
@@ -230,4 +231,64 @@ fn the_observation_of_a_mount_carries_the_contracted_keys() {
         panic!("options render as a list");
     };
     assert_eq!(options.len(), 2);
+}
+
+/// A fixture on disk, named per test so parallel runs cannot clash.
+fn fixture(name: &str, contents: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("rastro-mounts-{name}"));
+    std::fs::write(&path, contents).expect("the temp directory should be writable");
+    path
+}
+
+#[test]
+fn read_translates_a_table_on_disk_into_the_model() {
+    // Arrange: every other test goes through `parse`, which leaves the file reading and
+    // its error path uncovered.
+    let path = fixture("read", TWO_MOUNTS);
+    let source = ProcMounts::at(&path);
+
+    // Act
+    let table = source.read().expect("this fixture is well formed");
+
+    // Assert
+    assert_eq!(table.mounts().len(), 2);
+}
+
+#[test]
+fn read_names_the_file_it_could_not_open() {
+    // Arrange
+    let path = std::env::temp_dir().join("rastro-mounts-absent");
+    let source = ProcMounts::at(&path);
+
+    // Act
+    let failure = source.read().expect_err("a missing file is a failure");
+
+    // Assert: an operator reading stderr should not have to guess which file it was.
+    assert!(
+        failure.to_string().contains(&path.display().to_string()),
+        "got {failure}"
+    );
+}
+
+#[test]
+fn a_table_that_cannot_be_read_becomes_a_failed_collection() {
+    // Arrange: an unreadable table is a failure to read the mounts, never evidence that
+    // the host has none, so it must surface from `collect` rather than from `presence`.
+    let collector = MountsCollector::reading(ProcMounts::at(
+        std::env::temp_dir().join("rastro-mounts-absent-collect"),
+    ));
+
+    // Act & Assert
+    assert_eq!(collector.presence(), Presence::Present);
+    assert!(collector.collect().is_err());
+}
+
+#[test]
+fn parse_keeps_one_entry_when_an_option_is_repeated() {
+    // Arrange: options are a set, so the type collapses a repeat. The kernel emits none,
+    // but the behaviour changed when `MountOptions` became a `BTreeSet` and was untested.
+    let table = parsed("dev /data ext4 rw,relatime,rw 0 0\n");
+
+    // Assert
+    assert_eq!(options_of(first(&table)), ["relatime", "rw"]);
 }
