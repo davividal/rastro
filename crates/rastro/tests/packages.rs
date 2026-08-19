@@ -3,6 +3,7 @@
 //! The fixtures are real output: `dpkg-query` from `debian:stable-slim` (dpkg 1.22.22) and
 //! `/lib/apk/db/installed` from `alpine:latest` (apk-tools 3.0.6).
 
+use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::packages::{
     ApkDatabase, DpkgQuery, Package, PackageInventory, PackageManager, PackageName, PackageSet,
     PackageSource, PackagesCollector,
@@ -344,7 +345,7 @@ fn an_inventory_names_every_manager_even_from_a_partial_report() {
     let found = vec![(PackageManager::Apk, apk(APK_DATABASE))];
 
     // Act
-    let inventory = PackageInventory::of(found).expect("one manager reported once");
+    let inventory = PackageInventory::new(found).expect("one manager reported once");
 
     // Assert: completeness is the type's own documented rule, so it is the type that produces
     // it. A caller passing a subset cannot build an inventory that contradicts the doc.
@@ -365,11 +366,64 @@ fn an_inventory_names_every_manager_even_from_a_partial_report() {
 fn an_inventory_refuses_a_manager_reported_twice() {
     // Act: nothing can produce this today, and that is the point. If it ever does, one
     // manager's packages would vanish from a document claiming to be complete.
-    let result = PackageInventory::of(vec![
+    let result = PackageInventory::new(vec![
         (PackageManager::Apk, apk(APK_DATABASE)),
         (PackageManager::Apk, apk(APK_DATABASE)),
     ]);
 
     // Assert
     assert!(result.is_err());
+}
+
+#[test]
+fn apk_refuses_two_stanzas_that_ran_together() {
+    // Arrange: a missing blank separator. `field` takes the first hit in a stanza, so the second
+    // package was never constructed and the duplicate guard could not see it: the one input in
+    // this collector whose unguarded outcome was a quietly smaller answer.
+    let result = ApkDatabase::parse("P:a\nV:1\nA:x\nP:b\nV:2\nA:y\n");
+
+    // Assert
+    assert!(result.is_err());
+}
+
+#[test]
+fn dpkg_is_read_through_the_tool_rastro_actually_runs() {
+    // Arrange: a stand-in for `dpkg-query` that answers in the format rastro asks for. This is the
+    // only test that exercises the argument vector and the parse together, so changing `-W` or the
+    // format string fails here rather than only on a real Debian box. The seam clears the
+    // environment, so the script uses builtins only.
+    let directory = std::env::temp_dir().join("rastro-fake-dpkg");
+    std::fs::create_dir_all(&directory).expect("the temp directory should be writable");
+    let program = directory.join("dpkg-query");
+    std::fs::write(
+        &program,
+        "#!/bin/sh\nprintf 'apt\\t3.0.3\\tarm64\\tinstall\\tinstalled\\tok\\n'\n",
+    )
+    .expect("the temp directory should be writable");
+    std::fs::set_permissions(
+        &program,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .expect("the stand-in should be executable");
+
+    let tool = CanonicalTool::located_in("dpkg-query", &[directory.to_str().expect("UTF-8 path")])
+        .expect("the stand-in is in the directory just named");
+
+    // Act
+    let set = DpkgQuery::using(tool)
+        .read()
+        .expect("the stand-in answers in the format rastro asks for");
+
+    // Assert
+    let package = package(&set, "apt");
+    assert_eq!(package.version.as_str(), "3.0.3");
+    assert_eq!(
+        package
+            .status
+            .as_ref()
+            .expect("dpkg reports a status")
+            .state
+            .as_str(),
+        "installed"
+    );
 }

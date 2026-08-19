@@ -31,7 +31,7 @@ impl PackageInventory {
     /// A repeated manager is refused rather than overwritten, the rule the other two keyed
     /// collections already follow. Nothing can produce one today, and that is the point: if it
     /// ever does, one manager's packages would vanish from a document claiming to be complete.
-    pub fn of(
+    pub fn new(
         found: impl IntoIterator<Item = (PackageManager, PackageSet)>,
     ) -> Result<Self, CollectionError> {
         let mut inventory: BTreeMap<PackageManager, Option<PackageSet>> =

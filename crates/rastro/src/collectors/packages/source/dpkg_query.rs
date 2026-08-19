@@ -32,7 +32,16 @@ pub struct DpkgQuery {
 impl DpkgQuery {
     /// Finds dpkg's query tool, or reports that this host does not use dpkg.
     pub fn detect() -> Option<Self> {
-        CanonicalTool::located(PROGRAM).map(|tool| Self { tool })
+        CanonicalTool::located(PROGRAM).map(Self::using)
+    }
+
+    /// The same over a tool the caller located.
+    ///
+    /// Every other source takes its interface this way, and without it the pairing of `-W` with
+    /// the query format was the one line in the exec route that nothing could observe: changing
+    /// that format would leave every test passing and every real Debian box failing.
+    pub fn using(tool: CanonicalTool) -> Self {
+        Self { tool }
     }
 
     /// Asks dpkg for every package it knows, and translates the answer.

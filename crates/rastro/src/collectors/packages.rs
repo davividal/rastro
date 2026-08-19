@@ -92,6 +92,6 @@ impl Collector for PackagesCollector {
             .map(|source| Ok((source.manager(), source.read()?)))
             .collect::<Result<Vec<_>, CollectionError>>()?;
 
-        Ok(Observation::from(&PackageInventory::of(found)?))
+        Ok(Observation::from(&PackageInventory::new(found)?))
     }
 }

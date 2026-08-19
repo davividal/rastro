@@ -36,10 +36,7 @@ impl PackageSource {
     /// The match is the mechanism: adding a `PackageManager` variant fails to compile until the
     /// new manager is given something to detect.
     ///
-    /// **If you are here because you added a variant, `known_managers` above needs it too, and
-    /// nothing will tell you.** That array is the one place in this collector resting on someone
-    /// remembering. No test closes it, because a test would need its own copy of the same list,
-    /// so this comment sits where the compiler sends you instead.
+    /// The same hazard is documented where the list lives, on `PackageManager::ALL`.
     fn detect(manager: PackageManager) -> Option<Self> {
         match manager {
             PackageManager::Apk => ApkDatabase::detect().map(Self::Apk),

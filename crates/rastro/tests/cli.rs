@@ -105,12 +105,24 @@ fn a_bare_run_reports_the_installed_packages_as_state() {
     // Act
     let packages = facet(&document(&[]), "facets", "packages").clone();
 
-    // Assert: always `ok`, on every host. rastro can always report the state of the managers
-    // it reads, and both are always named, so a box with neither is described rather than
-    // reported as a failure.
+    // Assert: always `ok`, on every host. rastro can always report the state of the managers it
+    // reads, and both are always named, so a box with neither is described rather than reported
+    // as a failure.
     assert_eq!(packages["status"], "ok", "got {packages:?}");
     assert!(packages["data"].get("apk").is_some(), "got {packages:?}");
     assert!(packages["data"].get("dpkg").is_some(), "got {packages:?}");
+
+    // And where dpkg is genuinely installed, that it was genuinely read. `get` returns
+    // `Some(Null)` for a null key and the status is `ok` either way, so without this the whole
+    // detect-run-parse chain could go dark in CI with every test still green.
+    if std::path::Path::new("/usr/bin/dpkg-query").is_file() {
+        assert!(
+            packages["data"]["dpkg"]
+                .as_object()
+                .is_some_and(|packages| !packages.is_empty()),
+            "dpkg-query is installed here, so its packages should have been read: {packages:?}"
+        );
+    }
 }
 
 #[test]

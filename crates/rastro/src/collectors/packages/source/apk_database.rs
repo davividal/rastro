@@ -74,6 +74,18 @@ impl ApkDatabase {
     }
 
     fn parse_stanza(stanza: &str) -> Result<(PackageName, Package), CollectionError> {
+        // Two names mean two stanzas run together, and `field` takes the first hit, so the second
+        // package would simply not be constructed. Every other guard in this collector refuses an
+        // input nothing can produce; this is the one whose unguarded outcome is a quietly smaller
+        // answer rather than a loud failure.
+        let names = stanza.lines().filter(|line| line.starts_with(NAME)).count();
+        if names > 1 {
+            return Err(CollectionError::new(format!(
+                "a stanza in the apk database carries {names} {NAME:?} fields, so two ran \
+                 together: {stanza:?}"
+            )));
+        }
+
         let name = Self::field(stanza, NAME)?;
         let package = Package {
             version: PackageVersion::new(Self::field(stanza, VERSION)?)?,
