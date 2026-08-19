@@ -3,7 +3,6 @@ name = "rastro"
 description = "Emits a canonical, diffable fingerprint of a Linux host's state"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "../../README.md"

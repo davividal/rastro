@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 # No job writes anything. Stated explicitly so the grant survives a change to
@@ -19,77 +19,30 @@ env:
   CARGO_TERM_COLOR: always
 
 # Actions are pinned by commit rather than by tag, because a tag can be moved.
-# dtolnay/rust-toolchain is pinned to a `master` commit and given the channel as
-# an input: its branch names *are* the channel, so pinning `@stable` by SHA
-# would freeze the Rust version instead of the action.
+# The toolchain comes from `mise.toml`, so CI and a working machine cannot drift.
 jobs:
   check:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       # Doc links are only checked when the docs are built, which is what makes
-      # `deny(rustdoc::broken_intra_doc_links)` in lib.rs bite. Without this a
-      # rename can leave a dangling path behind indefinitely.
+      # `deny(rustdoc::broken_intra_doc_links)` in lib.rs bite.
       - run: cargo doc --no-deps
-
-  msrv:
-    name: check the declared MSRV
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # Read from Cargo.toml rather than repeated here, so the two cannot drift.
-      # A second copy of the MSRV would be the same bug this job exists to catch.
-      # `cargo metadata` rather than a grep: it is TOML-aware, so quoting style
-      # and table context cannot break it.
-      #
-      # The floor is a *fact about the dependencies*, never a support promise:
-      # Rust ships every six weeks and maintains only the latest release, so no
-      # older version is supported by anyone. This job therefore checks that the
-      # declared floor is still true, not that an old compiler is blessed. A
-      # `cargo update` that picks up a raised MSRV fails it by design; the fix is
-      # to raise the floor here or pin that dependency, deliberately either way.
-      #
-      # There is no headroom, and one caveat comes with that: the workspace
-      # declares a single floor and the step below takes the highest across
-      # members, so `rastro`'s tool dependencies set the floor for
-      # `rastro-collector` too. That is backwards, since the port is the crate a
-      # third-party collector compiles against. Splitting it per member is open.
-      - id: msrv
-        run: |
-          # A virtual workspace has several packages, so take the highest
-          # floor. `sort -V` rather than jq's `max`, which compares strings and
-          # would put 1.9 above 1.10.
-          # `select(. != null)` first: a member without `rust-version` would
-          # otherwise sort as the literal "null", after every real version.
-          version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[].rust_version | select(. != null)' | sort -V | tail -1)
-          test -n "$version" -a "$version" != null || { echo "no rust-version in Cargo.toml"; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: ${{ steps.msrv.outputs.version }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - run: cargo check --all-targets
 
   static-binary:
     name: musl static build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: stable
-          targets: x86_64-unknown-linux-musl
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: rustup target add x86_64-unknown-linux-musl
       - name: Install the musl linker
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --target x86_64-unknown-linux-musl -p rastro

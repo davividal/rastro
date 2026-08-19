@@ -8,10 +8,8 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-# A consequence of the dependencies, not a support promise. Rust ships every six
-# weeks and maintains only the latest release, so no older version is "supported"
-# by anyone. `subprocess` uses let-chains, stable since 1.88.
-rust-version = "1.88"
+# No `rust-version`: only the latest Rust is maintained, and under `resolver = "3"`
+# a floor holds dependencies back to suit it. `mise.toml` pins what we build with.
 license = "AGPL-3.0-only"
 repository = "https://github.com/davividal/rastro"
 
