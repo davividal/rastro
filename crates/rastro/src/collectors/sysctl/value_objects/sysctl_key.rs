@@ -31,22 +31,46 @@ pub struct SysctlKey(NonEmptyText);
 /// the determinism harness by itself: the kernel mints a fresh UUID on *every
 /// read*, so two reads within a single run already disagree.
 ///
-/// **The last two are here by construction, not by measurement.** Neither moved
-/// in that window, because the entropy pool was saturated and nobody logged in.
-/// Both are counters the kernel maintains, and consuming entropy or opening a
-/// second session moves them. Marking a settled parameter volatile costs a
-/// little signal; missing a moving one costs the byte-identical diffable view
-/// that the whole tool rests on, and nothing but the determinism harness would
-/// ever say so. That asymmetry is why the doubtful two are in rather than out.
-const SELF_CHANGING: [&str; 8] = [
+/// **The rest are here by construction, not by measurement**, and the difference is
+/// the point of this comment. None of them moved in that window: the entropy pool was
+/// saturated, nobody logged in, the box uses no disk quotas, nothing was using
+/// asynchronous I/O, and it has no conntrack module loaded at all. Every one of them is
+/// nevertheless a counter the kernel maintains rather than a setting anyone chose, so a
+/// box doing the work they count moves them.
+///
+/// Marking a settled parameter volatile costs a little signal; missing a moving one costs
+/// the byte-identical diffable view that the whole tool rests on, and nothing but the
+/// determinism harness would ever say so. Here that asymmetry is not even a trade: a
+/// count of quota cache hits has no signal to lose.
+///
+/// **This list is inherently incomplete, and pretending otherwise is the trap.** It was
+/// extended once already, after CI caught a `sysctl` divergence that the development box
+/// could not reproduce — the box has no `nf_conntrack_count` because it loads no conntrack
+/// module, while a CI runner with a container engine does, and it changes with every
+/// connection the runner opens. There is no structural way to tell a counter from a
+/// setting: mode `0444` looked promising and marks `kernel.osrelease` too, which would be
+/// a disastrous thing to drop from a diff. So the list is a list, the determinism harness
+/// is the backstop, and a future addition is expected rather than a failure.
+const SELF_CHANGING: [&str; 19] = [
+    "fs.aio-nr",
     "fs.dentry-state",
     "fs.file-nr",
     "fs.inode-nr",
     "fs.inode-state",
+    "fs.quota.allocated_dquots",
+    "fs.quota.cache_hits",
+    "fs.quota.drops",
+    "fs.quota.free_dquots",
+    "fs.quota.lookups",
+    "fs.quota.reads",
+    "fs.quota.syncs",
+    "fs.quota.warnings",
+    "fs.quota.writes",
     "kernel.ns_last_pid",
     "kernel.pty.nr",
     "kernel.random.entropy_avail",
     "kernel.random.uuid",
+    "net.netfilter.nf_conntrack_count",
 ];
 
 /// Parameters whose value is a key rather than a setting.

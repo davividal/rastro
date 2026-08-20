@@ -520,3 +520,43 @@ fn collect_fails_loudly_when_the_tree_cannot_be_listed() {
     // Assert
     assert!(result.is_err());
 }
+
+#[test]
+fn a_counter_the_kernel_maintains_is_volatile_even_where_it_reads_zero() {
+    // Arrange: these were added after CI caught a `sysctl` divergence the development box
+    // could not reproduce. It has no conntrack module, so `nf_conntrack_count` does not
+    // exist there at all, while a runner with a container engine has one that moves with
+    // every connection. The quota counters and `fs.aio-nr` are the same shape: idle here,
+    // moving on a box doing the work they count.
+    let root = tree("counters");
+    write(&root, "fs/aio-nr", "0\n", READABLE);
+    write(&root, "fs/quota/syncs", "358\n", READABLE);
+    write(&root, "net/netfilter/nf_conntrack_count", "27\n", READABLE);
+    write(&root, "net/core/somaxconn", "4096\n", READABLE);
+
+    // Act
+    let diffable = Observation::from(&read(&root))
+        .in_view(View::Diffable)
+        .expect("the facet survives the diffable view");
+
+    // Assert: only the setting is left. A count of quota cache hits has no signal to lose.
+    assert_eq!(keys_of(&diffable), ["net.core.somaxconn"]);
+}
+
+#[test]
+fn a_read_only_parameter_is_not_treated_as_a_counter() {
+    // Arrange: mode `0444` looks like a promising structural signal for "the kernel tells
+    // you and you cannot set it", and it marks `kernel.osrelease` too. Dropping that from a
+    // diff would be a disaster, which is why the volatile set is a name list.
+    let root = tree("read-only-is-not-volatile");
+    write(&root, "kernel/osrelease", "6.1.0-47-arm64\n", 0o444);
+    write(&root, "kernel/ostype", "Linux\n", 0o444);
+
+    // Act
+    let diffable = Observation::from(&read(&root))
+        .in_view(View::Diffable)
+        .expect("the facet survives");
+
+    // Assert
+    assert_eq!(keys_of(&diffable), ["kernel.osrelease", "kernel.ostype"]);
+}
