@@ -1,18 +1,47 @@
 //! The collectors that ship inside the binary.
 
+pub mod accounts;
+pub mod block_devices;
 pub mod canonical_tool;
+pub mod cron;
+pub mod firewall;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
+pub mod locale;
 pub mod modules;
 pub mod mounts;
+pub mod network;
 pub mod packages;
+pub mod processes;
+pub mod repositories;
+pub mod sockets;
+pub mod ssh_access;
+pub mod sysctl;
+pub mod systemd;
+pub mod time;
+pub mod timers;
+pub mod units;
 
+pub use accounts::AccountsCollector;
+pub use block_devices::BlockDevicesCollector;
+pub use cron::CronCollector;
+pub use firewall::FirewallCollector;
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
+pub use locale::LocaleCollector;
 pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
+pub use network::NetworkCollector;
 pub use packages::PackagesCollector;
+pub use processes::ProcessesCollector;
+pub use repositories::RepositoriesCollector;
+pub use sockets::SocketsCollector;
+pub use ssh_access::SshAccessCollector;
+pub use sysctl::SysctlCollector;
+pub use time::TimeCollector;
+pub use timers::TimersCollector;
+pub use units::UnitsCollector;
 
 use rastro_collector::{Collector, CollectorCategory};
 
@@ -47,11 +76,25 @@ pub enum SelectionError {
 /// other registration reads it.
 pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
     vec![
+        Box::new(AccountsCollector::new()),
+        Box::new(BlockDevicesCollector::new()),
+        Box::new(CronCollector::new()),
+        Box::new(FirewallCollector::new()),
         Box::new(HostCollector::new()),
         Box::new(InvocationCollector::new(effective_config)),
+        Box::new(LocaleCollector::new()),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
+        Box::new(NetworkCollector::new()),
         Box::new(PackagesCollector::new()),
+        Box::new(ProcessesCollector::new()),
+        Box::new(RepositoriesCollector::new()),
+        Box::new(SocketsCollector::new()),
+        Box::new(SshAccessCollector::new()),
+        Box::new(SysctlCollector::new()),
+        Box::new(TimeCollector::new()),
+        Box::new(TimersCollector::new()),
+        Box::new(UnitsCollector::new()),
     ]
 }
 

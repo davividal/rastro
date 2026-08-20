@@ -17,6 +17,10 @@ clap = { workspace = true }
 # For `SIGKILL` alone, as a constant. Already in the tree under `subprocess`.
 libc = { workspace = true }
 serde = { workspace = true }
+# systemd, `ip` and `lsblk` all emit JSON on request, which is a format rastro
+# chooses rather than a table it has to guess the columns of. Promoted from a
+# dev-dependency for that: see `docs/decisions.md`.
+serde_json = { workspace = true }
 # Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
 # output of a run and can signal the child's whole process group.
 subprocess = { workspace = true }
@@ -25,5 +29,5 @@ toml = { workspace = true }
 
 [dev-dependencies]
 rastro-fingerprint = { workspace = true }
-# Tests read the rendered document back to assert on its shape.
-serde_json = { workspace = true }
+# `serde_json` is deliberately not repeated here. Tests read the rendered document
+# back to assert on its shape, and a normal dependency is already visible to them.

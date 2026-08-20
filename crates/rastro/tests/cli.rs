@@ -180,7 +180,144 @@ fn two_bare_runs_produce_byte_identical_output() {
 
     // Assert: the determinism contract, end to end through the real binary,
     // with no flag needed to get it.
-    assert_eq!(first, second);
+    //
+    // The comparison is on bytes, because bytes are the contract. The *message* is
+    // not: this test used to `assert_eq!` the two `Vec<u8>` directly, and when it
+    // finally caught something it reported two four-hundred-kilobyte byte arrays,
+    // which told a CI log reader nothing at all. Naming the facet is what turns a
+    // failure here into a starting point instead of a puzzle.
+    if first != second {
+        panic!("{}", divergence(&first, &second));
+    }
+}
+
+/// Which facets two runs disagreed about, for the failure above.
+///
+/// Reached only when the byte comparison has already failed, so it is free to be
+/// slower and more thorough than the assertion it explains.
+fn divergence(first: &[u8], second: &[u8]) -> String {
+    let (Ok(first), Ok(second)) = (
+        serde_json::from_slice::<Value>(first),
+        serde_json::from_slice::<Value>(second),
+    ) else {
+        return "two runs differed, and at least one did not parse as JSON".to_owned();
+    };
+
+    let mut report = String::from("two runs of an unchanged host differed.\n");
+    for section in ["metadata", "facets"] {
+        for name in facet_names(&first, section) {
+            let (before, after) = (
+                facet(&first, section, &name),
+                facet(&second, section, &name),
+            );
+            if before == after {
+                continue;
+            }
+
+            report.push_str(&format!("\n  {section}/{name} differs:\n"));
+            report.push_str(&detail(&before["data"], &after["data"]));
+        }
+    }
+
+    report
+}
+
+/// What changed inside one facet's data, in terms of the shape it has.
+///
+/// **A structural comparison, not a text excerpt.** The first version of this printed the
+/// first four hundred characters of each side, which for a facet whose difference is one
+/// key out of eleven hundred showed two identical prefixes and told nobody anything. What a
+/// reader needs is the key, or the entry, that moved.
+fn detail(before: &Value, after: &Value) -> String {
+    match (before, after) {
+        (Value::Object(before), Value::Object(after)) => {
+            let mut lines = String::new();
+            for key in union(before.keys().chain(after.keys()).cloned()) {
+                let (was, now) = (before.get(&key), after.get(&key));
+                if was == now {
+                    continue;
+                }
+                lines.push_str(&format!(
+                    "    {key}: {} -> {}\n",
+                    rendered(was),
+                    rendered(now)
+                ));
+            }
+            lines
+        }
+        (Value::Array(before), Value::Array(after)) => {
+            // Counted, not set-compared: two runs catching three and then five identical
+            // entries differ in bytes while sharing every distinct one.
+            let mut lines = format!("    {} entries -> {}\n", before.len(), after.len());
+            let counts = |items: &[Value]| {
+                let mut counted: std::collections::BTreeMap<String, usize> = Default::default();
+                for item in items {
+                    *counted.entry(item.to_string()).or_default() += 1;
+                }
+                counted
+            };
+            let (before, after) = (counts(before), counts(after));
+            for entry in union(before.keys().chain(after.keys()).cloned()) {
+                let (was, now) = (
+                    before.get(&entry).copied().unwrap_or_default(),
+                    after.get(&entry).copied().unwrap_or_default(),
+                );
+                if was == now {
+                    continue;
+                }
+                lines.push_str(&format!("    {was} -> {now}  {}\n", clipped(&entry)));
+            }
+            lines
+        }
+        _ => format!(
+            "    first:  {}\n    second: {}\n",
+            clipped(&before.to_string()),
+            clipped(&after.to_string())
+        ),
+    }
+}
+
+/// Every key either side has, sorted, so the report reads the same way twice.
+fn union(keys: impl Iterator<Item = String>) -> std::collections::BTreeSet<String> {
+    keys.collect()
+}
+
+fn rendered(value: Option<&Value>) -> String {
+    value.map_or_else(
+        || "<absent>".to_owned(),
+        |value| clipped(&value.to_string()),
+    )
+}
+
+fn facet_names(document: &Value, section: &str) -> Vec<String> {
+    document[section]
+        .as_array()
+        .expect("a section is an array of facets")
+        .iter()
+        .filter_map(|facet| facet["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// How much of one value the message shows.
+const CLIPPED: usize = 200;
+
+/// One value, short enough to read in a CI log.
+///
+/// Cut on a character boundary rather than a byte offset, because a facet may hold text
+/// from the host and slicing mid-sequence would panic.
+fn clipped(value: &str) -> String {
+    if value.len() <= CLIPPED {
+        return value.to_owned();
+    }
+
+    let end = value
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= CLIPPED)
+        .last()
+        .unwrap_or(0);
+
+    format!("{}... ({} bytes)", &value[..end], value.len())
 }
 
 #[test]

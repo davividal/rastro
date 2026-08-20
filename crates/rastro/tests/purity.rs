@@ -132,24 +132,45 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
     // Act & Assert: the anti-corruption boundary. A source holds one host
     // interface's spelling, so the moment the model reaches back into it, adding a
     // second interface reporting the same concepts stops being a local change.
-    //
-    // `canonical_tool` is on the list because it is the *other* route to the host, and
-    // the one a future collector is most likely to take: sysctl, systemd units and
-    // nftables all shell out. A model calling it directly would bypass the source layer
-    // entirely while every needle about `source` stayed satisfied.
     for file in domain {
         let code = code_of(&file);
-        // The last four are the set `rastro-collector`'s own purity test uses. Without them
-        // the guard rests on a naming convention nobody wrote down: a future source called
-        // `EtcPasswd` or `NetlinkSockets` matches none of the names above, and neither does
-        // the shortest route around the boundary, a `model/` file reading `/proc` itself.
+        // **These are paths, not type names, and that is a deliberate change.** The list
+        // used to carry `Proc`, `Query` and `Database` as well, as stand-ins for "the name
+        // of a source type". Name-shaped needles cannot survive a collector whose domain
+        // genuinely uses one of those words: `SocketProcess` is a model type with no host
+        // interface anywhere near it, and the processes collector cannot avoid `Process`
+        // at all. Contorting a domain name to satisfy a test would be the test dictating
+        // the ubiquitous language, which is backwards.
+        //
+        // Paths are strictly stronger anyway. Every source type in this codebase is
+        // reached either through a `::source::` path, which the first needle catches
+        // whatever the type is called, or by deriving a deserializer, which the middle two
+        // catch. `ProcMounts` in a model file was only ever reachable as
+        // `...::source::ProcMounts`.
+        //
+        // Delimited on both sides for the same reason the sibling test below is: a bare
+        // `source::` would match the re-export `pub use firewall_source::FirewallSource;`
+        // the day a collector put one in a domain file.
+        //
+        // `canonical_tool` is here because it is the *other* route to the host, and the
+        // one a future collector is most likely to take: sysctl, systemd units and
+        // nftables all shell out. A model calling it directly would bypass the source
+        // layer entirely while every needle about `source` stayed satisfied.
+        //
+        // The `serde` pair is new and closes a hole the old list had. A model that derived
+        // `Deserialize` would let one interface's field names dictate rastro's own shape,
+        // which is the very corruption this boundary exists to prevent, and it needs no
+        // `source::` path to do it.
+        //
+        // What still slips past, as before: a domain file reaching a source type through
+        // its collector's flat re-export, `use crate::collectors::sockets::Ss`. This
+        // catches the accidental `use`, which is the breach that actually happens.
         for needle in [
-            "source",
-            "Proc",
-            "Query",
-            "Database",
+            "::source::",
             "canonical_tool",
             "CanonicalTool",
+            "serde_json",
+            "Deserialize",
             "std::fs",
             "std::process",
             "std::net",
@@ -170,13 +191,20 @@ fn a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into() {
     // Act & Assert: `value_objects` holds the facet's leaves and `model` its structure,
     // so the arrow runs model to value_objects. Reversing it would make a leaf
     // unusable in any other shape.
+    //
+    // **A layer path, not the bare word, and the delimiters on both sides earn their
+    // keep.** `model` alone matches the module `device_model`, whose `DeviceModel` is a
+    // leaf that has never heard of a shape. `model::` alone still matches, because the
+    // re-export line reads `pub use device_model::DeviceModel;`. Only `::model::` picks out
+    // the layer, since every route into it is qualified: `crate::collectors::x::model::Y`,
+    // `super::super::model::Y`, `super::model::Y`.
     for file in domain_sources_of_every_collector() {
         if !belongs_to_layer(&file, "value_objects") {
             continue;
         }
         assert!(
-            !code_of(&file).contains("model"),
-            "{} mentions `model`: a leaf value is composed *by* a shape, never aware \
+            !code_of(&file).contains("::model::"),
+            "{} mentions `::model::`: a leaf value is composed *by* a shape, never aware \
              of one",
             file.display()
         );
