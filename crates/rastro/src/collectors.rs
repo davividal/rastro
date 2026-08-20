@@ -11,6 +11,7 @@ pub mod packages;
 pub mod repositories;
 pub mod sysctl;
 pub mod systemd;
+pub mod timers;
 pub mod units;
 
 pub use accounts::AccountsCollector;
@@ -21,6 +22,7 @@ pub use mounts::MountsCollector;
 pub use packages::PackagesCollector;
 pub use repositories::RepositoriesCollector;
 pub use sysctl::SysctlCollector;
+pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
 use rastro_collector::{Collector, CollectorCategory};
@@ -64,6 +66,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(PackagesCollector::new()),
         Box::new(RepositoriesCollector::new()),
         Box::new(SysctlCollector::new()),
+        Box::new(TimersCollector::new()),
         Box::new(UnitsCollector::new()),
     ]
 }
