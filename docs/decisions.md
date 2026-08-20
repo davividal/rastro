@@ -744,3 +744,37 @@ tool that edits the hash column directly. Locking does not move it, because
 at which point a digest of the hash becomes recordable and a password change becomes
 visible without the credential ever being printed. That is a new entry, not an edit
 to this one.
+
+## Collectors ask their tool for JSON, which promotes serde_json to a real dependency
+
+`serde_json` was a dev-dependency, used only by tests reading the rendered document
+back. The units collector makes it a normal dependency of `rastro`.
+
+**Why.** `systemctl` prints a whitespace-aligned table with a trailing free-text
+description. Splitting it means guessing where a column ends, and the guess is worst
+exactly where the data is most awkward: device unit names run to hundreds of
+characters and carry systemd's `\x2d` escaping, and the alignment shifts with them.
+`systemctl --output=json` removes the guess, and systemd 252, which Debian 12 ships,
+supports it on both subcommands this collector uses.
+
+This is the same reasoning that already has the packages collector query dpkg through
+`dpkg-query -f` rather than reading `/var/lib/dpkg/status`: **prefer the source whose
+shape rastro chooses over the one it has to infer.** The principle was already written
+down; this entry only records that honouring it costs a dependency.
+
+`ip -j` and `lsblk -J` offer the same, so the network and block-device collectors
+inherit the decision rather than each re-arguing it.
+
+**Cost, and why it is small.** One more crate linked into a binary that runs as root:
+that is exactly what `deny.toml` exists to police, and `serde_json` passes it
+unchanged, being MIT/Apache-2.0 and already in the lockfile at the version the tests
+were using. It is pure Rust with no build script and no C, so the static musl build is
+unaffected. `serde` itself was already a normal dependency for the config layer, so no
+new derive machinery arrives.
+
+**What was rejected.** Parsing the tables and keeping the dependency out. It is
+strictly more code, and the code is the fragile kind: a column-guessing parser that
+passes on the fixtures the author thought of and mis-slots a unit name nobody
+anticipated. Refusing a dependency at the price of a parser that can be quietly wrong
+is the wrong trade for a tool whose one unacceptable failure is reporting something it
+half-understood as complete.
