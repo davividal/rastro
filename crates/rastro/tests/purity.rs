@@ -192,13 +192,19 @@ fn a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into() {
     // Act & Assert: `value_objects` holds the facet's leaves and `model` its structure,
     // so the arrow runs model to value_objects. Reversing it would make a leaf
     // unusable in any other shape.
+    //
+    // A path, not the bare word, for the reason the sibling test above gives at length.
+    // `model` on its own matches the module `device_model`, whose `DeviceModel` is a leaf
+    // that has never heard of a shape, and it would match any future `data_model` or
+    // `model_number` too. Reaching the model layer is always spelled with a `::` after it,
+    // whether as `crate::collectors::x::model::Y` or as `super::super::model::Y`.
     for file in domain_sources_of_every_collector() {
         if !belongs_to_layer(&file, "value_objects") {
             continue;
         }
         assert!(
-            !code_of(&file).contains("model"),
-            "{} mentions `model`: a leaf value is composed *by* a shape, never aware \
+            !code_of(&file).contains("model::"),
+            "{} mentions `model::`: a leaf value is composed *by* a shape, never aware \
              of one",
             file.display()
         );
