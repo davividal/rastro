@@ -7,6 +7,7 @@ pub mod firewall;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
+pub mod locale;
 pub mod modules;
 pub mod mounts;
 pub mod network;
@@ -16,6 +17,7 @@ pub mod repositories;
 pub mod sockets;
 pub mod sysctl;
 pub mod systemd;
+pub mod time;
 pub mod timers;
 pub mod units;
 
@@ -24,6 +26,7 @@ pub use block_devices::BlockDevicesCollector;
 pub use firewall::FirewallCollector;
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
+pub use locale::LocaleCollector;
 pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
 pub use network::NetworkCollector;
@@ -32,6 +35,7 @@ pub use processes::ProcessesCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
 pub use sysctl::SysctlCollector;
+pub use time::TimeCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
@@ -73,6 +77,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(FirewallCollector::new()),
         Box::new(HostCollector::new()),
         Box::new(InvocationCollector::new(effective_config)),
+        Box::new(LocaleCollector::new()),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
         Box::new(NetworkCollector::new()),
@@ -81,6 +86,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),
         Box::new(SysctlCollector::new()),
+        Box::new(TimeCollector::new()),
         Box::new(TimersCollector::new()),
         Box::new(UnitsCollector::new()),
     ]
