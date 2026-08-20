@@ -705,3 +705,135 @@ and the entry recording it stood for four commits while describing code that had
 The lesson is the one the `nix` reversal already taught: an entry justified by a mechanism needs
 re-reading whenever that mechanism changes, and neither of the two commits that touched this file
 afterwards did so.
+
+## The accounts collector records no password hash, so it cannot see a password change
+
+`/etc/shadow` is read, and the hash column is classified and dropped where the line
+is parsed. What reaches the document is a state (`absent`, `unusable`, `locked`,
+`usable`), the placeholder a tool wrote when there is no hash, and the crypt
+algorithm identifier when there is one. No type in the collector has a field a hash
+could be stored in.
+
+**Why not carry it and mark it sensitive.** That is what `Sensitivity::Sensitive` is
+for, and it would be the right answer if the redaction layer existed. It does not:
+the annotation is recorded and nothing acts on it yet, so a hash marked sensitive
+today is a hash printed to stdout in plain text. The box this was developed against
+has a live yescrypt hash in `/etc/shadow`, so this is not hypothetical. Absence of a
+field is a guarantee the unbuilt redaction layer cannot weaken; an annotation is a
+promise about code that is not written.
+
+**The cost, stated plainly, because it is the reason this entry exists.** The hash is
+the only part of a password that changes when the password changes. So changing a
+password does not change this facet: the state stays `usable`, the algorithm stays
+the same, and a diff either side of `passwd` is empty. Anybody reading an `accounts`
+diff as evidence that authentication was untouched is reading it wrong.
+
+What is still visible: an account arriving or leaving, a uid, home or shell changing,
+a password appearing or being removed at all, an account being locked or unlocked,
+the hashing scheme changing under a release upgrade, and group membership changing —
+which on a key-authenticated box is how privilege is actually granted.
+
+**One field narrows the gap.** `shadow(5)` defines column three as the date of the
+last password change and `passwd` rewrites it when it writes a hash, so
+`last_changed_days_since_epoch` moves, to a resolution of one day. That is the file's
+documented contract rather than something rastro measured, and it is defeated by a
+tool that edits the hash column directly. Locking does not move it, because
+`usermod -L` only prefixes the hash.
+
+**Reversing this** means a redaction layer that hashes a value before it is rendered,
+at which point a digest of the hash becomes recordable and a password change becomes
+visible without the credential ever being printed. That is a new entry, not an edit
+to this one.
+
+## Collectors ask their tool for JSON, which promotes serde_json to a real dependency
+
+`serde_json` was a dev-dependency, used only by tests reading the rendered document
+back. The units collector makes it a normal dependency of `rastro`.
+
+**Why.** `systemctl` prints a whitespace-aligned table with a trailing free-text
+description. Splitting it means guessing where a column ends, and the guess is worst
+exactly where the data is most awkward: device unit names run to hundreds of
+characters and carry systemd's `\x2d` escaping, and the alignment shifts with them.
+`systemctl --output=json` removes the guess, and systemd 252, which Debian 12 ships,
+supports it on both subcommands this collector uses.
+
+This is the same reasoning that already has the packages collector query dpkg through
+`dpkg-query -f` rather than reading `/var/lib/dpkg/status`: **prefer the source whose
+shape rastro chooses over the one it has to infer.** The principle was already written
+down; this entry only records that honouring it costs a dependency.
+
+`ip -j` and `lsblk -J` offer the same, so the network and block-device collectors
+inherit the decision rather than each re-arguing it.
+
+**Cost, and why it is small.** One more crate linked into a binary that runs as root:
+that is exactly what `deny.toml` exists to police, and `serde_json` passes it
+unchanged, being MIT/Apache-2.0 and already in the lockfile at the version the tests
+were using. It is pure Rust with no build script and no C, so the static musl build is
+unaffected. `serde` itself was already a normal dependency for the config layer, so no
+new derive machinery arrives.
+
+**What was rejected.** Parsing the tables and keeping the dependency out. It is
+strictly more code, and the code is the fragile kind: a column-guessing parser that
+passes on the fixtures the author thought of and mis-slots a unit name nobody
+anticipated. Refusing a dependency at the price of a parser that can be quietly wrong
+is the wrong trade for a tool whose one unacceptable failure is reporting something it
+half-understood as complete.
+
+## Superseded: the time collector reads files, because `timedatectl` starts a unit
+
+The time collector was written to run `timedatectl show`, on the rule that effective,
+resolved state beats reading configuration files. That was the wrong call, and the
+reversal was forced by CI rather than reasoned out in advance.
+
+**`timedatectl` starts a systemd unit on the box being fingerprinted.**
+`systemd-timedated.service` is `Type=dbus`, so the first D-Bus call activates it and it
+keeps running afterwards. Measured, not inferred: with the unit stopped,
+`systemctl list-unit-files` left it `inactive`, and a single `timedatectl show` left it
+`active`.
+
+**How it surfaced.** The determinism harness failed in CI and nowhere else. The unit that
+the `time` collector started appeared in the *next* run's `processes` facet, so two runs of
+an unchanged host differed by exactly one process. It could not reproduce locally: macOS
+has no `/proc`, and an idle container has neither systemd nor the tools. It reproduced on
+the Debian test box only under load, which is what CI is — every tool present, two runs
+seconds apart.
+
+**Two reasons to reverse it, either sufficient.** A fingerprint must not change the box:
+rastro runs as root on production to observe, and starting a unit is a mutation however
+small. Nothing else it runs does this — `systemctl`, `ss`, `ip`, `lsblk`, `iptables-save`,
+`dpkg-query` and `sshd -T` all leave the box as they found it. And the byte-identical
+diffable view is the contract everything else rests on, so a collector that breaks it is
+wrong whatever else it gets right.
+
+**What the files give.** `/etc/localtime`'s symlink target for the zone, with
+`/etc/timezone` as the fallback and the symlink winning when they disagree, because the
+symlink is what programs follow. `/etc/adjtime`'s third line for the hardware clock's
+scale, where an absent file means UTC — its documented contract, and the case on the test
+box. `/run/systemd/timesync/synchronized` for whether synchronisation has happened.
+
+**What it gives up, and why that is acceptable.** `CanNTP` and `NTP`: whether a
+time-synchronisation service exists and whether it is switched on. Neither leaves the
+document, because both are the enablement state of a unit and that is the `units` facet's
+answer — `systemd-timesyncd.service` appears there as `enabled`. One fact in one place is
+better than the same fact in two.
+
+**The collector's version went to `2`**, because the facet lost two fields. A consumer
+diffing across the change has to be able to see that the collector moved rather than the
+host.
+
+**The general rule this does not overturn.** Prefer effective state over configuration
+files still holds; `sysctl`, `systemctl` and `sshd -T` are all still read that way. What
+this adds is a precondition: prefer the effective source *unless reading it changes the
+host*. `nginx -T` and `sshd -T` do not. `timedatectl` does.
+
+## The determinism harness names the facet that differed
+
+The harness compared two runs as `Vec<u8>` and asserted equality. When it finally caught
+something, it reported two four-hundred-kilobyte byte arrays into a CI log, which is worth
+nothing to whoever reads it — the failure above took a reproduction on a real box to
+diagnose, and the test had the answer all along.
+
+The comparison is still on bytes, because bytes are the contract. On failure it now parses
+both documents and names each facet that differs, with a bounded excerpt of each side.
+That is a diagnostic on the failure path only, so it is free to be slower than the
+assertion it explains.
