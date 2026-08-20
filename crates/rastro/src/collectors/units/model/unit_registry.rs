@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use rastro_collector::Observation;
 
 use super::unit::Unit;
-use crate::collectors::units::value_objects::UnitName;
+use crate::collectors::systemd::UnitName;
 
 /// The units, keyed by name.
 ///

@@ -10,6 +10,7 @@ pub mod mounts;
 pub mod packages;
 pub mod repositories;
 pub mod sysctl;
+pub mod systemd;
 pub mod units;
 
 pub use accounts::AccountsCollector;

@@ -4,8 +4,9 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
+use crate::collectors::systemd::UnitName;
 use crate::collectors::units::model::UnitFile;
-use crate::collectors::units::value_objects::{PresetState, UnitFileState, UnitName};
+use crate::collectors::units::value_objects::{PresetState, UnitFileState};
 
 /// systemd's spelling of an installed unit, kept apart from rastro's meaning.
 ///

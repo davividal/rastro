@@ -4,10 +4,9 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
+use crate::collectors::systemd::UnitName;
 use crate::collectors::units::model::UnitRuntime;
-use crate::collectors::units::value_objects::{
-    ActiveState, Description, LoadState, SubState, UnitName,
-};
+use crate::collectors::units::value_objects::{ActiveState, Description, LoadState, SubState};
 
 /// systemd's spelling of a loaded unit, kept apart from rastro's meaning.
 #[derive(Debug, Clone, Deserialize)]

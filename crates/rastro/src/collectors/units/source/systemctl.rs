@@ -7,8 +7,8 @@ use rastro_collector::CollectionError;
 use super::systemctl_unit_files::UnitFileRow;
 use super::systemctl_units::UnitRow;
 use crate::collectors::canonical_tool::CanonicalTool;
+use crate::collectors::systemd::UnitName;
 use crate::collectors::units::model::{Unit, UnitFile, UnitRegistry, UnitRuntime};
-use crate::collectors::units::value_objects::UnitName;
 
 const PROGRAM: &str = "systemctl";
 

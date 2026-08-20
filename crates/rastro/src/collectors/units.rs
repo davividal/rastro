@@ -17,10 +17,11 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
+pub use crate::collectors::systemd::UnitName;
 pub use model::{Unit, UnitFile, UnitRegistry, UnitRuntime};
 pub use source::{Systemctl, UnitFileRow, UnitRow};
 pub use value_objects::{
-    ActiveState, Description, LoadState, PresetState, SubState, UnitFileState, UnitName,
+    ActiveState, Description, LoadState, PresetState, SubState, UnitFileState,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs. A
