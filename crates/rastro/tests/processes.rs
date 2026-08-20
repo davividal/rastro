@@ -8,8 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rastro::collectors::processes::{
-    ControlGroup, ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline,
-    proc_status,
+    ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline, proc_status,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, View};
@@ -326,82 +325,6 @@ fn read_sorts_the_table_rather_than_leaving_it_in_pid_order() {
 }
 
 #[test]
-fn the_diffable_view_keeps_what_a_process_is_and_drops_what_moves() {
-    // Arrange
-    let root = tree("diffable");
-    write_process(
-        &root,
-        1234,
-        SYSTEMD_STATUS,
-        "/lib/systemd/systemd\0--system\0",
-        Some("0::/init.scope\n"),
-    );
-
-    // Act
-    let observation = Observation::from(&read(&root));
-    let diffable = observation
-        .in_view(View::Diffable)
-        .expect("the facet survives the diffable view");
-
-    // Assert: the pid, its parent, the state and the thread count are gone; what a process
-    // *is* remains.
-    assert_eq!(
-        keys_of(&items_of(&diffable)[0]),
-        [
-            "command_line",
-            "control_group",
-            "executable",
-            "group_id",
-            "name",
-            "user_id"
-        ]
-    );
-}
-
-#[test]
-fn the_table_is_a_list_so_a_volatile_pid_does_not_take_its_process_with_it() {
-    // Arrange: keying by pid would make every key volatile, and a volatile key takes its
-    // entry out of the view, leaving the facet an empty object on every run.
-    let root = tree("list-not-map");
-    write_process(&root, 1, SYSTEMD_STATUS, "/x\0", None);
-
-    // Act
-    let diffable = Observation::from(&read(&root))
-        .in_view(View::Diffable)
-        .expect("the facet survives");
-
-    // Assert
-    assert_eq!(items_of(&diffable).len(), 1);
-}
-
-#[test]
-fn two_reads_of_an_unchanged_tree_agree_in_the_diffable_view() {
-    // Arrange: the property the whole design exists for.
-    let root = tree("steady-state");
-    write_process(
-        &root,
-        1,
-        SYSTEMD_STATUS,
-        "/lib/systemd/systemd\0--system\0",
-        Some("0::/init.scope\n"),
-    );
-    write_process(
-        &root,
-        42,
-        DROPPED_STATUS,
-        "/usr/bin/node_exporter\0",
-        Some("0::/system.slice/x.service\n"),
-    );
-
-    // Act
-    let first = Observation::from(&read(&root)).in_view(View::Diffable);
-    let second = Observation::from(&read(&root)).in_view(View::Diffable);
-
-    // Assert
-    assert_eq!(first, second);
-}
-
-#[test]
 fn presence_is_present_when_procfs_is_mounted() {
     // Arrange
     let root = tree("presence-present");
@@ -451,19 +374,44 @@ fn status_fails_loudly_for_a_field_the_kernel_did_not_write() {
 }
 
 #[test]
-fn a_kernel_workqueue_thread_does_not_reach_the_diffable_view() {
-    // Arrange: the kernel rewrites a workqueue thread's name to whatever work it is running,
-    // so two runs seconds apart on an idle box saw `kworker/0:3-cgroup_release` become
-    // `kworker/0:3-events`. The name is the only identity a kernel thread has, so there is
-    // nothing left to diff once it moves.
-    let root = tree("kworker");
+fn no_process_reaches_the_diffable_view() {
+    // Arrange: the facet's central property. A process table cannot be byte-identical on a
+    // machine that is doing anything, and byte-identity is the contract every other facet
+    // rests on, so the whole table is volatile. Two narrower rules preceded this one and the
+    // collector's documentation records why each was not enough.
+    let root = tree("nothing-diffable");
     write_process(
         &root,
-        60,
-        "Name:\tkworker/0:3-events\nState:\tI (idle)\nPPid:\t2\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nThreads:\t1\n",
-        "",
-        Some("0::/\n"),
+        1,
+        SYSTEMD_STATUS,
+        "/lib/systemd/systemd\0--system\0",
+        Some("0::/init.scope\n"),
     );
+    write_process(&root, 42, DROPPED_STATUS, "/usr/bin/node_exporter\0", None);
+
+    // Act
+    let observation = Observation::from(&read(&root));
+    let diffable = observation
+        .in_view(View::Diffable)
+        .expect("the facet itself survives, empty");
+
+    // Assert
+    assert_eq!(
+        items_of(&observation).len(),
+        2,
+        "both are in the complete view"
+    );
+    assert!(
+        items_of(&diffable).is_empty(),
+        "no process may reach the diffable view, got {:?}",
+        items_of(&diffable)
+    );
+}
+
+#[test]
+fn the_complete_view_keeps_every_field() {
+    // Act: `--include-volatile` is where this facet lives, so nothing may be missing there.
+    let root = tree("complete");
     write_process(
         &root,
         1,
@@ -472,95 +420,30 @@ fn a_kernel_workqueue_thread_does_not_reach_the_diffable_view() {
         Some("0::/init.scope\n"),
     );
 
-    // Act
-    let diffable = Observation::from(&read(&root))
-        .in_view(View::Diffable)
-        .expect("the facet survives the diffable view");
-
-    // Assert: systemd stays, the workqueue thread goes entirely.
-    assert_eq!(items_of(&diffable).len(), 1);
+    // Assert
+    assert_eq!(
+        keys_of(&items_of(&Observation::from(&read(&root)))[0]),
+        [
+            "command_line",
+            "control_group",
+            "executable",
+            "group_id",
+            "name",
+            "parent_process_id",
+            "process_id",
+            "state",
+            "thread_count",
+            "user_id"
+        ]
+    );
 }
 
 #[test]
-fn a_kernel_workqueue_thread_is_still_in_the_complete_view() {
-    // Arrange
-    let root = tree("kworker-complete");
-    write_process(
-        &root,
-        60,
-        "Name:\tkworker/u4:2-flush-8:0\nState:\tI (idle)\nPPid:\t2\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nThreads:\t1\n",
-        "",
-        None,
-    );
-
-    // Act & Assert
-    assert_eq!(items_of(&Observation::from(&read(&root))).len(), 1);
-}
-
-#[test]
-fn a_control_group_inside_a_login_session_does_not_reach_the_diffable_view() {
-    // Arrange: rastro observing the box changes what it observes. Every invocation over ssh
-    // creates a new session, so this field churned on rastro's own process, on `sudo`, on
-    // `sh` and on `sshd` between two runs.
-    let root = tree("session-cgroup");
-    write_process(
-        &root,
-        99,
-        SYSTEMD_STATUS,
-        "/tmp/rastro\0",
-        Some("0::/user.slice/user-1000.slice/session-851.scope\n"),
-    );
-
-    // Act
-    let diffable = Observation::from(&read(&root))
-        .in_view(View::Diffable)
-        .expect("the facet survives");
-
-    // Assert: the process stays and only the churning field goes.
-    let process = &items_of(&diffable)[0];
-    assert!(
-        !keys_of(process).contains(&"control_group".to_owned()),
-        "a session scope must not reach the diffable view, got {:?}",
-        keys_of(process)
-    );
-    assert!(keys_of(process).contains(&"name".to_owned()));
-}
-
-#[test]
-fn a_control_group_in_a_system_slice_is_kept() {
-    // Arrange: these are the ones that carry the unit an operator wants, and they do not
-    // churn.
-    let root = tree("system-cgroup");
-    write_process(
-        &root,
-        99,
-        SYSTEMD_STATUS,
-        "/usr/sbin/sshd\0",
-        Some("0::/system.slice/ssh.service\n"),
-    );
-
-    // Act
-    let diffable = Observation::from(&read(&root))
-        .in_view(View::Diffable)
-        .expect("the facet survives");
+fn the_collector_reports_its_second_version() {
+    // Act: the data is unchanged and its visibility is not, so a consumer that saw processes
+    // in a default run and now sees none must be able to tell the collector moved.
+    let collector = ProcessesCollector::reading(ProcProcesses::new());
 
     // Assert
-    assert!(keys_of(&items_of(&diffable)[0]).contains(&"control_group".to_owned()));
-}
-
-#[test]
-fn a_session_scope_is_recognised_wherever_it_sits_in_the_path() {
-    // Act: it is a component of a longer path, never the whole of it.
-    let nested = ControlGroup::new("/user.slice/user-1000.slice/session-852.scope/x")
-        .expect("a legal control group");
-    let system = ControlGroup::new("/system.slice/ssh.service").expect("legal");
-    let almost = ControlGroup::new("/user.slice/session-abc.scope").expect("legal");
-
-    // Assert
-    assert!(nested.names_a_login_session());
-    assert!(!system.names_a_login_session());
-    assert!(
-        !almost.names_a_login_session(),
-        "only a counter-bearing scope churns"
-    );
+    assert_eq!(collector.identity().version.as_str(), "2");
 }

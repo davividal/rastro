@@ -33,13 +33,15 @@ pub struct Process {
 }
 
 impl From<&Process> for Observation {
-    /// **A kernel workqueue thread is annotated volatile whole**, because its name encodes
-    /// the work it is running rather than what it is, and the name is the only identity a
-    /// kernel thread has. `ProcessName::is_a_kernel_workqueue` carries the measurement.
+    /// **Every process is annotated volatile, so the whole table is absent from the diffable
+    /// view.** This is the facet's central decision and it was arrived at by being wrong
+    /// twice; the collector's own documentation carries the reasoning and the measurements.
     ///
-    /// The control group carries its own annotation, applied inside its own type, because
-    /// that one depends on the value rather than on the process: a path through a login
-    /// session's scope churns and a path through a system slice does not.
+    /// The short version: a process table cannot be byte-identical on a machine that is
+    /// doing anything, and byte-identity is the contract every other facet rests on. Earlier
+    /// versions annotated two specific kinds of churn — kernel workqueue threads, whose names
+    /// the kernel rewrites, and control-group paths carrying a login-session counter — and
+    /// both were real, but both were instances of a general truth rather than the whole of it.
     fn from(process: &Process) -> Self {
         let observed = Observation::object([
             ("command_line", Observation::from(&process.command_line)),
@@ -76,10 +78,6 @@ impl From<&Process> for Observation {
             ("user_id", Observation::integer(i64::from(process.user_id))),
         ]);
 
-        if process.name.is_a_kernel_workqueue() {
-            return observed.volatile();
-        }
-
-        observed
+        observed.volatile()
     }
 }

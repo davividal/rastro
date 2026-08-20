@@ -215,12 +215,78 @@ fn divergence(first: &[u8], second: &[u8]) -> String {
             }
 
             report.push_str(&format!("\n  {section}/{name} differs:\n"));
-            report.push_str(&format!("    first:  {}\n", excerpt(before)));
-            report.push_str(&format!("    second: {}\n", excerpt(after)));
+            report.push_str(&detail(&before["data"], &after["data"]));
         }
     }
 
     report
+}
+
+/// What changed inside one facet's data, in terms of the shape it has.
+///
+/// **A structural comparison, not a text excerpt.** The first version of this printed the
+/// first four hundred characters of each side, which for a facet whose difference is one
+/// key out of eleven hundred showed two identical prefixes and told nobody anything. What a
+/// reader needs is the key, or the entry, that moved.
+fn detail(before: &Value, after: &Value) -> String {
+    match (before, after) {
+        (Value::Object(before), Value::Object(after)) => {
+            let mut lines = String::new();
+            for key in union(before.keys().chain(after.keys()).cloned()) {
+                let (was, now) = (before.get(&key), after.get(&key));
+                if was == now {
+                    continue;
+                }
+                lines.push_str(&format!(
+                    "    {key}: {} -> {}\n",
+                    rendered(was),
+                    rendered(now)
+                ));
+            }
+            lines
+        }
+        (Value::Array(before), Value::Array(after)) => {
+            // Counted, not set-compared: two runs catching three and then five identical
+            // entries differ in bytes while sharing every distinct one.
+            let mut lines = format!("    {} entries -> {}\n", before.len(), after.len());
+            let counts = |items: &[Value]| {
+                let mut counted: std::collections::BTreeMap<String, usize> = Default::default();
+                for item in items {
+                    *counted.entry(item.to_string()).or_default() += 1;
+                }
+                counted
+            };
+            let (before, after) = (counts(before), counts(after));
+            for entry in union(before.keys().chain(after.keys()).cloned()) {
+                let (was, now) = (
+                    before.get(&entry).copied().unwrap_or_default(),
+                    after.get(&entry).copied().unwrap_or_default(),
+                );
+                if was == now {
+                    continue;
+                }
+                lines.push_str(&format!("    {was} -> {now}  {}\n", clipped(&entry)));
+            }
+            lines
+        }
+        _ => format!(
+            "    first:  {}\n    second: {}\n",
+            clipped(&before.to_string()),
+            clipped(&after.to_string())
+        ),
+    }
+}
+
+/// Every key either side has, sorted, so the report reads the same way twice.
+fn union(keys: impl Iterator<Item = String>) -> std::collections::BTreeSet<String> {
+    keys.collect()
+}
+
+fn rendered(value: Option<&Value>) -> String {
+    value.map_or_else(
+        || "<absent>".to_owned(),
+        |value| clipped(&value.to_string()),
+    )
 }
 
 fn facet_names(document: &Value, section: &str) -> Vec<String> {
@@ -232,16 +298,26 @@ fn facet_names(document: &Value, section: &str) -> Vec<String> {
         .collect()
 }
 
-/// How much of a differing facet the message shows.
-const EXCERPT: usize = 400;
+/// How much of one value the message shows.
+const CLIPPED: usize = 200;
 
-fn excerpt(facet: &Value) -> String {
-    let rendered = facet.to_string();
-    if rendered.len() <= EXCERPT {
-        return rendered;
+/// One value, short enough to read in a CI log.
+///
+/// Cut on a character boundary rather than a byte offset, because a facet may hold text
+/// from the host and slicing mid-sequence would panic.
+fn clipped(value: &str) -> String {
+    if value.len() <= CLIPPED {
+        return value.to_owned();
     }
 
-    format!("{}... ({} bytes)", &rendered[..EXCERPT], rendered.len())
+    let end = value
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= CLIPPED)
+        .last()
+        .unwrap_or(0);
+
+    format!("{}... ({} bytes)", &value[..end], value.len())
 }
 
 #[test]

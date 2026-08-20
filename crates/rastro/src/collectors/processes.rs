@@ -4,25 +4,47 @@
 //! [`source`] knows [`model`], `model` knows [`value_objects`], and neither of the last
 //! two knows a host interface exists.
 //!
-//! # The most volatile facet here, and what is left after the noise is removed
+//! # This facet does not reach the diffable view, and that was learned the hard way
 //!
-//! A process table is mostly weather. Pids churn, states flip, thread counts move, and
-//! short-lived processes appear and vanish between two runs seconds apart. Treated naively
-//! this facet would differ on every run and teach an operator to ignore it.
+//! **Every process is annotated volatile, so a default run reports an empty list and
+//! `--include-volatile` reports the table.** That is the whole design, and it replaced two
+//! narrower attempts that were each correct about a real thing and wrong about the general
+//! case.
 //!
-//! Two decisions make it useful instead. The table is a **sorted list rather than a map
-//! keyed by pid**, because a volatile key takes its whole entry out of the diffable view and
-//! keying by pid would leave the facet empty on every run. And the four moving fields — pid,
-//! parent pid, state, thread count — are annotated volatile, so what the diffable view
-//! keeps is each process's name, arguments, account, control group and binary.
+//! The first attempt annotated only the four obviously moving fields — pid, parent pid,
+//! state, thread count — and kept name, arguments, account, control group and binary, on the
+//! reasoning that a box in steady state reports the same set of daemons twice. Running it
+//! proved two specific holes, both real and both now recorded here rather than in code:
 //!
-//! On a box in steady state that surviving list is identical between runs, and a new daemon
-//! shows up as one new entry. On a busy box it will still churn, and that churn is real:
-//! a process was running. `ProcessTable`'s own documentation says so plainly rather than
-//! claiming more than the design delivers.
+//! - **The kernel rewrites a workqueue thread's name to the work it is running.**
+//!   `kworker/0:3-cgroup_release` became `kworker/0:3-events` between two runs seconds
+//!   apart. A kernel thread's name is its only identity, so there was nothing left to diff.
+//! - **rastro observing the box changed what it observed.** Its own process, and the `sudo`,
+//!   `sh` and `sshd` above it, sit in a control group carrying the login-session counter, so
+//!   `session-851.scope` became `session-852.scope` over two ssh connections.
 //!
-//! The control group is the field worth knowing about: on a systemd box it names the unit a
-//! process belongs to, which is the only link between this facet and `units`.
+//! Annotating those two was enough to make the box byte-identical, including under four
+//! hundred concurrently spawned processes. It was **not** enough in CI, where the harness
+//! runs while sibling tests spawn `sleep` and re-run this very binary, and two runs differed
+//! by a couple of entries.
+//!
+//! That is the general truth the two narrow rules were instances of: **a process table
+//! cannot be byte-identical on a machine that is doing anything**, and byte-identity is the
+//! contract every other facet rests on. A production box has cron jobs and timers firing for
+//! the same reason a CI runner has test processes. So the table is volatile whole, which is
+//! precisely what `Volatility` is for — "changes on its own between two runs of an unchanged
+//! host" — rather than something the contract had to be weakened to accommodate.
+//!
+//! # What answers the durable question instead
+//!
+//! The `units` facet. What an operator wants from a diff is which services are enabled and
+//! loaded, and that is stable by construction because it is configuration rather than a
+//! snapshot. This facet answers "what is running *right now*", which is a thing to look at
+//! while standing in front of the box, not a thing to diff.
+//!
+//! The control group is still the field worth knowing about in the complete view: on a
+//! systemd box it names the unit a process belongs to, which is the only link between this
+//! facet and `units`.
 pub mod model;
 pub mod source;
 pub mod value_objects;
@@ -55,7 +77,10 @@ impl ProcessesCollector {
             name: FacetName::new("processes").expect("`processes` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("processes").expect("`processes` is a legal collector id"),
-                CollectorVersion::new("1").expect("`1` is a legal collector version"),
+                // Second version: the facet's data is unchanged but its *visibility* is not.
+                // A consumer that saw processes in a default run and now sees none needs to
+                // be able to tell that the collector moved rather than the host emptying.
+                CollectorVersion::new("2").expect("`2` is a legal collector version"),
             ),
             processes,
         }
