@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod canonical_tool;
+pub mod firewall;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
@@ -17,6 +18,7 @@ pub mod timers;
 pub mod units;
 
 pub use accounts::AccountsCollector;
+pub use firewall::FirewallCollector;
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use modules::ModulesCollector;
@@ -63,6 +65,7 @@ pub enum SelectionError {
 pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(AccountsCollector::new()),
+        Box::new(FirewallCollector::new()),
         Box::new(HostCollector::new()),
         Box::new(InvocationCollector::new(effective_config)),
         Box::new(ModulesCollector::new()),
