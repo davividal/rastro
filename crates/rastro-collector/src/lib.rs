@@ -15,8 +15,13 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod fingerprint_host;
+pub mod value_objects;
 
 use thiserror::Error;
+
+/// The vocabulary collectors share, re-exported so one import still covers a
+/// collector's needs.
+pub use value_objects::{AbsolutePath, ByteSize, NonEmptyText};
 
 /// Everything a collector author needs from the document model, under exactly
 /// the names the trait signatures use.

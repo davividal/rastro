@@ -90,6 +90,64 @@ fn a_bare_run_reports_the_mount_table_as_state() {
 }
 
 #[test]
+fn a_bare_run_reports_the_loaded_modules_as_state() {
+    // Act
+    let modules = facet(&document(&[]), "facets", "modules").clone();
+
+    // Assert: `absent` is a legitimate answer, from a kernel built without
+    // `CONFIG_MODULES`, so the status is not asserted to be `ok`. What must hold is
+    // that the facet is there and did not fail.
+    assert_ne!(modules["status"], "error", "got {modules:?}");
+}
+
+#[test]
+fn a_bare_run_reports_the_installed_packages_as_state() {
+    // Act
+    let packages = facet(&document(&[]), "facets", "packages").clone();
+
+    // Assert: always `ok`, on every host. rastro can always report the state of the managers it
+    // reads, and both are always named, so a box with neither is described rather than reported
+    // as a failure.
+    assert_eq!(packages["status"], "ok", "got {packages:?}");
+    assert!(packages["data"].get("apk").is_some(), "got {packages:?}");
+    assert!(packages["data"].get("dpkg").is_some(), "got {packages:?}");
+
+    // And where dpkg is genuinely installed, that it was genuinely read. `get` returns
+    // `Some(Null)` for a null key and the status is `ok` either way, so without this the whole
+    // detect-run-parse chain could go dark in CI with every test still green.
+    if std::path::Path::new("/usr/bin/dpkg-query").is_file() {
+        assert!(
+            packages["data"]["dpkg"]
+                .as_object()
+                .is_some_and(|packages| !packages.is_empty()),
+            "dpkg-query is installed here, so its packages should have been read: {packages:?}"
+        );
+    }
+}
+
+#[test]
+fn no_kernel_pointer_reaches_the_document() {
+    // Act: the complete view is the one that keeps volatile values, so a load address
+    // that was merely annotated rather than dropped would surface here.
+    let rendered = String::from_utf8(run(&["--include-volatile"]).stdout)
+        .expect("stdout should carry a UTF-8 document");
+
+    // Assert: `/proc/modules` publishes each module's kernel text address. It changes every
+    // boot, so it is noise, and it leaks a KASLR offset into a document that gets copied off
+    // the box and stored.
+    //
+    // Both forms, because a reader without `CAP_SYSLOG` sees zeros rather than a real
+    // pointer, which is exactly the case in a container. Asserting only the real form left
+    // this test unable to fail in the environment it runs in.
+    for pointer in ["0xffff", "0x00000000"] {
+        assert!(
+            !rendered.contains(pointer),
+            "a kernel address reached stdout as {pointer}"
+        );
+    }
+}
+
+#[test]
 fn including_volatile_values_carries_the_run_timestamp() {
     // Act
     let invocation = facet(&document(&["--include-volatile"]), "metadata", "invocation").clone();

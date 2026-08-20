@@ -3,7 +3,6 @@ name = "rastro"
 description = "Emits a canonical, diffable fingerprint of a Linux host's state"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "../../README.md"
@@ -15,7 +14,12 @@ publish = false
 rastro-collector = { workspace = true }
 rastro-fingerprint = { workspace = true }
 clap = { workspace = true }
+# For `SIGKILL` alone, as a constant. Already in the tree under `subprocess`.
+libc = { workspace = true }
 serde = { workspace = true }
+# Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
+# output of a run and can signal the child's whole process group.
+subprocess = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 

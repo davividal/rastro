@@ -1,12 +1,18 @@
 //! The collectors that ship inside the binary.
 
+pub mod canonical_tool;
+// Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
-mod mounts;
+pub mod modules;
+pub mod mounts;
+pub mod packages;
 
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
-pub use mounts::{MountsCollector, parse_mount_table};
+pub use modules::ModulesCollector;
+pub use mounts::MountsCollector;
+pub use packages::PackagesCollector;
 
 use rastro_collector::{Collector, CollectorCategory};
 
@@ -43,7 +49,9 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(HostCollector::new()),
         Box::new(InvocationCollector::new(effective_config)),
+        Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
+        Box::new(PackagesCollector::new()),
     ]
 }
 
