@@ -19,7 +19,9 @@ exclude = ["mounts"]
 | ------------ | -------- | ---------- |
 | `host`       | metadata | no         |
 | `invocation` | metadata | no         |
+| `modules`    | state    | yes        |
 | `mounts`     | state    | yes        |
+| `packages`   | state    | yes        |
 
 Metadata collectors cannot be excluded: without them one fingerprint cannot be
 told apart from another.
@@ -45,5 +47,13 @@ valid UTF-8 is refused rather than recorded lossily.
 Exclusions are sorted and deduplicated, so two configs meaning the same thing
 produce the same document.
 
-There is no include list. An exclusion that is wrong produces noise; an
-inclusion that is wrong produces a blind spot.
+There is no include list. What decides it is which way each kind of list fails
+when you forget an entry, and forgetting is the likely mistake on a box nobody
+documented.
+
+Forget to exclude a collector and the fingerprint carries a surface you did not
+want: noise, visible in the diff, and you exclude it on the next run. Forget to
+include one and a whole state surface is missing, with nothing in the output
+saying so. Even an exclusion made by mistake stays discoverable, because
+`excluded_collectors` is in the `invocation` facet, so a diff shows the scope
+changed. A missing inclusion leaves no trace at all.

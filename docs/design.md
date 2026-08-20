@@ -41,6 +41,15 @@ A collector, built-in or exec, produces exactly one **facet**:
 A collector never mentions facets; assembling one is the use case's job, which
 keeps every adapter free of the document model it feeds.
 
+**A built-in collector is layered**, and the arrows point one way: `source/` holds
+one host interface's spelling, `model/` the types that render as a composed node,
+`value_objects/` the types that render as a leaf. Nothing in the last two knows a
+host interface exists, which is what makes a second interface reporting the same
+concepts a new source rather than a change to the model. Enforced by
+`crates/rastro/tests/purity.rs`. Shared value objects live in `rastro-collector`,
+so an outside collector spells a path or a byte size the way the built-ins do.
+See [decisions.md](decisions.md#a-collector-is-layered-source-model-value-objects).
+
 **Absence is state.** No tenant means status `absent`, never a silent omission.
 A collector that could not tell is `error` with its reason, never `absent`.
 
@@ -68,9 +77,18 @@ an enablement symlink under `*.wants/` is exactly what this tool exists to catch
 
 **Layer 2, the fixed runtime list.** Processes, listening sockets, established
 connections, systemd units and timers, kernel modules, runtime sysctl, the
-nftables/iptables ruleset, mounts, the dpkg package list, users and groups,
-container state. Read from `/proc` or netlink where cheap, shell out to the
-canonical tool where parsing its output is more honest than reimplementing it.
+nftables/iptables ruleset, mounts, the package list, users and groups, container
+state. Read from `/proc` or netlink where cheap, shell out to the canonical tool
+where parsing its output is more honest than reimplementing it, and read a
+manager's own database where the tool offers no format rastro controls. apk is
+that case: it prints no machine-readable form, and every text form fuses name and
+version into one token. The principle is to prefer the source that is unambiguous,
+not to shell out on reflex.
+
+Shelling out is confined to one hardened seam, `collectors::canonical_tool`:
+absolute path, no shell, cleared environment, bounded in time and output, and a
+breach kills the tool's whole process group. rastro runs as root on production, so
+a collector must not be able to hang or flood the box it is inspecting.
 
 **Layer 3 starters:** `nginx -T`; `pg_dumpall --globals-only` plus `SHOW ALL`;
 `docker inspect` plus volumes and networks. Enough to prove the
@@ -168,8 +186,9 @@ unannotated volatile fields at CI time instead of on a production box.
   between siblings in one crate.
 - That a collector can be written against `rastro-collector` alone
   (`tests/one_dependency_is_enough.rs`).
-- `fmt`, `clippy` as errors, a build on the declared MSRV, and an assertion that
-  the shipped musl binary really is static.
+- `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
+  the shipped musl binary really is static. There is no MSRV job and no declared
+  floor; `mise.toml` pins the toolchain and CI reads it.
 
 Crate boundaries need no test: cargo will not compile a cycle.
 

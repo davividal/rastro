@@ -9,11 +9,13 @@ Rust binary, dropped on a Linux box, emits a canonical diffable JSON fingerprint
 of the host. Purpose: see what a change *actually did* to an undocumented
 server, via before/after fingerprints and a plain diff.
 
-**It runs.** Three collectors ship: `host`, `invocation` (metadata) and `mounts`
-(state). Both views work, config narrows a run.
+**It runs.** Both views work, config narrows a run. `built_in()` in
+`crates/rastro/src/collectors.rs` says which collectors ship.
 
 **Not built:** the Layer 1 walker, the rest of Layer 2, Layer 3, the exec
 contract, redaction.
+
+The toolchain is pinned in `mise.toml`, and CI reads the same file.
 
 ```sh
 cargo test                                    # the whole workspace
@@ -22,9 +24,17 @@ cargo fmt --all                               # CI runs --check
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-No Rust toolchain on this machine. Build in a container:
-`docker run --rm -v "$PWD":/w -w /w rust:alpine sh -c 'cargo test'`. It leaves a
-root-owned `target/`; remove it from inside the container.
+Off Linux there is no `/proc`, so the three `tests/cli.rs` tests that read the real
+host fail while every fixture test passes. Gate those in a container, Alpine as well
+as Debian since the package sources differ:
+
+```sh
+podman run --rm -v "$PWD":/w -w /w \
+  -v rastro-cargo-registry:/usr/local/cargo/registry rust:latest sh -c 'cargo test'
+```
+
+The named volume stops each run re-downloading the registry. A container leaves a
+root-owned `target/`.
 
 ## Documents
 
@@ -63,6 +73,17 @@ Violating one is a plan change, not a detail.
   responsibility, an option not a guarantee.
 - **stdout carries only the fingerprint.**
 - v1 boundaries: single box, generate-only, no network I/O, JSON only.
+
+## Comment scope
+
+The core conventions cap an inline `//` comment at one line. Applied here that means **one
+non-obvious thought, stated fully**, which is occasionally two lines and is not licence for a
+paragraph. Doc comments (`///`, `//!`) are the opposite: they are expected to carry the *why*,
+including the mechanism in another crate or in the kernel that a reader cannot infer.
+
+Test `// Arrange:` comments are doc comments in spirit. They state the host or crate behaviour a
+fixture stands for, and trimming them to fit a line for production code would delete the reason
+the fixture looks the way it does.
 
 ## Guiding principles
 

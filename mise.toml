@@ -1,0 +1,11 @@
+# Components and the musl target are declared here rather than installed by a CI step,
+# so a working machine and CI get the same toolchain from one place.
+#
+# They are not optional extras. With neither `components` nor `profile` set, mise runs a
+# bare `rustup toolchain install` and rustup falls back to its own configured default
+# profile, which on a GitHub runner is `minimal`. `cargo fmt` and `cargo clippy` would
+# then fail there while passing locally.
+[tools.rust]
+version = "1.97.1"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl"]
