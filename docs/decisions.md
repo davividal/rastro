@@ -705,3 +705,42 @@ and the entry recording it stood for four commits while describing code that had
 The lesson is the one the `nix` reversal already taught: an entry justified by a mechanism needs
 re-reading whenever that mechanism changes, and neither of the two commits that touched this file
 afterwards did so.
+
+## The accounts collector records no password hash, so it cannot see a password change
+
+`/etc/shadow` is read, and the hash column is classified and dropped where the line
+is parsed. What reaches the document is a state (`absent`, `unusable`, `locked`,
+`usable`), the placeholder a tool wrote when there is no hash, and the crypt
+algorithm identifier when there is one. No type in the collector has a field a hash
+could be stored in.
+
+**Why not carry it and mark it sensitive.** That is what `Sensitivity::Sensitive` is
+for, and it would be the right answer if the redaction layer existed. It does not:
+the annotation is recorded and nothing acts on it yet, so a hash marked sensitive
+today is a hash printed to stdout in plain text. The box this was developed against
+has a live yescrypt hash in `/etc/shadow`, so this is not hypothetical. Absence of a
+field is a guarantee the unbuilt redaction layer cannot weaken; an annotation is a
+promise about code that is not written.
+
+**The cost, stated plainly, because it is the reason this entry exists.** The hash is
+the only part of a password that changes when the password changes. So changing a
+password does not change this facet: the state stays `usable`, the algorithm stays
+the same, and a diff either side of `passwd` is empty. Anybody reading an `accounts`
+diff as evidence that authentication was untouched is reading it wrong.
+
+What is still visible: an account arriving or leaving, a uid, home or shell changing,
+a password appearing or being removed at all, an account being locked or unlocked,
+the hashing scheme changing under a release upgrade, and group membership changing —
+which on a key-authenticated box is how privilege is actually granted.
+
+**One field narrows the gap.** `shadow(5)` defines column three as the date of the
+last password change and `passwd` rewrites it when it writes a hash, so
+`last_changed_days_since_epoch` moves, to a resolution of one day. That is the file's
+documented contract rather than something rastro measured, and it is defeated by a
+tool that edits the hash column directly. Locking does not move it, because
+`usermod -L` only prefixes the hash.
+
+**Reversing this** means a redaction layer that hashes a value before it is rendered,
+at which point a digest of the hash becomes recordable and a password change becomes
+visible without the credential ever being printed. That is a new entry, not an edit
+to this one.

@@ -15,6 +15,14 @@ use crate::collectors::accounts::value_objects::HashAlgorithm;
 /// Rendered as a composed node rather than a single token: the state and the scheme
 /// are two facts, and fusing them into `"usable:y"` would make a reader parse a
 /// value rather than read it.
+///
+/// **What this type deliberately cannot express: that a password changed.** It has no
+/// variant and no field that holds a hash, so re-running `passwd` on an account
+/// leaves every value here identical. The state stays `Usable`, the scheme stays the
+/// same, and the diff is empty. The date in
+/// [`PasswordAging`](super::PasswordAging) is what moves instead. The collector's own
+/// documentation states the limitation in full; it is repeated here because this is
+/// the type a reader lands on when they ask what rastro knows about a password.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasswordStatus {
     /// The field is empty, so this account authenticates with no password at all.

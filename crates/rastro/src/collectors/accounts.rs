@@ -4,11 +4,51 @@
 //! [`source`] knows [`model`], `model` knows [`value_objects`], and neither of the
 //! last two knows a host interface exists.
 //!
-//! **No credential ever leaves this collector.** The shadow database is read, and
-//! what comes out of it is whether a password exists, whether it is locked, and which
+//! # This collector does not collect passwords
+//!
+//! **No credential ever leaves it.** The shadow database is read, and the only things
+//! that come out of it are whether a password exists, whether it is locked, and which
 //! scheme hashed it. There is no field anywhere in the model that a hash could be
 //! stored in, which is a stronger guarantee than marking one sensitive would be while
 //! rastro's redaction layer is still unbuilt.
+//!
+//! # This collector does not register a password change either
+//!
+//! **That is the direct cost of the paragraph above, and it is a real gap in what a
+//! fingerprint of this box tells you.** Read this before relying on a diff of the
+//! `accounts` facet to tell you nothing about authentication changed.
+//!
+//! A password's hash is the only part of it that changes when the password changes.
+//! Because no hash is recorded, changing a password is invisible here: the state
+//! stays `usable`, the scheme stays `y`, and two fingerprints taken either side of a
+//! `passwd` run are identical in this facet.
+//!
+//! What *is* visible, and is most of what an audit actually asks:
+//!
+//! - an account appearing, disappearing, or changing its uid, home or shell;
+//! - a password appearing or being removed at all, since that moves the state
+//!   between `absent`, `unusable`, `locked` and `usable`;
+//! - an account being locked or unlocked, which is the `locked` state;
+//! - the hashing scheme changing, which is how a release upgrade migrating SHA-512
+//!   to yescrypt shows up;
+//! - group membership changing, which is how privilege is actually granted on a box
+//!   whose accounts all authenticate by key.
+//!
+//! **One field narrows the gap without recording a credential:**
+//! `last_changed_days_since_epoch`, part of [`PasswordAging`]. `shadow(5)` defines
+//! that column as the date of the last password change, and `passwd` rewrites it
+//! whenever it writes a new hash, so a password change moves it. The resolution is
+//! one day, and two changes on the same day are indistinguishable.
+//!
+//! Two caveats on leaning on it, because it is weaker than it first looks. It is the
+//! documented contract of the file rather than something rastro measured, so a tool
+//! that edits the hash column directly and leaves the date alone defeats it. And
+//! locking or unlocking an account does *not* move it: `usermod -L` only prefixes the
+//! hash, which is why the `locked` state exists separately.
+//!
+//! So the honest summary is that a password change leaves a dated trace and never a
+//! recoverable one. That is deliberate, and it is as far as this collector goes until
+//! there is a redaction layer to hand a hash to.
 
 pub mod model;
 pub mod source;
