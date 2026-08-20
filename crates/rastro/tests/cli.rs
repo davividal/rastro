@@ -180,7 +180,68 @@ fn two_bare_runs_produce_byte_identical_output() {
 
     // Assert: the determinism contract, end to end through the real binary,
     // with no flag needed to get it.
-    assert_eq!(first, second);
+    //
+    // The comparison is on bytes, because bytes are the contract. The *message* is
+    // not: this test used to `assert_eq!` the two `Vec<u8>` directly, and when it
+    // finally caught something it reported two four-hundred-kilobyte byte arrays,
+    // which told a CI log reader nothing at all. Naming the facet is what turns a
+    // failure here into a starting point instead of a puzzle.
+    if first != second {
+        panic!("{}", divergence(&first, &second));
+    }
+}
+
+/// Which facets two runs disagreed about, for the failure above.
+///
+/// Reached only when the byte comparison has already failed, so it is free to be
+/// slower and more thorough than the assertion it explains.
+fn divergence(first: &[u8], second: &[u8]) -> String {
+    let (Ok(first), Ok(second)) = (
+        serde_json::from_slice::<Value>(first),
+        serde_json::from_slice::<Value>(second),
+    ) else {
+        return "two runs differed, and at least one did not parse as JSON".to_owned();
+    };
+
+    let mut report = String::from("two runs of an unchanged host differed.\n");
+    for section in ["metadata", "facets"] {
+        for name in facet_names(&first, section) {
+            let (before, after) = (
+                facet(&first, section, &name),
+                facet(&second, section, &name),
+            );
+            if before == after {
+                continue;
+            }
+
+            report.push_str(&format!("\n  {section}/{name} differs:\n"));
+            report.push_str(&format!("    first:  {}\n", excerpt(before)));
+            report.push_str(&format!("    second: {}\n", excerpt(after)));
+        }
+    }
+
+    report
+}
+
+fn facet_names(document: &Value, section: &str) -> Vec<String> {
+    document[section]
+        .as_array()
+        .expect("a section is an array of facets")
+        .iter()
+        .filter_map(|facet| facet["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// How much of a differing facet the message shows.
+const EXCERPT: usize = 400;
+
+fn excerpt(facet: &Value) -> String {
+    let rendered = facet.to_string();
+    if rendered.len() <= EXCERPT {
+        return rendered;
+    }
+
+    format!("{}... ({} bytes)", &rendered[..EXCERPT], rendered.len())
 }
 
 #[test]
