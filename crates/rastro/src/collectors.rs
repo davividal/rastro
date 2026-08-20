@@ -7,6 +7,7 @@ mod host;
 mod invocation;
 pub mod modules;
 pub mod mounts;
+pub mod network;
 pub mod packages;
 pub mod repositories;
 pub mod sockets;
@@ -20,6 +21,7 @@ pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
+pub use network::NetworkCollector;
 pub use packages::PackagesCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
@@ -65,6 +67,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(InvocationCollector::new(effective_config)),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
+        Box::new(NetworkCollector::new()),
         Box::new(PackagesCollector::new()),
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),
