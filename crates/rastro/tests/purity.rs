@@ -132,11 +132,6 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
     // Act & Assert: the anti-corruption boundary. A source holds one host
     // interface's spelling, so the moment the model reaches back into it, adding a
     // second interface reporting the same concepts stops being a local change.
-    //
-    // `canonical_tool` is on the list because it is the *other* route to the host, and
-    // the one a future collector is most likely to take: sysctl, systemd units and
-    // nftables all shell out. A model calling it directly would bypass the source layer
-    // entirely while every needle about `source` stayed satisfied.
     for file in domain {
         let code = code_of(&file);
         // **These are paths, not type names, and that is a deliberate change.** The list
@@ -148,10 +143,14 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
         // the ubiquitous language, which is backwards.
         //
         // Paths are strictly stronger anyway. Every source type in this codebase is
-        // reached either through a `source::` path, which the first needle catches
-        // whatever the type is called, or by deriving a deserializer, which the last two
+        // reached either through a `::source::` path, which the first needle catches
+        // whatever the type is called, or by deriving a deserializer, which the middle two
         // catch. `ProcMounts` in a model file was only ever reachable as
         // `...::source::ProcMounts`.
+        //
+        // Delimited on both sides for the same reason the sibling test below is: a bare
+        // `source::` would match the re-export `pub use firewall_source::FirewallSource;`
+        // the day a collector put one in a domain file.
         //
         // `canonical_tool` is here because it is the *other* route to the host, and the
         // one a future collector is most likely to take: sysctl, systemd units and
@@ -167,7 +166,7 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
         // its collector's flat re-export, `use crate::collectors::sockets::Ss`. This
         // catches the accidental `use`, which is the breach that actually happens.
         for needle in [
-            "source::",
+            "::source::",
             "canonical_tool",
             "CanonicalTool",
             "serde_json",
@@ -193,18 +192,19 @@ fn a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into() {
     // so the arrow runs model to value_objects. Reversing it would make a leaf
     // unusable in any other shape.
     //
-    // A path, not the bare word, for the reason the sibling test above gives at length.
-    // `model` on its own matches the module `device_model`, whose `DeviceModel` is a leaf
-    // that has never heard of a shape, and it would match any future `data_model` or
-    // `model_number` too. Reaching the model layer is always spelled with a `::` after it,
-    // whether as `crate::collectors::x::model::Y` or as `super::super::model::Y`.
+    // **A layer path, not the bare word, and the delimiters on both sides earn their
+    // keep.** `model` alone matches the module `device_model`, whose `DeviceModel` is a
+    // leaf that has never heard of a shape. `model::` alone still matches, because the
+    // re-export line reads `pub use device_model::DeviceModel;`. Only `::model::` picks out
+    // the layer, since every route into it is qualified: `crate::collectors::x::model::Y`,
+    // `super::super::model::Y`, `super::model::Y`.
     for file in domain_sources_of_every_collector() {
         if !belongs_to_layer(&file, "value_objects") {
             continue;
         }
         assert!(
-            !code_of(&file).contains("model::"),
-            "{} mentions `model::`: a leaf value is composed *by* a shape, never aware \
+            !code_of(&file).contains("::model::"),
+            "{} mentions `::model::`: a leaf value is composed *by* a shape, never aware \
              of one",
             file.display()
         );
