@@ -1,5 +1,6 @@
 //! The collectors that ship inside the binary.
 
+pub mod accounts;
 pub mod canonical_tool;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
@@ -9,6 +10,7 @@ pub mod mounts;
 pub mod packages;
 pub mod sysctl;
 
+pub use accounts::AccountsCollector;
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use modules::ModulesCollector;
@@ -49,6 +51,7 @@ pub enum SelectionError {
 /// other registration reads it.
 pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
     vec![
+        Box::new(AccountsCollector::new()),
         Box::new(HostCollector::new()),
         Box::new(InvocationCollector::new(effective_config)),
         Box::new(ModulesCollector::new()),
