@@ -139,17 +139,39 @@ fn a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from() {
     // entirely while every needle about `source` stayed satisfied.
     for file in domain {
         let code = code_of(&file);
-        // The last four are the set `rastro-collector`'s own purity test uses. Without them
-        // the guard rests on a naming convention nobody wrote down: a future source called
-        // `EtcPasswd` or `NetlinkSockets` matches none of the names above, and neither does
-        // the shortest route around the boundary, a `model/` file reading `/proc` itself.
+        // **These are paths, not type names, and that is a deliberate change.** The list
+        // used to carry `Proc`, `Query` and `Database` as well, as stand-ins for "the name
+        // of a source type". Name-shaped needles cannot survive a collector whose domain
+        // genuinely uses one of those words: `SocketProcess` is a model type with no host
+        // interface anywhere near it, and the processes collector cannot avoid `Process`
+        // at all. Contorting a domain name to satisfy a test would be the test dictating
+        // the ubiquitous language, which is backwards.
+        //
+        // Paths are strictly stronger anyway. Every source type in this codebase is
+        // reached either through a `source::` path, which the first needle catches
+        // whatever the type is called, or by deriving a deserializer, which the last two
+        // catch. `ProcMounts` in a model file was only ever reachable as
+        // `...::source::ProcMounts`.
+        //
+        // `canonical_tool` is here because it is the *other* route to the host, and the
+        // one a future collector is most likely to take: sysctl, systemd units and
+        // nftables all shell out. A model calling it directly would bypass the source
+        // layer entirely while every needle about `source` stayed satisfied.
+        //
+        // The `serde` pair is new and closes a hole the old list had. A model that derived
+        // `Deserialize` would let one interface's field names dictate rastro's own shape,
+        // which is the very corruption this boundary exists to prevent, and it needs no
+        // `source::` path to do it.
+        //
+        // What still slips past, as before: a domain file reaching a source type through
+        // its collector's flat re-export, `use crate::collectors::sockets::Ss`. This
+        // catches the accidental `use`, which is the breach that actually happens.
         for needle in [
-            "source",
-            "Proc",
-            "Query",
-            "Database",
+            "source::",
             "canonical_tool",
             "CanonicalTool",
+            "serde_json",
+            "Deserialize",
             "std::fs",
             "std::process",
             "std::net",

@@ -9,6 +9,7 @@ pub mod modules;
 pub mod mounts;
 pub mod packages;
 pub mod repositories;
+pub mod sockets;
 pub mod sysctl;
 pub mod systemd;
 pub mod timers;
@@ -21,6 +22,7 @@ pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
 pub use packages::PackagesCollector;
 pub use repositories::RepositoriesCollector;
+pub use sockets::SocketsCollector;
 pub use sysctl::SysctlCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
@@ -65,6 +67,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(MountsCollector::new()),
         Box::new(PackagesCollector::new()),
         Box::new(RepositoriesCollector::new()),
+        Box::new(SocketsCollector::new()),
         Box::new(SysctlCollector::new()),
         Box::new(TimersCollector::new()),
         Box::new(UnitsCollector::new()),
