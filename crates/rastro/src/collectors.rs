@@ -16,6 +16,7 @@ pub mod packages;
 pub mod processes;
 pub mod repositories;
 pub mod sockets;
+pub mod ssh_access;
 pub mod sysctl;
 pub mod systemd;
 pub mod time;
@@ -36,6 +37,7 @@ pub use packages::PackagesCollector;
 pub use processes::ProcessesCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
+pub use ssh_access::SshAccessCollector;
 pub use sysctl::SysctlCollector;
 pub use time::TimeCollector;
 pub use timers::TimersCollector;
@@ -88,6 +90,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(ProcessesCollector::new()),
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),
+        Box::new(SshAccessCollector::new()),
         Box::new(SysctlCollector::new()),
         Box::new(TimeCollector::new()),
         Box::new(TimersCollector::new()),
