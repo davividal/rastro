@@ -2,13 +2,15 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::time::value_objects::{Timezone, WallClock};
+use crate::collectors::time::value_objects::Timezone;
 
 /// The host's time configuration.
 ///
-/// **Four booleans and a timezone survive the diffable view; the two clock readings do
-/// not.** That split is the whole facet: how the box is *configured* to keep time is state,
-/// and what time it currently thinks it is is not.
+/// **Three facts, all of them stable, and no reading of the current time.** An earlier
+/// version of this type carried the system and hardware clocks as volatile values, because
+/// `timedatectl` reports them. It no longer asks `timedatectl` anything, for the reason the
+/// collector's own documentation gives, and a clock reading was the one thing the files
+/// cannot supply. Nothing is lost from the diffable view, because a clock never reached it.
 ///
 /// `local_real_time_clock` is the one worth explaining. When it is false the hardware clock
 /// runs in UTC, which is what a server should do; when true it runs in local time, which is
@@ -16,41 +18,32 @@ use crate::collectors::time::value_objects::{Timezone, WallClock};
 /// year.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockSettings {
-    pub timezone: Timezone,
+    /// Absent on a host that has never had one configured, which leaves every program on
+    /// it in UTC.
+    pub timezone: Option<Timezone>,
     pub local_real_time_clock: bool,
-    /// Whether a time-synchronisation service is available at all.
-    pub can_synchronise: bool,
-    /// Whether it is switched on.
-    pub synchronisation_enabled: bool,
-    /// Whether it has actually synchronised. Not volatile: a box that loses sync and does
-    /// not regain it is a fault worth seeing in a diff, not noise.
+    /// Whether a time-synchronisation service has actually synchronised.
+    ///
+    /// Not volatile: a box that loses sync and does not regain it is a fault worth seeing
+    /// in a diff, not noise.
     pub synchronised: bool,
-    pub system_clock: WallClock,
-    pub hardware_clock: WallClock,
 }
 
 impl From<&ClockSettings> for Observation {
     fn from(settings: &ClockSettings) -> Self {
         Observation::object([
             (
-                "can_synchronise",
-                Observation::boolean(settings.can_synchronise),
-            ),
-            (
-                "hardware_clock",
-                Observation::from(&settings.hardware_clock),
-            ),
-            (
                 "local_real_time_clock",
                 Observation::boolean(settings.local_real_time_clock),
             ),
             ("synchronised", Observation::boolean(settings.synchronised)),
             (
-                "synchronisation_enabled",
-                Observation::boolean(settings.synchronisation_enabled),
+                "timezone",
+                settings
+                    .timezone
+                    .as_ref()
+                    .map_or_else(Observation::null, Observation::from),
             ),
-            ("system_clock", Observation::from(&settings.system_clock)),
-            ("timezone", Observation::from(&settings.timezone)),
         ])
     }
 }

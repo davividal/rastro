@@ -1,5 +1,5 @@
 //! The host interfaces the time facet can be read from.
 
-mod timedatectl;
+mod clock_files;
 
-pub use timedatectl::Timedatectl;
+pub use clock_files::ClockFiles;

@@ -778,3 +778,62 @@ passes on the fixtures the author thought of and mis-slots a unit name nobody
 anticipated. Refusing a dependency at the price of a parser that can be quietly wrong
 is the wrong trade for a tool whose one unacceptable failure is reporting something it
 half-understood as complete.
+
+## Superseded: the time collector reads files, because `timedatectl` starts a unit
+
+The time collector was written to run `timedatectl show`, on the rule that effective,
+resolved state beats reading configuration files. That was the wrong call, and the
+reversal was forced by CI rather than reasoned out in advance.
+
+**`timedatectl` starts a systemd unit on the box being fingerprinted.**
+`systemd-timedated.service` is `Type=dbus`, so the first D-Bus call activates it and it
+keeps running afterwards. Measured, not inferred: with the unit stopped,
+`systemctl list-unit-files` left it `inactive`, and a single `timedatectl show` left it
+`active`.
+
+**How it surfaced.** The determinism harness failed in CI and nowhere else. The unit that
+the `time` collector started appeared in the *next* run's `processes` facet, so two runs of
+an unchanged host differed by exactly one process. It could not reproduce locally: macOS
+has no `/proc`, and an idle container has neither systemd nor the tools. It reproduced on
+the Debian test box only under load, which is what CI is — every tool present, two runs
+seconds apart.
+
+**Two reasons to reverse it, either sufficient.** A fingerprint must not change the box:
+rastro runs as root on production to observe, and starting a unit is a mutation however
+small. Nothing else it runs does this — `systemctl`, `ss`, `ip`, `lsblk`, `iptables-save`,
+`dpkg-query` and `sshd -T` all leave the box as they found it. And the byte-identical
+diffable view is the contract everything else rests on, so a collector that breaks it is
+wrong whatever else it gets right.
+
+**What the files give.** `/etc/localtime`'s symlink target for the zone, with
+`/etc/timezone` as the fallback and the symlink winning when they disagree, because the
+symlink is what programs follow. `/etc/adjtime`'s third line for the hardware clock's
+scale, where an absent file means UTC — its documented contract, and the case on the test
+box. `/run/systemd/timesync/synchronized` for whether synchronisation has happened.
+
+**What it gives up, and why that is acceptable.** `CanNTP` and `NTP`: whether a
+time-synchronisation service exists and whether it is switched on. Neither leaves the
+document, because both are the enablement state of a unit and that is the `units` facet's
+answer — `systemd-timesyncd.service` appears there as `enabled`. One fact in one place is
+better than the same fact in two.
+
+**The collector's version went to `2`**, because the facet lost two fields. A consumer
+diffing across the change has to be able to see that the collector moved rather than the
+host.
+
+**The general rule this does not overturn.** Prefer effective state over configuration
+files still holds; `sysctl`, `systemctl` and `sshd -T` are all still read that way. What
+this adds is a precondition: prefer the effective source *unless reading it changes the
+host*. `nginx -T` and `sshd -T` do not. `timedatectl` does.
+
+## The determinism harness names the facet that differed
+
+The harness compared two runs as `Vec<u8>` and asserted equality. When it finally caught
+something, it reported two four-hundred-kilobyte byte arrays into a CI log, which is worth
+nothing to whoever reads it — the failure above took a reproduction on a real box to
+diagnose, and the test had the answer all along.
+
+The comparison is still on bytes, because bytes are the contract. On failure it now parses
+both documents and names each facet that differs, with a bounded excerpt of each side.
+That is a diagnostic on the failure path only, so it is free to be slower than the
+assertion it explains.
