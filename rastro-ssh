@@ -1,0 +1,42 @@
+#!/bin/sh
+# Fingerprint a remote host with rastro. The binary goes in on stdin, the
+# fingerprint comes back on stdout, warnings on stderr, and nothing is left
+# behind. One ssh connection, so one authentication and one login record.
+#
+#   rastro-ssh <rastro-binary> <ssh-destination> [ssh-option...]
+#   RASTRO_SSH_SUDO=1 rastro-ssh ./rastro-aarch64 debian12
+#
+# The destination is passed to ssh untouched, so ~/.ssh/config decides
+# everything: user, port, key, jump host, known hosts.
+
+set -eu
+
+if [ "$#" -lt 2 ]; then
+	printf 'usage: %s <rastro-binary> <ssh-destination> [ssh-option...]\n' "${0##*/}" >&2
+	exit 64
+fi
+
+binary=$1
+destination=$2
+shift 2
+
+# Staged in /var/tmp because /tmp is noexec on hardened hosts and /root is in
+# rastro's own walk set. The trap also fires on a dropped link, since that is a
+# SIGHUP to the remote shell, so cleanup needs no second connection.
+remote_program='set -eu
+staged=$(mktemp /var/tmp/rastro.XXXXXXXX)
+trap "rm -f $staged" EXIT HUP INT TERM
+cat >"$staged"
+chmod 700 "$staged"
+'"${RASTRO_SSH_SUDO:+sudo -n }"'"$staged"'
+
+# -T because a pty would translate LF to CRLF and corrupt every byte of a format
+# whose whole contract is byte-identical output.
+fingerprint=$(mktemp "${TMPDIR:-/tmp}/rastro-ssh.XXXXXXXX")
+trap 'rm -f "$fingerprint"' EXIT HUP INT TERM
+
+ssh -T "$@" "$destination" "$remote_program" <"$binary" >"$fingerprint"
+
+# Emitted only after a clean exit, so a run that died halfway cannot leave half a
+# document on stdout.
+cat "$fingerprint"

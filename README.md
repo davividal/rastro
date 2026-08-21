@@ -51,11 +51,47 @@ why AIDE and configsnap were rejected.
 ## What it is not
 
 Not drift prevention, remediation, or monitoring. No agent, no daemon, no
-server, no SSH, no fleet. One box, one invocation, one document.
+server, no fleet. One box, one invocation, one document. The binary opens no
+socket: [remote runs](#remote-hosts) are a shell wrapper around `ssh`, not a
+client talking to a service.
 
 No `diff` verb either: the format is contractually diffable, so `diff(1)`,
 `dyff` or `jd` are enough. See
 [the format contract](docs/design.md#output-format-the-real-contract).
+
+## Remote hosts
+
+`rastro` only ever fingerprints the box it runs on. To fingerprint another one,
+push the binary over ssh, run it, delete it. That is the whole of what
+[`rastro-ssh`](rastro-ssh) does, in a single connection:
+
+```sh
+./rastro-ssh ./rastro-aarch64 debian12 > before.json
+```
+
+The arguments are the binary to push and an ssh destination, followed by any
+further options handed straight to `ssh`. Nothing is configured twice: the
+destination is whatever your `~/.ssh/config` already resolves, keys, ports,
+jump hosts and host-key checking included.
+
+- The binary you name must match the target's architecture, because nothing
+  probes it. `ssh <destination> uname -m` if you are unsure.
+- `RASTRO_SSH_SUDO=1` prefixes the run with `sudo -n`. Unprivileged, the
+  collectors that read `/etc/shadow`, user crontabs and the firewall ruleset
+  report `error` rather than lying about the host.
+- The binary is staged under `mktemp` in `/var/tmp`, mode 700, and removed by a
+  trap that fires on a dropped link too. An interrupted run leaves nothing
+  behind and needs no second login.
+- The fingerprint reaches stdout only after a clean exit, so a run that died
+  halfway cannot leave half a document to be diffed.
+- It is produced by the same code as a local run, so the byte-identical
+  guarantee survives the transport. A pty would not: the wrapper passes `-T`
+  because CRLF translation would corrupt every line of it.
+- The remote login shell has to be POSIX. csh and fish will not run the staging
+  command.
+
+One host per invocation, as ever. A fleet is a `for` loop, and `xargs -P` does
+the parallel version better than rastro would.
 
 ## Building
 
@@ -69,7 +105,8 @@ cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 The musl target is what ships: one static binary for a host with nothing
-installed on it. CI asserts it really is static.
+installed on it. CI asserts it really is static. Swap in
+`aarch64-unknown-linux-musl` for an arm64 host.
 
 ## Documentation
 
