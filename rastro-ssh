@@ -31,11 +31,14 @@ chmod 700 "$staged"
 '"${RASTRO_SSH_SUDO:+sudo -n }"'"$staged"'
 
 # -T because a pty would translate LF to CRLF and corrupt every byte of a format
-# whose whole contract is byte-identical output.
+# whose whole contract is byte-identical output. It comes *after* the caller's
+# options on purpose: between -t and -T the last one wins, so passing them first
+# would let a caller's -tt force a pty. Both spellings lose to this either way,
+# since -o RequestTTY never overrides the flag.
 fingerprint=$(mktemp "${TMPDIR:-/tmp}/rastro-ssh.XXXXXXXX")
 trap 'rm -f "$fingerprint"' EXIT HUP INT TERM
 
-ssh -T "$@" "$destination" "$remote_program" <"$binary" >"$fingerprint"
+ssh "$@" -T "$destination" "$remote_program" <"$binary" >"$fingerprint"
 
 # Emitted only after a clean exit, so a run that died halfway cannot leave half a
 # document on stdout.
