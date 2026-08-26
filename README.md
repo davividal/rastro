@@ -59,6 +59,35 @@ No `diff` verb either: the format is contractually diffable, so `diff(1)`,
 `dyff` or `jd` are enough. See
 [the format contract](docs/design.md#output-format-the-real-contract).
 
+## What it needs on the host
+
+Nothing installed, and that is the point: one static binary, no runtime, no
+library to match. Two exceptions, both about privilege rather than software.
+
+**Root**, because `/etc`, user crontabs and the firewall ruleset are not
+readable otherwise.
+
+**`sudo`**, for the Layer 3 collectors that read a service as the account that
+owns it. A PostgreSQL cluster with Debian's default `local all all peer` in
+`pg_hba.conf` refuses root outright, so the cluster is reachable only as
+`postgres`. rastro drops privilege to get there; it never gains any, which is
+why this needs no sudoers entry.
+
+Nothing in the binary needs `sudo` yet: no Layer 3 collector ships in
+`built_in()` so far, so today's run wants root and nothing else. The rest of
+this section is the contract the first one arrives under, written down before
+it lands rather than after.
+
+Where `sudo` is missing, or present and refusing, the facet will be an `error`
+carrying the reason, never `absent`. A cluster listening on 5432 is running
+whether or not rastro can reach it, so the only thing missing sudo establishes
+is that rastro could not look. Reporting that as absence would put a confident
+lie in the document, and the run continues either way.
+
+Absence is still reported where it is genuinely knowable, and it needs no
+privilege: no unit, no listening socket and no cluster directory means no
+cluster, which is state.
+
 ## Remote hosts
 
 `rastro` only ever fingerprints the box it runs on. To fingerprint another one,

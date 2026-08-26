@@ -16,6 +16,7 @@ pub mod modules;
 pub mod mounts;
 pub mod network;
 pub mod packages;
+pub mod postgresql;
 pub mod processes;
 pub mod repositories;
 pub mod sockets;

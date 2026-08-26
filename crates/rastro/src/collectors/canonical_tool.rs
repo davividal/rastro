@@ -44,9 +44,13 @@
 //! recorded failure with the child killed.
 
 mod run_limits;
+mod target_user;
+mod tool_as_user;
 mod tool_output;
 
 pub use run_limits::RunLimits;
+pub use target_user::TargetUser;
+pub use tool_as_user::ToolAsUser;
 pub use tool_output::ToolOutput;
 
 use std::io::ErrorKind;
