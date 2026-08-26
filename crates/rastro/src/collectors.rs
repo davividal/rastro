@@ -39,6 +39,7 @@ pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
 pub use network::NetworkCollector;
 pub use packages::PackagesCollector;
+pub use postgresql::PostgresqlCollector;
 pub use processes::ProcessesCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
@@ -93,6 +94,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(MountsCollector::new()),
         Box::new(NetworkCollector::new()),
         Box::new(PackagesCollector::new()),
+        Box::new(PostgresqlCollector::new()),
         Box::new(ProcessesCollector::new()),
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),

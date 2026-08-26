@@ -4,7 +4,19 @@
 //! why the odd-looking ones are in: `"""$user"", public"` is how `search_path` arrives,
 //! and `log_line_prefix` really does end in a space.
 
-use rastro::collectors::postgresql::{PsqlSettings, Setting, SettingName, SettingSource};
+mod support;
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
+use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
+use rastro::collectors::postgresql::{
+    Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
+    PostgresqlCollector, PsqlSettings, RegisteredCluster, Setting, SettingName, SettingSource,
+};
+use rastro_collector::{Collector, Observation, Presence};
+use support::fs_tree::scratch_tree;
+use support::observation::{boolean, field, integer, is_null, keys_of, text};
 
 /// The six columns the collector asks for, as psql renders them with `--csv -t`.
 const SETTINGS: &str = "\
@@ -194,4 +206,373 @@ max_connections,200,,configuration file,postmaster,f
 
     // Assert
     assert!(refused.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// The clusters on the box: enumeration, keying, and the facet they produce.
+// ---------------------------------------------------------------------------
+
+/// `pg_lsclusters` as postgresql-common prints it on a box mid-upgrade: the new cluster
+/// running, the old one kept until the data is dropped, and a third owned by somebody other
+/// than `postgres` because nothing requires that name.
+const REGISTERED: &str = "\
+Ver Cluster Port Status Owner    Data directory              Log file
+16  main    5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log
+15  main    5433 down   postgres /var/lib/postgresql/15/main /var/log/postgresql/postgresql-15-main.log
+9   legacy  5434 online pgsql    /var/lib/postgresql/9/legacy /var/log/postgresql/postgresql-9-legacy.log
+";
+
+fn registered(output: &str) -> Vec<RegisteredCluster> {
+    ClusterInventory::parse(output).expect("this output is well formed")
+}
+
+#[test]
+fn parse_reads_every_registered_cluster() {
+    // Act
+    let clusters = registered(REGISTERED);
+
+    // Assert
+    assert_eq!(clusters.len(), 3);
+    assert_eq!(clusters[0].id.as_str(), "16/main");
+    assert_eq!(clusters[0].port, 5432);
+    assert_eq!(clusters[0].owner, "postgres");
+    assert!(clusters[0].status.is_online());
+}
+
+#[test]
+fn parse_reads_the_owner_rather_than_assuming_postgres() {
+    // Act
+    let clusters = registered(REGISTERED);
+
+    // Assert: peer authentication refuses everybody but the owner, so guessing this name
+    // would turn a readable cluster into a reported failure.
+    let legacy = &clusters[2];
+    assert_eq!(legacy.id.as_str(), "9/legacy");
+    assert_eq!(legacy.owner, "pgsql");
+}
+
+#[test]
+fn parse_tells_a_stopped_cluster_from_a_running_one() {
+    // Act
+    let clusters = registered(REGISTERED);
+
+    // Assert
+    assert!(!clusters[1].status.is_online());
+}
+
+#[test]
+fn parse_reads_a_box_with_no_cluster_created_as_an_empty_inventory() {
+    // Arrange: postgresql-common installed, nothing created. Only the header prints.
+    let header = "Ver Cluster Port Status Owner Data directory Log file\n";
+
+    // Act & Assert: no cluster is state, not a failure.
+    assert!(registered(header).is_empty());
+}
+
+#[test]
+fn parse_refuses_a_row_it_cannot_tell_a_cluster_from() {
+    // Act
+    let refused = ClusterInventory::parse("16 main 5432\n");
+
+    // Assert
+    assert!(refused.is_err());
+}
+
+#[test]
+fn parse_refuses_a_status_that_is_neither_online_nor_down() {
+    // Act: the facet branches on this, so a word rastro does not know cannot be guessed.
+    let refused =
+        ClusterInventory::parse("16 main 5432 wedged postgres /var/lib/pg /var/log/pg.log\n");
+
+    // Assert
+    assert!(refused.is_err());
+}
+
+#[test]
+fn clusters_render_in_one_deterministic_key_order() {
+    // Arrange
+    let clusters = registered(REGISTERED);
+    let fleet = Clusters::new(clusters.into_iter().map(|cluster| {
+        (
+            cluster.id,
+            Cluster {
+                status: cluster.status,
+                port: cluster.port,
+                owner: cluster.owner,
+                settings: None,
+            },
+        )
+    }));
+
+    // Act
+    let keys = keys_of(&Observation::from(&fleet));
+
+    // Assert: lexicographic on the key text, because an `Observation` object is a
+    // `BTreeMap<String, _>` and the format owns that ordering. `15/main` before `9/legacy`
+    // reads oddly and is still the contract: what it must be is the same every run.
+    assert_eq!(keys, vec!["15/main", "16/main", "9/legacy"]);
+}
+
+#[test]
+fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
+    // Arrange
+    let running = Cluster {
+        status: ClusterStatus::parse("online").expect("a legal status"),
+        port: 5432,
+        owner: "postgres".to_owned(),
+        settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
+    };
+    let stopped = Cluster {
+        status: ClusterStatus::parse("down").expect("a legal status"),
+        port: 5433,
+        owner: "postgres".to_owned(),
+        settings: None,
+    };
+    let fleet = Clusters::new([
+        (ClusterId::new("16", "main").expect("legal"), running),
+        (ClusterId::new("15", "main").expect("legal"), stopped),
+    ]);
+
+    // Act
+    let observation = Observation::from(&fleet);
+
+    // Assert: a stopped cluster has no effective configuration, because nothing is running
+    // to hold one. Null says that; an empty object would read as a cluster configured with
+    // nothing.
+    let sixteen = field(&observation, "16/main");
+    assert_eq!(text(&field(&sixteen, "status")), "online");
+    assert_eq!(integer(&field(&sixteen, "port")), 5432);
+    assert_eq!(text(&field(&sixteen, "owner")), "postgres");
+    assert!(!is_null(&field(&sixteen, "settings")));
+
+    let fifteen = field(&observation, "15/main");
+    assert_eq!(text(&field(&fifteen, "status")), "down");
+    assert!(is_null(&field(&fifteen, "settings")));
+}
+
+#[test]
+fn the_collector_reports_absent_without_postgresql_common() {
+    // Arrange: no pg_lsclusters means no Debian-managed cluster.
+    let collector = PostgresqlCollector::reading(None);
+
+    // Act & Assert: absence, not a failed look. Reporting `error` on every box in a fleet
+    // that has no PostgreSQL would bury the failures that are real.
+    assert_eq!(collector.presence(), Presence::Absent);
+    assert!(collector.collect().is_err());
+}
+
+#[test]
+fn the_collector_names_the_facet_it_fills() {
+    // Arrange
+    let collector = PostgresqlCollector::reading(None);
+
+    // Act & Assert
+    assert_eq!(collector.name().as_str(), "postgresql");
+    assert_eq!(collector.identity().id.as_str(), "postgresql");
+}
+
+#[test]
+fn parse_reads_a_standby_as_running_and_in_recovery() {
+    // Arrange: pg_lsclusters appends `,recovery` when it finds recovery.signal or
+    // recovery.conf in the data directory, which is every standby on the box.
+    let standby = "\
+Ver Cluster Port Status         Owner    Data directory              Log file
+17  main    5432 online,recovery postgres /var/lib/postgresql/17/main /var/log/pg.log
+";
+
+    // Act
+    let clusters = registered(standby);
+
+    // Assert: a standby is running and readable, so treating the suffix as an unknown
+    // status would fail the whole facet on every replica in the fleet.
+    assert_eq!(clusters.len(), 1);
+    assert!(clusters[0].status.is_online());
+    assert!(clusters[0].status.in_recovery());
+}
+
+#[test]
+fn parse_reads_a_stopped_standby_as_neither_running_nor_lost() {
+    // Arrange
+    let stopped = "17 main 5432 down,recovery postgres /var/lib/pg /var/log/pg.log\n";
+
+    // Act
+    let clusters = registered(stopped);
+
+    // Assert
+    assert!(!clusters[0].status.is_online());
+    assert!(clusters[0].status.in_recovery());
+}
+
+#[test]
+fn recovery_reaches_the_facet_as_its_own_fact() {
+    // Arrange
+    let cluster = Cluster {
+        status: ClusterStatus::parse("online,recovery").expect("a legal status"),
+        port: 5432,
+        owner: "postgres".to_owned(),
+        settings: None,
+    };
+    let fleet = Clusters::new([(ClusterId::new("17", "main").expect("legal"), cluster)]);
+
+    // Act
+    let observation = field(&Observation::from(&fleet), "17/main");
+
+    // Assert: a cluster promoted out of recovery, or demoted into it, is exactly the change
+    // a fingerprint exists to catch, so it is a field rather than a word inside `status`.
+    assert_eq!(text(&field(&observation, "status")), "online");
+    assert!(boolean(&field(&observation, "in_recovery")));
+}
+
+// ---------------------------------------------------------------------------
+// The whole read, against fake tools: no cluster, no psql, no sudo.
+// ---------------------------------------------------------------------------
+
+/// A shell script standing in for a host tool, so the composition can be exercised where
+/// the host would otherwise decide the answer.
+fn fake_tool(tree: &str, program: &str, body: &str) -> CanonicalTool {
+    let root = scratch_tree(&format!("postgresql-{tree}"), &[]);
+    let path = root.join(program);
+    fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("a writable script");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("an executable script");
+    CanonicalTool::located_in(program, &[root.to_str().expect("utf-8 scratch path")])
+        .expect("the script should be locatable")
+}
+
+fn fake_inventory(tree: &str, listed: &str) -> CanonicalTool {
+    fake_tool(
+        tree,
+        "pg_lsclusters",
+        &format!("cat <<'EOF'\n{listed}\nEOF"),
+    )
+}
+
+/// Stands in for `sudo`: drops `-n -u <user>` and runs the rest, so the delegation is real
+/// while the privilege drop is not.
+fn fake_client(tree: &str, psql_body: &str) -> ToolAsUser {
+    ToolAsUser::using(
+        fake_tool(&format!("{tree}-sudo"), "sudo", "shift 3\nexec \"$@\""),
+        fake_tool(&format!("{tree}-psql"), "psql", psql_body),
+        ClusterOwner::new("postgres").expect("a legal user name"),
+    )
+}
+
+fn read_with(tree: &str, listed: &str, psql_body: &str) -> Clusters {
+    PostgresqlClusters::reading_as(fake_inventory(tree, listed), fake_client(tree, psql_body))
+        .read()
+        .expect("these fixtures are well formed")
+}
+
+#[test]
+fn read_asks_a_running_cluster_and_carries_its_settings() {
+    // Act
+    let clusters = read_with(
+        "online",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &format!("cat <<'EOF'\n{SETTINGS}EOF"),
+    );
+
+    // Assert: the whole path, from the register through the delegated client to the parse.
+    assert_eq!(clusters.len(), 1);
+    assert!(!clusters.is_empty());
+    let settings = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .settings
+        .as_ref()
+        .expect("a running cluster is asked");
+    assert_eq!(settings.settings().len(), 5);
+}
+
+#[test]
+fn read_does_not_ask_a_stopped_cluster() {
+    // Arrange: a client that fails if it is ever invoked, so being asked is a test failure
+    // rather than a silent success.
+    let clusters = read_with(
+        "stopped",
+        "17  main    5432 down   postgres /var/lib/pg /var/log/pg.log",
+        "printf 'a stopped cluster must not be queried\\n' >&2\nexit 1",
+    );
+
+    // Assert
+    assert!(
+        clusters
+            .clusters()
+            .values()
+            .next()
+            .expect("one cluster")
+            .settings
+            .is_none()
+    );
+}
+
+#[test]
+fn read_reports_which_cluster_could_not_be_answered_for() {
+    // Arrange
+    let refusing = PostgresqlClusters::reading_as(
+        fake_inventory(
+            "refused",
+            "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        ),
+        fake_client("refused", "printf 'FATAL: no such database\\n' >&2\nexit 2"),
+    );
+
+    // Act
+    let failure = refusing
+        .read()
+        .expect_err("the client refuses every database");
+
+    // Assert: both candidate databases are named, because an operator told only that
+    // `template1` failed cannot see that `postgres` was missing first.
+    let reason = failure.to_string();
+    assert!(reason.contains("17/main"), "got {reason:?}");
+    assert!(reason.contains("postgres"), "got {reason:?}");
+    assert!(reason.contains("template1"), "got {reason:?}");
+}
+
+#[test]
+fn read_carries_every_cluster_the_register_lists() {
+    // Act
+    let clusters = read_with(
+        "several",
+        "17  main    5432 online postgres /var/lib/pg/17 /var/log/pg17.log\n\
+         15  main    5433 down   postgres /var/lib/pg/15 /var/log/pg15.log",
+        &format!("cat <<'EOF'\n{SETTINGS}EOF"),
+    );
+
+    // Assert
+    assert_eq!(
+        keys_of(&Observation::from(&clusters)),
+        vec!["15/main", "17/main"]
+    );
+}
+
+#[test]
+fn read_refuses_a_register_it_cannot_read() {
+    // Arrange
+    let broken = PostgresqlClusters::using(fake_inventory("broken", "17 main 5432"));
+
+    // Act & Assert: a short row cannot be told apart from a cluster, so the register is
+    // reported as unreadable rather than half-read.
+    assert!(broken.read().is_err());
+}
+
+#[test]
+fn using_names_the_register_it_will_run() {
+    // Arrange
+    let clusters = PostgresqlClusters::using(fake_inventory("named", ""));
+
+    // Act & Assert
+    assert_eq!(clusters.inventory().program(), "pg_lsclusters");
+}
+
+#[test]
+fn a_cluster_id_refuses_a_half_it_cannot_render() {
+    // Act & Assert: an empty half would render as `17/` or `/main`, which names no cluster
+    // and would collide with the next one that lost the same half.
+    assert!(ClusterId::new("", "main").is_err());
+    assert!(ClusterId::new("17", "").is_err());
 }

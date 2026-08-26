@@ -69,24 +69,26 @@ readable otherwise.
 
 **`sudo`**, for the Layer 3 collectors that read a service as the account that
 owns it. A PostgreSQL cluster with Debian's default `local all all peer` in
-`pg_hba.conf` refuses root outright, so the cluster is reachable only as
-`postgres`. rastro drops privilege to get there; it never gains any, which is
-why this needs no sudoers entry.
+`pg_hba.conf` refuses root outright, so the cluster is reachable only as its
+owner. rastro reads that owner from `pg_lsclusters` rather than assuming
+`postgres`, then drops privilege to it; it never gains any, which is why this
+needs no sudoers entry.
 
-Nothing in the binary needs `sudo` yet: no Layer 3 collector ships in
-`built_in()` so far, so today's run wants root and nothing else. The rest of
-this section is the contract the first one arrives under, written down before
-it lands rather than after.
-
-Where `sudo` is missing, or present and refusing, the facet will be an `error`
+Where `sudo` is missing, or present and refusing, the facet is an `error`
 carrying the reason, never `absent`. A cluster listening on 5432 is running
 whether or not rastro can reach it, so the only thing missing sudo establishes
 is that rastro could not look. Reporting that as absence would put a confident
 lie in the document, and the run continues either way.
 
-Absence is still reported where it is genuinely knowable, and it needs no
-privilege: no unit, no listening socket and no cluster directory means no
-cluster, which is state.
+Absence is reported where it is genuinely knowable, and it needs no privilege:
+no `pg_lsclusters` means no Debian-managed cluster, which is state. A cluster
+built from source and started by hand is missed, and that is a named gap rather
+than a claim.
+
+A stopped cluster is neither of those. It is recorded, with its settings null,
+because a server that is not running has no effective configuration to read.
+Substituting its `postgresql.conf` would report a file as the state of
+something not applying it.
 
 ## Remote hosts
 

@@ -17,6 +17,7 @@ use rastro::collectors::exporters::{
 use rastro::collectors::systemd::UnitName;
 use rastro_collector::{Collector, Content, Observation, Presence, Scalar};
 use support::fs_tree::scratch_tree;
+use support::observation::{field, integer, keys_of, text};
 
 /// The six agents as `systemctl show -p Id -p ExecStartEx --no-pager -- <units>` prints
 /// them, alongside two units that are not telemetry at all.
@@ -79,37 +80,6 @@ fn deployment(unit: &str) -> rastro::collectors::exporters::Deployment {
         .into_iter()
         .find(|deployment| deployment.unit == name)
         .unwrap_or_else(|| panic!("expected {unit:?} to be recognised as an exporter"))
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .get(name)
-            .unwrap_or_else(|| panic!("expected a {name:?} field"))
-            .clone(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn text(observation: &Observation) -> String {
-    match observation.content() {
-        Content::Scalar(Scalar::Text(value)) => value.clone(),
-        other => panic!("expected text, got {other:?}"),
-    }
-}
-
-fn integer(observation: &Observation) -> i64 {
-    match observation.content() {
-        Content::Scalar(Scalar::Integer(value)) => *value,
-        other => panic!("expected an integer, got {other:?}"),
-    }
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    match observation.content() {
-        Content::Object(entries) => entries.keys().cloned().collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
 }
 
 fn on_stdout(printed: &str) -> ToolOutput {

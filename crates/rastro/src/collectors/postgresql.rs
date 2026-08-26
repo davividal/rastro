@@ -10,13 +10,92 @@
 //! carries the two columns a file never can: where each value came from, and whether the
 //! running server has taken it up yet.
 //!
-//! The collector itself is not here yet. This is the interface and the meaning: reading
-//! psql's output into a cluster's configuration.
-
+//! **Keyed by cluster**, because one box legitimately runs several: an upgrade leaves
+//! `16/main` and `15/main` side by side, each on its own port with its own effective
+//! configuration. The facet holds one entry per cluster rather than the settings of whichever
+//! one psql happened to connect to.
 pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{ClusterSettings, Setting};
-pub use source::PsqlSettings;
-pub use value_objects::{SettingName, SettingSource, SettingUnit, SettingValue};
+pub use model::{Cluster, ClusterSettings, Clusters, Setting};
+pub use source::{ClusterInventory, PostgresqlClusters, PsqlSettings, RegisteredCluster};
+pub use value_objects::{
+    ClusterId, ClusterStatus, SettingName, SettingSource, SettingUnit, SettingValue,
+};
+
+// One import, because `rastro-collector` re-exports what an author needs.
+use rastro_collector::{
+    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    CollectorVersion, FacetName, Observation, Presence,
+};
+
+pub struct PostgresqlCollector {
+    name: FacetName,
+    identity: CollectorIdentity,
+    clusters: Option<PostgresqlClusters>,
+}
+
+impl PostgresqlCollector {
+    pub fn new() -> Self {
+        Self::reading(PostgresqlClusters::detect())
+    }
+
+    /// The same collector over a source the caller chose.
+    pub fn reading(clusters: Option<PostgresqlClusters>) -> Self {
+        Self {
+            name: FacetName::new("postgresql").expect("`postgresql` is a legal facet name"),
+            identity: CollectorIdentity::new(
+                CollectorId::new("postgresql").expect("`postgresql` is a legal collector id"),
+                CollectorVersion::new("1").expect("`1` is a legal collector version"),
+            ),
+            clusters,
+        }
+    }
+}
+
+impl Default for PostgresqlCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Collector for PostgresqlCollector {
+    fn name(&self) -> &FacetName {
+        &self.name
+    }
+
+    fn identity(&self) -> &CollectorIdentity {
+        &self.identity
+    }
+
+    fn category(&self) -> CollectorCategory {
+        CollectorCategory::State
+    }
+
+    /// `absent` without postgresql-common, `present` with it even if no cluster exists.
+    ///
+    /// The two are different facts and the document keeps them apart: a box with
+    /// postgresql-common and no cluster has had PostgreSQL installed and no cluster created,
+    /// which is state, while a box without it has no Debian-managed cluster at all. Neither
+    /// is a failure, so neither is `Undetermined`; the reasons rastro genuinely cannot look
+    /// (no psql, no sudo, a cluster that refuses the connection) surface from
+    /// [`Collector::collect`] as an `error` instead, because by then the cluster is known to
+    /// be there.
+    fn presence(&self) -> Presence {
+        match self.clusters {
+            Some(_) => Presence::Present,
+            None => Presence::Absent,
+        }
+    }
+
+    fn collect(&self) -> Result<Observation, CollectionError> {
+        let clusters = self.clusters.as_ref().ok_or_else(|| {
+            CollectionError::new(
+                "no pg_lsclusters was found, so this box has no postgresql-common to ask",
+            )
+        })?;
+
+        Ok(Observation::from(&clusters.read()?))
+    }
+}
