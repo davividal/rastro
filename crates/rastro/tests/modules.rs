@@ -184,6 +184,52 @@ fn parse_ignores_the_going_and_coming_markers_in_the_taint_column() {
 }
 
 #[test]
+fn taint_flag_knows_the_whole_kernel_alphabet() {
+    let cases = [
+        ('P', TaintFlag::ProprietaryModule, "proprietary_module"),
+        ('F', TaintFlag::ForcedModule, "forced_module"),
+        (
+            'S',
+            TaintFlag::OutOfSpecificationSystem,
+            "out_of_specification_system",
+        ),
+        ('R', TaintFlag::ForcedUnload, "forced_unload"),
+        (
+            'M',
+            TaintFlag::MachineCheckException,
+            "machine_check_exception",
+        ),
+        ('B', TaintFlag::BadPage, "bad_page"),
+        ('U', TaintFlag::UserspaceRequested, "userspace_requested"),
+        ('D', TaintFlag::KernelDied, "kernel_died"),
+        ('A', TaintFlag::AcpiTableOverridden, "acpi_table_overridden"),
+        ('W', TaintFlag::WarningIssued, "warning_issued"),
+        ('C', TaintFlag::StagingDriver, "staging_driver"),
+        ('I', TaintFlag::FirmwareWorkaround, "firmware_workaround"),
+        ('O', TaintFlag::OutOfTreeModule, "out_of_tree_module"),
+        ('E', TaintFlag::UnsignedModule, "unsigned_module"),
+        ('L', TaintFlag::SoftLockup, "soft_lockup"),
+        ('K', TaintFlag::LivePatched, "live_patched"),
+        ('X', TaintFlag::Auxiliary, "auxiliary"),
+        ('T', TaintFlag::RandstructPlugin, "randstruct_plugin"),
+        ('N', TaintFlag::InKernelTest, "in_kernel_test"),
+        ('J', TaintFlag::FwctlMutatingDebug, "fwctl_mutating_debug"),
+    ];
+    for (letter, expected, name) in cases {
+        let flag = TaintFlag::from_letter(letter);
+        assert_eq!(flag, expected, "wrong taint for {letter:?}");
+        assert_eq!(flag.to_name(), name, "wrong rendered name for {letter:?}");
+    }
+}
+
+#[test]
+fn taint_flag_spells_an_unknown_letter_in_the_document() {
+    let flag = TaintFlag::from_letter('Z');
+    assert_eq!(flag, TaintFlag::Unrecognised('Z'));
+    assert_eq!(flag.to_name(), "unrecognised_Z");
+}
+
+#[test]
 fn parse_ignores_blank_lines() {
     // Act
     let table = parsed("\nnft_ct 24576 2 - Live 0x0000000000000000\n\n");

@@ -5,12 +5,18 @@
 //! Debian package. That mix is the reason this facet exists, and it is measured rather than
 //! supposed — `dpkg-query` knows `collectd 5.12.0-14` and has never heard of the other five.
 
-use rastro::collectors::canonical_tool::ToolOutput;
+mod support;
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
+use rastro::collectors::canonical_tool::{CanonicalTool, ToolOutput};
 use rastro::collectors::exporters::{
     ExporterBuild, ExportersCollector, TelemetryFleet, VersionDialect,
 };
 use rastro::collectors::systemd::UnitName;
 use rastro_collector::{Collector, Content, Observation, Presence, Scalar};
+use support::fs_tree::scratch_tree;
 
 /// The six agents as `systemctl show -p Id -p ExecStartEx --no-pager -- <units>` prints
 /// them, alongside two units that are not telemetry at all.
@@ -47,6 +53,23 @@ Id=ssh.service
 
 Id=-.slice
 ";
+
+fn fake_systemctl(name: &str, listed: &str, shown: &str) -> CanonicalTool {
+    let root = scratch_tree(&format!("exporters-{name}"), &[]);
+    let path = root.join("systemctl");
+    fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\nlist-units)\ncat <<'EOF'\n{listed}\nEOF\n;;\nshow)\ncat <<'EOF'\n{shown}\nEOF\n;;\n*)\nprintf 'unexpected invocation: %s\\n' \"$*\" >&2\nexit 1\n;;\nesac\n"
+        ),
+    )
+    .expect("a writable script");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("an executable script");
+    CanonicalTool::located_in("systemctl", &[root.to_str().expect("utf-8 scratch path")])
+        .expect("the fake tool should be locatable")
+}
 
 fn deployment(unit: &str) -> rastro::collectors::exporters::Deployment {
     let name = UnitName::new(unit).expect("a legal unit name");
@@ -480,4 +503,62 @@ Id=postgres_exporter.service\n";
     // refutable-bad-split rule that lets this facet tokenise argv where the units facet
     // deliberately does not.
     assert!(refused.is_err());
+}
+
+#[test]
+fn using_names_the_systemctl_tool_it_will_run() {
+    let fleet = TelemetryFleet::using(fake_systemctl("tool", "[]\n", ""));
+    assert_eq!(fleet.tool().program(), "systemctl");
+}
+
+#[test]
+fn read_returns_an_empty_fleet_when_systemd_lists_no_units() {
+    let fleet = TelemetryFleet::using(fake_systemctl("empty", "[]\n", ""));
+    let read = fleet.read().expect("no units is not a failure");
+    assert!(read.is_empty());
+}
+
+#[test]
+fn read_keeps_collectd_without_trying_to_guess_a_build() {
+    let listed = "[{\"unit\":\"collectd.service\"}]\n";
+    let shown = "\
+ExecStartEx={ path=/usr/sbin/collectd ; argv[]=/usr/sbin/collectd ; flags= ; pid=0 }\n\
+Id=collectd.service\n";
+    let fleet = TelemetryFleet::using(fake_systemctl("collectd", listed, shown));
+
+    let read = fleet
+        .read()
+        .expect("the fake systemctl output is well formed");
+    let collectd = read
+        .exporters()
+        .get(&UnitName::new("collectd.service").expect("legal unit"))
+        .expect("collectd should be in the fleet");
+
+    assert!(collectd.build.is_none());
+    assert_eq!(collectd.agent.as_str(), "collectd");
+}
+
+#[test]
+fn read_records_a_known_agent_even_when_rastro_will_not_run_its_binary() {
+    if CanonicalTool::located("node_exporter").is_some() {
+        return;
+    }
+
+    let listed = "[{\"unit\":\"node_exporter.service\"}]\n";
+    let shown = "\
+ExecStartEx={ path=/usr/local/bin/node_exporter ; argv[]=/usr/local/bin/node_exporter \
+--web.listen-address=0.0.0.0:9100 ; flags= ; pid=0 }\n\
+Id=node_exporter.service\n";
+    let fleet = TelemetryFleet::using(fake_systemctl("missing-binary", listed, shown));
+
+    let read = fleet
+        .read()
+        .expect("the fake systemctl output is well formed");
+    let exporter = read
+        .exporters()
+        .get(&UnitName::new("node_exporter.service").expect("legal unit"))
+        .expect("node_exporter should be in the fleet");
+
+    assert!(exporter.build.is_none());
+    assert_eq!(exporter.executable.as_str(), "/usr/local/bin/node_exporter");
 }

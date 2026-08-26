@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 mod support;
 
 use rastro::collectors::ssh_access::{
-    SshAccessCollector, SshServer, Sshd, authorized_keys, resolve,
+    SshAccessCollector, SshFiles, SshServer, Sshd, authorized_keys, resolve,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
@@ -35,6 +35,31 @@ fn server() -> SshServer {
 
 fn tree(name: &str) -> PathBuf {
     scratch_tree(&format!("ssh-access-{name}"), &[])
+}
+
+fn fake_sshd(name: &str) -> Sshd {
+    let root = tree(&format!("fake-sshd-{name}"));
+    let script = root.join("sshd");
+    fs::write(&script, format!("#!/bin/sh\nprintf '%s' '{SSHD_DUMP}'\n"))
+        .expect("a writable script");
+    let mut permissions = fs::metadata(&script).expect("metadata").permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+    }
+    fs::set_permissions(&script, permissions).expect("an executable script");
+    Sshd::using(
+        rastro::collectors::canonical_tool::CanonicalTool::located_in(
+            "sshd",
+            &[root.to_str().expect("utf-8 scratch path")],
+        )
+        .expect("the fake tool should be locatable"),
+    )
+}
+
+fn files(sshd_name: &str, passwd: &Path) -> SshFiles {
+    SshFiles::using(fake_sshd(sshd_name), passwd)
 }
 
 fn text(observation: &Observation) -> String {
@@ -328,6 +353,162 @@ fn read_accounts_reports_only_accounts_that_have_a_key_file() {
             .map(|(name, _)| name.as_str())
             .collect::<Vec<&str>>(),
         ["operator"]
+    );
+}
+
+#[test]
+fn read_translates_the_server_and_account_files_together() {
+    let root = tree("read");
+    let home = root.join("home/operator");
+    fs::create_dir_all(home.join(".ssh")).expect("a writable home");
+    fs::write(
+        home.join(".ssh/authorized_keys"),
+        format!("ssh-ed25519 {ED25519} operator\n"),
+    )
+    .expect("a writable file");
+    let passwd = root.join("passwd");
+    fs::write(
+        &passwd,
+        format!("operator:x:1000:1000::{}:/bin/sh\n", home.display()),
+    )
+    .expect("a writable passwd");
+
+    let access = files("read", &passwd)
+        .read()
+        .expect("this tree is well formed");
+    let observation = Observation::from(&access);
+
+    assert_eq!(
+        text(&field(
+            &field(&observation, "server"),
+            "authorized_keys_command"
+        )),
+        "none"
+    );
+    let operator = field(&field(&observation, "accounts"), "operator");
+    assert_eq!(items_of(&operator).len(), 1);
+}
+
+#[test]
+fn read_accounts_names_the_passwd_file_it_could_not_read() {
+    let passwd = tree("missing-passwd").join("passwd");
+    let failure = files("missing-passwd", &passwd)
+        .read_accounts(&server())
+        .expect_err("a missing passwd file is a failure");
+
+    assert!(failure.to_string().contains(&passwd.display().to_string()));
+}
+
+#[test]
+fn read_accounts_refuses_a_passwd_line_with_the_wrong_number_of_columns() {
+    let root = tree("bad-passwd-columns");
+    let passwd = root.join("passwd");
+    fs::write(&passwd, "operator:x:1000\n").expect("a writable passwd");
+
+    let failure = files("bad-passwd-columns", &passwd)
+        .read_accounts(&server())
+        .expect_err("a malformed passwd line must fail");
+
+    assert!(
+        failure
+            .to_string()
+            .contains("expected 7 colon-separated columns")
+    );
+}
+
+#[test]
+fn read_accounts_skips_passwd_entries_missing_an_account_or_home() {
+    let root = tree("blank-passwd-fields");
+    let home = root.join("home/operator");
+    fs::create_dir_all(home.join(".ssh")).expect("a writable home");
+    fs::write(
+        home.join(".ssh/authorized_keys"),
+        format!("ssh-ed25519 {ED25519} operator\n"),
+    )
+    .expect("a writable file");
+    let passwd = root.join("passwd");
+    fs::write(
+        &passwd,
+        format!(
+            ":x:1:1::{}:/bin/sh\nblankhome:x:2:2:::/bin/sh\noperator:x:1000:1000::{}:/bin/sh\n",
+            home.display(),
+            home.display()
+        ),
+    )
+    .expect("a writable passwd");
+
+    let accounts = files("blank-passwd-fields", &passwd)
+        .read_accounts(&server())
+        .expect("well formed");
+
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].0, "operator");
+}
+
+#[test]
+fn read_accounts_names_the_key_file_that_failed_to_parse() {
+    let root = tree("bad-key-file");
+    let home = root.join("home/operator");
+    fs::create_dir_all(home.join(".ssh")).expect("a writable home");
+    let key_file = home.join(".ssh/authorized_keys");
+    fs::write(&key_file, "ssh-ed25519\n").expect("a writable key file");
+    let passwd = root.join("passwd");
+    fs::write(
+        &passwd,
+        format!("operator:x:1000:1000::{}:/bin/sh\n", home.display()),
+    )
+    .expect("a writable passwd");
+
+    let failure = files("bad-key-file", &passwd)
+        .read_accounts(&server())
+        .expect_err("a malformed key file must fail");
+
+    assert!(
+        failure
+            .to_string()
+            .contains(&key_file.display().to_string())
+    );
+}
+
+#[test]
+fn read_accounts_ignores_a_path_whose_parent_is_not_a_directory() {
+    let root = tree("not-a-directory");
+    let home = root.join("home/operator");
+    fs::create_dir_all(&home).expect("a writable home");
+    fs::write(home.join(".ssh"), "not a directory").expect("a writable file");
+    let passwd = root.join("passwd");
+    fs::write(
+        &passwd,
+        format!("operator:x:1000:1000::{}:/bin/sh\n", home.display()),
+    )
+    .expect("a writable passwd");
+
+    let accounts = files("not-a-directory", &passwd)
+        .read_accounts(&server())
+        .expect("a not-a-directory key path is treated as absent");
+
+    assert!(accounts.is_empty());
+}
+
+#[test]
+fn read_accounts_fails_when_a_configured_key_path_is_a_directory() {
+    let root = tree("key-directory");
+    let key_directory = root.join("keys");
+    fs::create_dir_all(&key_directory).expect("a writable directory");
+    let passwd = root.join("passwd");
+    fs::write(&passwd, "operator:x:1000:1000::/home/operator:/bin/sh\n")
+        .expect("a writable passwd");
+    let mut configured = server();
+    configured.authorized_keys_files = vec![key_directory.display().to_string()];
+
+    let failure = files("key-directory", &passwd)
+        .read_accounts(&configured)
+        .expect_err("a directory is not a readable key file");
+
+    assert!(
+        failure
+            .to_string()
+            .contains(&key_directory.display().to_string())
     );
 }
 

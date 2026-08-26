@@ -4,7 +4,7 @@
 //! Both apt formats are exercised, because Debian 12 ships both at once: the fixtures
 //! are the shapes really found on the development box, with the URIs changed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod support;
 
@@ -499,6 +499,56 @@ fn apk_records_a_commented_repository_as_disabled() {
 fn apk_refuses_a_tag_with_no_uri_after_it() {
     // Act & Assert
     assert!(ApkRepositories::parse("@edge\n").is_err());
+}
+
+#[test]
+fn apk_read_translates_a_file_on_disk() {
+    let root = tree("apk-read");
+    let path = root.join("repositories");
+    write(
+        &root,
+        "repositories",
+        "https://dl-cdn.example.org/alpine/v3.19/main\n",
+    );
+
+    let set = ApkRepositories::at(&path)
+        .read()
+        .expect("this fixture is well formed");
+
+    assert_eq!(
+        set.repositories()[0].uri.as_str(),
+        "https://dl-cdn.example.org/alpine/v3.19/main"
+    );
+}
+
+#[test]
+fn apk_read_names_the_file_it_could_not_open() {
+    let path = tree("apk-missing").join("repositories");
+    let failure = ApkRepositories::at(&path)
+        .read()
+        .expect_err("a missing file is a failure");
+
+    assert!(failure.to_string().contains(&path.display().to_string()));
+}
+
+#[test]
+fn apk_skips_blank_lines_and_comment_markers_on_their_own() {
+    let set = ApkRepositories::parse("\n#\n  \n").expect("blank lines carry no repositories");
+    assert!(set.is_empty());
+}
+
+#[test]
+fn apk_path_accessors_keep_the_named_file() {
+    let path = Path::new("/tmp/rastro-apk-repositories");
+    assert_eq!(ApkRepositories::at(path).path(), path);
+}
+
+#[test]
+fn apk_default_points_at_the_system_file() {
+    assert_eq!(
+        ApkRepositories::default().path(),
+        Path::new("/etc/apk/repositories")
+    );
 }
 
 #[test]
