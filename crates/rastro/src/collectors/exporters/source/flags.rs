@@ -58,7 +58,10 @@ fn flag(argument: &str) -> Result<(SettingName, Option<SettingValue>), Collectio
         })?;
 
     match flag.split_once('=') {
-        Some((name, value)) => Ok((SettingName::new(name)?, Some(SettingValue::new(value)?))),
+        Some((name, value)) => Ok((
+            SettingName::new(name)?,
+            Some(SettingValue::new(value, "flag value")?),
+        )),
         None => Ok((SettingName::new(flag)?, None)),
     }
 }

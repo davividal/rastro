@@ -8,10 +8,10 @@ mod agent_id;
 mod build_revision;
 mod exporter_version;
 mod setting_name;
-mod setting_value;
 
 pub use agent_id::AgentId;
 pub use build_revision::BuildRevision;
 pub use exporter_version::ExporterVersion;
 pub use setting_name::SettingName;
-pub use setting_value::SettingValue;
+
+pub use rastro_collector::SettingValue;

@@ -1,9 +1,9 @@
 //! The `/proc/<pid>/status` interface.
 //!
 //! `Name:\tsystemd`, one field per line, tab after the colon. Chosen over `/proc/<pid>/stat`
-//! for the reason `ProcessName` documents: `stat` puts the process name in parentheses and
-//! a name may contain parentheses and spaces, so every field after it needs the *last* `)`
-//! to be located first. This file has no such trap.
+//! because `stat` puts the process name in parentheses and a name may itself contain
+//! parentheses and spaces, so every field after it needs the *last* `)` to be located first.
+//! This file has no such trap.
 
 use std::collections::BTreeMap;
 

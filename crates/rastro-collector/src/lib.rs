@@ -21,7 +21,7 @@ use thiserror::Error;
 
 /// The vocabulary collectors share, re-exported so one import still covers a
 /// collector's needs.
-pub use value_objects::{AbsolutePath, ByteSize, NonEmptyText};
+pub use value_objects::{AbsolutePath, ByteSize, NonEmptyText, ProcessName, SettingValue};
 
 /// Everything a collector author needs from the document model, under exactly
 /// the names the trait signatures use.

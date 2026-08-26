@@ -91,5 +91,5 @@ fn field<'a>(
 }
 
 fn setting(settings: &BTreeMap<&str, &str>, name: &str) -> Result<SettingValue, CollectionError> {
-    SettingValue::new(field(settings, name)?)
+    SettingValue::new(field(settings, name)?, "sshd setting")
 }
