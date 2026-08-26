@@ -7,22 +7,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use rastro::collectors::time::{ClockFiles, ClockSettings, TimeCollector};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::fs_tree::{scratch_tree, write};
+use support::observation::{field, keys_of};
 
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("time-{name}"));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("etc")).expect("a writable scratch directory");
-
-    root
-}
-
-fn write(root: &Path, relative: &str, contents: &str) {
-    let path = root.join(relative);
-    fs::create_dir_all(path.parent().expect("a parent")).expect("a writable tree");
-    fs::write(path, contents).expect("a writable file");
+    scratch_tree(&format!("time-{name}"), &["etc"])
 }
 
 /// A `/etc/localtime` symlink into a zoneinfo database under the same scratch root.
@@ -37,31 +31,6 @@ fn read(root: &Path) -> ClockSettings {
     ClockFiles::under(root)
         .read()
         .expect("this tree is well formed")
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 #[test]

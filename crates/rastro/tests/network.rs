@@ -4,10 +4,12 @@
 //! carry the cases that drove the design: a DHCP address whose lifetime counts down, and an
 //! IPv6 route from a router advertisement that has an expiry and no scope.
 
+mod support;
+
 use rastro::collectors::network::{AddressLifetime, Ip, NetworkCollector, NetworkState, Route};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
-
+use support::observation::{field, items_of, keys_of};
 /// Real interfaces: the loopback, a NIC with a static address, and a NIC on DHCP.
 const INTERFACES: &str = r#"[
   {"ifindex":1,"ifname":"lo","flags":["LOOPBACK","UP","LOWER_UP"],"mtu":65536,
@@ -67,38 +69,6 @@ fn route_to(state: &NetworkState, destination: &str, protocol: &str) -> Route {
         })
         .unwrap_or_else(|| panic!("expected a {protocol} route to {destination}"))
         .clone()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
-}
-
-fn items_of(observation: &Observation) -> Vec<Observation> {
-    match observation.content() {
-        Content::List(items) => items.clone(),
-        other => panic!("expected a list, got {other:?}"),
-    }
 }
 
 #[test]

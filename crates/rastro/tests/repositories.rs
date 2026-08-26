@@ -4,8 +4,9 @@
 //! Both apt formats are exercised, because Debian 12 ships both at once: the fixtures
 //! are the shapes really found on the development box, with the URIs changed.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+mod support;
 
 use rastro::collectors::repositories::{
     ApkRepositories, AptSources, ArchiveType, Component, Enablement, RepositoriesCollector,
@@ -14,6 +15,8 @@ use rastro::collectors::repositories::{
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation};
+use support::fs_tree::{scratch_tree, write};
+use support::observation::{field, object_of};
 
 /// The deb822 shape Debian 12 ships, which expands to more than one repository.
 const DEB822: &str = "\
@@ -31,17 +34,7 @@ https://apt.example.org/pub/repos/apt bookworm-example main
 ";
 
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("repositories-{name}"));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("sources.list.d")).expect("a writable scratch directory");
-
-    root
-}
-
-fn write(root: &Path, relative: &str, contents: &str) {
-    let path = root.join(relative);
-    fs::create_dir_all(path.parent().expect("a parent")).expect("a writable tree");
-    fs::write(path, contents).expect("a writable file");
+    scratch_tree(&format!("repositories-{name}"), &["sources.list.d"])
 }
 
 fn one_line(line: &str) -> Repository {
@@ -63,24 +56,6 @@ fn suites_of(set: &RepositorySet) -> Vec<&str> {
         .filter_map(|repository| repository.suite.as_ref())
         .map(|suite| suite.as_str())
         .collect()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
 }
 
 #[test]

@@ -5,11 +5,14 @@
 //! that drove the design are all things systemd does and none of them are what a first
 //! guess would invent.
 
+mod support;
+
 use rastro::collectors::units::{
     LoadState, Systemctl, Unit, UnitFileState, UnitName, UnitRegistry, UnitsCollector,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::observation::{field, keys_of};
 
 /// Real rows, covering an enabled service, a masked one, an alias, a template, a
 /// runtime-enabled unit and the transient scope of a login session.
@@ -55,36 +58,11 @@ fn unit(registry: &UnitRegistry, name: &str) -> Unit {
         .clone()
 }
 
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
 fn text(observation: &Observation) -> String {
     match observation.content() {
         Content::Scalar(Scalar::Text(value)) => value.clone(),
         other => panic!("expected text, got {other:?}"),
     }
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 #[test]

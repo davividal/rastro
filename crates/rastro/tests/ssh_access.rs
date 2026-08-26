@@ -6,11 +6,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use rastro::collectors::ssh_access::{
     SshAccessCollector, SshServer, Sshd, authorized_keys, resolve,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
+use support::fs_tree::scratch_tree;
+use support::observation::{field, items_of, object_of};
 
 /// The lines of `sshd -T` this collector reads, as the development box reports them.
 const SSHD_DUMP: &str = "\
@@ -30,36 +34,7 @@ fn server() -> SshServer {
 }
 
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("ssh-access-{name}"));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a writable scratch directory");
-
-    root
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn items_of(observation: &Observation) -> Vec<Observation> {
-    match observation.content() {
-        Content::List(items) => items.clone(),
-        other => panic!("expected a list, got {other:?}"),
-    }
+    scratch_tree(&format!("ssh-access-{name}"), &[])
 }
 
 fn text(observation: &Observation) -> String {

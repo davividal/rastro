@@ -4,10 +4,12 @@
 //! device-mapper volume and an unmounted partition added to cover the stacking and
 //! empty-filesystem cases the box itself does not have.
 
+mod support;
+
 use rastro::collectors::block_devices::{BlockDevicesCollector, DeviceName, DeviceTree, Lsblk};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
-
+use support::observation::{field, keys_of, object_of};
 const LISTING: &str = r#"{
   "blockdevices": [
     {"name":"sda","kname":"sda","pkname":null,"type":"disk","size":107374182400,
@@ -45,31 +47,6 @@ fn device(tree: &DeviceTree, name: &str) -> rastro::collectors::block_devices::B
         .get(&DeviceName::new(name).expect("a legal device name"))
         .unwrap_or_else(|| panic!("expected a device named {name}"))
         .clone()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 #[test]

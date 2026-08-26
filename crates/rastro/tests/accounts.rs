@@ -7,13 +7,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use rastro::collectors::accounts::{
     AccountFiles, AccountRegistry, AccountsCollector, EtcGroup, EtcPasswd, PasswordStatus,
     ShadowEntry, UserName,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
-
+use support::observation::{field, object_of};
 /// Three accounts covering the shapes an ordinary box has: a privileged one with a
 /// real shell, a system one with no comment and no login, and a human one.
 const PASSWD: &str = "\
@@ -68,24 +70,6 @@ fn tree_for(passwd: &str, group: &str, shadow: Option<&str>) -> PathBuf {
 
 fn user(name: &str) -> UserName {
     UserName::new(name).expect("a legal user name")
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
 }
 
 fn text(observation: &Observation) -> String {

@@ -4,12 +4,15 @@
 //! are the point: five spellings appear there, and each one breaks a different naive
 //! parser.
 
+mod support;
+
 use rastro::collectors::sockets::{
     InetHost, ListeningSocket, SocketAddress, SocketTable, SocketsCollector, Ss, ss_address,
     ss_users,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::observation::{field, items_of, object_of};
 
 /// Real internet rows: an IPv4 wildcard, an any-family wildcard, a loopback binding, an
 /// address scoped to an interface, an IPv6 wildcard, and a link-local IPv6 with a scope.
@@ -67,31 +70,6 @@ fn names_of(socket: &ListeningSocket) -> Vec<&str> {
         .iter()
         .map(|process| process.name.as_str())
         .collect()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn items_of(observation: &Observation) -> Vec<Observation> {
-    match observation.content() {
-        Content::List(items) => items.clone(),
-        other => panic!("expected a list, got {other:?}"),
-    }
 }
 
 #[test]

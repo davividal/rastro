@@ -1,12 +1,14 @@
 //! Reading the packet filter, without needing an `iptables` to run.
 
+mod support;
+
 use rastro::collectors::firewall::{
     ChainName, FirewallBackend, FirewallCollector, FirewallInventory, Ruleset, TableName,
     iptables_save,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
-
+use support::observation::{field, keys_of, object_of};
 /// A dump in the shape `iptables-save` writes: a timestamped header, two tables, a
 /// user-defined chain with no policy, and rules in the order the kernel tests them.
 const DUMP: &str = "\
@@ -45,31 +47,6 @@ fn chain(
         .get(&ChainName::new(chain).expect("a legal chain name"))
         .unwrap_or_else(|| panic!("expected a {chain} chain in {table}"))
         .clone()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 #[test]

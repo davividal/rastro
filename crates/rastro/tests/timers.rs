@@ -3,9 +3,12 @@
 //! The fixture rows are real rows from `systemctl list-timers --all --output=json` on the
 //! development box.
 
+mod support;
+
 use rastro::collectors::timers::{SystemctlTimers, TimerTable, TimersCollector, UnitName};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::observation::{field, keys_of};
 
 /// Real rows. Note that `left` repeats `next` and `passed` repeats `last` exactly, which
 /// is what this output does and the reason two of the four fields are dropped.
@@ -17,31 +20,6 @@ const TIMERS: &str = r#"[
 
 fn table() -> TimerTable {
     SystemctlTimers::parse(TIMERS).expect("these fixtures are well formed")
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 fn timer(table: &TimerTable, name: &str) -> rastro::collectors::timers::Timer {

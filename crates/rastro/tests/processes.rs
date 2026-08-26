@@ -7,12 +7,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use rastro::collectors::processes::{
     ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline, proc_status,
 };
 use rastro_collector::{Collector, Presence};
-use rastro_fingerprint::{Content, Observation, View};
-
+use rastro_fingerprint::{Observation, View};
+use support::fs_tree::scratch_tree;
+use support::observation::{items_of, keys_of};
 /// `/proc/1/status` as the development box writes it, trimmed to the lines rastro reads.
 const SYSTEMD_STATUS: &str = "\
 Name:\tsystemd
@@ -37,11 +40,7 @@ Threads:\t8
 ";
 
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("processes-{name}"));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("self")).expect("a writable scratch directory");
-
-    root
+    scratch_tree(&format!("processes-{name}"), &["self"])
 }
 
 /// Writes one process directory. `cmdline` is written verbatim, so a test can spell the NUL
@@ -69,30 +68,6 @@ fn named(table: &ProcessTable, name: &str) -> Process {
         .find(|process| process.name.as_str() == name)
         .unwrap_or_else(|| panic!("expected a process named {name}"))
         .clone()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
-}
-
-fn items_of(observation: &Observation) -> Vec<Observation> {
-    match observation.content() {
-        Content::List(items) => items.clone(),
-        other => panic!("expected a list, got {other:?}"),
-    }
 }
 
 #[test]

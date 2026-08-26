@@ -3,44 +3,21 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use rastro::collectors::locale::{LocaleCollector, LocaleFiles, SettingValue};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
+use support::fs_tree::scratch_tree;
+use support::observation::{field, object_of};
 
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("locale-{name}"));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a writable scratch directory");
-
-    root
+    scratch_tree(&format!("locale-{name}"), &[])
 }
 
 /// The source over one scratch file, standing in for `/etc/default/locale`.
 fn files_in(root: &Path, names: &[&str]) -> LocaleFiles {
     LocaleFiles::at(names.iter().map(|name| root.join(name)))
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| {
-            panic!(
-                "expected a {name:?} field, got {:?}",
-                object_of(observation)
-            )
-        })
 }
 
 fn text(observation: &Observation) -> String {

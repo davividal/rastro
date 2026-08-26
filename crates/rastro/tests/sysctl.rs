@@ -11,11 +11,15 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use rastro::collectors::sysctl::{
     ProcSys, SysctlCollector, SysctlKey, SysctlParameters, SysctlValue, proc_sys_entry,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::fs_tree::scratch_tree;
+use support::observation::{keys_of, object_of};
 
 /// A mode with no read bit for anyone, which is how the kernel marks the entries
 /// that are triggers rather than settings.
@@ -38,11 +42,7 @@ fn segments(names: &[&str]) -> Vec<String> {
 /// Named rather than random so that a failing test's tree can be inspected, and
 /// removed first rather than last so that it survives the failure for that.
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a writable scratch directory");
-
-    root
+    scratch_tree(name, &[])
 }
 
 fn write(root: &Path, relative: &str, contents: &str, mode: u32) {
@@ -72,23 +72,6 @@ fn text_of(parameters: &SysctlParameters, name: &str) -> String {
         .as_str()
         .unwrap_or_else(|| panic!("expected {name:?} to have been reported"))
         .to_owned()
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn keys_of(observation: &Observation) -> Vec<String> {
-    object_of(observation)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect()
 }
 
 #[test]

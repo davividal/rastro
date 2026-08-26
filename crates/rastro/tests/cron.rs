@@ -4,14 +4,17 @@
 //! development box, tabs and all.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+mod support;
 
 use rastro::collectors::cron::{
     CronCollector, CronFiles, CronTable, OwnerColumn, Schedule, crontab,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
-
+use support::fs_tree::{scratch_tree, write};
+use support::observation::{field, items_of, object_of};
 /// `/etc/crontab` as Debian ships it: two environment assignments and four tab-aligned jobs.
 const SYSTEM_CRONTAB: &str = "\
 # /etc/crontab: system-wide crontab
@@ -29,42 +32,7 @@ const DROP_IN: &str = "\
 ";
 
 fn tree(name: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("cron-{name}"));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("a writable scratch directory");
-
-    root
-}
-
-fn write(root: &Path, relative: &str, contents: &str) {
-    let path = root.join(relative);
-    fs::create_dir_all(path.parent().expect("a parent")).expect("a writable tree");
-    fs::write(path, contents).expect("a writable file");
-}
-
-fn object_of(observation: &Observation) -> Vec<(String, Observation)> {
-    match observation.content() {
-        Content::Object(entries) => entries
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-        other => panic!("expected an object, got {other:?}"),
-    }
-}
-
-fn field(observation: &Observation, name: &str) -> Observation {
-    object_of(observation)
-        .into_iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value)
-        .unwrap_or_else(|| panic!("expected a {name:?} field"))
-}
-
-fn items_of(observation: &Observation) -> Vec<Observation> {
-    match observation.content() {
-        Content::List(items) => items.clone(),
-        other => panic!("expected a list, got {other:?}"),
-    }
+    scratch_tree(&format!("cron-{name}"), &[])
 }
 
 fn text(observation: &Observation) -> String {
