@@ -5,6 +5,7 @@ pub mod block_devices;
 pub mod canonical_tool;
 pub mod cron;
 pub mod exporters;
+pub mod filesystem;
 pub mod firewall;
 pub mod inet;
 // Private: the flat re-exports below are the whole outside surface.
