@@ -323,6 +323,28 @@ Signed-By:
 }
 
 #[test]
+fn deb822_ignores_comment_lines() {
+    // Arrange: in this format `#` is prose, so a comment must not start or end a paragraph.
+    let text = "\
+# Debian's shipped file carries comments like this
+Types: deb
+URIs: https://example.org/repo
+# Another comment between fields
+Suites: bookworm
+";
+
+    // Act
+    let repositories = apt_deb822::parse(text).expect("well formed");
+
+    // Assert
+    assert_eq!(repositories.len(), 1);
+    assert_eq!(
+        repositories[0].suite.as_ref().map(|suite| suite.as_str()),
+        Some("bookworm")
+    );
+}
+
+#[test]
 fn deb822_refuses_a_paragraph_with_no_types() {
     // Act: the expansion is a cross product, so an absent `Types` would quietly
     // produce no repositories and drop the paragraph from a complete facet.

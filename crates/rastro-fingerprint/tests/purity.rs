@@ -60,7 +60,17 @@ fn nothing_here_reads_the_host() {
 /// Which sibling modules each module of this crate reaches into.
 fn module_graph() -> BTreeMap<String, BTreeSet<String>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let modules: Vec<String> = fs::read_to_string(root.join("lib.rs"))
+    let modules = module_names(&root);
+    let files = sources();
+
+    modules
+        .iter()
+        .map(|module| (module.clone(), module_reaches(module, &modules, &files)))
+        .collect()
+}
+
+fn module_names(root: &Path) -> Vec<String> {
+    fs::read_to_string(root.join("lib.rs"))
         .expect("a readable lib.rs")
         .lines()
         .filter_map(|line| {
@@ -71,32 +81,69 @@ fn module_graph() -> BTreeMap<String, BTreeSet<String>> {
                     .to_owned(),
             )
         })
-        .collect();
+        .collect()
+}
 
-    let mut graph = BTreeMap::new();
-    for module in &modules {
-        let owned: Vec<PathBuf> = sources()
-            .into_iter()
-            .filter(|file| {
-                file.file_stem().is_some_and(|stem| stem == module.as_str())
-                    || file.parent().is_some_and(|parent| parent.ends_with(module))
-            })
-            .collect();
+fn module_reaches(module: &str, modules: &[String], files: &[PathBuf]) -> BTreeSet<String> {
+    let mut reaches = BTreeSet::new();
 
-        let mut reaches = BTreeSet::new();
-        for file in owned {
-            let source = fs::read_to_string(&file).expect("a readable source file");
-            for line in source.lines().filter(|l| !l.trim_start().starts_with("//")) {
-                for other in &modules {
-                    if other != module && line.contains(&format!("crate::{other}::")) {
-                        reaches.insert(other.clone());
-                    }
-                }
+    for file in files.iter().filter(|file| module_owns(file, module)) {
+        let source = fs::read_to_string(file).expect("a readable source file");
+        reaches.extend(referenced_modules(&source, modules, module));
+    }
+
+    reaches
+}
+
+fn module_owns(file: &Path, module: &str) -> bool {
+    file.file_stem().is_some_and(|stem| stem == module)
+        || file.parent().is_some_and(|parent| parent.ends_with(module))
+}
+
+fn referenced_modules(source: &str, modules: &[String], module: &str) -> BTreeSet<String> {
+    let mut reaches = BTreeSet::new();
+
+    for line in source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+    {
+        for other in modules {
+            if other != module && line.contains(&format!("crate::{other}::")) {
+                reaches.insert(other.clone());
             }
         }
-        graph.insert(module.clone(), reaches);
     }
-    graph
+
+    reaches
+}
+
+#[test]
+fn module_owns_matches_a_module_file_or_directory() {
+    // Act & Assert
+    assert!(module_owns(Path::new("src/facet.rs"), "facet"));
+    assert!(module_owns(Path::new("src/facet/value.rs"), "facet"));
+    assert!(!module_owns(Path::new("src/observation.rs"), "facet"));
+}
+
+#[test]
+fn referenced_modules_ignore_comments_and_self_references() {
+    // Arrange
+    let modules = vec![
+        "facet".to_owned(),
+        "observation".to_owned(),
+        "document".to_owned(),
+    ];
+    let source = "\
+// crate::document::CommentOnly
+crate::facet::SelfReference
+crate::document::RealEdge
+";
+
+    // Act
+    let reaches = referenced_modules(source, &modules, "facet");
+
+    // Assert
+    assert_eq!(reaches, BTreeSet::from(["document".to_owned()]));
 }
 
 #[test]

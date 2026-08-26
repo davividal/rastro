@@ -68,10 +68,8 @@ fn paragraphs(text: &str) -> Vec<BTreeMap<String, String>> {
 
     for line in text.lines() {
         if line.trim().is_empty() {
-            if !current.is_empty() {
-                found.push(std::mem::take(&mut current));
-                last_field = None;
-            }
+            push_paragraph(&mut found, &mut current);
+            last_field = None;
             continue;
         }
 
@@ -79,34 +77,55 @@ fn paragraphs(text: &str) -> Vec<BTreeMap<String, String>> {
             continue;
         }
 
-        // A continuation line begins with whitespace and belongs to the field above it.
-        if line.starts_with([' ', '\t']) {
-            if let Some(field) = &last_field {
-                let continued = line.trim();
-                let continued = if continued == BLANK_CONTINUATION {
-                    ""
-                } else {
-                    continued
-                };
-                let value = current.entry(field.clone()).or_default();
-                value.push('\n');
-                value.push_str(continued);
-            }
+        if append_continuation(line, &mut current, last_field.as_deref()) {
             continue;
         }
 
-        if let Some((name, value)) = line.split_once(':') {
-            let name = name.trim().to_ascii_lowercase();
-            current.insert(name.clone(), value.trim().to_owned());
-            last_field = Some(name);
-        }
+        last_field = parse_field(line, &mut current);
     }
 
-    if !current.is_empty() {
-        found.push(current);
-    }
-
+    push_paragraph(&mut found, &mut current);
     found
+}
+
+fn push_paragraph(
+    found: &mut Vec<BTreeMap<String, String>>,
+    current: &mut BTreeMap<String, String>,
+) {
+    if !current.is_empty() {
+        found.push(std::mem::take(current));
+    }
+}
+
+fn append_continuation(
+    line: &str,
+    current: &mut BTreeMap<String, String>,
+    last_field: Option<&str>,
+) -> bool {
+    if !line.starts_with([' ', '\t']) {
+        return false;
+    }
+
+    if let Some(field) = last_field {
+        let continued = line.trim();
+        let continued = if continued == BLANK_CONTINUATION {
+            ""
+        } else {
+            continued
+        };
+        let value = current.entry(field.to_owned()).or_default();
+        value.push('\n');
+        value.push_str(continued);
+    }
+
+    true
+}
+
+fn parse_field(line: &str, current: &mut BTreeMap<String, String>) -> Option<String> {
+    let (name, value) = line.split_once(':')?;
+    let name = name.trim().to_ascii_lowercase();
+    current.insert(name.clone(), value.trim().to_owned());
+    Some(name)
 }
 
 /// Every repository one paragraph describes.
