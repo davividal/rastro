@@ -38,6 +38,12 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [Fingerprints are sensitive](#a-fingerprint-is-sensitive-operational-data-until-redaction-exists) | a package inventory is a target-selection aid, so handle the document accordingly |
 | [Signalling by pid](#accepted-residual-risk-signalling-by-pid) | a pid-reuse window remains, accepted. **Superseded** |
 | [Unconditional group signal](#superseded-the-group-signal-is-unconditional) | the guard that created the window was hiding the leak it was meant to guard |
+| [What a unit starts](#a-unit-records-what-it-starts-resolved-by-systemd) | the `units` facet carries every unit's effective `ExecStart=` |
+| [argv stays whole](#a-units-argument-vector-is-recorded-whole-not-split) | systemd loses the quoting, so splitting would invent a structure |
+| [Exporters facet](#layer-3-a-telemetry-fleet-facet-dispatched-from-the-binary-a-unit-starts) | telemetry agents are read as their own facet, keyed by unit |
+| [A named catalogue](#the-exporters-facet-knows-its-agents-by-name-rather-than-by-heuristic) | a heuristic would sweep in daemons and still miss two of six |
+| [Both streams](#the-execution-seam-can-capture-stderr) | two of six agents print `--version` to stderr and exit zero |
+| [Configured, not bound](#a-configured-endpoint-is-a-different-fact-from-a-bound-socket) | `exporters` and `sockets` observe separately so they can disagree |
 
 ## Native collectors, no external tool as a dependency
 
@@ -837,3 +843,125 @@ The comparison is still on bytes, because bytes are the contract. On failure it 
 both documents and names each facet that differs, with a bounded excerpt of each side.
 That is a diagnostic on the failure path only, so it is free to be slower than the
 assertion it explains.
+
+# Telemetry: what runs on the box, and what watches it
+
+Dated 2026-08-24. Driven by a box running six telemetry agents, none of which
+the fingerprint could see.
+
+## A unit records what it starts, resolved by systemd
+
+The `units` facet reported enablement and runtime state and never said which
+binary a unit amounts to. "This service is enabled and active" is a weaker claim
+than an operator assumes: the unit file can be rewritten to start a different
+program, with different flags, and every field the facet carried would be
+unchanged.
+
+It now carries each unit's effective `ExecStart=`, asked of `systemctl show`
+rather than read from the unit file, so drop-ins under `<unit>.d/` are already
+applied. That is the same preference for effective state that has `sshd -T`
+asked instead of `sshd_config` parsed.
+
+**Asked of systemd rather than read from `/proc`.** The process table carries the
+same argument vector for a *running* service, and the processes facet already
+records it. systemd answers for a unit that is enabled and dead, which is a
+configuration that exists and has no process behind it. Where the two disagree —
+a unit edited without a restart — both facets are in the document and the
+divergence is visible.
+
+**Cost, accepted:** a second `systemctl` call per run, over every loaded unit.
+
+**The glob is a trap, and it is silent.** `systemctl show '*.service'` answers
+for 47 of the 109 service units `list-units --all` reports on the development
+box, with no error and no warning. Every unit is named explicitly instead, after
+a `--`, because systemd's own root slice and root mount are called `-.slice` and
+`-.mount` and `systemctl` otherwise rejects them as invalid options.
+
+## A unit's argument vector is recorded whole, not split
+
+Measured, not assumed: a unit reading `ExecStart=/bin/echo --flag="a b" second`
+comes back from `systemctl show` as `argv[]=/bin/echo --flag=a b second`.
+**systemd does not preserve the quoting**, so three whitespace-separated tokens
+stand for two arguments and nothing in the output says which.
+
+Splitting there would claim a structure the source cannot support, and would be
+silently wrong for exactly the units whose arguments are interesting. The vector
+is kept as one string.
+
+**The exporters facet does split, and the difference is what makes it safe.**
+Every agent it knows takes `--flag=value`, so a token that is not a flag can only
+mean the vector was not what rastro assumed — a recorded failure naming the
+argument. A bad split is refutable there and is not refutable in the general
+case.
+
+## Layer 3: a telemetry fleet facet, dispatched from the binary a unit starts
+
+Six telemetry agents run on the development box and **`dpkg` has heard of exactly
+one of them**. collectd is a Debian package at `5.12.0-14`; cAdvisor,
+node_exporter, process-exporter, systemd_exporter and postgres_exporter are
+binaries dropped into `/usr/local/bin` by Ansible, invisible to every package
+manager on the host. Their versions exist nowhere on the box except inside the
+binaries, so the facet runs them and asks.
+
+This is the fourth Layer 3 collector, alongside the nginx, postgres and docker
+starters, and it is the first where the dispatch signal is the **binary a unit
+starts** rather than the unit's name. `process_exporter.service` runs a program
+called `process-exporter`, underscore against hyphen, and an operator may name a
+unit anything at all.
+
+**Keyed by unit, not by agent.** A box with two PostgreSQL clusters runs two
+`postgres_exporter` instances on two ports. Keying by agent would let the second
+silently overwrite the first; systemd enforces one unit per name.
+
+## The exporters facet knows its agents by name rather than by heuristic
+
+A fixed catalogue of six agents, each with the dialect it uses to report a
+version and the dialect it uses to spell its listen address.
+
+The alternative is worse rather than more general. A heuristic — "any unit with a
+`--web.listen-address`" — would sweep in unrelated daemons that happen to use the
+flag, and would still miss cAdvisor and collectd, neither of which uses it.
+cAdvisor takes `--listen_ip` and `--port` separately; collectd takes no arguments
+at all and gets its port from a plugin in `/etc/collectd/collectd.conf`.
+
+**Cost, accepted knowingly:** an agent not in the catalogue is not in the facet.
+That is a visible gap rather than a half-read entry, and the units facet still
+records what its unit starts.
+
+**No defaults are filled in.** Only flags the unit actually passes are recorded.
+Every one of these agents compiles in a default for each flag it was not given,
+and writing those into the facet would mean shipping a copy of somebody else's
+flag table and asserting values rastro never observed.
+
+## The execution seam can capture stderr
+
+`CanonicalTool::run` returns stdout, which is what almost every collector wants.
+Measured on the development box: `node_exporter --version` and
+`process-exporter --version` print to stdout, while `systemd_exporter --version`
+and `postgres_exporter --version` print the same text to **stderr**, all four
+exiting zero.
+
+A collector reading stdout alone would report half the fleet as having no version
+— wrong, and quietly so, rather than a recorded failure. `run_capturing_stderr`
+returns both streams. Every other guarantee is unchanged: same bounds, same group
+kill, same refusal of a non-zero exit and of invalid UTF-8.
+
+Reading stderr on success is not the same as trusting it on failure: a failing
+tool's stderr is still only quoted back as a diagnostic.
+
+## A configured endpoint is a different fact from a bound socket
+
+The `exporters` facet records the address an agent's **flags asked for**. Whether
+anything is listening there is the `sockets` facet's answer, read from the
+kernel. The two are deliberately separate observations, and the point is that
+they can disagree: an agent configured for 9100 with nothing bound to it is a
+dead exporter, and only two independent observations can show that.
+
+Verified on the box: all five flag-configured agents are bound where they were
+configured, and collectd's 9103 appears as bound-but-not-configured — exactly
+right, because that port comes from a plugin config and rastro declines to invent
+it from a flag that is not there.
+
+**An agent's own measurements are not here and never will be.** Container CPU and
+memory numbers change by the second; a fingerprint records what a box *is*, not
+what it is doing.

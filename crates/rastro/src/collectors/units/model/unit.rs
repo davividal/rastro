@@ -4,6 +4,7 @@ use rastro_collector::Observation;
 
 use super::unit_file::UnitFile;
 use super::unit_runtime::UnitRuntime;
+use crate::collectors::systemd::ExecStart;
 
 /// A unit as rastro means it: whatever is on disk, and whatever systemd has loaded.
 ///
@@ -26,11 +27,27 @@ use super::unit_runtime::UnitRuntime;
 pub struct Unit {
     pub file: Option<UnitFile>,
     pub runtime: Option<UnitRuntime>,
+    /// What systemd will actually run, resolved through every drop-in, in the order it
+    /// runs them.
+    ///
+    /// **This is the field that makes the facet answer "what is running on this box".**
+    /// The state either side of it says a unit is enabled and active; only this says which
+    /// binary that amounts to and which flags it was given, which is where a change to a
+    /// deployment actually shows up.
+    ///
+    /// Empty for the many units that start nothing — targets, slices, most sockets — and
+    /// for a unit file systemd has not loaded, since an unresolved file is not a claim
+    /// rastro can make about what would run.
+    pub exec_start: Vec<ExecStart>,
 }
 
 impl From<&Unit> for Observation {
     fn from(unit: &Unit) -> Self {
         Observation::object([
+            (
+                "exec_start",
+                Observation::list(unit.exec_start.iter().map(Observation::from)),
+            ),
             (
                 "file",
                 unit.file

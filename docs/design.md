@@ -78,7 +78,9 @@ an enablement symlink under `*.wants/` is exactly what this tool exists to catch
 **Layer 2, the fixed runtime list.** Processes, listening sockets, established
 connections, systemd units and timers, kernel modules, runtime sysctl, the
 nftables/iptables ruleset, mounts, the package list, users and groups, container
-state. Read from `/proc` or netlink where cheap, shell out to the canonical tool
+state. A unit carries its effective `ExecStart=`, resolved by systemd rather than
+read from the unit file, because "enabled and active" does not say which binary
+that amounts to. Read from `/proc` or netlink where cheap, shell out to the canonical tool
 where parsing its output is more honest than reimplementing it, and read a
 manager's own database where the tool offers no format rastro controls. apk is
 that case: it prints no machine-readable form, and every text form fuses name and
@@ -88,11 +90,22 @@ not to shell out on reflex.
 Shelling out is confined to one hardened seam, `collectors::canonical_tool`:
 absolute path, no shell, cleared environment, bounded in time and output, and a
 breach kills the tool's whole process group. rastro runs as root on production, so
-a collector must not be able to hang or flood the box it is inspecting.
+a collector must not be able to hang or flood the box it is inspecting. It returns
+stdout, or both streams for the tools that answer on the wrong one — two of the six
+telemetry agents print `--version` to stderr and exit zero.
 
 **Layer 3 starters:** `nginx -T`; `pg_dumpall --globals-only` plus `SHOW ALL`;
 `docker inspect` plus volumes and networks. Enough to prove the
 detect-and-dispatch pattern exec-contract authors will copy.
+
+**Layer 3, telemetry.** The agents watching the box — Prometheus-style exporters,
+cAdvisor, collectd — as one `exporters` facet, keyed by the unit that starts each.
+Dispatched from the **binary a unit starts**, matched against a named catalogue,
+because a unit may be called anything and `process_exporter.service` runs
+`process-exporter`. It earns its place against the package list: of the six agents
+on the development box, `dpkg` has heard of one. The endpoint recorded is the one
+the flags configure, which is a different fact from what `sockets` observes bound,
+and the two are separate so they can disagree.
 
 ## Configuration
 

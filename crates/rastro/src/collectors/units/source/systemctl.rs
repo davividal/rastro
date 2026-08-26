@@ -7,7 +7,7 @@ use rastro_collector::CollectionError;
 use super::systemctl_unit_files::UnitFileRow;
 use super::systemctl_units::UnitRow;
 use crate::collectors::canonical_tool::CanonicalTool;
-use crate::collectors::systemd::UnitName;
+use crate::collectors::systemd::{ExecStart, UnitName, systemctl_show};
 use crate::collectors::units::model::{Unit, UnitFile, UnitRegistry, UnitRuntime};
 
 const PROGRAM: &str = "systemctl";
@@ -37,6 +37,21 @@ const NO_PAGER: &str = "--no-pager";
 /// show.
 const ALL: &str = "--all";
 
+/// Ask what each unit starts. `list-units` does not carry it, and it is the half of the
+/// answer that says which binary an enabled service actually amounts to.
+const SHOW: &str = "show";
+
+const ID_PROPERTY: &str = "--property=Id";
+const EXEC_START_PROPERTY: &str = "--property=ExecStartEx";
+
+/// Everything after this is a unit name, however much it looks like an option.
+///
+/// **Not optional, and not defensive programming.** systemd's root slice and root mount are
+/// named `-.slice` and `-.mount`, both loaded on every box, and `systemctl` rejects them as
+/// bare arguments with `invalid option -- '.'`. Its own hint is to use `--`, which is what
+/// this is.
+const END_OF_OPTIONS: &str = "--";
+
 /// systemd's view of the units, as a source rastro can read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Systemctl {
@@ -60,12 +75,49 @@ impl Systemctl {
         &self.tool
     }
 
-    /// Asks systemd for both halves of the answer and joins them.
+    /// Asks systemd for every half of the answer and joins them.
     pub fn read(&self) -> Result<UnitRegistry, CollectionError> {
         let files = self.tool.run(&["list-unit-files", JSON, NO_PAGER])?;
         let loaded = self.tool.run(&["list-units", ALL, JSON, NO_PAGER])?;
+        let shown = self.show(Self::parse_units(&loaded)?.keys())?;
 
-        Self::join(&files, &loaded)
+        Self::join(&files, &loaded, &shown)
+    }
+
+    /// Asks what each loaded unit starts, naming every unit rather than globbing.
+    ///
+    /// **The glob is the trap, and it is silent.** `systemctl show '*.service'` answers for
+    /// 47 of the 109 service units `list-units --all` reports on the development box, with
+    /// no error and no warning: it matches only what is currently loaded in the sense the
+    /// glob means, and the units it drops are ordinary ones. Naming every unit is what makes
+    /// this population the same as the one the runtime rows came from, which is the only way
+    /// the join below cannot quietly lose a unit.
+    ///
+    /// The loaded units, not the unit files. A file systemd has never resolved has no
+    /// effective `ExecStart=` to report, and reading the file itself would mean
+    /// re-implementing drop-in resolution — the exact thing asking systemd avoids.
+    fn show<'a>(
+        &self,
+        names: impl Iterator<Item = &'a UnitName>,
+    ) -> Result<String, CollectionError> {
+        let names: Vec<&str> = names.map(UnitName::as_str).collect();
+
+        // A box with no loaded units is not a box to ask about them: `systemctl show` with
+        // no unit named answers about the manager itself, which is a different question.
+        if names.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut arguments = vec![
+            SHOW,
+            ID_PROPERTY,
+            EXEC_START_PROPERTY,
+            NO_PAGER,
+            END_OF_OPTIONS,
+        ];
+        arguments.extend(names);
+
+        self.tool.run(&arguments)
     }
 
     /// Combines the two answers into one registry.
@@ -78,15 +130,17 @@ impl Systemctl {
     /// never loaded, while `NetworkManager.service` is loaded `not-found` with no file
     /// behind it. Dropping either population would make the facet quietly incomplete,
     /// which is the one failure this project does not accept.
-    pub fn join(files: &str, loaded: &str) -> Result<UnitRegistry, CollectionError> {
+    pub fn join(files: &str, loaded: &str, shown: &str) -> Result<UnitRegistry, CollectionError> {
         let files = Self::parse_unit_files(files)?;
         let runtimes = Self::parse_units(loaded)?;
+        let starts: BTreeMap<UnitName, Vec<ExecStart>> = systemctl_show::parse(shown)?;
 
         let names: BTreeSet<&UnitName> = files.keys().chain(runtimes.keys()).collect();
         let units = names.into_iter().map(|name| {
             let unit = Unit {
                 file: files.get(name).cloned(),
                 runtime: runtimes.get(name).cloned(),
+                exec_start: starts.get(name).cloned().unwrap_or_default(),
             };
 
             (name.clone(), unit)

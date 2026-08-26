@@ -44,8 +44,10 @@
 //! recorded failure with the child killed.
 
 mod run_limits;
+mod tool_output;
 
 pub use run_limits::RunLimits;
+pub use tool_output::ToolOutput;
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -152,7 +154,22 @@ impl CanonicalTool {
     }
 
     /// Runs the tool and returns everything it wrote to stdout.
+    ///
+    /// What almost every collector wants: the answer is on stdout and stderr is noise that
+    /// only matters when the tool failed, in which case it is quoted into the error.
     pub fn run(&self, arguments: &[&str]) -> Result<String, CollectionError> {
+        Ok(self.run_capturing_stderr(arguments)?.stdout)
+    }
+
+    /// The same run, with stderr kept.
+    ///
+    /// For the tools that answer on the wrong stream. `systemd_exporter --version` and
+    /// `postgres_exporter --version` both print their version to stderr and exit zero, so a
+    /// collector reading only stdout would report them as having no version rather than
+    /// failing loudly — the quiet kind of wrong. Every guarantee this module makes is
+    /// unchanged: same bounds, same group kill, same refusal of a non-zero exit and of
+    /// invalid UTF-8.
+    pub fn run_capturing_stderr(&self, arguments: &[&str]) -> Result<ToolOutput, CollectionError> {
         let mut job = self
             .command(arguments)
             .start()
@@ -173,8 +190,16 @@ impl CanonicalTool {
             )));
         }
 
-        String::from_utf8(stdout)
-            .map_err(|_| self.failure("wrote output that is not valid UTF-8".to_owned()))
+        Ok(ToolOutput {
+            stdout: self.decoded(stdout, "stdout")?,
+            stderr: self.decoded(stderr, "stderr")?,
+        })
+    }
+
+    /// One stream, refused rather than repaired when it is not UTF-8.
+    fn decoded(&self, stream: Vec<u8>, which: &str) -> Result<String, CollectionError> {
+        String::from_utf8(stream)
+            .map_err(|_| self.failure(format!("wrote {which} that is not valid UTF-8")))
     }
 
     /// The resolved path, an explicit argument vector, one environment variable, and

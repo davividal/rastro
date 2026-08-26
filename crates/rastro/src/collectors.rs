@@ -4,7 +4,9 @@ pub mod accounts;
 pub mod block_devices;
 pub mod canonical_tool;
 pub mod cron;
+pub mod exporters;
 pub mod firewall;
+pub mod inet;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
@@ -26,6 +28,7 @@ pub mod units;
 pub use accounts::AccountsCollector;
 pub use block_devices::BlockDevicesCollector;
 pub use cron::CronCollector;
+pub use exporters::ExportersCollector;
 pub use firewall::FirewallCollector;
 pub use host::HostCollector;
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
@@ -79,6 +82,7 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(AccountsCollector::new()),
         Box::new(BlockDevicesCollector::new()),
         Box::new(CronCollector::new()),
+        Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
         Box::new(HostCollector::new()),
         Box::new(InvocationCollector::new(effective_config)),

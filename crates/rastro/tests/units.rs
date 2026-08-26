@@ -33,8 +33,18 @@ const UNITS: &str = r#"[
   {"unit":"dev-disk-by\\x2ddiskseq-1.device","load":"loaded","active":"active","sub":"plugged","description":"HARDDISK"}
 ]"#;
 
+/// Real groups, as `systemctl show -p Id -p ExecStartEx --no-pager -- <units>` prints
+/// them for the same units: a daemon with a command, and a slice with none.
+const SHOWN: &str = "\
+ExecStartEx={ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D $SSHD_OPTS ; flags= ; \
+start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+Id=ssh.service
+
+Id=-.slice
+";
+
 fn joined() -> UnitRegistry {
-    Systemctl::join(UNIT_FILES, UNITS).expect("these fixtures are well formed")
+    Systemctl::join(UNIT_FILES, UNITS, SHOWN).expect("these fixtures are well formed")
 }
 
 fn unit(registry: &UnitRegistry, name: &str) -> Unit {
@@ -216,7 +226,7 @@ fn join_refuses_a_unit_reported_twice() {
     ]"#;
 
     // Act
-    let result = Systemctl::join(repeated, "[]");
+    let result = Systemctl::join(repeated, "[]", "");
 
     // Assert
     let failure = result.expect_err("a repeated unit must not be silently dropped");
@@ -232,6 +242,7 @@ fn join_refuses_output_that_is_not_json() {
     let result = Systemctl::join(
         "UNIT FILE STATE PRESET\nssh.service enabled enabled\n",
         "[]",
+        "",
     );
 
     // Assert
@@ -278,7 +289,7 @@ fn a_unit_whose_name_embeds_a_uid_is_not_treated_as_churn() {
     ]"#;
 
     // Act
-    let observation = Observation::from(&Systemctl::join(files, "[]").expect("well formed"));
+    let observation = Observation::from(&Systemctl::join(files, "[]", "").expect("well formed"));
     let diffable = observation
         .in_view(View::Diffable)
         .expect("the facet survives");
@@ -294,7 +305,7 @@ fn a_scope_that_is_not_a_numbered_session_is_kept() {
     let files = r#"[{"unit_file":"init.scope","state":"static","preset":null}]"#;
 
     // Act
-    let observation = Observation::from(&Systemctl::join(files, "[]").expect("well formed"));
+    let observation = Observation::from(&Systemctl::join(files, "[]", "").expect("well formed"));
     let diffable = observation
         .in_view(View::Diffable)
         .expect("the facet survives");
@@ -311,7 +322,7 @@ fn a_unit_renders_both_sides_with_a_null_for_the_missing_one() {
 
     // Assert: a key that is sometimes present and sometimes missing is awkward for
     // every consumer, so both sides are always there and one is null.
-    assert_eq!(keys_of(&template), ["file", "runtime"]);
+    assert_eq!(keys_of(&template), ["exec_start", "file", "runtime"]);
     assert_eq!(
         field(&template, "runtime").content(),
         &Content::Scalar(Scalar::Null)
@@ -352,4 +363,56 @@ fn collect_fails_rather_than_reporting_an_empty_registry_without_systemd() {
     // Assert: an empty registry passed off as the truth is the one thing that must not
     // happen.
     assert!(result.is_err());
+}
+
+#[test]
+fn join_records_what_a_unit_starts() {
+    // Act
+    let ssh = unit(&joined(), "ssh.service");
+
+    // Assert: the field that turns "enabled and active" into "and this is the binary it
+    // amounts to, with these flags".
+    assert_eq!(ssh.exec_start.len(), 1);
+    assert_eq!(ssh.exec_start[0].executable.as_str(), "/usr/sbin/sshd");
+    assert_eq!(
+        ssh.exec_start[0].argv.as_str(),
+        "/usr/sbin/sshd -D $SSHD_OPTS"
+    );
+}
+
+#[test]
+fn join_gives_a_unit_that_starts_nothing_an_empty_command_list() {
+    // Act: the root slice is loaded and active and runs no process at all.
+    let slice = unit(&joined(), "-.slice");
+
+    // Assert
+    assert!(slice.exec_start.is_empty());
+}
+
+#[test]
+fn join_leaves_a_unit_systemd_did_not_resolve_starting_nothing() {
+    // Act: a template has a file, is never loaded, and so was never shown.
+    let template = unit(&joined(), "autovt@.service");
+
+    // Assert: empty rather than a guess read out of the unit file, because resolving a
+    // file into an effective command is systemd's job and rastro does not do it twice.
+    assert!(template.exec_start.is_empty());
+}
+
+#[test]
+fn what_a_unit_starts_survives_into_the_diffable_view() {
+    // Act
+    let observation = Observation::from(&joined());
+    let diffable = observation
+        .in_view(View::Diffable)
+        .expect("the facet survives");
+
+    // Assert: a resolved command is stable across two runs of an unchanged box, unlike the
+    // pid and exit status systemd prints beside it, which this facet never reads.
+    let ssh = field(&diffable, "ssh.service");
+    let started = match field(&ssh, "exec_start").content() {
+        Content::List(items) => items.clone(),
+        other => panic!("expected a list, got {other:?}"),
+    };
+    assert_eq!(text(&field(&started[0], "executable")), "/usr/sbin/sshd");
 }
