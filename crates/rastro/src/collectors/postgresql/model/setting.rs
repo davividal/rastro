@@ -19,10 +19,17 @@ pub struct Setting {
     pub unit: Option<SettingUnit>,
     pub source: SettingSource,
 
-    /// The configuration file asks for a value the running server has not adopted.
+    /// The server has read a new value from its configuration and needs a restart to use it.
     ///
-    /// Drift that no file comparison can see: `postgresql.conf` and the server disagree,
-    /// and the file alone looks correct.
+    /// **Only after a reload, and that limit is worth stating.** The server sets this when it
+    /// re-reads its configuration and finds a value it cannot adopt without restarting. A
+    /// file edited and never reloaded leaves it `false`, because the server does not yet know
+    /// the file changed: on the reference box a `conf.d` drop-in asked for three
+    /// `shared_preload_libraries` and `pg_settings` reported the default with
+    /// `pending_restart` false, the cluster having run unreloaded since it was written.
+    ///
+    /// So this is drift no file comparison can see, and the walker is what sees the drift
+    /// this cannot.
     pub pending_restart: bool,
 }
 

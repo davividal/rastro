@@ -3,9 +3,17 @@
 use rastro_collector::CollectionError;
 
 use super::cluster_inventory::{ClusterInventory, RegisteredCluster};
+use super::psql_database_grants::PsqlDatabaseGrants;
+use super::psql_databases::PsqlDatabases;
+use super::psql_extensions::PsqlExtensions;
+use super::psql_memberships::PsqlMemberships;
+use super::psql_roles::PsqlRoles;
 use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
-use crate::collectors::postgresql::model::{Cluster, ClusterSettings, Clusters};
+use crate::collectors::postgresql::model::{
+    Cluster, ClusterDatabases, ClusterMemberships, ClusterRoles, ClusterSettings, Clusters,
+    Database, DatabaseGrants,
+};
 
 /// postgresql-common's register of the box.
 const INVENTORY_PROGRAM: &str = "pg_lsclusters";
@@ -21,6 +29,64 @@ const CLIENT_PROGRAM: &str = "psql";
 /// and is recorded.
 const SETTINGS_QUERY: &str =
     "SELECT name, setting, unit, source, context, pending_restart FROM pg_settings";
+
+/// The ten columns [`PsqlRoles`] reads, in the order it expects them.
+///
+/// The attributes come from `pg_roles`, which masks the password. The tenth column is a
+/// `CASE` over `pg_authid.rolpassword`, so how a password is stored reaches the document
+/// while the hash itself never leaves the server. Reading `pg_authid` at all needs superuser,
+/// which the cluster owner is under peer authentication; a cluster whose owner is not will
+/// fail this read loudly rather than report roles without saying whether they have passwords.
+///
+/// The `pg_` roles are filtered out because they arrive with the server version, which the
+/// document already records, and the prefix is reserved so nothing an administrator creates
+/// can hide behind the filter. `ORDER BY` is deliberately absent: the model sorts, because
+/// list order is a contract rastro keeps rather than one it asks the server for.
+const ROLES_QUERY: &str = "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcreaterole, \
+     r.rolreplication, r.rolbypassrls, r.rolcanlogin, r.rolconnlimit, r.rolvaliduntil, \
+     CASE WHEN a.rolpassword IS NULL THEN '' \
+          WHEN a.rolpassword LIKE 'SCRAM-SHA-256$%' THEN 'scram-sha-256' \
+          WHEN a.rolpassword LIKE 'md5%' THEN 'md5' \
+          ELSE 'unrecognised' END \
+     FROM pg_roles r JOIN pg_authid a ON a.oid = r.oid \
+     WHERE r.rolname NOT LIKE 'pg\\_%'";
+
+/// The three columns [`PsqlMemberships`] reads, in the order it expects them.
+///
+/// Only the member side is filtered: `newrelic` in `pg_monitor` is a per-host grant somebody
+/// made and is worth having, while `pg_monitor` in `pg_read_all_stats` is a chain the server
+/// version ships and is the same everywhere.
+const MEMBERSHIPS_QUERY: &str = "SELECT member.rolname, granted.rolname, am.admin_option \
+     FROM pg_auth_members am \
+     JOIN pg_roles member ON member.oid = am.member \
+     JOIN pg_roles granted ON granted.oid = am.roleid \
+     WHERE member.rolname NOT LIKE 'pg\\_%'";
+
+/// The five columns [`PsqlDatabases`] reads, in the order it expects them.
+///
+/// The last is `datacl IS NULL`, and it is asked outright because no rendering of the ACL's
+/// contents can answer it: a null array and an empty one both render as nothing, and they
+/// are opposite states. Null means the built-in defaults apply; empty means everything has
+/// been revoked from everybody.
+const DATABASES_QUERY: &str = "SELECT datname, pg_get_userbyid(datdba), datallowconn, \
+     datconnlimit, datacl IS NULL FROM pg_database";
+
+/// The five columns [`PsqlDatabaseGrants`] reads, in the order it expects them.
+///
+/// `aclexplode` rather than the text form of an `aclitem`: a role name may contain a space or
+/// an equals sign, so the text form cannot be tokenised. Grantee zero is `PUBLIC` and
+/// `pg_get_userbyid` would fail on it, hence the `CASE` rendering it as an empty column.
+const DATABASE_GRANTS_QUERY: &str = "SELECT d.datname, \
+     CASE WHEN a.grantee = 0 THEN '' ELSE pg_get_userbyid(a.grantee) END, \
+     a.privilege_type, a.is_grantable, pg_get_userbyid(a.grantor) \
+     FROM pg_database d, aclexplode(d.datacl) a";
+
+/// The three columns [`PsqlExtensions`] reads, in the order it expects them.
+///
+/// Asked once per connectable database, because `pg_extension` is per database rather than
+/// shared. `pg_namespace` gives the schema its objects live in.
+const EXTENSIONS_QUERY: &str = "SELECT e.extname, e.extversion, n.nspname FROM pg_extension e \
+     JOIN pg_namespace n ON n.oid = e.extnamespace";
 
 /// Read nothing of the invoking account's, print no header, quote every value.
 ///
@@ -117,17 +183,22 @@ impl PostgresqlClusters {
     /// `postgresql.conf` would report a file as the state of a server that is not applying
     /// it, which is the substitution this whole collector exists to refuse.
     fn resolve(&self, cluster: &RegisteredCluster) -> Result<Cluster, CollectionError> {
-        let settings = if cluster.status.is_online() {
+        let read = if cluster.status.is_online() {
             Some(self.query(cluster)?)
         } else {
             None
         };
 
+        // Split here rather than held as one option, because the document's shape is one
+        // field per catalogue and a stopped cluster leaves every one of them null.
         Ok(Cluster {
             status: cluster.status,
             port: cluster.port,
             owner: cluster.owner.clone(),
-            settings,
+            settings: read.as_ref().map(|read| read.settings.clone()),
+            roles: read.as_ref().map(|read| read.roles.clone()),
+            memberships: read.as_ref().map(|read| read.memberships.clone()),
+            databases: read.map(|read| read.databases),
         })
     }
 
@@ -140,7 +211,7 @@ impl PostgresqlClusters {
     /// Every candidate database is tried before the cluster is called unreadable, and the
     /// reasons are reported together: told only that `template1` failed, an operator cannot
     /// see that `postgres` was missing, which is the fact that explains the rest.
-    fn query(&self, cluster: &RegisteredCluster) -> Result<ClusterSettings, CollectionError> {
+    fn query(&self, cluster: &RegisteredCluster) -> Result<ClusterReading, CollectionError> {
         // Validated whichever client is used, so a name read from the host is never trusted.
         let owner = TargetUser::new(cluster.owner.as_str())?;
         let client = match &self.client {
@@ -152,7 +223,7 @@ impl PostgresqlClusters {
 
         for database in CANDIDATE_DATABASES {
             match self.query_database(&client, &port, database) {
-                Ok(settings) => return Ok(settings),
+                Ok(reading) => return self.with_extensions(&client, &port, reading),
                 Err(refusal) => refusals.push(format!("{database}: {refusal}")),
             }
         }
@@ -164,17 +235,151 @@ impl PostgresqlClusters {
         )))
     }
 
-    /// One connection attempt, against one database.
+    /// One connection attempt, against one database, for every catalogue.
+    ///
+    /// All or nothing per database: both reads are server-wide views that any database can
+    /// answer, so one failing where the other succeeded means the connection or the account
+    /// is the problem rather than the query. Falling through to the next candidate with half
+    /// an answer would report a cluster as partly read without saying which half was missing.
     fn query_database(
         &self,
         client: &ToolAsUser,
         port: &str,
         database: &str,
-    ) -> Result<ClusterSettings, CollectionError> {
+    ) -> Result<ClusterReading, CollectionError> {
+        Ok(ClusterReading {
+            settings: PsqlSettings::parse(&self.ask(client, port, database, SETTINGS_QUERY)?)?,
+            roles: PsqlRoles::parse(&self.ask(client, port, database, ROLES_QUERY)?)?,
+            memberships: PsqlMemberships::parse(&self.ask(
+                client,
+                port,
+                database,
+                MEMBERSHIPS_QUERY,
+            )?)?,
+            databases: Self::joined(
+                &PsqlDatabases::parse(&self.ask(client, port, database, DATABASES_QUERY)?)?,
+                &PsqlDatabaseGrants::parse(&self.ask(
+                    client,
+                    port,
+                    database,
+                    DATABASE_GRANTS_QUERY,
+                )?)?,
+            )?,
+        })
+    }
+
+    /// Joins the ACL rows onto the databases that have an ACL.
+    ///
+    /// Pure, and called from the attempt that read both, so the grants can only ever come
+    /// from the database that answered. It used to be a second pass that reconnected to the
+    /// first candidate, which meant a cluster with no `postgres` database read everything
+    /// through `template1` and then failed here.
+    ///
+    /// A database whose `datacl` is null keeps `None`: the built-in defaults apply and there
+    /// are no rows to join. One that has an ACL gets what `aclexplode` returned, which may be
+    /// nothing at all, and nothing at all is a real state rather than a missing read.
+    ///
+    /// Grants naming a database the register did not list are a failure rather than a shrug:
+    /// it means a `CREATE DATABASE` landed between the two queries, so neither answer
+    /// describes one moment of the cluster.
+    fn joined(
+        databases: &ClusterDatabases,
+        grants: &DatabaseGrants,
+    ) -> Result<ClusterDatabases, CollectionError> {
+        let joined = databases
+            .databases()
+            .iter()
+            .map(|database| Database {
+                grants: database.grants.as_ref().map(|_| {
+                    grants
+                        .of_database(database.name.as_str())
+                        .unwrap_or_default()
+                        .to_vec()
+                }),
+                ..database.clone()
+            })
+            .collect::<Vec<Database>>();
+
+        if let Some(unknown) = grants
+            .databases()
+            .find(|name| !joined.iter().any(|database| &&database.name == name))
+        {
+            return Err(CollectionError::new(format!(
+                "the server reported grants on {:?}, which it did not list as a database, so the \
+                 two reads do not describe one moment",
+                unknown.as_str()
+            )));
+        }
+
+        ClusterDatabases::new(joined)
+    }
+
+    /// Asks every connectable database what it has installed.
+    ///
+    /// **A database that refuses connections is left `None` rather than empty.** `template0`
+    /// is kept unconnectable on purpose, so nothing can be read from it, and an empty list
+    /// would claim it has no extensions when the truth is that nobody asked.
+    fn with_extensions(
+        &self,
+        client: &ToolAsUser,
+        port: &str,
+        reading: ClusterReading,
+    ) -> Result<ClusterReading, CollectionError> {
+        let databases = reading
+            .databases
+            .databases()
+            .iter()
+            .map(|database| {
+                let extensions = if database.allows_connections {
+                    Some(PsqlExtensions::parse(&self.ask(
+                        client,
+                        port,
+                        database.name.as_str(),
+                        EXTENSIONS_QUERY,
+                    )?)?)
+                } else {
+                    None
+                };
+
+                Ok(Database {
+                    extensions,
+                    ..database.clone()
+                })
+            })
+            .collect::<Result<Vec<Database>, CollectionError>>()?;
+
+        Ok(ClusterReading {
+            databases: ClusterDatabases::new(databases)?,
+            ..reading
+        })
+    }
+
+    /// One query, on its own connection.
+    ///
+    /// A connection per query rather than several `-c` flags on one: psql concatenates the
+    /// result sets of multiple commands with nothing to tell them apart, so splitting them
+    /// again would mean guessing where one catalogue ends and the next begins.
+    fn ask(
+        &self,
+        client: &ToolAsUser,
+        port: &str,
+        database: &str,
+        query: &str,
+    ) -> Result<String, CollectionError> {
         let mut arguments: Vec<&str> = CLIENT_FLAGS.to_vec();
 
-        arguments.extend(["-p", port, "-d", database, "-c", SETTINGS_QUERY]);
+        arguments.extend(["-p", port, "-d", database, "-c", query]);
 
-        PsqlSettings::parse(&client.run(&arguments)?)
+        client.run(&arguments)
     }
+}
+
+/// Everything one connection attempt read.
+///
+/// A named type rather than a pair, so the caller reads what each half is at the call site.
+struct ClusterReading {
+    settings: ClusterSettings,
+    roles: ClusterRoles,
+    memberships: ClusterMemberships,
+    databases: ClusterDatabases,
 }

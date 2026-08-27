@@ -12,7 +12,8 @@ use std::os::unix::fs::PermissionsExt;
 use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
-    PostgresqlCollector, PsqlSettings, RegisteredCluster, Setting, SettingName, SettingSource,
+    PostgresqlCollector, PsqlDatabases, PsqlMemberships, PsqlRoles, PsqlSettings,
+    RegisteredCluster, Setting, SettingName, SettingSource,
 };
 use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
@@ -25,6 +26,40 @@ log_line_prefix,%m [%p] %q%u@%d ,,configuration file,sighup,f
 max_connections,100,,configuration file,postmaster,f
 search_path,\"\"\"$user\"\", public\",,default,user,f
 shared_buffers,16384,8kB,configuration file,postmaster,f
+";
+
+/// The three columns the extensions query asks for, once per connectable database.
+const EXTENSIONS: &str = "\
+plpgsql,1.0,pg_catalog
+";
+
+/// The five columns the databases query asks for, with a grant to a migration role.
+const DATABASES: &str = "\
+postgres,postgres,t,-1,t
+orders,postgres,t,-1,f
+";
+
+/// The five columns the grants query asks for, as `aclexplode` answers them. The empty
+/// grantee is `PUBLIC`.
+const DATABASE_GRANTS: &str = "\
+orders,,CONNECT,f,postgres
+orders,migrator,CREATE,t,postgres
+";
+
+/// The three columns the memberships query asks for: the two monitoring accounts that box
+/// holds in `pg_monitor`, and a developer in the migration role.
+const MEMBERSHIPS: &str = "\
+newrelic,pg_monitor,f
+developer,migrator,f
+";
+
+/// The nine columns the roles query asks for. `ops_admin` is real: that box carries
+/// two superusers besides the cluster owner.
+const ROLES: &str = "\
+ops_admin,t,t,t,t,f,t,-1,,scram-sha-256
+postgres,t,t,t,t,t,t,-1,,scram-sha-256
+app,f,f,f,f,f,t,-1,,scram-sha-256
+migrator,f,f,f,f,f,t,-1,,md5
 ";
 
 fn parsed(csv: &str) -> Vec<Setting> {
@@ -112,8 +147,9 @@ fn parse_reads_a_setting_awaiting_a_restart() {
     // Act
     let settings = parsed(changed);
 
-    // Assert: a value edited in postgresql.conf that the running server has not taken
-    // up yet is exactly the drift this collector exists to show.
+    // Assert: a value the server has read and cannot adopt without restarting. It says
+    // nothing about a file edited and never reloaded, which the server does not know about
+    // and which this column reports as `false`.
     assert!(named(&settings, "max_connections").pending_restart);
 }
 
@@ -300,6 +336,9 @@ fn clusters_render_in_one_deterministic_key_order() {
                 port: cluster.port,
                 owner: cluster.owner,
                 settings: None,
+                roles: None,
+                memberships: None,
+                databases: None,
             },
         )
     }));
@@ -321,12 +360,18 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         port: 5432,
         owner: "postgres".to_owned(),
         settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
+        roles: Some(PsqlRoles::parse(ROLES).expect("well formed")),
+        memberships: Some(PsqlMemberships::parse(MEMBERSHIPS).expect("well formed")),
+        databases: Some(PsqlDatabases::parse(DATABASES).expect("well formed")),
     };
     let stopped = Cluster {
         status: ClusterStatus::parse("down").expect("a legal status"),
         port: 5433,
         owner: "postgres".to_owned(),
         settings: None,
+        roles: None,
+        memberships: None,
+        databases: None,
     };
     let fleet = Clusters::new([
         (ClusterId::new("16", "main").expect("legal"), running),
@@ -411,6 +456,9 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         port: 5432,
         owner: "postgres".to_owned(),
         settings: None,
+        roles: None,
+        memberships: None,
+        databases: None,
     };
     let fleet = Clusters::new([(ClusterId::new("17", "main").expect("legal"), cluster)]);
 
@@ -464,13 +512,36 @@ fn read_with(tree: &str, listed: &str, psql_body: &str) -> Clusters {
         .expect("these fixtures are well formed")
 }
 
+/// A psql that answers each catalogue the collector asks for, dispatching on the query it
+/// was handed.
+///
+/// The collector sends more than one query per connection, so a stand-in that answered
+/// everything with one fixture would feed a settings result set to the roles parser and fail
+/// for a reason the test is not about.
+///
+/// `pg_auth_members` is matched before `pg_roles` on purpose: the memberships query joins
+/// `pg_roles` twice, so the looser pattern would answer it with the roles fixture.
+fn answering_every_query() -> String {
+    format!(
+        "case \"$*\" in\n\
+         *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
+         *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
+         *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
+         *pg_database*) cat <<'EOF'\n{DATABASES}EOF\n ;;\n\
+         *pg_extension*) cat <<'EOF'\n{EXTENSIONS}EOF\n ;;\n\
+         *pg_roles*) cat <<'EOF'\n{ROLES}EOF\n ;;\n\
+         *) printf 'unexpected query: %s\\n' \"$*\" >&2; exit 3 ;;\n\
+         esac"
+    )
+}
+
 #[test]
 fn read_asks_a_running_cluster_and_carries_its_settings() {
     // Act
     let clusters = read_with(
         "online",
         "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
-        &format!("cat <<'EOF'\n{SETTINGS}EOF"),
+        &answering_every_query(),
     );
 
     // Assert: the whole path, from the register through the delegated client to the parse.
@@ -510,6 +581,111 @@ fn read_does_not_ask_a_stopped_cluster() {
 }
 
 #[test]
+fn read_carries_a_running_clusters_roles() {
+    // Act
+    let clusters = read_with(
+        "roles",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: the catalogue read the settings-only collector was missing. A
+    // second superuser is in the fixture because that is the change worth making loud.
+    let roles = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .roles
+        .as_ref()
+        .expect("a running cluster is asked for its roles");
+    assert_eq!(roles.roles().len(), 4);
+    assert_eq!(
+        roles
+            .roles()
+            .iter()
+            .filter(|role| role.superuser)
+            .map(|role| role.name.as_str())
+            .collect::<Vec<&str>>(),
+        vec!["ops_admin", "postgres"]
+    );
+}
+
+#[test]
+fn read_does_not_ask_a_stopped_cluster_for_roles() {
+    // Act
+    let clusters = read_with(
+        "stopped-roles",
+        "17  main    5432 down   postgres /var/lib/pg /var/log/pg.log",
+        "printf 'a stopped cluster must not be queried\\n' >&2\nexit 1",
+    );
+
+    // Assert: a cluster that is down has no catalogue to read for the same reason it has no
+    // effective configuration. Nothing is running to hold either.
+    assert!(
+        clusters
+            .clusters()
+            .values()
+            .next()
+            .expect("one cluster")
+            .roles
+            .is_none()
+    );
+}
+
+#[test]
+fn read_falls_back_to_the_second_candidate_for_every_query() {
+    // Arrange: a cluster with no `postgres` database, which is legal. initdb creates it and
+    // nothing stops an administrator dropping it, which is why `template1` is the fallback.
+    // The stand-in refuses `-d postgres` and answers everything else, so any query that
+    // reconnects to the first candidate rather than the one that worked fails the read.
+    let without_postgres = "\
+template1,postgres,t,-1,t
+orders,postgres,t,-1,f
+";
+    let body = format!(
+        "case \"$*\" in\n\
+         *\"-d postgres \"*) printf 'FATAL: no database \"postgres\"\\n' >&2; exit 2 ;;\n\
+         esac\n\
+         case \"$*\" in\n\
+         *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
+         *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
+         *pg_database*) cat <<'EOF'\n{without_postgres}EOF\n ;;\n\
+         *pg_extension*) cat <<'EOF'\n{EXTENSIONS}EOF\n ;;\n\
+         *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
+         *pg_roles*) cat <<'EOF'\n{ROLES}EOF\n ;;\n\
+         *) printf 'unexpected query: %s\\n' \"$*\" >&2; exit 3 ;;\n\
+         esac"
+    );
+
+    // Act
+    let clusters = read_with(
+        "fallback",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &body,
+    );
+
+    // Assert: every catalogue is there, the grants included.
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    assert!(cluster.settings.is_some(), "settings");
+    assert!(cluster.roles.is_some(), "roles");
+    let databases = cluster.databases.as_ref().expect("databases");
+    let orders = databases
+        .databases()
+        .iter()
+        .find(|database| database.name.as_str() == "orders")
+        .expect("the fixture lists orders");
+    assert!(
+        !orders
+            .grants
+            .as_ref()
+            .expect("an ACL that is not the default")
+            .is_empty(),
+        "the grants read has to use the database that answered"
+    );
+}
+
+#[test]
 fn read_reports_which_cluster_could_not_be_answered_for() {
     // Arrange
     let refusing = PostgresqlClusters::reading_as(
@@ -540,7 +716,7 @@ fn read_carries_every_cluster_the_register_lists() {
         "several",
         "17  main    5432 online postgres /var/lib/pg/17 /var/log/pg17.log\n\
          15  main    5433 down   postgres /var/lib/pg/15 /var/log/pg15.log",
-        &format!("cat <<'EOF'\n{SETTINGS}EOF"),
+        &answering_every_query(),
     );
 
     // Assert

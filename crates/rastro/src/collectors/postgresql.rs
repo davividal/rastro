@@ -18,10 +18,17 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{Cluster, ClusterSettings, Clusters, Setting};
-pub use source::{ClusterInventory, PostgresqlClusters, PsqlSettings, RegisteredCluster};
+pub use model::{
+    Cluster, ClusterDatabases, ClusterMemberships, ClusterRoles, ClusterSettings, Clusters,
+    Database, DatabaseExtensions, DatabaseGrants, Extension, Grant, Membership, Role, Setting,
+};
+pub use source::{
+    ClusterInventory, PostgresqlClusters, PsqlDatabaseGrants, PsqlDatabases, PsqlExtensions,
+    PsqlMemberships, PsqlResultSet, PsqlRoles, PsqlSettings, RegisteredCluster,
+};
 pub use value_objects::{
-    ClusterId, ClusterStatus, SettingName, SettingSource, SettingUnit, SettingValue,
+    ClusterId, ClusterStatus, DatabaseName, DatabasePrivilege, ExtensionName, Grantee,
+    PasswordMethod, RoleName, SettingName, SettingSource, SettingUnit, SettingValue,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs.

@@ -2,7 +2,9 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::postgresql::model::ClusterSettings;
+use crate::collectors::postgresql::model::{
+    ClusterDatabases, ClusterMemberships, ClusterRoles, ClusterSettings,
+};
 use crate::collectors::postgresql::value_objects::ClusterStatus;
 
 /// A cluster on the box.
@@ -18,6 +20,9 @@ pub struct Cluster {
     pub port: u16,
     pub owner: String,
     pub settings: Option<ClusterSettings>,
+    pub roles: Option<ClusterRoles>,
+    pub memberships: Option<ClusterMemberships>,
+    pub databases: Option<ClusterDatabases>,
 }
 
 impl From<&Cluster> for Observation {
@@ -33,11 +38,35 @@ impl From<&Cluster> for Observation {
         ];
 
         // Declared rather than sorted: this object's shape is rastro's own, and the key
-        // order is the contract. Only the settings map beneath it is sorted, by its own type.
+        // order is the contract. Only the maps beneath it are sorted, by their own types.
         entries.push((
             "settings",
             match &cluster.settings {
                 Some(settings) => Observation::from(settings),
+                None => Observation::null(),
+            },
+        ));
+
+        entries.push((
+            "roles",
+            match &cluster.roles {
+                Some(roles) => Observation::from(roles),
+                None => Observation::null(),
+            },
+        ));
+
+        entries.push((
+            "memberships",
+            match &cluster.memberships {
+                Some(memberships) => Observation::from(memberships),
+                None => Observation::null(),
+            },
+        ));
+
+        entries.push((
+            "databases",
+            match &cluster.databases {
+                Some(databases) => Observation::from(databases),
                 None => Observation::null(),
             },
         ));
