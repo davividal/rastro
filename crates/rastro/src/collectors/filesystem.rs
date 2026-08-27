@@ -1,8 +1,11 @@
 //! Layer 1: what is on the disk.
 //!
-//! The walk itself does not exist yet. What is here is the decision it will be driven
-//! by: for each tree, whether a file's content is read and digested or whether the
-//! entry is known by its metadata alone.
+//! `FileTree::at(root).walk(&policy)` returns every entry under a root. The policy is
+//! the decision the walk is driven by: for each tree, whether a file's content is read
+//! and digested or whether the entry is known by its metadata alone.
+//!
+//! Not registered in `built_in()` yet, so nothing here reaches the document. The scope
+//! and the exclusions are the increments still owed.
 //!
 //! **Why a table and not a strategy object.** Every way of describing a file changes
 //! what a leaf in the document looks like, so each one is a change to the output
@@ -15,7 +18,12 @@
 //! resolved by the most specific tree containing the path.
 
 pub mod model;
+pub mod source;
 pub mod value_objects;
 
-pub use model::{PolicyRule, WalkPolicy};
-pub use value_objects::{ContentPolicy, DigestAlgorithm, WalkedTree};
+pub use model::{FileEntry, FilesystemInventory, PolicyRule, WalkPolicy};
+pub use source::FileTree;
+pub use value_objects::{
+    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode,
+    NanosecondsSinceEpoch, WalkedTree,
+};

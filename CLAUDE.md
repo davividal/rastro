@@ -29,9 +29,15 @@ host fail while every fixture test passes. Gate those in a container, Alpine as 
 as Debian since the package sources differ:
 
 ```sh
-podman run --rm -v "$PWD":/w -w /w \
+podman run --rm -v "$PWD":/w -w /w -e CARGO_TARGET_DIR=/tmp/target \
   -v rastro-cargo-registry:/usr/local/cargo/registry rust:latest sh -c 'cargo test'
 ```
+
+`CARGO_TARGET_DIR` is not optional. `CARGO_TARGET_TMPDIR` is derived from it, and the
+default puts every scratch tree back on the bind-mounted macOS filesystem, which is
+not the Linux the container was started for: it refuses a filename that is not UTF-8
+and refuses a unix socket, so the filesystem-walk tests for both fail there and pass
+on any real Linux.
 
 The named volume stops each run re-downloading the registry. A container leaves a
 root-owned `target/`.

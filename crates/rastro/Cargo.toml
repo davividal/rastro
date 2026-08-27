@@ -14,13 +14,16 @@ publish = false
 rastro-collector = { workspace = true }
 rastro-fingerprint = { workspace = true }
 clap = { workspace = true }
-# For `SIGKILL` alone, as a constant. Already in the tree under `subprocess`.
+# For constants alone: `SIGKILL`, and the `O_NOFOLLOW`/`O_NONBLOCK` the Layer 1
+# walker opens with. Already in the tree under `subprocess`.
 libc = { workspace = true }
 serde = { workspace = true }
 # systemd, `ip` and `lsblk` all emit JSON on request, which is a format rastro
 # chooses rather than a table it has to guess the columns of. Promoted from a
 # dev-dependency for that: see `docs/decisions.md`.
 serde_json = { workspace = true }
+# The Layer 1 walker's digest. Every hashed tree goes through it.
+sha2 = { workspace = true }
 # Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
 # output of a run and can signal the child's whole process group.
 subprocess = { workspace = true }

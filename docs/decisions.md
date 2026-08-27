@@ -44,6 +44,10 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [A named catalogue](#the-exporters-facet-knows-its-agents-by-name-rather-than-by-heuristic) | a heuristic would sweep in daemons and still miss two of six |
 | [Both streams](#the-execution-seam-can-capture-stderr) | two of six agents print `--version` to stderr and exit zero |
 | [Configured, not bound](#a-configured-endpoint-is-a-different-fact-from-a-bound-socket) | `exporters` and `sockets` observe separately so they can disagree |
+| [Inode timestamps](#an-inodes-timestamps-are-nanoseconds-since-the-epoch-and-atime-is-not-recorded) | mtime and ctime in nanoseconds, neither volatile; no atime, since hashing moves it |
+| [Device numbers](#a-device-node-records-its-major-and-minor-numbers) | a device node's state is its major and minor, split out of the packed `st_rdev` |
+| [Hardened open](#hashing-opens-with-o_nofollow-and-o_nonblock) | the stat and the open are two calls, so the open refuses a swapped-in symlink or fifo |
+| [Attributes owed](#acls-and-extended-attributes-are-owed-not-dropped) | ACLs and xattrs are one decision, deferred whole rather than built a third at a time |
 
 ## Native collectors, no external tool as a dependency
 
@@ -965,3 +969,87 @@ it from a flag that is not there.
 **An agent's own measurements are not here and never will be.** Container CPU and
 memory numbers change by the second; a fingerprint records what a box *is*, not
 what it is doing.
+
+# Layer 1: what the walk records about one entry
+
+Dated 2026-08-27. Driven by the walker itself existing: the entries below are the
+attribute-depth questions it could not be written without answering.
+
+## An inode's timestamps are nanoseconds since the epoch, and atime is not recorded
+
+`st_mtim` and `st_ctim` are a second and a nanosecond each, and both halves are
+kept, combined into one integer. Rounding to the second would make two writes
+inside one second the same fact, the format admits no floating point so a second
+with a fraction is not on offer, and rendering a calendar date would mean rastro
+being right about every zone and leap-second rule to gain readability and no
+signal. It is the same reasoning that keeps a systemd timer's moment in
+microseconds, and the units collector's precedent for the shape.
+
+**Both stamps, not one.** They are separate facts, and the pair is what makes a
+tampered one visible: a `chmod` moves the ctime alone, and a `touch -d` that
+backdates the mtime cannot move the ctime backwards with it.
+
+**Neither is volatile.** A file nobody touched carries the same stamp on both
+runs, so the byte-identical guarantee holds with these in the document. Stamp and
+lock files whose only churn *is* their mtime are noise in a diff — 23 of the 112
+files that changed on the reference box in seven days are exactly that — but they
+are real changes, and the answer to them is the walker's exclusion scope rather
+than pretending the value moves on its own.
+
+**There is no atime.** rastro reads a file's content to hash it, which moves that
+file's access time, so recording atime would report the tool's own visit as a
+change to the box. The one attribute a fingerprint must not carry is the one the
+fingerprinting created.
+
+**Cost:** every entry carries two more integers, and a tree whose files are
+rewritten identically now diffs where before it did not.
+
+## A device node records its major and minor numbers
+
+`st_rdev` is split into the two numbers `major(3)` and `minor(3)` yield, and
+carried for block and character devices only. A device node has no content to
+hash and no size worth recording: the numbers are the whole of its state, and
+`/dev/sda` becoming `8:16` where it was `8:0` is a different disk under the same
+path. Recording the kind alone would let two inventories addressing different
+devices compare equal.
+
+Split here rather than left packed, because the packed form is a Linux encoding
+that scatters both numbers through a 64-bit word, and a reader should not need to
+know it to read the document.
+
+**Cost:** the split is the kernel's, so a port to a system that packs `st_rdev`
+differently changes this one function.
+
+## Hashing opens with `O_NOFOLLOW` and `O_NONBLOCK`
+
+The `symlink_metadata` that classifies an entry as a regular file and the open
+that hashes it are two calls, and on a live box a package upgrade lands between
+them. A pathname open would then follow a replacement symlink out of the walked
+tree, or block forever on a replacement fifo — as root, on production, with the
+never-follow promise the walker makes broken and nothing in the output saying so.
+
+The flags refuse both, and the file type is checked again on the descriptor
+rather than on the path, because the descriptor is the thing actually being read.
+A mismatch is a recorded failure, not a digest of whatever arrived.
+
+**What this does not fix:** a regular file replaced by another regular file
+between the two calls still hashes the replacement. That race has no fix at this
+layer — the entry describes what was at the path when the walk reached it — and
+the inode is recorded, which is what makes the swap legible afterwards.
+
+## ACLs and extended attributes are owed, not dropped
+
+`design.md` lists POSIX ACLs and xattrs per entry, and the walk records neither
+yet. On a host where access is decided by an ACL, an SELinux label or
+`security.capability`, a change to any of them leaves every field the walk does
+record identical, so the gap is real and it is a gap in what the tool claims.
+
+It is deferred rather than half-built because "which attributes" is one decision,
+not three: ACLs are themselves stored as xattrs, the interesting security ones
+are namespaced differently, and enumerating every attribute on every file has a
+cost the walk has not measured. The walk has no `*xattr(2)` seam at all today, and
+adding one for a third of the answer would fix the shape before the question is
+settled.
+
+**Cost:** until it lands, a capability-only or label-only change is invisible to
+rastro, and that is a known false negative rather than an unknown one.

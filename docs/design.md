@@ -71,8 +71,10 @@ exclusion-based path set: `/etc`, `/usr/local`, `/opt`, `/root`,
 `/var/spool/cron` and the systemd unit directories with full attributes and
 hashing; `/srv` attributes only.
 
-Per entry: permissions, uid, gid, size, mtime, ctime, inode, link target, file
-type, ACLs, xattrs, sha256 (skippable per tree). Symlinks are first-class, since
+Per entry: permissions, uid, gid, size, mtime, ctime, inode, link count, link
+target, file type, device major and minor, ACLs, xattrs, sha256 (skippable per
+tree). Timestamps are nanoseconds since the epoch, and there is no atime, since
+reading a file to hash it moves that file's own. Symlinks are first-class, since
 an enablement symlink under `*.wants/` is exactly what this tool exists to catch.
 
 **Layer 2, the fixed runtime list.** Processes, listening sockets, established
