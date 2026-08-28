@@ -31,12 +31,50 @@ pub struct Setting {
     /// So this is drift no file comparison can see, and the walker is what sees the drift
     /// this cannot.
     pub pending_restart: bool,
+
+    /// When a change to this setting takes effect: `postmaster`, `sighup`, `user`, and the
+    /// rest of the GUC contexts.
+    ///
+    /// Recorded because it tells a reader of a diff whether a changed value could have taken
+    /// effect at all: a `postmaster`-context setting that moved means the cluster was
+    /// restarted, a `user`-context one means nothing of the kind.
+    pub context: String,
+
+    /// The file a value was set in, or `None` where it came from a default, the command line,
+    /// or a role too unprivileged to be shown the source.
+    pub sourcefile: Option<String>,
+
+    /// The line of [`Setting::sourcefile`] the value was set on, absent on the same terms.
+    pub sourceline: Option<i64>,
+}
+
+/// Renders a setting's value, withholding the content of one that can carry a credential.
+///
+/// While rastro's redaction layer is unbuilt, marking a value `sensitive` does not stop the
+/// renderer emitting it, so the collector withholds the content itself rather than shipping a
+/// secret in cleartext: a credential-bearing setting reports only whether it is set. The
+/// accounts collector makes the same choice for a password hash. The cost, accepted
+/// knowingly, is that a change *within* the value is invisible; a value appearing or being
+/// removed still shows, and the `sensitive` marker stays for the day a redaction layer can do
+/// better.
+pub(crate) fn value_observation(name: &SettingName, value: &SettingValue) -> Observation {
+    if name.holds_credential() {
+        let presence = if value.as_str().is_empty() {
+            ""
+        } else {
+            "[redacted]"
+        };
+
+        return Observation::text(presence).sensitive();
+    }
+
+    Observation::text(value.as_str())
 }
 
 impl From<&Setting> for Observation {
     fn from(setting: &Setting) -> Self {
         Observation::object([
-            ("value", Observation::text(setting.value.as_str())),
+            ("value", value_observation(&setting.name, &setting.value)),
             (
                 "unit",
                 match &setting.unit {
@@ -48,6 +86,21 @@ impl From<&Setting> for Observation {
             (
                 "pending_restart",
                 Observation::boolean(setting.pending_restart),
+            ),
+            ("context", Observation::text(setting.context.as_str())),
+            (
+                "sourcefile",
+                match &setting.sourcefile {
+                    Some(file) => Observation::text(file.as_str()),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "sourceline",
+                match setting.sourceline {
+                    Some(line) => Observation::integer(line),
+                    None => Observation::null(),
+                },
             ),
         ])
     }

@@ -12,20 +12,23 @@ use std::os::unix::fs::PermissionsExt;
 use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
-    PostgresqlCollector, PsqlDatabases, PsqlMemberships, PsqlRoles, PsqlSettings,
-    RegisteredCluster, Setting, SettingName, SettingSource,
+    PostgresqlCollector, PostmasterStatus, PsqlAvailableExtensions, PsqlControlData, PsqlDatabases,
+    PsqlFileSettings, PsqlHbaRules, PsqlMemberships, PsqlReadLens, PsqlReplicationSlots,
+    PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster, Setting, SettingName,
+    SettingSource,
 };
 use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
-use support::observation::{boolean, field, integer, is_null, keys_of, text};
+use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
-/// The six columns the collector asks for, as psql renders them with `--csv -t`.
+/// The eight columns the collector asks for, as psql renders them with `--csv -t`. The last
+/// two are the source file and line, empty for a value that came from no file.
 const SETTINGS: &str = "\
-DateStyle,\"ISO, MDY\",,configuration file,user,f
-log_line_prefix,%m [%p] %q%u@%d ,,configuration file,sighup,f
-max_connections,100,,configuration file,postmaster,f
-search_path,\"\"\"$user\"\", public\",,default,user,f
-shared_buffers,16384,8kB,configuration file,postmaster,f
+DateStyle,\"ISO, MDY\",,configuration file,user,f,,
+log_line_prefix,%m [%p] %q%u@%d ,,configuration file,sighup,f,/etc/postgresql/17/main/postgresql.conf,100
+max_connections,100,,configuration file,postmaster,f,/etc/postgresql/17/main/postgresql.conf,64
+search_path,\"\"\"$user\"\", public\",,default,user,f,,
+shared_buffers,16384,8kB,configuration file,postmaster,f,/etc/postgresql/17/main/postgresql.conf,120
 ";
 
 /// The three columns the extensions query asks for, once per connectable database.
@@ -46,20 +49,69 @@ orders,,CONNECT,f,postgres
 orders,migrator,CREATE,t,postgres
 ";
 
-/// The three columns the memberships query asks for: the two monitoring accounts that box
-/// holds in `pg_monitor`, and a developer in the migration role.
+/// The three columns the memberships query asks for: two monitoring accounts in
+/// `pg_monitor`, and a developer in the migration role.
 const MEMBERSHIPS: &str = "\
-newrelic,pg_monitor,f
+metrics,pg_monitor,f
 developer,migrator,f
 ";
 
-/// The nine columns the roles query asks for. `ops_admin` is real: that box carries
-/// two superusers besides the cluster owner.
+/// The nine columns the roles query asks for. `ops_admin` is a second superuser besides the
+/// cluster owner, which is the change this read exists to surface.
 const ROLES: &str = "\
 ops_admin,t,t,t,t,f,t,-1,,scram-sha-256
 postgres,t,t,t,t,t,t,-1,,scram-sha-256
 app,f,f,f,f,f,t,-1,,scram-sha-256
 migrator,f,f,f,f,f,t,-1,,md5
+";
+
+/// The three columns the role-settings query asks for: an `ALTER ROLE`, an `ALTER DATABASE`
+/// and an `ALTER ROLE ... IN DATABASE`, which is every scope `pg_db_role_setting` records.
+const ROLE_SETTINGS: &str = "\
+,app,work_mem=256MB
+orders,,statement_timeout=5000
+orders,migrator,search_path=public
+";
+
+/// The four columns the lens query asks for: the superuser owner rastro connects as under
+/// peer authentication, in the database that answered.
+const LENS: &str = "\
+postgres,postgres,t,t
+";
+
+/// The seven columns the file-settings query asks for: a plain line, a credential-bearing
+/// one, and a drop-in that will not apply, which is the typo a file comparison reads past.
+const FILE_SETTINGS: &str = "\
+1,/etc/postgresql/17/main/postgresql.conf,110,max_connections,100,t,
+2,/etc/postgresql/17/main/postgresql.conf,112,archive_command,rsync %p backup:%f,t,
+3,/etc/postgresql/17/main/conf.d/10-bad.conf,4,shared_buffers,notasize,f,invalid value for parameter shared_buffers
+";
+
+/// The two columns the control query asks for: the system identifier (a 64-bit value carried
+/// as text) and the timeline.
+const CONTROL: &str = "\
+7280634931331371930,1
+";
+
+/// The eleven columns the PostgreSQL 16+ hba query asks for: a peer local rule and a
+/// scram host rule, with the array columns rendered as `{...}`.
+const HBA_RULES: &str = "\
+1,/etc/postgresql/17/main/pg_hba.conf,90,local,{all},{postgres},,,peer,{},
+2,/etc/postgresql/17/main/pg_hba.conf,92,host,{all},{all},127.0.0.1/32,,scram-sha-256,{},
+";
+
+/// The three columns the available-extensions query asks for: one installed, and one that is
+/// available but not created in the database that answered.
+const AVAILABLE_EXTENSIONS: &str = "\
+plpgsql,1.0,1.0
+pg_stat_statements,1.11,
+";
+
+/// The six stable columns the replication-slots query asks for: a physical slot and a
+/// logical one, the latter bound to a database and decoding two-phase commits.
+const REPLICATION_SLOTS: &str = "\
+standby_1,,physical,,f,f
+sub_slot,pgoutput,logical,orders,f,t
 ";
 
 fn parsed(csv: &str) -> Vec<Setting> {
@@ -93,6 +145,27 @@ fn parse_reads_every_column_of_a_setting() {
         SettingSource::new("configuration file").expect("a legal source")
     );
     assert!(!shared_buffers.pending_restart);
+}
+
+#[test]
+fn parse_reads_the_context_and_source_location_of_a_setting() {
+    // Act
+    let settings = parsed(SETTINGS);
+
+    // Assert: context tells whether a changed value could have taken effect, and the source
+    // file and line say where it was set.
+    let shared_buffers = named(&settings, "shared_buffers");
+    assert_eq!(shared_buffers.context, "postmaster");
+    assert_eq!(
+        shared_buffers.sourcefile.as_deref(),
+        Some("/etc/postgresql/17/main/postgresql.conf")
+    );
+    assert_eq!(shared_buffers.sourceline, Some(120));
+
+    // A value that came from no file has neither a source file nor a line.
+    let search_path = named(&settings, "search_path");
+    assert_eq!(search_path.sourcefile, None);
+    assert_eq!(search_path.sourceline, None);
 }
 
 #[test]
@@ -130,6 +203,39 @@ fn parse_preserves_trailing_space_in_a_value() {
 }
 
 #[test]
+fn a_setting_that_can_hold_a_credential_is_redacted() {
+    // Arrange: `primary_conninfo` carries `password=` on a standby set up inline, and is
+    // visible precisely because rastro connects as the superuser owner. The server redacts
+    // none of it, so the collector must.
+    let standby = "\
+max_connections,100,,configuration file,postmaster,f,,
+primary_conninfo,host=primary user=replicator password=hunter2,,configuration file,postmaster,f,,
+";
+
+    // Act
+    let observation =
+        Observation::from(&PsqlSettings::parse(standby).expect("this output is well formed"));
+
+    // Assert: the secret content is withheld outright, not merely annotated, because the
+    // renderer does not yet honour the sensitive marker. The value reads `[redacted]`, never
+    // the password, and an ordinary setting beside it is untouched.
+    let conninfo = field(&field(&observation, "primary_conninfo"), "value");
+    assert_eq!(text(&conninfo), "[redacted]");
+    assert_eq!(
+        conninfo.sensitivity(),
+        rastro_fingerprint::Sensitivity::Sensitive
+    );
+    assert_eq!(
+        text(&field(&field(&observation, "max_connections"), "value")),
+        "100"
+    );
+    assert_eq!(
+        field(&field(&observation, "max_connections"), "value").sensitivity(),
+        rastro_fingerprint::Sensitivity::Public
+    );
+}
+
+#[test]
 fn parse_reads_an_empty_unit_as_no_unit() {
     // Act
     let settings = parsed(SETTINGS);
@@ -142,7 +248,7 @@ fn parse_reads_an_empty_unit_as_no_unit() {
 #[test]
 fn parse_reads_a_setting_awaiting_a_restart() {
     // Arrange
-    let changed = "max_connections,200,,configuration file,postmaster,t\n";
+    let changed = "max_connections,200,,configuration file,postmaster,t,,\n";
 
     // Act
     let settings = parsed(changed);
@@ -158,8 +264,8 @@ fn parse_drops_a_setting_that_came_from_our_own_connection() {
     // Arrange: psql sets `application_name` on the connection the collector opens, so
     // the server reports it with source `client`.
     let ours = "\
-application_name,psql,,client,user,f
-max_connections,100,,configuration file,postmaster,f
+application_name,psql,,client,user,f,,
+max_connections,100,,configuration file,postmaster,f,,
 ";
 
     // Act
@@ -172,10 +278,32 @@ max_connections,100,,configuration file,postmaster,f
 }
 
 #[test]
+fn parse_keeps_a_client_sourced_setting_that_is_not_our_application_name() {
+    // Arrange: PGOPTIONS and startup-packet options arrive with source `client` and are host
+    // state, so filtering by source rather than by name would lose them without a trace.
+    let via_environment = "\
+work_mem,64MB,,client,user,f,,
+application_name,psql,,client,user,f,,
+";
+
+    // Act
+    let settings = parsed(via_environment);
+
+    // Assert: our own application_name is dropped by name, while the environment-passed
+    // setting is kept, its client source recorded as the fact that it arrived that way.
+    assert_eq!(settings.len(), 1);
+    assert_eq!(settings[0].name.as_str(), "work_mem");
+    assert_eq!(
+        settings[0].source,
+        SettingSource::new("client").expect("a legal source")
+    );
+}
+
+#[test]
 fn parse_reads_a_value_containing_a_newline() {
     // Arrange: `archive_command` holds a shell command, so nothing stops it spanning
     // lines. A row-per-line parser would read this as two broken rows.
-    let multiline = "archive_command,\"test ! -f x &&\ncp %p x\",,configuration file,sighup,f\n";
+    let multiline = "archive_command,\"test ! -f x &&\ncp %p x\",,configuration file,sighup,f,,\n";
 
     // Act
     let settings = parsed(multiline);
@@ -189,9 +317,9 @@ fn parse_reads_a_value_containing_a_newline() {
 fn parse_orders_settings_by_name() {
     // Arrange
     let unsorted = "\
-shared_buffers,16384,8kB,configuration file,postmaster,f
-DateStyle,\"ISO, MDY\",,configuration file,user,f
-max_connections,100,,configuration file,postmaster,f
+shared_buffers,16384,8kB,configuration file,postmaster,f,,
+DateStyle,\"ISO, MDY\",,configuration file,user,f,,
+max_connections,100,,configuration file,postmaster,f,,
 ";
 
     // Act
@@ -233,8 +361,8 @@ fn parse_refuses_output_with_no_settings_in_it() {
 fn parse_refuses_two_rows_for_one_setting() {
     // Arrange
     let contradiction = "\
-max_connections,100,,configuration file,postmaster,f
-max_connections,200,,configuration file,postmaster,f
+max_connections,100,,configuration file,postmaster,f,,
+max_connections,200,,configuration file,postmaster,f,,
 ";
 
     // Act
@@ -270,7 +398,7 @@ fn parse_reads_every_registered_cluster() {
     // Assert
     assert_eq!(clusters.len(), 3);
     assert_eq!(clusters[0].id.as_str(), "16/main");
-    assert_eq!(clusters[0].port, 5432);
+    assert_eq!(clusters[0].port, Some(5432));
     assert_eq!(clusters[0].owner, "postgres");
     assert!(clusters[0].status.is_online());
 }
@@ -338,6 +466,14 @@ fn clusters_render_in_one_deterministic_key_order() {
                 settings: None,
                 roles: None,
                 memberships: None,
+                role_settings: None,
+                file_settings: None,
+                control: None,
+                hba_rules: None,
+                replication_slots: None,
+                available_extensions: None,
+                observed: None,
+                lens: None,
                 databases: None,
             },
         )
@@ -357,20 +493,40 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
     // Arrange
     let running = Cluster {
         status: ClusterStatus::parse("online").expect("a legal status"),
-        port: 5432,
+        port: Some(5432),
         owner: "postgres".to_owned(),
         settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
         roles: Some(PsqlRoles::parse(ROLES).expect("well formed")),
         memberships: Some(PsqlMemberships::parse(MEMBERSHIPS).expect("well formed")),
+        role_settings: Some(PsqlRoleSettings::parse(ROLE_SETTINGS).expect("well formed")),
+        file_settings: Some(PsqlFileSettings::parse(FILE_SETTINGS).expect("well formed")),
+        control: Some(PsqlControlData::parse(CONTROL).expect("well formed")),
+        hba_rules: Some(PsqlHbaRules::parse(HBA_RULES).expect("well formed")),
+        replication_slots: Some(
+            PsqlReplicationSlots::parse(REPLICATION_SLOTS).expect("well formed"),
+        ),
+        available_extensions: Some(
+            PsqlAvailableExtensions::parse(AVAILABLE_EXTENSIONS).expect("well formed"),
+        ),
+        observed: None,
+        lens: Some(PsqlReadLens::parse(LENS).expect("well formed")),
         databases: Some(PsqlDatabases::parse(DATABASES).expect("well formed")),
     };
     let stopped = Cluster {
         status: ClusterStatus::parse("down").expect("a legal status"),
-        port: 5433,
+        port: Some(5433),
         owner: "postgres".to_owned(),
         settings: None,
         roles: None,
         memberships: None,
+        role_settings: None,
+        file_settings: None,
+        control: None,
+        hba_rules: None,
+        replication_slots: None,
+        available_extensions: None,
+        observed: None,
+        lens: None,
         databases: None,
     };
     let fleet = Clusters::new([
@@ -453,11 +609,19 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
     // Arrange
     let cluster = Cluster {
         status: ClusterStatus::parse("online,recovery").expect("a legal status"),
-        port: 5432,
+        port: Some(5432),
         owner: "postgres".to_owned(),
         settings: None,
         roles: None,
         memberships: None,
+        role_settings: None,
+        file_settings: None,
+        control: None,
+        hba_rules: None,
+        replication_slots: None,
+        available_extensions: None,
+        observed: None,
+        lens: None,
         databases: None,
     };
     let fleet = Clusters::new([(ClusterId::new("17", "main").expect("legal"), cluster)]);
@@ -469,6 +633,81 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
     // a fingerprint exists to catch, so it is a field rather than a word inside `status`.
     assert_eq!(text(&field(&observation, "status")), "online");
     assert!(boolean(&field(&observation, "in_recovery")));
+}
+
+#[test]
+fn parse_records_a_missing_package_without_failing_the_facet() {
+    // Arrange: a purged old-version package leaves this after a major upgrade, and it is
+    // exactly the state a fingerprint should be showing.
+    let purged = "15 main 5433 down,binaries_missing postgres /var/lib/pg /var/log/pg.log\n";
+
+    // Act
+    let clusters = registered(purged);
+
+    // Assert: the qualifier is recorded, not rejected, so this row does not take the whole
+    // facet, and every other cluster on the box, down with it.
+    assert!(!clusters[0].status.is_online());
+    assert_eq!(clusters[0].status.qualifiers(), ["binaries_missing"]);
+}
+
+#[test]
+fn parse_records_a_supervisor_alongside_recovery() {
+    // Arrange: a Patroni-managed standby stacks the qualifiers onto the running word.
+    let managed = "17 main 5432 online,recovery,patroni postgres /var/lib/pg /var/log/pg.log\n";
+
+    // Act
+    let clusters = registered(managed);
+
+    // Assert: recovery is its own fact, and the supervisor is kept rather than rejected.
+    assert!(clusters[0].status.is_online());
+    assert!(clusters[0].status.in_recovery());
+    assert_eq!(clusters[0].status.qualifiers(), ["patroni"]);
+}
+
+#[test]
+fn parse_reads_an_empty_owner_column_as_no_owner() {
+    // Arrange: a uid with no passwd entry prints an empty owner, and the data directory
+    // collapses into its place under whitespace splitting.
+    let orphaned = "17 main 5432 down /var/lib/postgresql/17/main /var/log/pg.log\n";
+
+    // Act
+    let clusters = registered(orphaned);
+
+    // Assert: the path is not filed as the owner. Empty is the truth, rather than a name a
+    // later read would try to sudo to.
+    assert_eq!(clusters[0].owner, "");
+}
+
+#[test]
+fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
+    // Arrange
+    let cluster = Cluster {
+        status: ClusterStatus::parse("down,binaries_missing").expect("a legal status"),
+        port: Some(5433),
+        owner: "postgres".to_owned(),
+        lens: None,
+        settings: None,
+        roles: None,
+        memberships: None,
+        role_settings: None,
+        file_settings: None,
+        control: None,
+        hba_rules: None,
+        replication_slots: None,
+        available_extensions: None,
+        observed: None,
+        databases: None,
+    };
+    let fleet = Clusters::new([(ClusterId::new("15", "main").expect("legal"), cluster)]);
+
+    // Act
+    let observation = field(&Observation::from(&fleet), "15/main");
+
+    // Assert: a package going missing, or a supervisor appearing, shows in a diff without
+    // being able to fail the read.
+    let qualifiers = items_of(&field(&observation, "qualifiers"));
+    assert_eq!(qualifiers.len(), 1);
+    assert_eq!(text(&qualifiers[0]), "binaries_missing");
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +763,13 @@ fn read_with(tree: &str, listed: &str, psql_body: &str) -> Clusters {
 fn answering_every_query() -> String {
     format!(
         "case \"$*\" in\n\
+         *pg_read_all_settings*) cat <<'EOF'\n{LENS}EOF\n ;;\n\
+         *pg_db_role_setting*) cat <<'EOF'\n{ROLE_SETTINGS}EOF\n ;;\n\
+         *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
+         *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
+         *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
+         *pg_available_extensions*) cat <<'EOF'\n{AVAILABLE_EXTENSIONS}EOF\n ;;\n\
+         *pg_replication_slots*) cat <<'EOF'\n{REPLICATION_SLOTS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
@@ -589,8 +835,8 @@ fn read_carries_a_running_clusters_roles() {
         &answering_every_query(),
     );
 
-    // Assert: the catalogue read the settings-only collector was missing. A
-    // second superuser is in the fixture because that is the change worth making loud.
+    // Assert: the catalogue read the settings-only collector was missing. A second superuser
+    // is in the fixture because that is the change worth making loud.
     let roles = clusters
         .clusters()
         .values()
@@ -609,6 +855,190 @@ fn read_carries_a_running_clusters_roles() {
             .collect::<Vec<&str>>(),
         vec!["ops_admin", "postgres"]
     );
+}
+
+#[test]
+fn read_carries_a_running_clusters_role_settings() {
+    // Act
+    let clusters = read_with(
+        "role-settings",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: the `ALTER ROLE`/`ALTER DATABASE` overrides `pg_settings` folds into one
+    // session's map are read apart, so a diff can tell a scoped default from a global one.
+    let role_settings = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .role_settings
+        .as_ref()
+        .expect("a running cluster is asked for its overrides");
+    assert_eq!(role_settings.settings().len(), 3);
+}
+
+#[test]
+fn read_carries_a_running_clusters_file_settings() {
+    // Act
+    let clusters = read_with(
+        "file-settings",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: the configuration-file lines are read apart from the effective settings, so a
+    // value edited without a reload, and a line that will not apply, are both visible.
+    let file_settings = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .file_settings
+        .as_ref()
+        .expect("a running cluster is asked for its file settings");
+    assert_eq!(file_settings.settings().len(), 3);
+}
+
+#[test]
+fn read_carries_a_running_clusters_control_lineage() {
+    // Act
+    let clusters = read_with(
+        "control",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: the control-file lineage neither pg_settings nor pg_lsclusters can produce, so
+    // a re-initdb or a promotion shows in a diff.
+    let control = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .control
+        .as_ref()
+        .expect("a running cluster is asked for its lineage");
+    assert_eq!(control.system_identifier, "7280634931331371930");
+    assert_eq!(control.timeline_id, 1);
+}
+
+#[test]
+fn read_carries_a_running_clusters_hba_rules() {
+    // Act
+    let clusters = read_with(
+        "hba",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: who may connect as whom is server state pg_settings does not carry, so the
+    // rules are read apart.
+    let hba_rules = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .hba_rules
+        .as_ref()
+        .expect("a running cluster is asked for its authentication rules");
+    assert_eq!(hba_rules.rules().len(), 2);
+}
+
+#[test]
+fn read_carries_a_running_clusters_available_extensions() {
+    // Act
+    let clusters = read_with(
+        "available-extensions",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: what is installable cluster-wide, distinct from what each database created.
+    let available = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .available_extensions
+        .as_ref()
+        .expect("a running cluster is asked for its available extensions");
+    assert_eq!(available.extensions().len(), 2);
+}
+
+#[test]
+fn read_carries_a_running_clusters_replication_slots() {
+    // Act
+    let clusters = read_with(
+        "replication-slots",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: a slot appearing is a subscription pointed at this cluster, so the stable
+    // subset is read.
+    let slots = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .replication_slots
+        .as_ref()
+        .expect("a running cluster is asked for its replication slots");
+    assert_eq!(slots.slots().len(), 2);
+}
+
+#[test]
+fn read_carries_the_lens_the_settings_were_read_through() {
+    // Act
+    let clusters = read_with(
+        "lens",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: peer authentication as the owner lands on a superuser, so the map is complete
+    // and the reader can trust it carries the GUC_SUPERUSER_ONLY rows.
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    let lens = cluster
+        .lens
+        .as_ref()
+        .expect("a running cluster records its lens");
+    assert!(lens.is_superuser);
+    assert!(lens.sees_all_settings());
+}
+
+#[test]
+fn a_non_privileged_read_marks_the_settings_incomplete() {
+    // Arrange: a cluster read as a role that is neither a superuser nor a member of
+    // pg_read_all_settings, which is the "not always a superuser" case peer auth allows.
+    let cluster = Cluster {
+        status: ClusterStatus::parse("online").expect("a legal status"),
+        port: Some(5432),
+        owner: "postgres".to_owned(),
+        lens: Some(PsqlReadLens::parse("app,orders,f,f\n").expect("well formed")),
+        settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
+        roles: None,
+        memberships: None,
+        role_settings: None,
+        file_settings: None,
+        control: None,
+        hba_rules: None,
+        replication_slots: None,
+        available_extensions: None,
+        observed: None,
+        databases: None,
+    };
+    let fleet = Clusters::new([(ClusterId::new("16", "main").expect("legal"), cluster)]);
+
+    // Act
+    let observation = field(&Observation::from(&fleet), "16/main");
+
+    // Assert: the map is present but flagged incomplete, because the 21 GUC_SUPERUSER_ONLY
+    // rows are dropped with no word from the server. The flag is the loud qualifier.
+    assert!(!is_null(&field(&observation, "settings")));
+    assert!(!boolean(&field(&observation, "settings_complete")));
 }
 
 #[test]
@@ -648,6 +1078,13 @@ orders,postgres,t,-1,f
          *\"-d postgres \"*) printf 'FATAL: no database \"postgres\"\\n' >&2; exit 2 ;;\n\
          esac\n\
          case \"$*\" in\n\
+         *pg_read_all_settings*) cat <<'EOF'\n{LENS}EOF\n ;;\n\
+         *pg_db_role_setting*) cat <<'EOF'\n{ROLE_SETTINGS}EOF\n ;;\n\
+         *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
+         *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
+         *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
+         *pg_available_extensions*) cat <<'EOF'\n{AVAILABLE_EXTENSIONS}EOF\n ;;\n\
+         *pg_replication_slots*) cat <<'EOF'\n{REPLICATION_SLOTS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
          *pg_database*) cat <<'EOF'\n{without_postgres}EOF\n ;;\n\
@@ -751,4 +1188,136 @@ fn a_cluster_id_refuses_a_half_it_cannot_render() {
     // and would collide with the next one that lost the same half.
     assert!(ClusterId::new("", "main").is_err());
     assert!(ClusterId::new("17", "").is_err());
+}
+
+#[test]
+fn read_carries_the_observed_half_from_the_pid_file() {
+    // Arrange: a data directory with a postmaster.pid, read as the observed half. Line 4 is
+    // the port the server is serving on, line 8 its status.
+    let data_directory = scratch_tree("pgdata-observed", &[]);
+    fs::write(
+        data_directory.join("postmaster.pid"),
+        "4242\n/var/lib/postgresql/17/main\n1700000000\n5599\n/var/run/postgresql\n*\n0\nready   \n",
+    )
+    .expect("a writable pid file");
+    let listed = format!(
+        "17 main 5432 online postgres {} /var/log/pg.log",
+        data_directory.display()
+    );
+
+    // Act
+    let clusters = read_with("observed", &listed, &answering_every_query());
+
+    // Assert: the observed half carries the running port and status, kept apart from the
+    // configured port the register printed.
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    let observed = cluster
+        .observed
+        .as_ref()
+        .expect("a running cluster with a pid file");
+    assert_eq!(observed.port, 5599);
+    assert_eq!(observed.status, Some(PostmasterStatus::Ready));
+    assert_eq!(cluster.port, Some(5432));
+}
+
+#[test]
+fn read_connects_on_the_running_port_not_the_stale_configured_one() {
+    // Arrange: the drift case. The port was edited in postgresql.conf and never reloaded, so
+    // pg_lsclusters prints the new port (6000) while the server still serves the old one
+    // (5599), which postmaster.pid records.
+    let data_directory = scratch_tree("pgdata-drift", &[]);
+    fs::write(
+        data_directory.join("postmaster.pid"),
+        "4242\n/data\n1700000000\n5599\n/run/postgresql\n*\n0\nready   \n",
+    )
+    .expect("a writable pid file");
+    let listed = format!(
+        "17 main 6000 online postgres {} /var/log/pg.log",
+        data_directory.display()
+    );
+    let inner = answering_every_query();
+    let only_on_running = format!(
+        "case \"$*\" in \
+         *\"-p 5599 \"*) {inner} ;; \
+         *) printf 'refused on %s\\n' \"$*\" >&2; exit 2 ;; \
+         esac"
+    );
+
+    // Act
+    let clusters = read_with("drift", &listed, &only_on_running);
+
+    // Assert: the cluster was read, which can only happen if the connection used the running
+    // port 5599 rather than the stale configured 6000; the two stay apart in the document.
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    assert!(cluster.settings.is_some(), "connected on the running port");
+    assert_eq!(cluster.observed.as_ref().expect("pid file").port, 5599);
+    assert_eq!(cluster.port, Some(6000));
+}
+
+#[test]
+fn a_standby_refusing_connections_is_kept_as_its_observed_half() {
+    // Arrange: a streaming standby with hot_standby = off is up and answers no SQL.
+    // postmaster.pid says `standby`; psql refuses every connection.
+    let data_directory = scratch_tree("pgdata-standby", &[]);
+    fs::write(
+        data_directory.join("postmaster.pid"),
+        "4242\n/data\n1700000000\n5432\n/run/postgresql\n*\n0\nstandby \n",
+    )
+    .expect("a writable pid file");
+    let listed = format!(
+        "17 main 5432 online,recovery postgres {} /var/log/pg.log",
+        data_directory.display()
+    );
+
+    // Act: a client that refuses every connection the way a recovering standby does.
+    let clusters = read_with(
+        "standby",
+        &listed,
+        "printf 'FATAL: the database system is starting up\\n' >&2\nexit 2",
+    );
+
+    // Assert: recorded, not errored. The observed half carries the standby status, and the
+    // catalogues are null because none could be read, so it is not mistaken for broken.
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    assert_eq!(
+        cluster.observed.as_ref().expect("a pid file").status,
+        Some(PostmasterStatus::Standby)
+    );
+    assert!(cluster.settings.is_none());
+    assert!(cluster.roles.is_none());
+}
+
+#[test]
+fn a_standby_failing_for_a_non_refusal_reason_still_fails_the_facet() {
+    // Arrange: a standby (postmaster.pid says `standby`), but psql fails for a reason that is
+    // not the recovery refusal - here an authentication failure carrying the same exit status.
+    // It must not be hidden as a clean null read the way a `hot_standby = off` refusal is.
+    let data_directory = scratch_tree("pgdata-standby-auth", &[]);
+    fs::write(
+        data_directory.join("postmaster.pid"),
+        "4242\n/data\n1700000000\n5432\n/run/postgresql\n*\n0\nstandby \n",
+    )
+    .expect("a writable pid file");
+    let listed = format!(
+        "17 main 5432 online,recovery postgres {} /var/log/pg.log",
+        data_directory.display()
+    );
+
+    // Act
+    let failure = PostgresqlClusters::reading_as(
+        fake_inventory("standby-auth", &listed),
+        fake_client(
+            "standby-auth",
+            "printf 'FATAL: password authentication failed for user \"postgres\"\\n' >&2\nexit 2",
+        ),
+    )
+    .read()
+    .expect_err("an operational failure on a standby is still a facet error");
+
+    // Assert: the reason reaches the operator rather than being recorded as a null read.
+    assert!(
+        failure
+            .to_string()
+            .contains("password authentication failed")
+    );
 }

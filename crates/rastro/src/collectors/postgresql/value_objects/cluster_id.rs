@@ -34,6 +34,19 @@ impl ClusterId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The major version as a number, where it reads as one.
+    ///
+    /// postgresql-common spells the version `17` on modern releases and `9.6` on the last of
+    /// the old scheme, so the major is the integer before the first `.`. It is what decides
+    /// which shape a version-dependent catalogue has, `pg_hba_file_rules` among them. `None`
+    /// where the version is not a number rastro can read, which leaves the caller to take the
+    /// conservative branch rather than guess.
+    pub fn major_version(&self) -> Option<u32> {
+        let version = self.0.split('/').next()?;
+
+        version.split('.').next()?.parse::<u32>().ok()
+    }
 }
 
 /// Ordered by the rendered key, so this type's order and the document's are the same order.
