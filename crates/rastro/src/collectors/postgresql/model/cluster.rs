@@ -3,8 +3,8 @@
 use rastro_collector::Observation;
 
 use crate::collectors::postgresql::model::{
-    ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings, ClusterRoles,
-    ClusterSettings, ControlData, Postmaster, ReadLens,
+    ClusterDatabases, ClusterFileSettings, ClusterHbaRules, ClusterMemberships,
+    ClusterRoleSettings, ClusterRoles, ClusterSettings, ControlData, Postmaster, ReadLens,
 };
 use crate::collectors::postgresql::value_objects::ClusterStatus;
 
@@ -28,6 +28,7 @@ pub struct Cluster {
     /// configured facts above so the two can disagree.
     pub observed: Option<Postmaster>,
     pub control: Option<ControlData>,
+    pub hba_rules: Option<ClusterHbaRules>,
     pub lens: Option<ReadLens>,
     pub settings: Option<ClusterSettings>,
     pub file_settings: Option<ClusterFileSettings>,
@@ -80,6 +81,15 @@ impl From<&Cluster> for Observation {
             "control",
             match &cluster.control {
                 Some(control) => Observation::from(control),
+                None => Observation::null(),
+            },
+        ));
+
+        // Who may connect as whom: authentication state pg_settings does not carry.
+        entries.push((
+            "hba_rules",
+            match &cluster.hba_rules {
+                Some(hba_rules) => Observation::from(hba_rules),
                 None => Observation::null(),
             },
         ));

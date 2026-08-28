@@ -13,6 +13,7 @@ use super::psql_database_grants::PsqlDatabaseGrants;
 use super::psql_databases::PsqlDatabases;
 use super::psql_extensions::PsqlExtensions;
 use super::psql_file_settings::PsqlFileSettings;
+use super::psql_hba_rules::PsqlHbaRules;
 use super::psql_memberships::PsqlMemberships;
 use super::psql_read_lens::PsqlReadLens;
 use super::psql_role_settings::PsqlRoleSettings;
@@ -20,9 +21,9 @@ use super::psql_roles::PsqlRoles;
 use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
-    Cluster, ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings,
-    ClusterRoles, ClusterSettings, Clusters, ControlData, Database, DatabaseGrants, Postmaster,
-    ReadLens,
+    Cluster, ClusterDatabases, ClusterFileSettings, ClusterHbaRules, ClusterMemberships,
+    ClusterRoleSettings, ClusterRoles, ClusterSettings, Clusters, ControlData, Database,
+    DatabaseGrants, Postmaster, ReadLens,
 };
 
 /// postgresql-common's register of the box.
@@ -149,6 +150,23 @@ const FILE_SETTINGS_QUERY: &str = "SELECT seqno, sourcefile, sourceline, name, s
 const CONTROL_QUERY: &str = "SELECT (pg_control_system()).system_identifier::text, \
      (pg_control_checkpoint()).timeline_id";
 
+/// The first major version whose `pg_hba_file_rules` carries `rule_number` and `file_name`.
+const HBA_RULE_NUMBER_SINCE: u32 = 16;
+
+/// The eleven columns [`PsqlHbaRules`] reads on PostgreSQL 16 and later.
+///
+/// Who may connect as whom, from where, and how: server state `pg_settings` does not carry.
+/// Superuser only, revoked from PUBLIC. `rule_number` and `file_name` are 16 additions.
+/// `ORDER BY` is absent because the model sorts, which is the contract rastro keeps.
+const HBA_RULES_QUERY_V16: &str = "SELECT rule_number, file_name, line_number, type, database, \
+     user_name, address, netmask, auth_method, options, error FROM pg_hba_file_rules";
+
+/// The nine columns [`PsqlHbaRules`] reads on PostgreSQL 15, which has neither `rule_number`
+/// nor `file_name`. Asking for them there would fail the read on the box the collector was
+/// written for.
+const HBA_RULES_QUERY_V15: &str = "SELECT line_number, type, database, user_name, address, \
+     netmask, auth_method, options, error FROM pg_hba_file_rules";
+
 /// Read nothing of the invoking account's, print no header, quote every value.
 ///
 /// - `-X` because `HOME` belongs to the target account once sudo has built the environment,
@@ -266,6 +284,7 @@ impl PostgresqlClusters {
             role_settings: read.as_ref().map(|read| read.role_settings.clone()),
             file_settings: read.as_ref().map(|read| read.file_settings.clone()),
             control: read.as_ref().map(|read| read.control.clone()),
+            hba_rules: read.as_ref().map(|read| read.hba_rules.clone()),
             databases: read.map(|read| read.databases),
         })
     }
@@ -328,10 +347,16 @@ impl PostgresqlClusters {
                 ))
             })?
             .to_string();
+        // The view gained rule_number and file_name in 16, so an older cluster is asked for
+        // the nine columns it has rather than the eleven it does not.
+        let hba_query = match cluster.id.major_version() {
+            Some(major) if major >= HBA_RULE_NUMBER_SINCE => HBA_RULES_QUERY_V16,
+            _ => HBA_RULES_QUERY_V15,
+        };
         let mut refusals = Vec::new();
 
         for database in CANDIDATE_DATABASES {
-            match self.query_database(&client, &port, database) {
+            match self.query_database(&client, &port, database, hba_query) {
                 Ok(reading) => return self.with_extensions(&client, &port, reading),
                 Err(refusal) => refusals.push(format!("{database}: {refusal}")),
             }
@@ -355,10 +380,12 @@ impl PostgresqlClusters {
         client: &ToolAsUser,
         port: &str,
         database: &str,
+        hba_query: &str,
     ) -> Result<ClusterReading, CollectionError> {
         Ok(ClusterReading {
             lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
             control: PsqlControlData::parse(&self.ask(client, port, database, CONTROL_QUERY)?)?,
+            hba_rules: PsqlHbaRules::parse(&self.ask(client, port, database, hba_query)?)?,
             settings: PsqlSettings::parse(&self.ask(client, port, database, SETTINGS_QUERY)?)?,
             file_settings: PsqlFileSettings::parse(&self.ask(
                 client,
@@ -507,6 +534,7 @@ struct ClusterReading {
     role_settings: ClusterRoleSettings,
     file_settings: ClusterFileSettings,
     control: ControlData,
+    hba_rules: ClusterHbaRules,
     memberships: ClusterMemberships,
     databases: ClusterDatabases,
 }

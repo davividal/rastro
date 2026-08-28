@@ -13,8 +13,8 @@ use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwn
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
     PostgresqlCollector, PostmasterStatus, PsqlControlData, PsqlDatabases, PsqlFileSettings,
-    PsqlMemberships, PsqlReadLens, PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster,
-    Setting, SettingName, SettingSource,
+    PsqlHbaRules, PsqlMemberships, PsqlReadLens, PsqlRoleSettings, PsqlRoles, PsqlSettings,
+    RegisteredCluster, Setting, SettingName, SettingSource,
 };
 use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
@@ -89,6 +89,13 @@ const FILE_SETTINGS: &str = "\
 /// as text) and the timeline.
 const CONTROL: &str = "\
 7280634931331371930,1
+";
+
+/// The eleven columns the PostgreSQL 16+ hba query asks for: a peer local rule and a
+/// scram host rule, with the array columns rendered as `{...}`.
+const HBA_RULES: &str = "\
+1,/etc/postgresql/17/main/pg_hba.conf,90,local,{all},{postgres},,,peer,{},
+2,/etc/postgresql/17/main/pg_hba.conf,92,host,{all},{all},127.0.0.1/32,,scram-sha-256,{},
 ";
 
 fn parsed(csv: &str) -> Vec<Setting> {
@@ -395,6 +402,7 @@ fn clusters_render_in_one_deterministic_key_order() {
                 role_settings: None,
                 file_settings: None,
                 control: None,
+                hba_rules: None,
                 observed: None,
                 lens: None,
                 databases: None,
@@ -424,6 +432,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         role_settings: Some(PsqlRoleSettings::parse(ROLE_SETTINGS).expect("well formed")),
         file_settings: Some(PsqlFileSettings::parse(FILE_SETTINGS).expect("well formed")),
         control: Some(PsqlControlData::parse(CONTROL).expect("well formed")),
+        hba_rules: Some(PsqlHbaRules::parse(HBA_RULES).expect("well formed")),
         observed: None,
         lens: Some(PsqlReadLens::parse(LENS).expect("well formed")),
         databases: Some(PsqlDatabases::parse(DATABASES).expect("well formed")),
@@ -438,6 +447,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         role_settings: None,
         file_settings: None,
         control: None,
+        hba_rules: None,
         observed: None,
         lens: None,
         databases: None,
@@ -530,6 +540,7 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         role_settings: None,
         file_settings: None,
         control: None,
+        hba_rules: None,
         observed: None,
         lens: None,
         databases: None,
@@ -602,6 +613,7 @@ fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
         role_settings: None,
         file_settings: None,
         control: None,
+        hba_rules: None,
         observed: None,
         databases: None,
     };
@@ -674,6 +686,7 @@ fn answering_every_query() -> String {
          *pg_db_role_setting*) cat <<'EOF'\n{ROLE_SETTINGS}EOF\n ;;\n\
          *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
          *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
+         *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
@@ -829,6 +842,28 @@ fn read_carries_a_running_clusters_control_lineage() {
 }
 
 #[test]
+fn read_carries_a_running_clusters_hba_rules() {
+    // Act
+    let clusters = read_with(
+        "hba",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: who may connect as whom is server state pg_settings does not carry, so the
+    // rules are read apart.
+    let hba_rules = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .hba_rules
+        .as_ref()
+        .expect("a running cluster is asked for its authentication rules");
+    assert_eq!(hba_rules.rules().len(), 2);
+}
+
+#[test]
 fn read_carries_the_lens_the_settings_were_read_through() {
     // Act
     let clusters = read_with(
@@ -863,6 +898,7 @@ fn a_non_privileged_read_marks_the_settings_incomplete() {
         role_settings: None,
         file_settings: None,
         control: None,
+        hba_rules: None,
         observed: None,
         databases: None,
     };
@@ -918,6 +954,7 @@ orders,postgres,t,-1,f
          *pg_db_role_setting*) cat <<'EOF'\n{ROLE_SETTINGS}EOF\n ;;\n\
          *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
          *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
+         *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
          *pg_database*) cat <<'EOF'\n{without_postgres}EOF\n ;;\n\
