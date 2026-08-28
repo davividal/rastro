@@ -9,7 +9,7 @@ mod support;
 
 use rastro::collectors::postgresql::{FileSetting, PsqlFileSettings, SettingName};
 use rastro_fingerprint::{Observation, Sensitivity};
-use support::observation::{field, text};
+use support::observation::{field, is_null, text};
 
 /// The seven columns the collector's query asks for, in order.
 const FILE_SETTINGS: &str = "\
@@ -26,9 +26,10 @@ fn parsed(csv: &str) -> Vec<FileSetting> {
 }
 
 fn named<'a>(settings: &'a [FileSetting], name: &str) -> &'a FileSetting {
+    let wanted = SettingName::new(name).expect("a legal name");
     settings
         .iter()
-        .find(|setting| setting.name == SettingName::new(name).expect("a legal name"))
+        .find(|setting| setting.name.as_ref() == Some(&wanted))
         .expect("the fixture has this line")
 }
 
@@ -106,4 +107,34 @@ fn new_refuses_one_seqno_reported_twice() {
 1,/b.conf,1,shared_buffers,128MB,t,
 ";
     assert!(PsqlFileSettings::parse(repeated).is_err());
+}
+
+#[test]
+fn parse_reads_an_unparseable_line_with_no_name_and_its_error() {
+    // Arrange: a line PostgreSQL could not parse leaves `name` and `setting` null while the
+    // `error` column explains it. This is exactly the malformed line the catalogue exists to
+    // surface, so it must be recorded, not refused.
+    let unparseable = "\
+1,/etc/postgresql/17/main/postgresql.conf,7,,,f,syntax error
+";
+
+    // Act
+    let settings = parsed(unparseable);
+
+    // Assert
+    assert_eq!(settings.len(), 1);
+    let line = &settings[0];
+    assert_eq!(line.name, None);
+    assert!(!line.applied);
+    assert_eq!(line.error.as_deref(), Some("syntax error"));
+}
+
+#[test]
+fn an_unparseable_line_renders_a_null_name() {
+    // Act
+    let unparseable = "1,/etc/postgresql/17/main/postgresql.conf,7,,,f,syntax error\n";
+    let observation = Observation::from(&parsed(unparseable)[0]);
+
+    // Assert: the missing name reaches the document as null rather than an empty string.
+    assert!(is_null(&field(&observation, "name")));
 }

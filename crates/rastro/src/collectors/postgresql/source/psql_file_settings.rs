@@ -1,8 +1,9 @@
 //! Reading `pg_file_settings` out of a psql result set.
 //!
 //! What is peculiar to *this query* lives here: the seven columns it asks for, an empty
-//! source file or line that means the value did not come from a file, and an empty error that
-//! means the line applied.
+//! source file or line that means the value did not come from a file, an empty error that
+//! means the line applied, and an empty name that means PostgreSQL could not parse the line at
+//! all, its `error` saying why.
 //!
 //! **Superuser only.** The view is revoked from PUBLIC and `pg_read_all_settings` does not
 //! lift it, so a non-superuser read fails loudly (`permission denied for view
@@ -35,7 +36,7 @@ impl PsqlFileSettings {
                 seqno: whole_number(&record[0], "seqno")?,
                 sourcefile: present(&record[1]),
                 sourceline: source_line(&record[2])?,
-                name: SettingName::new(&record[3])?,
+                name: setting_name(&record[3])?,
                 value: SettingValue::new(&record[4]),
                 applied: PsqlResultSet::boolean(&record[5])?,
                 error: present(&record[6]),
@@ -74,4 +75,17 @@ fn present(column: &str) -> Option<String> {
     }
 
     Some(column.to_owned())
+}
+
+/// The parameter name, absent on a line PostgreSQL could not parse.
+///
+/// A syntax error or an invalid parameter name leaves `pg_file_settings.name` null while the
+/// `error` column explains it. Refusing the row would fail the whole read for the one line
+/// this catalogue exists to surface, so an empty name is recorded as absent, not rejected.
+fn setting_name(column: &str) -> Result<Option<SettingName>, CollectionError> {
+    if column.is_empty() {
+        return Ok(None);
+    }
+
+    SettingName::new(column).map(Some)
 }

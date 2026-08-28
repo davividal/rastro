@@ -33,7 +33,7 @@ fn parse_reads_an_installed_extension() {
 
     // Assert
     let plpgsql = named(&extensions, "plpgsql");
-    assert_eq!(plpgsql.default_version, "1.0");
+    assert_eq!(plpgsql.default_version.as_deref(), Some("1.0"));
     assert_eq!(plpgsql.installed_version.as_deref(), Some("1.0"));
 }
 
@@ -45,7 +45,7 @@ fn parse_reads_an_available_but_uninstalled_extension() {
     // Assert: an empty installed version means the extension is installable but not created
     // in the database that answered, which is a real state rather than a missing read.
     let available = named(&extensions, "pg_stat_statements");
-    assert_eq!(available.default_version, "1.11");
+    assert_eq!(available.default_version.as_deref(), Some("1.11"));
     assert_eq!(available.installed_version, None);
 }
 
@@ -66,4 +66,19 @@ fn new_refuses_one_extension_available_twice() {
     // means two reads were spliced.
     let repeated = "plpgsql,1.0,1.0\nplpgsql,1.0,\n";
     assert!(PsqlAvailableExtensions::parse(repeated).is_err());
+}
+
+#[test]
+fn parse_reads_an_extension_whose_control_file_omits_a_default_version() {
+    // Arrange: a control file may omit `default_version`, in which case a caller must name a
+    // version to install. psql renders that null as an empty field.
+    let no_default = "auto_explain,,\n";
+
+    // Act
+    let extensions = parsed(no_default);
+
+    // Assert: the absence is kept, not flattened to a version of "".
+    let auto_explain = named(&extensions, "auto_explain");
+    assert_eq!(auto_explain.default_version, None);
+    assert_eq!(auto_explain.installed_version, None);
 }

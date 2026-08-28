@@ -1286,3 +1286,38 @@ fn a_standby_refusing_connections_is_kept_as_its_observed_half() {
     assert!(cluster.settings.is_none());
     assert!(cluster.roles.is_none());
 }
+
+#[test]
+fn a_standby_failing_for_a_non_refusal_reason_still_fails_the_facet() {
+    // Arrange: a standby (postmaster.pid says `standby`), but psql fails for a reason that is
+    // not the recovery refusal - here an authentication failure carrying the same exit status.
+    // It must not be hidden as a clean null read the way a `hot_standby = off` refusal is.
+    let data_directory = scratch_tree("pgdata-standby-auth", &[]);
+    fs::write(
+        data_directory.join("postmaster.pid"),
+        "4242\n/data\n1700000000\n5432\n/run/postgresql\n*\n0\nstandby \n",
+    )
+    .expect("a writable pid file");
+    let listed = format!(
+        "17 main 5432 online,recovery postgres {} /var/log/pg.log",
+        data_directory.display()
+    );
+
+    // Act
+    let failure = PostgresqlClusters::reading_as(
+        fake_inventory("standby-auth", &listed),
+        fake_client(
+            "standby-auth",
+            "printf 'FATAL: password authentication failed for user \"postgres\"\\n' >&2\nexit 2",
+        ),
+    )
+    .read()
+    .expect_err("an operational failure on a standby is still a facet error");
+
+    // Assert: the reason reaches the operator rather than being recorded as a null read.
+    assert!(
+        failure
+            .to_string()
+            .contains("password authentication failed")
+    );
+}

@@ -36,6 +36,6 @@ impl ClusterHbaRules {
 
 impl From<&ClusterHbaRules> for Observation {
     fn from(rules: &ClusterHbaRules) -> Self {
-        Observation::list(rules.rules().iter().map(|rule| Observation::from(rule)))
+        Observation::list(rules.rules().iter().map(Observation::from))
     }
 }

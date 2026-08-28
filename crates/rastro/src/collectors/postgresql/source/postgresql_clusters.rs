@@ -297,17 +297,18 @@ impl PostgresqlClusters {
             let observed = self.observe(cluster)?;
             match self.query(cluster, observed.as_ref()) {
                 Ok(read) => (Some(read), observed),
-                Err(refusal) => {
-                    // A standby with `hot_standby = off` is up and deliberately refusing
-                    // connections, which `postmaster.pid` says and a failed psql cannot tell
-                    // from a broken cluster. Record what was observed rather than failing the
-                    // whole facet; every other running cluster stays readable.
-                    if is_refusing_standby(observed.as_ref()) {
-                        (None, observed)
-                    } else {
-                        return Err(refusal);
-                    }
+                // A standby with `hot_standby = off` is up and deliberately refusing SQL
+                // connections: `postmaster.pid` says `standby` and every candidate database
+                // answered "not accepting connections". Record what was observed rather than
+                // failing the whole facet; every other running cluster stays readable. Any
+                // other failure - a missing client, a denied permission, malformed output - is
+                // a real facet error even on a standby.
+                Err(ClusterQueryError::NotAcceptingConnections(_))
+                    if is_refusing_standby(observed.as_ref()) =>
+                {
+                    (None, observed)
                 }
+                Err(refusal) => return Err(refusal.into()),
             }
         } else {
             (None, None)
@@ -374,22 +375,24 @@ impl PostgresqlClusters {
         &self,
         cluster: &RegisteredCluster,
         observed: Option<&Postmaster>,
-    ) -> Result<ClusterReading, CollectionError> {
+    ) -> Result<ClusterReading, ClusterQueryError> {
         // Validated whichever client is used, so a name read from the host is never trusted.
-        let owner = TargetUser::new(cluster.owner.as_str())?;
+        let owner =
+            TargetUser::new(cluster.owner.as_str()).map_err(ClusterQueryError::Unreadable)?;
         let client = match &self.client {
             Some(named) => named.clone(),
-            None => ToolAsUser::located(CLIENT_PROGRAM, &owner)?,
+            None => ToolAsUser::located(CLIENT_PROGRAM, &owner)
+                .map_err(ClusterQueryError::Unreadable)?,
         };
         let port = observed
             .map(|observed| observed.port)
             .or(cluster.port)
             .ok_or_else(|| {
-                CollectionError::new(format!(
+                ClusterQueryError::Unreadable(CollectionError::new(format!(
                     "cluster {} is online, but neither pg_lsclusters nor postmaster.pid gave a \
                      port to connect on",
                     cluster.id.as_str()
-                ))
+                )))
             })?
             .to_string();
         // Two catalogues changed shape across versions: pg_hba_file_rules gained rule_number
@@ -405,11 +408,19 @@ impl PostgresqlClusters {
             _ => REPLICATION_SLOTS_QUERY_V13,
         };
         let mut refusals = Vec::new();
+        let mut all_not_accepting = true;
 
         for database in CANDIDATE_DATABASES {
             match self.query_database(&client, &port, database, hba_query, slots_query) {
-                Ok(reading) => return self.with_extensions(&client, &port, reading),
-                Err(refusal) => refusals.push(format!("{database}: {refusal}")),
+                Ok(reading) => {
+                    return self
+                        .with_extensions(&client, &port, reading)
+                        .map_err(ClusterQueryError::Unreadable);
+                }
+                Err(refusal) => {
+                    all_not_accepting &= is_not_accepting_connections(&refusal);
+                    refusals.push(format!("{database}: {refusal}"));
+                }
             }
         }
 
@@ -417,13 +428,18 @@ impl PostgresqlClusters {
         // likely than the wrong port, a standby refusing connections under `hot_standby =
         // off`, or `max_connections` exhausted. So the message reports the per-attempt reasons
         // rather than blaming the databases, which the two candidates could not fix anyway.
-        Err(CollectionError::new(format!(
+        let attempts = CollectionError::new(format!(
             "cluster {} could not be read on any database tried, which is rarely the database's \
              fault: look to the connection, a standby refusing connections, or exhausted \
              connections. The attempts reported: {}",
             cluster.id.as_str(),
             refusals.join("; ")
-        )))
+        ));
+        if all_not_accepting {
+            Err(ClusterQueryError::NotAcceptingConnections(attempts))
+        } else {
+            Err(ClusterQueryError::Unreadable(attempts))
+        }
     }
 
     /// One connection attempt, against one database, for every catalogue.
@@ -605,6 +621,43 @@ fn is_refusing_standby(observed: Option<&Postmaster>) -> bool {
         observed.and_then(|observed| observed.status),
         Some(PostmasterStatus::Standby)
     )
+}
+
+/// Why a running cluster could not be read.
+///
+/// The two are handled differently in [`PostgresqlClusters::resolve`]: a standby that is up
+/// but declining connections is recorded as its observed half, while anything else fails the
+/// facet. Keeping them apart here is what stops an unrelated failure - a missing client, a
+/// denied permission, malformed output - from being hidden on a standby.
+enum ClusterQueryError {
+    /// Every candidate database answered that the server is not accepting connections, the way
+    /// a standby with `hot_standby = off` or one still reaching its recovery point does.
+    NotAcceptingConnections(CollectionError),
+    /// Anything else that stops a read, which is a facet error whether or not the box is a
+    /// standby.
+    Unreadable(CollectionError),
+}
+
+impl From<ClusterQueryError> for CollectionError {
+    fn from(error: ClusterQueryError) -> Self {
+        match error {
+            ClusterQueryError::NotAcceptingConnections(error)
+            | ClusterQueryError::Unreadable(error) => error,
+        }
+    }
+}
+
+/// Whether psql's failure is the server declining SQL connections while in recovery.
+///
+/// A standby with `hot_standby = off`, or a server still reaching its consistent recovery
+/// point, answers every connection with a `FATAL` that says as much. `LC_ALL=C` keeps that
+/// text in English (see `canonical_tool`), so matching it is stable across versions. It is the
+/// one failure a standby's `postmaster.pid` makes expected; a missing client or a denied
+/// permission reads nothing like it.
+fn is_not_accepting_connections(error: &CollectionError) -> bool {
+    let message = error.to_string();
+    message.contains("not accepting connections")
+        || message.contains("the database system is starting up")
 }
 
 /// Everything one connection attempt read.

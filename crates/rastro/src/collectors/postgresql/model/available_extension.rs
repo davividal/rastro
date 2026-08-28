@@ -20,7 +20,9 @@ use crate::collectors::postgresql::value_objects::ExtensionName;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AvailableExtension {
     pub name: ExtensionName,
-    pub default_version: String,
+    /// The version the control file declares, or `None` where it omits one and a caller must
+    /// name a version to install.
+    pub default_version: Option<String>,
 
     /// The version created in the database that answered, or `None` where it is not created
     /// there.
@@ -32,7 +34,10 @@ impl From<&AvailableExtension> for Observation {
         Observation::object([
             (
                 "default_version",
-                Observation::text(extension.default_version.as_str()),
+                match &extension.default_version {
+                    Some(version) => Observation::text(version.as_str()),
+                    None => Observation::null(),
+                },
             ),
             (
                 "installed_version",

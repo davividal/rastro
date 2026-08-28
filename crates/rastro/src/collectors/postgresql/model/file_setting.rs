@@ -24,7 +24,9 @@ pub struct FileSetting {
     pub seqno: i64,
     pub sourcefile: Option<String>,
     pub sourceline: Option<i64>,
-    pub name: SettingName,
+    /// The parameter, absent on a line PostgreSQL could not parse: a syntax error or an
+    /// invalid name leaves it null while `error` says why.
+    pub name: Option<SettingName>,
     pub value: SettingValue,
 
     /// Whether the server accepted the line. `false` carries an `error`, and is the typo a
@@ -53,8 +55,20 @@ impl From<&FileSetting> for Observation {
                     None => Observation::null(),
                 },
             ),
-            ("name", Observation::text(setting.name.as_str())),
-            ("value", value_observation(&setting.name, &setting.value)),
+            (
+                "name",
+                match &setting.name {
+                    Some(name) => Observation::text(name.as_str()),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "value",
+                match &setting.name {
+                    Some(name) => value_observation(name, &setting.value),
+                    None => Observation::text(setting.value.as_str()),
+                },
+            ),
             ("applied", Observation::boolean(setting.applied)),
             (
                 "error",

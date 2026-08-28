@@ -48,11 +48,6 @@ impl ClusterRoleSettings {
 
 impl From<&ClusterRoleSettings> for Observation {
     fn from(settings: &ClusterRoleSettings) -> Self {
-        Observation::list(
-            settings
-                .settings()
-                .iter()
-                .map(|setting| Observation::from(setting)),
-        )
+        Observation::list(settings.settings().iter().map(Observation::from))
     }
 }
