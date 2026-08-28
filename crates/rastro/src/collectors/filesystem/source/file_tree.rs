@@ -51,6 +51,7 @@ use crate::collectors::filesystem::value_objects::{
 pub struct FileTree {
     root: PathBuf,
     boundaries: Vec<PathBuf>,
+    observer: Option<PathBuf>,
 }
 
 impl FileTree {
@@ -58,7 +59,24 @@ impl FileTree {
         Self {
             root: root.to_path_buf(),
             boundaries: Vec::new(),
+            observer: None,
         }
+    }
+
+    /// The same walk, reporting everything but this one file.
+    ///
+    /// For exactly one caller and exactly one path: the executable rastro is running from.
+    /// `rastro-ssh` stages the binary as `mktemp /var/tmp/rastro.XXXXXXXX` and `/var/tmp` is
+    /// walked on purpose, so without this every remote run reports one added and one removed
+    /// file under a fresh name, and the tool's own footprint is the largest single entry in
+    /// its noise floor.
+    ///
+    /// One path, compared whole. Not a name pattern, because a file an operator called
+    /// `rastro` is theirs and belongs in the document.
+    pub fn omitting(mut self, observer: &Path) -> Self {
+        self.observer = Some(observer.to_path_buf());
+
+        self
     }
 
     /// The same walk, stopping at each of these paths.
@@ -87,6 +105,10 @@ impl FileTree {
             .dev();
 
         while let Some(path) = pending.pop() {
+            if self.observer.as_deref() == Some(path.as_path()) {
+                continue;
+            }
+
             let metadata = fs::symlink_metadata(&path)
                 .map_err(|error| failure(&path, "could not be read", &error))?;
             let entry = self.entry_of(&path, &metadata, policy)?;

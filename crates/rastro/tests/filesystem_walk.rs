@@ -64,6 +64,22 @@ fn walked(
         .collect()
 }
 
+/// The same walk, with one path the observer must not report.
+fn walked_omitting(
+    root: &Path,
+    policy: &WalkPolicy,
+    observer: &Path,
+) -> Vec<(String, rastro::collectors::filesystem::FileEntry)> {
+    FileTree::at(root)
+        .omitting(observer)
+        .walk(policy)
+        .expect("a readable tree")
+        .entries()
+        .iter()
+        .map(|entry| (relative(root, entry.path.as_str()), entry.clone()))
+        .collect()
+}
+
 /// Paths relative to the scratch root, so an assertion does not carry the temporary
 /// directory's name.
 fn relative(root: &Path, path: &str) -> String {
@@ -190,6 +206,35 @@ fn walk_records_a_directory_without_a_digest() {
     assert_eq!(directory.kind, FileKind::Directory);
     assert!(directory.digest.is_none());
     assert!(directory.size.is_none());
+}
+
+#[test]
+fn walk_omits_the_observers_own_executable() {
+    // Arrange: `rastro-ssh` stages the binary as `mktemp /var/tmp/rastro.XXXXXXXX` and
+    // `/var/tmp` is walked on purpose, so every run otherwise reports one added and one
+    // removed file that is nothing but the tool's own footprint.
+    let root = tree_with_a_file("walk_omits_the_observer");
+    write(&root, "etc/rastro.zDeJEVKF", HELLO);
+    let observer = root.join("etc/rastro.zDeJEVKF");
+
+    // Act
+    let entries = walked_omitting(&root, &hashing_everything(), &observer);
+
+    // Assert: the observer is not state. Its neighbour in the same directory is.
+    assert_eq!(names(&entries), vec!["", "etc", "etc/greeting"]);
+}
+
+#[test]
+fn walk_omits_nothing_when_the_observer_is_elsewhere() {
+    // Arrange
+    let root = tree_with_a_file("walk_omits_nothing");
+
+    // Act
+    let entries = walked_omitting(&root, &hashing_everything(), Path::new("/usr/bin/rastro"));
+
+    // Assert: the rule is one path, not a name pattern. A file the operator called `rastro`
+    // is theirs, and it stays in the document.
+    assert_eq!(names(&entries), vec!["", "etc", "etc/greeting"]);
 }
 
 #[test]
