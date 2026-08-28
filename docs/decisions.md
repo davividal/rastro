@@ -56,6 +56,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [A contested tree fails the facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet) | no winner is picked, because two rules for one tree is a bug in a collector pair |
 | [Churn stops reporting what moves](#a-tree-that-churns-without-meaning-stops-reporting-the-attributes-that-move) | withholding only the digest left the journals in the diff on mtime alone |
 | [The walk table is self-description](#the-effective-walk-table-travels-in-the-invocation-facet) | one place says which rule applied to a tree and which facet asked for it |
+| [The observer is not state](#rastro-omits-the-file-it-is-running-from) | one path, the binary itself, named in the envelope so the omission is accounted for |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1272,3 +1273,37 @@ entries of the reference cycle become 17, and with the three claims that follow,
 **Cost:** a log file rewritten to a different size no longer shows in the diffable
 view, and neither does a journal replaced wholesale. The complete view still carries
 both, and `/var/log` was never the tree a fingerprint was watching.
+
+## rastro omits the file it is running from
+
+The walk skips exactly one path: the executable this process was started from, as
+`std::env::current_exe` reports it. `rastro-ssh` stages the binary with
+`mktemp /var/tmp/rastro.XXXXXXXX` and `/var/tmp` is walked on purpose, so every remote
+run otherwise reported one added and one removed file under a fresh name. On the
+reference cycle that was the single largest contributor to a six-path noise floor, and
+it was the tool measuring its own footprint.
+
+**One path, compared whole.** Not a name pattern: a file an operator called `rastro` is
+theirs and belongs in the document. Not a directory either, so the staged binary's
+neighbours in `/var/tmp` are reported as before.
+
+**The omission is accounted for.** The `invocation` facet carries `observer`, the path
+that was left out, annotated volatile because the `mktemp` name differs on every run and
+the diffable view has to stay byte-identical. The complete view names the file. An
+omission nothing in the document explains is the one thing this format does not do.
+
+**Resolved once, in the seam.** Two facets answer for the same path, so
+`FilesystemCollector::running_binary` is the only definition and `collectors::built_in`
+hands it to both. Two independent reads could disagree, and then the envelope would
+account for a different file than the walk skipped.
+
+**The known blind spot:** a rastro installed permanently, say in `/usr/local/bin`, will
+not appear in its own fingerprint. That is a real loss, accepted because the alternative
+is worse in both directions: a rule that only omitted the binary inside a scratch tree
+would make the document depend on where the operator staged it, and `argv[0]` is not a
+path the kernel vouches for. The version is in the envelope, and the complete view has
+the path.
+
+**Cost:** `current_exe` is a host read in a collector that had none, and a run that
+cannot resolve it reports the binary like any other file. One entry too many is the
+right direction to fail in; omitting somebody else's file is not.
