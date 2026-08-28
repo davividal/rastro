@@ -41,10 +41,7 @@ fn parse_reads_a_role_scoped_override() {
     // database is absent and the role is not.
     let override_ = named(&settings, "work_mem");
     assert_eq!(override_.database, None);
-    assert_eq!(
-        override_.role,
-        Some(RoleName::new("app").expect("legal"))
-    );
+    assert_eq!(override_.role, Some(RoleName::new("app").expect("legal")));
     assert_eq!(override_.value, SettingValue::new("256MB"));
 }
 

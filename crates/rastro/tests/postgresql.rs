@@ -49,15 +49,15 @@ orders,,CONNECT,f,postgres
 orders,migrator,CREATE,t,postgres
 ";
 
-/// The three columns the memberships query asks for: the two monitoring accounts that box
-/// holds in `pg_monitor`, and a developer in the migration role.
+/// The three columns the memberships query asks for: two monitoring accounts in
+/// `pg_monitor`, and a developer in the migration role.
 const MEMBERSHIPS: &str = "\
-newrelic,pg_monitor,f
+metrics,pg_monitor,f
 developer,migrator,f
 ";
 
-/// The nine columns the roles query asks for. `ops_admin` is real: that box carries
-/// two superusers besides the cluster owner.
+/// The nine columns the roles query asks for. `ops_admin` is a second superuser besides the
+/// cluster owner, which is the change this read exists to surface.
 const ROLES: &str = "\
 ops_admin,t,t,t,t,f,t,-1,,scram-sha-256
 postgres,t,t,t,t,t,t,-1,,scram-sha-256
@@ -827,8 +827,8 @@ fn read_carries_a_running_clusters_roles() {
         &answering_every_query(),
     );
 
-    // Assert: the catalogue read the settings-only collector was missing. A
-    // second superuser is in the fixture because that is the change worth making loud.
+    // Assert: the catalogue read the settings-only collector was missing. A second superuser
+    // is in the fixture because that is the change worth making loud.
     let roles = clusters
         .clusters()
         .values()

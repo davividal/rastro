@@ -1,8 +1,8 @@
 //! Reading the extensions installed in one database.
 //!
-//! The fixture is what that box holds today, which is the finding as much as the mechanism:
-//! the percona and New Relic extension *packages* are installed and no extension is created,
-//! so `plpgsql` is all there is until somebody restarts the server.
+//! The fixture is shaped like a real cluster's, which is the finding as much as the
+//! mechanism: monitoring extension *packages* are installed but no extension is created, so
+//! `plpgsql` is all there is until somebody restarts the server.
 
 mod support;
 

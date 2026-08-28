@@ -134,7 +134,7 @@ postgres,t,t,t,t,t,t,-1,,scram-sha-256
     // Assert: list order is contractual, so it is decided here rather than inherited from
     // whatever order the server answered in.
     let names: Vec<&str> = roles.iter().map(|role| role.name.as_str()).collect();
-    assert_eq!(names, vec!["ops_admin", "postgres", "app"]);
+    assert_eq!(names, vec!["app", "ops_admin", "postgres"]);
 }
 
 #[test]

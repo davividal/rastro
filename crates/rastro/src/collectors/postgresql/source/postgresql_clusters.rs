@@ -82,7 +82,7 @@ const ROLES_QUERY: &str = "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcre
 
 /// The three columns [`PsqlMemberships`] reads, in the order it expects them.
 ///
-/// Only the member side is filtered: `newrelic` in `pg_monitor` is a per-host grant somebody
+/// Only the member side is filtered: `metrics` in `pg_monitor` is a per-host grant somebody
 /// made and is worth having, while `pg_monitor` in `pg_read_all_stats` is a chain the server
 /// version ships and is the same everywhere.
 const MEMBERSHIPS_QUERY: &str = "SELECT member.rolname, granted.rolname, am.admin_option \

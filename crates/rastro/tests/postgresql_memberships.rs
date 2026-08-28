@@ -1,8 +1,7 @@
 //! Reading which roles a cluster's roles are members of.
 //!
-//! The fixture is what that box really holds: the two monitoring accounts in `pg_monitor`,
-//! and `developer` in `migrator`, which grants a developer
-//! everything the migration user owns.
+//! The fixture is shaped like a real cluster's: two monitoring accounts in `pg_monitor`, and
+//! `developer` in `migrator`, which grants a developer everything the migration role owns.
 
 mod support;
 
@@ -12,7 +11,7 @@ use support::observation::{boolean, field, keys_of};
 
 /// The three columns the collector's query asks for, in order.
 const MEMBERSHIPS: &str = "\
-newrelic,pg_monitor,f
+metrics,pg_monitor,f
 postgres-exp,pg_monitor,f
 developer,migrator,f
 ";
@@ -30,12 +29,9 @@ fn parse_reads_who_is_a_member_of_what() {
     // asking what somebody can reach.
     assert_eq!(
         keys_of(&memberships),
-        vec!["newrelic", "postgres-exp", "developer"]
+        vec!["developer", "metrics", "postgres-exp"]
     );
-    assert_eq!(
-        keys_of(&field(&memberships, "developer")),
-        vec!["migrator"]
-    );
+    assert_eq!(keys_of(&field(&memberships, "developer")), vec!["migrator"]);
 }
 
 #[test]
@@ -77,7 +73,7 @@ developer,reader,f
     // same bytes whatever order the server answered in.
     assert_eq!(
         keys_of(&field(&memberships, "developer")),
-        vec!["reader", "migrator"]
+        vec!["migrator", "reader"]
     );
 }
 

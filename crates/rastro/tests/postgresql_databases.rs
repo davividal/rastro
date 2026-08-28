@@ -175,7 +175,7 @@ orders,postgres,CREATE,f,postgres
         .iter()
         .map(|grant| text(&field(grant, "grantee")))
         .collect();
-    assert_eq!(grantees, vec!["PUBLIC", "postgres", "migrator"]);
+    assert_eq!(grantees, vec!["PUBLIC", "migrator", "postgres"]);
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn parse_orders_databases_by_name() {
         .iter()
         .map(|database| database.name.as_str())
         .collect();
-    assert_eq!(names, vec!["postgres", "template0", "orders"]);
+    assert_eq!(names, vec!["orders", "postgres", "template0"]);
 }
 
 #[test]
