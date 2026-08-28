@@ -3,6 +3,7 @@
 mod cluster_inventory;
 mod postgresql_clusters;
 mod postmaster_pid;
+mod psql_control_data;
 mod psql_database_grants;
 mod psql_databases;
 mod psql_extensions;
@@ -17,6 +18,7 @@ mod psql_settings;
 pub use cluster_inventory::{ClusterInventory, RegisteredCluster};
 pub use postgresql_clusters::PostgresqlClusters;
 pub use postmaster_pid::PostmasterPid;
+pub use psql_control_data::PsqlControlData;
 pub use psql_database_grants::PsqlDatabaseGrants;
 pub use psql_databases::PsqlDatabases;
 pub use psql_extensions::PsqlExtensions;

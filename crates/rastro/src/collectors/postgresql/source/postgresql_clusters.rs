@@ -8,6 +8,7 @@ use rastro_collector::CollectionError;
 
 use super::cluster_inventory::{ClusterInventory, RegisteredCluster};
 use super::postmaster_pid::PostmasterPid;
+use super::psql_control_data::PsqlControlData;
 use super::psql_database_grants::PsqlDatabaseGrants;
 use super::psql_databases::PsqlDatabases;
 use super::psql_extensions::PsqlExtensions;
@@ -20,7 +21,8 @@ use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
     Cluster, ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings,
-    ClusterRoles, ClusterSettings, Clusters, Database, DatabaseGrants, Postmaster, ReadLens,
+    ClusterRoles, ClusterSettings, Clusters, ControlData, Database, DatabaseGrants, Postmaster,
+    ReadLens,
 };
 
 /// postgresql-common's register of the box.
@@ -135,6 +137,17 @@ const ROLE_SETTINGS_QUERY: &str = "SELECT coalesce(d.datname, ''), coalesce(r.ro
 /// is a contract rastro keeps rather than one it asks the server for.
 const FILE_SETTINGS_QUERY: &str = "SELECT seqno, sourcefile, sourceline, name, setting, \
      applied, error FROM pg_file_settings";
+
+/// The two columns [`PsqlControlData`] reads, in the order it expects them.
+///
+/// The cluster's lineage from `pg_control`: `system_identifier` says which cluster this is,
+/// `timeline_id` increments on promotion. The whole `pg_control_*` family is
+/// EXECUTE-to-PUBLIC, so this needs no privilege. `system_identifier` is cast to text because
+/// it is a 64-bit unsigned value that does not fit an integer column a diff would compute on.
+/// Every other column of these functions is a counter that moves on each checkpoint and is
+/// deliberately not read.
+const CONTROL_QUERY: &str = "SELECT (pg_control_system()).system_identifier::text, \
+     (pg_control_checkpoint()).timeline_id";
 
 /// Read nothing of the invoking account's, print no header, quote every value.
 ///
@@ -252,6 +265,7 @@ impl PostgresqlClusters {
             memberships: read.as_ref().map(|read| read.memberships.clone()),
             role_settings: read.as_ref().map(|read| read.role_settings.clone()),
             file_settings: read.as_ref().map(|read| read.file_settings.clone()),
+            control: read.as_ref().map(|read| read.control.clone()),
             databases: read.map(|read| read.databases),
         })
     }
@@ -344,6 +358,7 @@ impl PostgresqlClusters {
     ) -> Result<ClusterReading, CollectionError> {
         Ok(ClusterReading {
             lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
+            control: PsqlControlData::parse(&self.ask(client, port, database, CONTROL_QUERY)?)?,
             settings: PsqlSettings::parse(&self.ask(client, port, database, SETTINGS_QUERY)?)?,
             file_settings: PsqlFileSettings::parse(&self.ask(
                 client,
@@ -491,6 +506,7 @@ struct ClusterReading {
     roles: ClusterRoles,
     role_settings: ClusterRoleSettings,
     file_settings: ClusterFileSettings,
+    control: ControlData,
     memberships: ClusterMemberships,
     databases: ClusterDatabases,
 }

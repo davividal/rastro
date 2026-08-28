@@ -4,7 +4,7 @@ use rastro_collector::Observation;
 
 use crate::collectors::postgresql::model::{
     ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings, ClusterRoles,
-    ClusterSettings, Postmaster, ReadLens,
+    ClusterSettings, ControlData, Postmaster, ReadLens,
 };
 use crate::collectors::postgresql::value_objects::ClusterStatus;
 
@@ -27,6 +27,7 @@ pub struct Cluster {
     /// What the running server observes of itself, from `postmaster.pid`, kept apart from the
     /// configured facts above so the two can disagree.
     pub observed: Option<Postmaster>,
+    pub control: Option<ControlData>,
     pub lens: Option<ReadLens>,
     pub settings: Option<ClusterSettings>,
     pub file_settings: Option<ClusterFileSettings>,
@@ -70,6 +71,15 @@ impl From<&Cluster> for Observation {
             "observed",
             match &cluster.observed {
                 Some(observed) => Observation::from(observed),
+                None => Observation::null(),
+            },
+        ));
+
+        // The control-file lineage: which cluster this is, and its timeline.
+        entries.push((
+            "control",
+            match &cluster.control {
+                Some(control) => Observation::from(control),
                 None => Observation::null(),
             },
         ));
