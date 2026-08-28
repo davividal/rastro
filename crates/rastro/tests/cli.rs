@@ -415,6 +415,29 @@ fn the_effective_config_reaches_the_document() {
 }
 
 #[test]
+fn a_bare_run_reports_the_binary_it_is_running_from() {
+    // Act
+    let document = document(&["--include-volatile"]);
+
+    // Assert: rastro installed on a box is part of that box, and a binary somebody swapped
+    // is exactly the change this tool exists to catch. The default hides nothing.
+    let config = facet(&document, "metadata", "invocation")["data"]["config"].clone();
+    assert_eq!(config["staged_binary"], json!(false));
+}
+
+#[test]
+fn a_staged_run_says_so_in_the_effective_config() {
+    // Act: the flag `rastro-ssh` passes, because the party that made the temporary copy is
+    // the only one that knows the file will be gone a second later.
+    let document = document(&["--staged", "--include-volatile"]);
+
+    // Assert: an omission the operator can see was requested, rather than a rule that
+    // quietly drops a path.
+    let config = facet(&document, "metadata", "invocation")["data"]["config"].clone();
+    assert_eq!(config["staged_binary"], json!(true));
+}
+
+#[test]
 fn a_config_path_that_cannot_be_read_fails_the_run() {
     // Act: falling back to the defaults would silently widen the run.
     let output = run(&["--config", "/nonexistent/rastro.toml"]);

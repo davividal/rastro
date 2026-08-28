@@ -234,14 +234,15 @@ fn the_collector_fails_the_facet_when_the_claims_did_not_resolve() {
 }
 
 #[test]
-fn the_collector_omits_the_executable_it_is_running_from() {
+fn a_staged_run_omits_the_executable_it_is_running_from() {
     // Arrange: the test binary is the observer here, and its own directory is the root, so
-    // the walk is guaranteed to reach it.
+    // the walk is guaranteed to reach it. Staged, because only a caller that made a
+    // temporary copy gets the omission: an installed rastro is part of the box.
     let observer = std::env::current_exe().expect("a running test has an executable");
     let directory = observer
         .parent()
         .expect("an executable lives in a directory");
-    let collector = FilesystemCollector::walking(
+    let collector = FilesystemCollector::walking_staged(
         vec![AbsolutePath::new(directory.to_str().expect("utf-8"), "root").expect("legal")],
         WalkPolicy::new(vec![PolicyRule::shipped(
             WalkedTree::new("/").expect("a legal tree"),
@@ -262,6 +263,35 @@ fn the_collector_omits_the_executable_it_is_running_from() {
     );
     assert!(paths.len() > 1, "only the observer should be missing");
 }
+
+#[test]
+fn a_local_run_reports_the_executable_it_is_running_from() {
+    // Arrange: the same tree, not staged.
+    let observer = std::env::current_exe().expect("a running test has an executable");
+    let directory = observer
+        .parent()
+        .expect("an executable lives in a directory");
+    let collector = FilesystemCollector::walking(
+        vec![AbsolutePath::new(directory.to_str().expect("utf-8"), "root").expect("legal")],
+        WalkPolicy::new(vec![PolicyRule::shipped(
+            WalkedTree::new("/").expect("a legal tree"),
+            ContentPolicy::MetadataOnly,
+        )])
+        .expect("a legal table"),
+    );
+
+    // Act
+    let observed = collector.collect().expect("the tree is readable");
+
+    // Assert: a rastro installed on a box is part of that box, and a swapped binary is
+    // exactly the change a fingerprint should catch. Only a caller that says it staged a
+    // temporary copy gets the omission.
+    assert!(
+        keys_of(&observed).contains(&observer.to_string_lossy().into_owned()),
+        "a local run must report its own binary"
+    );
+}
+
 #[test]
 fn the_collector_collapses_a_path_two_walks_both_reached() {
     // Arrange: the same root twice, which is what a mount point reached from its parent

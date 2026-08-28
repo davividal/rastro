@@ -33,8 +33,12 @@ fn run() -> Result<String, Box<dyn Error>> {
         None => Config::default(),
     };
 
-    let effective = collectors::effective_config(&config, invocation.view());
-    let selection = collectors::selected(collectors::built_in(effective), &config)?;
+    let effective =
+        collectors::effective_config(&config, invocation.view(), invocation.staged_binary());
+    let selection = collectors::selected(
+        collectors::built_in(effective, invocation.staged_binary()),
+        &config,
+    )?;
     for name in selection.excluded() {
         eprintln!("rastro: {name} excluded by config, so it is not in this fingerprint");
     }

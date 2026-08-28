@@ -23,12 +23,18 @@ shift 2
 # Staged in /var/tmp because /tmp is noexec on hardened hosts and /root is in
 # rastro's own walk set. The trap also fires on a dropped link, since that is a
 # SIGHUP to the remote shell, so cleanup needs no second connection.
+#
+# `--staged` is passed because this script is the only party that knows the
+# executable is a temporary copy under a name mktemp chose: rastro cannot tell it
+# from an installed one, since the bytes are identical and the kernel vouches for
+# both. Without the flag every run would report one added and one removed file
+# that is nothing but the tool's own footprint.
 remote_program='set -eu
 staged=$(mktemp /var/tmp/rastro.XXXXXXXX)
 trap "rm -f $staged" EXIT HUP INT TERM
 cat >"$staged"
 chmod 700 "$staged"
-'"${RASTRO_SSH_SUDO:+sudo -n }"'"$staged"'
+'"${RASTRO_SSH_SUDO:+sudo -n }"'"$staged" --staged'
 
 # -T because a pty would translate LF to CRLF and corrupt every byte of a format
 # whose whole contract is byte-identical output. It comes *after* the caller's

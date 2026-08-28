@@ -27,7 +27,12 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// secret: hashing it as `sensitive` would destroy the only thing it is for,
 /// and omitting it for privacy would be incoherent in a tool that fingerprints
 /// `/home` and the user accounts anyway.
-pub fn effective_config(config: &Config, view: View) -> Observation {
+///
+/// `staged_binary` is in here because it changes what the walk reports about one
+/// path, and an omission the document does not admit to is the one thing this
+/// format does not do. Recorded even when false, so the key is part of the shape
+/// rather than a hint that appears only on remote runs.
+pub fn effective_config(config: &Config, view: View, staged_binary: bool) -> Observation {
     Observation::object([
         (
             "excluded_collectors",
@@ -45,6 +50,7 @@ pub fn effective_config(config: &Config, view: View) -> Observation {
                 None => Observation::null(),
             },
         ),
+        ("staged_binary", Observation::boolean(staged_binary)),
         (
             "view",
             Observation::text(match view {

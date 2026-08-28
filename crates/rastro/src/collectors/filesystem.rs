@@ -72,8 +72,20 @@ impl FilesystemCollector {
     ///
     /// The escape hatch that makes the whole collector testable without a mount: with the
     /// roots given, the walk, the policy and the render can be exercised against a scratch
-    /// tree on any host.
+    /// tree on any host. It reports the running binary like any other file, which is what a
+    /// local run does.
     pub fn walking(roots: Vec<AbsolutePath>, policy: WalkPolicy) -> Self {
+        Self::of(
+            Some(WalkBoundaries::of(roots.clone(), roots)),
+            Ok(policy),
+            None,
+        )
+    }
+
+    /// The same over named roots, as a staged run: the running binary is left out.
+    ///
+    /// What `rastro-ssh` produces, with the roots named so a test can reach it.
+    pub fn walking_staged(roots: Vec<AbsolutePath>, policy: WalkPolicy) -> Self {
         Self::of(
             Some(WalkBoundaries::of(roots.clone(), roots)),
             Ok(policy),

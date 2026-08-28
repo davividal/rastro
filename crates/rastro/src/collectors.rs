@@ -86,23 +86,26 @@ pub enum SelectionError {
 /// produce: the filesystem walk runs under the table the others' claims resolve to, and the
 /// `invocation` facet reports that table. Gathering the claims here is what keeps the two
 /// collectors ignorant of each other.
-pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
+///
+/// `staged_binary` says the executable is a temporary copy the caller will delete, and only
+/// then is it left out of the walk. A rastro installed on a box is part of that box.
+pub fn built_in(effective_config: Observation, staged_binary: bool) -> Vec<Box<dyn Collector>> {
     let mut collectors = state_collectors();
     let policy = claimed_policy(&collectors);
     let table = match &policy {
         Ok(resolved) => Observation::from(resolved),
         Err(_) => Observation::null(),
     };
-    let observer = FilesystemCollector::running_binary();
+    let staged = match staged_binary {
+        true => FilesystemCollector::running_binary(),
+        false => None,
+    };
 
-    collectors.push(Box::new(FilesystemCollector::under(
-        policy,
-        observer.clone(),
-    )));
+    collectors.push(Box::new(FilesystemCollector::under(policy, staged.clone())));
     collectors.push(Box::new(InvocationCollector::new(
         effective_config,
         table,
-        observer.map(|binary| binary.to_string_lossy().into_owned()),
+        staged.map(|binary| binary.to_string_lossy().into_owned()),
     )));
     collectors
 }

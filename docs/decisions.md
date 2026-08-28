@@ -56,7 +56,8 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [A contested tree fails the facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet) | no winner is picked, because two rules for one tree is a bug in a collector pair |
 | [Churn stops reporting what moves](#a-tree-that-churns-without-meaning-stops-reporting-the-attributes-that-move) | withholding only the digest left the journals in the diff on mtime alone |
 | [The walk table is self-description](#the-effective-walk-table-travels-in-the-invocation-facet) | one place says which rule applied to a tree and which facet asked for it |
-| [The observer is not state](#rastro-omits-the-file-it-is-running-from) | one path, the binary itself, named in the envelope so the omission is accounted for |
+| [The observer is not state](#superseded-rastro-omits-the-file-it-is-running-from) | the running binary is omitted unconditionally. **Superseded** |
+| [Only a staged run omits it](#only-a-staged-run-omits-the-binary-and-the-caller-says-so) | an installed rastro is part of the box; only the caller that staged a copy knows it is transient |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1274,7 +1275,11 @@ entries of the reference cycle become 17, and with the three claims that follow,
 view, and neither does a journal replaced wholesale. The complete view still carries
 both, and `/var/log` was never the tree a fingerprint was watching.
 
-## rastro omits the file it is running from
+## Superseded: rastro omits the file it is running from
+
+Superseded by [only a staged run omits it](#only-a-staged-run-omits-the-binary-and-the-caller-says-so),
+which keeps the mechanism and drops the unconditional rule. What follows is what was
+built first, blind spot included.
 
 The walk skips exactly one path: the executable this process was started from, as
 `std::env::current_exe` reports it. `rastro-ssh` stages the binary with
@@ -1307,3 +1312,49 @@ the path.
 **Cost:** `current_exe` is a host read in a collector that had none, and a run that
 cannot resolve it reports the binary like any other file. One entry too many is the
 right direction to fail in; omitting somebody else's file is not.
+
+## Only a staged run omits the binary, and the caller says so
+
+Supersedes [rastro omits the file it is running from](#superseded-rastro-omits-the-file-it-is-running-from).
+The omission was right; making it unconditional was not.
+
+**The question that broke it:** can rastro recognise itself wherever it is? It already
+does, exactly, and that was never the problem. `/proc/self/exe` is a kernel link to the
+running inode, and it identifies the file better than any alternative: `argv[0]` is
+caller-controlled through `execve`, is often a bare name rather than a path, and a
+supervisor may rewrite it. Hashing itself at runtime would work too, and would make
+things worse: the staged copy and an installed `/usr/local/bin/rastro` are byte-identical,
+so recognition by content would hide every copy of rastro on the box rather than the one
+that is running.
+
+**What rastro genuinely cannot tell from inside one run is whether the file is
+transient.** A `mktemp` copy that `rastro-ssh`'s trap deletes is not host state. An
+installed binary is, and a swapped one is exactly the change this tool exists to catch.
+Identical bytes, identical kernel link, different facts, and the only party that knows
+which is which is the one that made the copy.
+
+So the knowledge travels with the invocation: `--staged` says "this executable is a
+temporary copy", `rastro-ssh` passes it because it did the staging, and only then is the
+path left out. A local or installed run reports its own binary like any other file.
+
+**The omission stays accounted for, and now honestly.** `staged_binary` is in the
+effective config, unannotated, so the *diffable* view says the omission was requested;
+`observer` still carries the path, volatile, because a `mktemp` name really does change
+between two runs of an unchanged host. The previous version annotated an installed
+binary's stable path as volatile, which was a lie by the format's own definition of the
+word.
+
+**Verified on the reference box:** with `rastro-ssh`, `staged_binary` is `true`, no
+`/var/tmp/rastro.*` entry appears, and two runs 15 seconds apart are byte-identical
+across the whole document. Run directly without the flag, the same binary reports its own
+path with mode and owner, and `staged_binary` is `false`.
+
+**Rejected: a deterministic staging path**, which would need no omission at all because
+the entry would be identical in both runs. `/var/tmp` is world-writable and sticky, so a
+fixed name is a symlink target for any local user, which is the reason `mktemp` is there.
+A fixed name under `/root` is safe from that but puts the tool's footprint in a hashed
+tree on every run and breaks for a non-root operator.
+
+**Cost:** a flag that a caller must remember, and a wrapper is the only caller that
+should. Forgetting it costs one entry of noise per run; passing it wrongly on an
+installed binary hides one file, and the effective config says so in the default view.
