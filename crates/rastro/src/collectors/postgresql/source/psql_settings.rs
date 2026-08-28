@@ -14,7 +14,7 @@ use crate::collectors::postgresql::value_objects::{
 };
 
 /// The columns the collector's query asks for, in order.
-const COLUMNS: usize = 6;
+const COLUMNS: usize = 8;
 
 /// The source a server reports for a value that the connecting client set.
 ///
@@ -27,8 +27,8 @@ const SET_BY_OUR_OWN_CONNECTION: &str = "client";
 pub struct PsqlSettings;
 
 impl PsqlSettings {
-    /// Reads `name,setting,unit,source,context,pending_restart` rows into a cluster's
-    /// configuration.
+    /// Reads `name,setting,unit,source,context,pending_restart,sourcefile,sourceline` rows
+    /// into a cluster's configuration.
     pub fn parse(output: &str) -> Result<ClusterSettings, CollectionError> {
         let mut settings = Vec::new();
 
@@ -45,6 +45,9 @@ impl PsqlSettings {
                 unit: unit_of(&record[2])?,
                 source: SettingSource::new(&record[3])?,
                 pending_restart: PsqlResultSet::boolean(&record[5])?,
+                context: record[4].clone(),
+                sourcefile: present(&record[6]),
+                sourceline: source_line(&record[7])?,
             });
         }
 
@@ -62,4 +65,29 @@ fn unit_of(column: &str) -> Result<Option<SettingUnit>, CollectionError> {
     }
 
     Ok(Some(SettingUnit::new(column)?))
+}
+
+/// An empty column is an absent value.
+///
+/// A setting from a default or the command line has no source file, and one read by an
+/// unprivileged role has it nulled; psql renders both as an empty column.
+fn present(column: &str) -> Option<String> {
+    if column.is_empty() {
+        return None;
+    }
+
+    Some(column.to_owned())
+}
+
+/// An empty source line is no line, on the same terms as the source file.
+fn source_line(column: &str) -> Result<Option<i64>, CollectionError> {
+    if column.is_empty() {
+        return Ok(None);
+    }
+
+    column.parse::<i64>().map(Some).map_err(|_| {
+        CollectionError::new(format!(
+            "psql printed {column:?} where pg_settings sourceline is a whole number"
+        ))
+    })
 }

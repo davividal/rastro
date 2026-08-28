@@ -37,14 +37,16 @@ const CLIENT_PROGRAM: &str = "psql";
 /// The file postgresql-common's data directory holds while the server runs.
 const PID_FILE: &str = "postmaster.pid";
 
-/// The six columns [`PsqlSettings`] reads, in the order it expects them.
+/// The eight columns [`PsqlSettings`] reads, in the order it expects them.
 ///
-/// `context` is selected and not recorded: it says whether a change needs a reload or a
-/// restart, which is a property of the setting rather than of this host, and the same on
-/// every box running that version. `pending_restart` is the per-host half of that question
-/// and is recorded.
-const SETTINGS_QUERY: &str =
-    "SELECT name, setting, unit, source, context, pending_restart FROM pg_settings";
+/// `context` is recorded, and for the reason the earlier version missed: it tells a reader of
+/// a diff whether a changed setting could have taken effect at all, since a `postmaster`
+/// value that changed means the cluster was restarted, while a `user` one means nothing of
+/// the kind. `sourcefile` and `sourceline` say where each value was set, but they are nulled
+/// for a role that cannot see the `GUC_SUPERUSER_ONLY` set, which the cluster's `lens` and
+/// `settings_complete` already qualify.
+const SETTINGS_QUERY: &str = "SELECT name, setting, unit, source, context, pending_restart, \
+     sourcefile, sourceline FROM pg_settings";
 
 /// The four columns [`PsqlReadLens`] reads, in the order it expects them.
 ///

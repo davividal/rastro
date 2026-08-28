@@ -21,13 +21,14 @@ use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
-/// The six columns the collector asks for, as psql renders them with `--csv -t`.
+/// The eight columns the collector asks for, as psql renders them with `--csv -t`. The last
+/// two are the source file and line, empty for a value that came from no file.
 const SETTINGS: &str = "\
-DateStyle,\"ISO, MDY\",,configuration file,user,f
-log_line_prefix,%m [%p] %q%u@%d ,,configuration file,sighup,f
-max_connections,100,,configuration file,postmaster,f
-search_path,\"\"\"$user\"\", public\",,default,user,f
-shared_buffers,16384,8kB,configuration file,postmaster,f
+DateStyle,\"ISO, MDY\",,configuration file,user,f,,
+log_line_prefix,%m [%p] %q%u@%d ,,configuration file,sighup,f,/etc/postgresql/17/main/postgresql.conf,100
+max_connections,100,,configuration file,postmaster,f,/etc/postgresql/17/main/postgresql.conf,64
+search_path,\"\"\"$user\"\", public\",,default,user,f,,
+shared_buffers,16384,8kB,configuration file,postmaster,f,/etc/postgresql/17/main/postgresql.conf,120
 ";
 
 /// The three columns the extensions query asks for, once per connectable database.
@@ -147,6 +148,27 @@ fn parse_reads_every_column_of_a_setting() {
 }
 
 #[test]
+fn parse_reads_the_context_and_source_location_of_a_setting() {
+    // Act
+    let settings = parsed(SETTINGS);
+
+    // Assert: context tells whether a changed value could have taken effect, and the source
+    // file and line say where it was set.
+    let shared_buffers = named(&settings, "shared_buffers");
+    assert_eq!(shared_buffers.context, "postmaster");
+    assert_eq!(
+        shared_buffers.sourcefile.as_deref(),
+        Some("/etc/postgresql/17/main/postgresql.conf")
+    );
+    assert_eq!(shared_buffers.sourceline, Some(120));
+
+    // A value that came from no file has neither a source file nor a line.
+    let search_path = named(&settings, "search_path");
+    assert_eq!(search_path.sourcefile, None);
+    assert_eq!(search_path.sourceline, None);
+}
+
+#[test]
 fn parse_keeps_a_quoted_value_whole() {
     // Act
     let settings = parsed(SETTINGS);
@@ -186,8 +208,8 @@ fn a_setting_that_can_hold_a_credential_is_redacted() {
     // visible precisely because rastro connects as the superuser owner. The server redacts
     // none of it, so the collector must.
     let standby = "\
-max_connections,100,,configuration file,postmaster,f
-primary_conninfo,host=primary user=replicator password=hunter2,,configuration file,postmaster,f
+max_connections,100,,configuration file,postmaster,f,,
+primary_conninfo,host=primary user=replicator password=hunter2,,configuration file,postmaster,f,,
 ";
 
     // Act
@@ -218,7 +240,7 @@ fn parse_reads_an_empty_unit_as_no_unit() {
 #[test]
 fn parse_reads_a_setting_awaiting_a_restart() {
     // Arrange
-    let changed = "max_connections,200,,configuration file,postmaster,t\n";
+    let changed = "max_connections,200,,configuration file,postmaster,t,,\n";
 
     // Act
     let settings = parsed(changed);
@@ -234,8 +256,8 @@ fn parse_drops_a_setting_that_came_from_our_own_connection() {
     // Arrange: psql sets `application_name` on the connection the collector opens, so
     // the server reports it with source `client`.
     let ours = "\
-application_name,psql,,client,user,f
-max_connections,100,,configuration file,postmaster,f
+application_name,psql,,client,user,f,,
+max_connections,100,,configuration file,postmaster,f,,
 ";
 
     // Act
@@ -251,7 +273,7 @@ max_connections,100,,configuration file,postmaster,f
 fn parse_reads_a_value_containing_a_newline() {
     // Arrange: `archive_command` holds a shell command, so nothing stops it spanning
     // lines. A row-per-line parser would read this as two broken rows.
-    let multiline = "archive_command,\"test ! -f x &&\ncp %p x\",,configuration file,sighup,f\n";
+    let multiline = "archive_command,\"test ! -f x &&\ncp %p x\",,configuration file,sighup,f,,\n";
 
     // Act
     let settings = parsed(multiline);
@@ -265,9 +287,9 @@ fn parse_reads_a_value_containing_a_newline() {
 fn parse_orders_settings_by_name() {
     // Arrange
     let unsorted = "\
-shared_buffers,16384,8kB,configuration file,postmaster,f
-DateStyle,\"ISO, MDY\",,configuration file,user,f
-max_connections,100,,configuration file,postmaster,f
+shared_buffers,16384,8kB,configuration file,postmaster,f,,
+DateStyle,\"ISO, MDY\",,configuration file,user,f,,
+max_connections,100,,configuration file,postmaster,f,,
 ";
 
     // Act
@@ -309,8 +331,8 @@ fn parse_refuses_output_with_no_settings_in_it() {
 fn parse_refuses_two_rows_for_one_setting() {
     // Arrange
     let contradiction = "\
-max_connections,100,,configuration file,postmaster,f
-max_connections,200,,configuration file,postmaster,f
+max_connections,100,,configuration file,postmaster,f,,
+max_connections,200,,configuration file,postmaster,f,,
 ";
 
     // Act

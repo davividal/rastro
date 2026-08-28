@@ -31,6 +31,21 @@ pub struct Setting {
     /// So this is drift no file comparison can see, and the walker is what sees the drift
     /// this cannot.
     pub pending_restart: bool,
+
+    /// When a change to this setting takes effect: `postmaster`, `sighup`, `user`, and the
+    /// rest of the GUC contexts.
+    ///
+    /// Recorded because it tells a reader of a diff whether a changed value could have taken
+    /// effect at all: a `postmaster`-context setting that moved means the cluster was
+    /// restarted, a `user`-context one means nothing of the kind.
+    pub context: String,
+
+    /// The file a value was set in, or `None` where it came from a default, the command line,
+    /// or a role too unprivileged to be shown the source.
+    pub sourcefile: Option<String>,
+
+    /// The line of [`Setting::sourcefile`] the value was set on, absent on the same terms.
+    pub sourceline: Option<i64>,
 }
 
 impl From<&Setting> for Observation {
@@ -58,6 +73,21 @@ impl From<&Setting> for Observation {
             (
                 "pending_restart",
                 Observation::boolean(setting.pending_restart),
+            ),
+            ("context", Observation::text(setting.context.as_str())),
+            (
+                "sourcefile",
+                match &setting.sourcefile {
+                    Some(file) => Observation::text(file.as_str()),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "sourceline",
+                match setting.sourceline {
+                    Some(line) => Observation::integer(line),
+                    None => Observation::null(),
+                },
             ),
         ])
     }
