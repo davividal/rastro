@@ -10,6 +10,17 @@
 //! An enablement symlink under a `*.wants/` directory is the thing this walker exists to
 //! catch, so the link is the state.
 //!
+//! **The walk stops at a mount boundary, and a device number is not enough to find one.** A
+//! bind mount shares the device of what it binds: `mount --bind / /mnt/root` leaves both at
+//! device 2049, verified on the reference box, so comparing devices alone walked and hashed
+//! the whole root filesystem a second time under `/mnt/root`. The caller therefore hands in
+//! the mount points, and the walk stops at each of them.
+//!
+//! The device comparison is kept as a second guard, for a mount the table did not name. Either
+//! way the directory is recorded and not descended into: a mount appears in the document as the
+//! directory it is, and whether its contents are walked is decided by whoever chose the
+//! roots.
+//!
 //! **Still owed, and deliberately not here yet:**
 //!
 //! - An unreadable directory currently fails the walk rather than being recorded as one
@@ -39,13 +50,29 @@ use crate::collectors::filesystem::value_objects::{
 /// directory, and so a future scope can hand it one mount at a time.
 pub struct FileTree {
     root: PathBuf,
+    boundaries: Vec<PathBuf>,
 }
 
 impl FileTree {
     pub fn at(root: &Path) -> Self {
         Self {
             root: root.to_path_buf(),
+            boundaries: Vec::new(),
         }
+    }
+
+    /// The same walk, stopping at each of these paths.
+    ///
+    /// The root itself is never a boundary to its own walk, whatever the caller passes: it is
+    /// a mount point in every real call, and stopping there would walk nothing.
+    pub fn stopping_at(mut self, boundaries: &[&Path]) -> Self {
+        self.boundaries = boundaries
+            .iter()
+            .map(|boundary| boundary.to_path_buf())
+            .filter(|boundary| boundary != &self.root)
+            .collect();
+
+        self
     }
 
     /// Every entry under the root, the root included, ordered by path.
@@ -55,20 +82,26 @@ impl FileTree {
     pub fn walk(&self, policy: &WalkPolicy) -> Result<FilesystemInventory, CollectionError> {
         let mut entries = Vec::new();
         let mut pending = vec![self.root.clone()];
+        let device = fs::symlink_metadata(&self.root)
+            .map_err(|error| failure(&self.root, "could not be read", &error))?
+            .dev();
 
         while let Some(path) = pending.pop() {
             let metadata = fs::symlink_metadata(&path)
                 .map_err(|error| failure(&path, "could not be read", &error))?;
             let entry = self.entry_of(&path, &metadata, policy)?;
 
-            if entry.kind == FileKind::Directory {
+            if entry.kind == FileKind::Directory
+                && metadata.dev() == device
+                && !self.boundaries.contains(&path)
+            {
                 pending.extend(self.children_of(&path)?);
             }
 
             entries.push(entry);
         }
 
-        Ok(FilesystemInventory::new(entries))
+        FilesystemInventory::new(entries)
     }
 
     /// The paths directly inside a directory.
