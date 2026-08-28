@@ -12,9 +12,9 @@ use std::os::unix::fs::PermissionsExt;
 use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
-    PostgresqlCollector, PostmasterStatus, PsqlControlData, PsqlDatabases, PsqlFileSettings,
-    PsqlHbaRules, PsqlMemberships, PsqlReadLens, PsqlRoleSettings, PsqlRoles, PsqlSettings,
-    RegisteredCluster, Setting, SettingName, SettingSource,
+    PostgresqlCollector, PostmasterStatus, PsqlAvailableExtensions, PsqlControlData, PsqlDatabases,
+    PsqlFileSettings, PsqlHbaRules, PsqlMemberships, PsqlReadLens, PsqlRoleSettings, PsqlRoles,
+    PsqlSettings, RegisteredCluster, Setting, SettingName, SettingSource,
 };
 use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
@@ -96,6 +96,13 @@ const CONTROL: &str = "\
 const HBA_RULES: &str = "\
 1,/etc/postgresql/17/main/pg_hba.conf,90,local,{all},{postgres},,,peer,{},
 2,/etc/postgresql/17/main/pg_hba.conf,92,host,{all},{all},127.0.0.1/32,,scram-sha-256,{},
+";
+
+/// The three columns the available-extensions query asks for: one installed, and one that is
+/// available but not created in the database that answered.
+const AVAILABLE_EXTENSIONS: &str = "\
+plpgsql,1.0,1.0
+pg_stat_statements,1.11,
 ";
 
 fn parsed(csv: &str) -> Vec<Setting> {
@@ -403,6 +410,7 @@ fn clusters_render_in_one_deterministic_key_order() {
                 file_settings: None,
                 control: None,
                 hba_rules: None,
+                available_extensions: None,
                 observed: None,
                 lens: None,
                 databases: None,
@@ -433,6 +441,9 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         file_settings: Some(PsqlFileSettings::parse(FILE_SETTINGS).expect("well formed")),
         control: Some(PsqlControlData::parse(CONTROL).expect("well formed")),
         hba_rules: Some(PsqlHbaRules::parse(HBA_RULES).expect("well formed")),
+        available_extensions: Some(
+            PsqlAvailableExtensions::parse(AVAILABLE_EXTENSIONS).expect("well formed"),
+        ),
         observed: None,
         lens: Some(PsqlReadLens::parse(LENS).expect("well formed")),
         databases: Some(PsqlDatabases::parse(DATABASES).expect("well formed")),
@@ -448,6 +459,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        available_extensions: None,
         observed: None,
         lens: None,
         databases: None,
@@ -541,6 +553,7 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        available_extensions: None,
         observed: None,
         lens: None,
         databases: None,
@@ -614,6 +627,7 @@ fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        available_extensions: None,
         observed: None,
         databases: None,
     };
@@ -687,6 +701,7 @@ fn answering_every_query() -> String {
          *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
          *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
          *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
+         *pg_available_extensions*) cat <<'EOF'\n{AVAILABLE_EXTENSIONS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
@@ -864,6 +879,27 @@ fn read_carries_a_running_clusters_hba_rules() {
 }
 
 #[test]
+fn read_carries_a_running_clusters_available_extensions() {
+    // Act
+    let clusters = read_with(
+        "available-extensions",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: what is installable cluster-wide, distinct from what each database created.
+    let available = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .available_extensions
+        .as_ref()
+        .expect("a running cluster is asked for its available extensions");
+    assert_eq!(available.extensions().len(), 2);
+}
+
+#[test]
 fn read_carries_the_lens_the_settings_were_read_through() {
     // Act
     let clusters = read_with(
@@ -899,6 +935,7 @@ fn a_non_privileged_read_marks_the_settings_incomplete() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        available_extensions: None,
         observed: None,
         databases: None,
     };
@@ -955,6 +992,7 @@ orders,postgres,t,-1,f
          *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
          *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
          *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
+         *pg_available_extensions*) cat <<'EOF'\n{AVAILABLE_EXTENSIONS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
          *pg_database*) cat <<'EOF'\n{without_postgres}EOF\n ;;\n\

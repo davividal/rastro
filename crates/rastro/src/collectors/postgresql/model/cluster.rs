@@ -3,8 +3,9 @@
 use rastro_collector::Observation;
 
 use crate::collectors::postgresql::model::{
-    ClusterDatabases, ClusterFileSettings, ClusterHbaRules, ClusterMemberships,
-    ClusterRoleSettings, ClusterRoles, ClusterSettings, ControlData, Postmaster, ReadLens,
+    ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings, ClusterHbaRules,
+    ClusterMemberships, ClusterRoleSettings, ClusterRoles, ClusterSettings, ControlData,
+    Postmaster, ReadLens,
 };
 use crate::collectors::postgresql::value_objects::ClusterStatus;
 
@@ -35,6 +36,7 @@ pub struct Cluster {
     pub roles: Option<ClusterRoles>,
     pub memberships: Option<ClusterMemberships>,
     pub role_settings: Option<ClusterRoleSettings>,
+    pub available_extensions: Option<ClusterAvailableExtensions>,
     pub databases: Option<ClusterDatabases>,
 }
 
@@ -152,6 +154,15 @@ impl From<&Cluster> for Observation {
             "role_settings",
             match &cluster.role_settings {
                 Some(role_settings) => Observation::from(role_settings),
+                None => Observation::null(),
+            },
+        ));
+
+        // What is installable cluster-wide, distinct from what each database has created.
+        entries.push((
+            "available_extensions",
+            match &cluster.available_extensions {
+                Some(available_extensions) => Observation::from(available_extensions),
                 None => Observation::null(),
             },
         ));

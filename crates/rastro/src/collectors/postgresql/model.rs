@@ -1,6 +1,8 @@
 //! What rastro means by a cluster's configuration, as opposed to how psql prints it.
 
+mod available_extension;
 mod cluster;
+mod cluster_available_extensions;
 mod cluster_databases;
 mod cluster_file_settings;
 mod cluster_hba_rules;
@@ -21,7 +23,9 @@ mod role;
 mod role_setting;
 mod setting;
 
+pub use available_extension::AvailableExtension;
 pub use cluster::Cluster;
+pub use cluster_available_extensions::ClusterAvailableExtensions;
 pub use cluster_databases::ClusterDatabases;
 pub use cluster_file_settings::ClusterFileSettings;
 pub use cluster_hba_rules::ClusterHbaRules;

@@ -8,6 +8,7 @@ use rastro_collector::CollectionError;
 
 use super::cluster_inventory::{ClusterInventory, RegisteredCluster};
 use super::postmaster_pid::PostmasterPid;
+use super::psql_available_extensions::PsqlAvailableExtensions;
 use super::psql_control_data::PsqlControlData;
 use super::psql_database_grants::PsqlDatabaseGrants;
 use super::psql_databases::PsqlDatabases;
@@ -21,9 +22,9 @@ use super::psql_roles::PsqlRoles;
 use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
-    Cluster, ClusterDatabases, ClusterFileSettings, ClusterHbaRules, ClusterMemberships,
-    ClusterRoleSettings, ClusterRoles, ClusterSettings, Clusters, ControlData, Database,
-    DatabaseGrants, Postmaster, ReadLens,
+    Cluster, ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings, ClusterHbaRules,
+    ClusterMemberships, ClusterRoleSettings, ClusterRoles, ClusterSettings, Clusters, ControlData,
+    Database, DatabaseGrants, Postmaster, ReadLens,
 };
 
 /// postgresql-common's register of the box.
@@ -112,6 +113,16 @@ const DATABASE_GRANTS_QUERY: &str = "SELECT d.datname, \
 /// shared. `pg_namespace` gives the schema its objects live in.
 const EXTENSIONS_QUERY: &str = "SELECT e.extname, e.extversion, n.nspname FROM pg_extension e \
      JOIN pg_namespace n ON n.oid = e.extnamespace";
+
+/// The three columns [`PsqlAvailableExtensions`] reads, in the order it expects them.
+///
+/// `pg_available_extensions` reads the extension control files from disk, so it is public,
+/// cheap, and the same in every database of the cluster, bar `installed_version`, which
+/// belongs to the database that answered and is named by the cluster's lens. Distinct from
+/// the per-database extension read: this is what is installable, that is what is installed.
+/// `ORDER BY` is absent because the model keys by name and the format owns the order.
+const AVAILABLE_EXTENSIONS_QUERY: &str =
+    "SELECT name, default_version, installed_version FROM pg_available_extensions";
 
 /// The three columns [`PsqlRoleSettings`] reads, in the order it expects them.
 ///
@@ -285,6 +296,7 @@ impl PostgresqlClusters {
             file_settings: read.as_ref().map(|read| read.file_settings.clone()),
             control: read.as_ref().map(|read| read.control.clone()),
             hba_rules: read.as_ref().map(|read| read.hba_rules.clone()),
+            available_extensions: read.as_ref().map(|read| read.available_extensions.clone()),
             databases: read.map(|read| read.databases),
         })
     }
@@ -386,6 +398,12 @@ impl PostgresqlClusters {
             lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
             control: PsqlControlData::parse(&self.ask(client, port, database, CONTROL_QUERY)?)?,
             hba_rules: PsqlHbaRules::parse(&self.ask(client, port, database, hba_query)?)?,
+            available_extensions: PsqlAvailableExtensions::parse(&self.ask(
+                client,
+                port,
+                database,
+                AVAILABLE_EXTENSIONS_QUERY,
+            )?)?,
             settings: PsqlSettings::parse(&self.ask(client, port, database, SETTINGS_QUERY)?)?,
             file_settings: PsqlFileSettings::parse(&self.ask(
                 client,
@@ -535,6 +553,7 @@ struct ClusterReading {
     file_settings: ClusterFileSettings,
     control: ControlData,
     hba_rules: ClusterHbaRules,
+    available_extensions: ClusterAvailableExtensions,
     memberships: ClusterMemberships,
     databases: ClusterDatabases,
 }
