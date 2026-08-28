@@ -48,6 +48,31 @@ would not need the diff. Anything asking you to declare what to watch is
 disqualified. [docs/research.md](docs/research.md) covers the alternatives, and
 why AIDE and configsnap were rejected.
 
+## The name
+
+_rastro_ is Portuguese.
+[Michaelis](https://michaelis.uol.com.br/palavra/la8pq/rastro/) puts it two
+ways:
+
+> 1 Marca ou pegada deixada pela passagem de uma pessoa ou de um animal.
+>
+> 2 Traço ou reflexo que certas coisas deixam como marca de sua presença.
+
+A print left by the passage of a person or an animal; a trace or mark that
+certain things leave behind as evidence of their presence.
+
+A server that has been running for years is made of those. You inherit it and
+nothing else: nobody can tell you what was installed, edited or abandoned on it,
+and the written record, where one exists, may be wrong, or worse, right in
+places with nothing marking which. What everything that passed through left
+behind is the only account of that host nobody had to write down.
+
+Collect it and the box stops being folklore. One run is the first statement
+about that host anybody can defend: not what it is supposed to be running, what
+it is. From there a change has something to be measured against, and the
+documentation nobody handed you can be written from the host rather than from
+memory.
+
 ## What it is not
 
 Not drift prevention, remediation, or monitoring. No agent, no daemon, no
