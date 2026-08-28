@@ -270,6 +270,28 @@ max_connections,100,,configuration file,postmaster,f,,
 }
 
 #[test]
+fn parse_keeps_a_client_sourced_setting_that_is_not_our_application_name() {
+    // Arrange: PGOPTIONS and startup-packet options arrive with source `client` and are host
+    // state, so filtering by source rather than by name would lose them without a trace.
+    let via_environment = "\
+work_mem,64MB,,client,user,f,,
+application_name,psql,,client,user,f,,
+";
+
+    // Act
+    let settings = parsed(via_environment);
+
+    // Assert: our own application_name is dropped by name, while the environment-passed
+    // setting is kept, its client source recorded as the fact that it arrived that way.
+    assert_eq!(settings.len(), 1);
+    assert_eq!(settings[0].name.as_str(), "work_mem");
+    assert_eq!(
+        settings[0].source,
+        SettingSource::new("client").expect("a legal source")
+    );
+}
+
+#[test]
 fn parse_reads_a_value_containing_a_newline() {
     // Arrange: `archive_command` holds a shell command, so nothing stops it spanning
     // lines. A row-per-line parser would read this as two broken rows.
