@@ -27,6 +27,7 @@ use crate::collectors::postgresql::model::{
     ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings, ClusterRoles,
     ClusterSettings, Clusters, ControlData, Database, DatabaseGrants, Postmaster, ReadLens,
 };
+use crate::collectors::postgresql::value_objects::PostmasterStatus;
 
 /// postgresql-common's register of the box.
 const INVENTORY_PROGRAM: &str = "pg_lsclusters";
@@ -127,13 +128,21 @@ const EXTENSIONS_QUERY: &str = "SELECT e.extname, e.extversion, n.nspname FROM p
 const AVAILABLE_EXTENSIONS_QUERY: &str =
     "SELECT name, default_version, installed_version FROM pg_available_extensions";
 
-/// The six columns [`PsqlReplicationSlots`] reads, in the order it expects them.
+/// The first major version whose `pg_replication_slots` carries `two_phase`.
+const TWO_PHASE_SINCE: u32 = 14;
+
+/// The six columns [`PsqlReplicationSlots`] reads on PostgreSQL 14 and later.
 ///
 /// The stable subset of `pg_replication_slots`: a slot's identity and shape, never its LSNs
 /// or its active flag, which move as it works. A slot appearing is a subscription pointed at
 /// this cluster, which is worth a diff. `ORDER BY` is absent because the model keys by name.
-const REPLICATION_SLOTS_QUERY: &str = "SELECT slot_name, plugin, slot_type, database, \
+const REPLICATION_SLOTS_QUERY_V14: &str = "SELECT slot_name, plugin, slot_type, database, \
      temporary, two_phase FROM pg_replication_slots";
+
+/// The five columns [`PsqlReplicationSlots`] reads on PostgreSQL 13 and earlier, which has no
+/// `two_phase`. Asking for it there would fail the read and take the whole facet with it.
+const REPLICATION_SLOTS_QUERY_V13: &str = "SELECT slot_name, plugin, slot_type, database, \
+     temporary FROM pg_replication_slots";
 
 /// The three columns [`PsqlRoleSettings`] reads, in the order it expects them.
 ///
@@ -286,8 +295,20 @@ impl PostgresqlClusters {
     fn resolve(&self, cluster: &RegisteredCluster) -> Result<Cluster, CollectionError> {
         let (read, observed) = if cluster.status.is_online() {
             let observed = self.observe(cluster)?;
-            let read = self.query(cluster, observed.as_ref())?;
-            (Some(read), observed)
+            match self.query(cluster, observed.as_ref()) {
+                Ok(read) => (Some(read), observed),
+                Err(refusal) => {
+                    // A standby with `hot_standby = off` is up and deliberately refusing
+                    // connections, which `postmaster.pid` says and a failed psql cannot tell
+                    // from a broken cluster. Record what was observed rather than failing the
+                    // whole facet; every other running cluster stays readable.
+                    if is_refusing_standby(observed.as_ref()) {
+                        (None, observed)
+                    } else {
+                        return Err(refusal);
+                    }
+                }
+            }
         } else {
             (None, None)
         };
@@ -371,16 +392,22 @@ impl PostgresqlClusters {
                 ))
             })?
             .to_string();
-        // The view gained rule_number and file_name in 16, so an older cluster is asked for
-        // the nine columns it has rather than the eleven it does not.
-        let hba_query = match cluster.id.major_version() {
+        // Two catalogues changed shape across versions: pg_hba_file_rules gained rule_number
+        // and file_name in 16, and pg_replication_slots gained two_phase in 14. An older
+        // cluster is asked for the columns it has rather than the ones it does not.
+        let major = cluster.id.major_version();
+        let hba_query = match major {
             Some(major) if major >= HBA_RULE_NUMBER_SINCE => HBA_RULES_QUERY_V16,
             _ => HBA_RULES_QUERY_V15,
+        };
+        let slots_query = match major {
+            Some(major) if major >= TWO_PHASE_SINCE => REPLICATION_SLOTS_QUERY_V14,
+            _ => REPLICATION_SLOTS_QUERY_V13,
         };
         let mut refusals = Vec::new();
 
         for database in CANDIDATE_DATABASES {
-            match self.query_database(&client, &port, database, hba_query) {
+            match self.query_database(&client, &port, database, hba_query, slots_query) {
                 Ok(reading) => return self.with_extensions(&client, &port, reading),
                 Err(refusal) => refusals.push(format!("{database}: {refusal}")),
             }
@@ -411,6 +438,7 @@ impl PostgresqlClusters {
         port: &str,
         database: &str,
         hba_query: &str,
+        slots_query: &str,
     ) -> Result<ClusterReading, CollectionError> {
         Ok(ClusterReading {
             lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
@@ -420,7 +448,7 @@ impl PostgresqlClusters {
                 client,
                 port,
                 database,
-                REPLICATION_SLOTS_QUERY,
+                slots_query,
             )?)?,
             available_extensions: PsqlAvailableExtensions::parse(&self.ask(
                 client,
@@ -564,6 +592,19 @@ impl PostgresqlClusters {
 
         client.run(&arguments)
     }
+}
+
+/// Whether the observed half says this is a standby that is up but refusing connections.
+///
+/// A streaming standby with `hot_standby = off` runs and answers no SQL, so its catalogues
+/// cannot be read; `postmaster.pid` reporting `standby` is what tells that state from a
+/// cluster that is simply broken. Absent a pid file there is no such evidence, so the read
+/// failure stands.
+fn is_refusing_standby(observed: Option<&Postmaster>) -> bool {
+    matches!(
+        observed.and_then(|observed| observed.status),
+        Some(PostmasterStatus::Standby)
+    )
 }
 
 /// Everything one connection attempt read.

@@ -2,6 +2,7 @@
 
 use rastro_collector::Observation;
 
+use super::setting::value_observation;
 use crate::collectors::postgresql::value_objects::{SettingName, SettingValue};
 
 /// A setting as it stands in the configuration files, before the server applies it.
@@ -36,15 +37,6 @@ pub struct FileSetting {
 
 impl From<&FileSetting> for Observation {
     fn from(setting: &FileSetting) -> Self {
-        // The raw file line, redacted by the same rule as an effective setting: this is where
-        // an uncanonicalised `archive_command` or `primary_conninfo` sits verbatim.
-        let value = Observation::text(setting.value.as_str());
-        let value = if setting.name.holds_credential() {
-            value.sensitive()
-        } else {
-            value
-        };
-
         Observation::object([
             ("seqno", Observation::integer(setting.seqno)),
             (
@@ -62,7 +54,7 @@ impl From<&FileSetting> for Observation {
                 },
             ),
             ("name", Observation::text(setting.name.as_str())),
-            ("value", value),
+            ("value", value_observation(&setting.name, &setting.value)),
             ("applied", Observation::boolean(setting.applied)),
             (
                 "error",

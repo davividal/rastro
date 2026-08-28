@@ -48,20 +48,33 @@ pub struct Setting {
     pub sourceline: Option<i64>,
 }
 
-impl From<&Setting> for Observation {
-    fn from(setting: &Setting) -> Self {
-        // Redaction is a property of the name, not the value: a value that merely looks like
-        // a secret is left alone, and a named credential-bearing setting is withheld even
-        // when the box happens to have left it empty.
-        let value = Observation::text(setting.value.as_str());
-        let value = if setting.name.holds_credential() {
-            value.sensitive()
+/// Renders a setting's value, withholding the content of one that can carry a credential.
+///
+/// While rastro's redaction layer is unbuilt, marking a value `sensitive` does not stop the
+/// renderer emitting it, so the collector withholds the content itself rather than shipping a
+/// secret in cleartext: a credential-bearing setting reports only whether it is set. The
+/// accounts collector makes the same choice for a password hash. The cost, accepted
+/// knowingly, is that a change *within* the value is invisible; a value appearing or being
+/// removed still shows, and the `sensitive` marker stays for the day a redaction layer can do
+/// better.
+pub(crate) fn value_observation(name: &SettingName, value: &SettingValue) -> Observation {
+    if name.holds_credential() {
+        let presence = if value.as_str().is_empty() {
+            ""
         } else {
-            value
+            "[redacted]"
         };
 
+        return Observation::text(presence).sensitive();
+    }
+
+    Observation::text(value.as_str())
+}
+
+impl From<&Setting> for Observation {
+    fn from(setting: &Setting) -> Self {
         Observation::object([
-            ("value", value),
+            ("value", value_observation(&setting.name, &setting.value)),
             (
                 "unit",
                 match &setting.unit {

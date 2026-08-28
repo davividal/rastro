@@ -216,10 +216,18 @@ primary_conninfo,host=primary user=replicator password=hunter2,,configuration fi
     let observation =
         Observation::from(&PsqlSettings::parse(standby).expect("this output is well formed"));
 
-    // Assert: the value is withheld by name, while an ordinary setting beside it is not.
+    // Assert: the secret content is withheld outright, not merely annotated, because the
+    // renderer does not yet honour the sensitive marker. The value reads `[redacted]`, never
+    // the password, and an ordinary setting beside it is untouched.
+    let conninfo = field(&field(&observation, "primary_conninfo"), "value");
+    assert_eq!(text(&conninfo), "[redacted]");
     assert_eq!(
-        field(&field(&observation, "primary_conninfo"), "value").sensitivity(),
+        conninfo.sensitivity(),
         rastro_fingerprint::Sensitivity::Sensitive
+    );
+    assert_eq!(
+        text(&field(&field(&observation, "max_connections"), "value")),
+        "100"
     );
     assert_eq!(
         field(&field(&observation, "max_connections"), "value").sensitivity(),
@@ -1244,4 +1252,37 @@ fn read_connects_on_the_running_port_not_the_stale_configured_one() {
     assert!(cluster.settings.is_some(), "connected on the running port");
     assert_eq!(cluster.observed.as_ref().expect("pid file").port, 5599);
     assert_eq!(cluster.port, Some(6000));
+}
+
+#[test]
+fn a_standby_refusing_connections_is_kept_as_its_observed_half() {
+    // Arrange: a streaming standby with hot_standby = off is up and answers no SQL.
+    // postmaster.pid says `standby`; psql refuses every connection.
+    let data_directory = scratch_tree("pgdata-standby", &[]);
+    fs::write(
+        data_directory.join("postmaster.pid"),
+        "4242\n/data\n1700000000\n5432\n/run/postgresql\n*\n0\nstandby \n",
+    )
+    .expect("a writable pid file");
+    let listed = format!(
+        "17 main 5432 online,recovery postgres {} /var/log/pg.log",
+        data_directory.display()
+    );
+
+    // Act: a client that refuses every connection the way a recovering standby does.
+    let clusters = read_with(
+        "standby",
+        &listed,
+        "printf 'FATAL: the database system is starting up\\n' >&2\nexit 2",
+    );
+
+    // Assert: recorded, not errored. The observed half carries the standby status, and the
+    // catalogues are null because none could be read, so it is not mistaken for broken.
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    assert_eq!(
+        cluster.observed.as_ref().expect("a pid file").status,
+        Some(PostmasterStatus::Standby)
+    );
+    assert!(cluster.settings.is_none());
+    assert!(cluster.roles.is_none());
 }

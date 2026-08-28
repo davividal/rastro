@@ -9,7 +9,7 @@ mod support;
 
 use rastro::collectors::postgresql::{FileSetting, PsqlFileSettings, SettingName};
 use rastro_fingerprint::{Observation, Sensitivity};
-use support::observation::field;
+use support::observation::{field, text};
 
 /// The seven columns the collector's query asks for, in order.
 const FILE_SETTINGS: &str = "\
@@ -90,11 +90,11 @@ fn a_credential_bearing_file_line_is_redacted() {
     // archive_command sits here verbatim and must be withheld.
     let observation = Observation::from(named(&parsed(FILE_SETTINGS), "archive_command"));
 
-    // Assert
-    assert_eq!(
-        field(&observation, "value").sensitivity(),
-        Sensitivity::Sensitive
-    );
+    // Assert: the content is withheld, not just annotated, so the raw archive_command never
+    // reaches the document.
+    let value = field(&observation, "value");
+    assert_eq!(text(&value), "[redacted]");
+    assert_eq!(value.sensitivity(), Sensitivity::Sensitive);
 }
 
 #[test]

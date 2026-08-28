@@ -70,7 +70,7 @@ impl PostgresqlCollector {
             name: FacetName::new("postgresql").expect("`postgresql` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("postgresql").expect("`postgresql` is a legal collector id"),
-                CollectorVersion::new("1").expect("`1` is a legal collector version"),
+                CollectorVersion::new("2").expect("`2` is a legal collector version"),
             ),
             clusters,
         }

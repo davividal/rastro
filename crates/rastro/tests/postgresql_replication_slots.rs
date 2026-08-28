@@ -64,6 +64,21 @@ fn parse_reads_a_cluster_with_no_slots_as_empty() {
 }
 
 #[test]
+fn parse_reads_the_five_column_shape_without_two_phase() {
+    // Arrange: PostgreSQL 13 and earlier have no two_phase column, so the read is five
+    // columns rather than six.
+    let pg13 = "standby_1,,physical,,f\nsub_slot,pgoutput,logical,orders,f\n";
+
+    // Act
+    let slots = parsed(pg13);
+
+    // Assert: the slot is read, and two_phase defaults to false where the server cannot
+    // report it, rather than the whole facet failing for want of one column.
+    assert_eq!(slots.len(), 2);
+    assert!(!named(&slots, "sub_slot").two_phase);
+}
+
+#[test]
 fn new_refuses_one_slot_reported_twice() {
     // Act & Assert: slot_name is unique in the catalog, so a repeat means two reads were
     // spliced.

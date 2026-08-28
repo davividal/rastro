@@ -2,6 +2,7 @@
 
 use rastro_collector::Observation;
 
+use super::setting::value_observation;
 use crate::collectors::postgresql::value_objects::{
     DatabaseName, RoleName, SettingName, SettingValue,
 };
@@ -29,15 +30,6 @@ pub struct RoleSetting {
 
 impl From<&RoleSetting> for Observation {
     fn from(setting: &RoleSetting) -> Self {
-        // Redacted on the same rule as an effective setting: an override can name exactly the
-        // settings that carry a credential, and `setconfig` stores the value verbatim.
-        let value = Observation::text(setting.value.as_str());
-        let value = if setting.name.holds_credential() {
-            value.sensitive()
-        } else {
-            value
-        };
-
         Observation::object([
             (
                 "database",
@@ -54,7 +46,7 @@ impl From<&RoleSetting> for Observation {
                 },
             ),
             ("name", Observation::text(setting.name.as_str())),
-            ("value", value),
+            ("value", value_observation(&setting.name, &setting.value)),
         ])
     }
 }
