@@ -60,22 +60,31 @@ pub struct InvocationCollector {
     identity: CollectorIdentity,
     effective_config: Observation,
     walk_policy: Observation,
+    observer: Option<String>,
 }
 
 impl InvocationCollector {
-    /// Takes the effective config and the effective walk table rather than reading either,
-    /// so the document's self-description is whatever the composition root actually
-    /// resolved.
+    /// Takes the effective config, the effective walk table and the binary this run is
+    /// reading from, rather than reading any of them, so the document's self-description is
+    /// whatever the composition root actually resolved.
     ///
     /// The walk table belongs here for the same reason the config does: it is a decision
     /// this run made, not state observed on the host, and a reader looking at a tree with no
     /// digests needs one place that says which rule applied and which facet asked for it.
     /// `null` where the table could not be resolved, which is the conflict the `filesystem`
     /// facet reports as its error.
-    pub fn new(effective_config: Observation, walk_policy: Observation) -> Self {
+    ///
+    /// The observer is here because the walk leaves it out, and an omission nothing accounts
+    /// for is the one thing this format does not do.
+    pub fn new(
+        effective_config: Observation,
+        walk_policy: Observation,
+        observer: Option<String>,
+    ) -> Self {
         Self {
             effective_config,
             walk_policy,
+            observer,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
@@ -109,6 +118,13 @@ impl Collector for InvocationCollector {
         Ok(Observation::object([
             ("rastro_version", Observation::text(RASTRO_VERSION)),
             ("config", self.effective_config.clone()),
+            (
+                "observer",
+                match &self.observer {
+                    Some(binary) => Observation::text(binary.as_str()).volatile(),
+                    None => Observation::null(),
+                },
+            ),
             ("started_at", Observation::integer(started_at).volatile()),
             ("walk_policy", self.walk_policy.clone()),
         ]))

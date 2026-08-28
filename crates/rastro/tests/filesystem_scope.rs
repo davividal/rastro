@@ -217,9 +217,12 @@ fn the_collector_fails_rather_than_reporting_a_host_with_no_files() {
 fn the_collector_fails_the_facet_when_the_claims_did_not_resolve() {
     // Arrange: what two collectors claiming one tree leaves behind. The conflict is
     // detected while the table is assembled, before any collector runs.
-    let conflicted = FilesystemCollector::under(Err(CollectionError::new(
-        "\"/var/lib/mysql\" is claimed by mariadb and already ruled by mysql",
-    )));
+    let conflicted = FilesystemCollector::under(
+        Err(CollectionError::new(
+            "\"/var/lib/mysql\" is claimed by mariadb and already ruled by mysql",
+        )),
+        None,
+    );
 
     // Act
     let refused = conflicted.collect();

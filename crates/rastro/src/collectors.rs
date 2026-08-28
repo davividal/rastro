@@ -93,9 +93,17 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Ok(resolved) => Observation::from(resolved),
         Err(_) => Observation::null(),
     };
+    let observer = FilesystemCollector::running_binary();
 
-    collectors.push(Box::new(FilesystemCollector::under(policy)));
-    collectors.push(Box::new(InvocationCollector::new(effective_config, table)));
+    collectors.push(Box::new(FilesystemCollector::under(
+        policy,
+        observer.clone(),
+    )));
+    collectors.push(Box::new(InvocationCollector::new(
+        effective_config,
+        table,
+        observer.map(|binary| binary.to_string_lossy().into_owned()),
+    )));
     collectors
 }
 

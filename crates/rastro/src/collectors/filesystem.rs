@@ -45,22 +45,27 @@ pub struct FilesystemCollector {
     identity: CollectorIdentity,
     walked: Option<WalkBoundaries>,
     policy: Result<WalkPolicy, CollectionError>,
+    observer: Option<PathBuf>,
 }
 
 impl FilesystemCollector {
     pub fn new() -> Self {
-        Self::of(None, Ok(WalkPolicy::built_in()))
+        Self::of(None, Ok(WalkPolicy::built_in()), None)
     }
 
-    /// The same collector, under a table somebody else resolved.
+    /// The same collector, under a table somebody else resolved, omitting the binary this
+    /// run is reading from.
     ///
     /// The table arrives as a `Result` because folding the other collectors' claims into it
     /// can fail, and that failure belongs to this facet: a conflict makes the walk
     /// unanswerable, and nothing else in the document is any less true for it. The
     /// alternative was failing the whole run, which would cost an operator every other
     /// facet over a bug in a collector pair.
-    pub fn under(policy: Result<WalkPolicy, CollectionError>) -> Self {
-        Self::of(None, policy)
+    ///
+    /// The observer is passed in rather than read here, because the `invocation` facet
+    /// reports the same path and the two must not disagree.
+    pub fn under(policy: Result<WalkPolicy, CollectionError>, observer: Option<PathBuf>) -> Self {
+        Self::of(None, policy, observer)
     }
 
     /// The same collector over roots the caller names.
@@ -69,7 +74,11 @@ impl FilesystemCollector {
     /// roots given, the walk, the policy and the render can be exercised against a scratch
     /// tree on any host.
     pub fn walking(roots: Vec<AbsolutePath>, policy: WalkPolicy) -> Self {
-        Self::of(Some(WalkBoundaries::of(roots.clone(), roots)), Ok(policy))
+        Self::of(
+            Some(WalkBoundaries::of(roots.clone(), roots)),
+            Ok(policy),
+            Self::running_binary(),
+        )
     }
 
     /// The same, with the boundaries named separately from the roots.
@@ -81,27 +90,11 @@ impl FilesystemCollector {
         boundaries: Vec<AbsolutePath>,
         policy: WalkPolicy,
     ) -> Self {
-        Self::of(Some(WalkBoundaries::of(roots, boundaries)), Ok(policy))
-    }
-
-    fn of(walked: Option<WalkBoundaries>, policy: Result<WalkPolicy, CollectionError>) -> Self {
-        Self {
-            name: FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
-            identity: CollectorIdentity::new(
-                CollectorId::new("filesystem").expect("`filesystem` is a legal collector id"),
-                CollectorVersion::new("1").expect("`1` is a legal collector version"),
-            ),
-            walked,
-            policy,
-        }
-    }
-
-    /// The mount points to walk, asked of the kernel unless the caller named them.
-    fn walked(&self) -> Result<WalkBoundaries, CollectionError> {
-        match &self.walked {
-            Some(named) => Ok(named.clone()),
-            None => MountedFilesystems::of_this_host().walked(),
-        }
+        Self::of(
+            Some(WalkBoundaries::of(roots, boundaries)),
+            Ok(policy),
+            Self::running_binary(),
+        )
     }
 
     /// The executable this run is reading the host from.
@@ -113,8 +106,36 @@ impl FilesystemCollector {
     /// `None` where the kernel will not answer, and then the walk reports the binary like any
     /// other file. A run that cannot tell which file it is should report one entry too many
     /// rather than guess at a path and omit somebody else's.
-    fn observer() -> Option<PathBuf> {
+    ///
+    /// Public because the `invocation` facet accounts for the omission and has to name the
+    /// same path: one definition, so the two cannot disagree.
+    pub fn running_binary() -> Option<PathBuf> {
         std::env::current_exe().ok()
+    }
+
+    fn of(
+        walked: Option<WalkBoundaries>,
+        policy: Result<WalkPolicy, CollectionError>,
+        observer: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            name: FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
+            identity: CollectorIdentity::new(
+                CollectorId::new("filesystem").expect("`filesystem` is a legal collector id"),
+                CollectorVersion::new("1").expect("`1` is a legal collector version"),
+            ),
+            walked,
+            policy,
+            observer,
+        }
+    }
+
+    /// The mount points to walk, asked of the kernel unless the caller named them.
+    fn walked(&self) -> Result<WalkBoundaries, CollectionError> {
+        match &self.walked {
+            Some(named) => Ok(named.clone()),
+            None => MountedFilesystems::of_this_host().walked(),
+        }
     }
 }
 
@@ -154,7 +175,6 @@ impl Collector for FilesystemCollector {
             .iter()
             .map(|boundary| Path::new(boundary.as_str()))
             .collect();
-        let observer = Self::observer();
 
         let inventories = walked
             .roots()
@@ -162,7 +182,7 @@ impl Collector for FilesystemCollector {
             .map(|root| {
                 let tree = FileTree::at(Path::new(root.as_str())).stopping_at(&boundaries);
 
-                match &observer {
+                match &self.observer {
                     Some(binary) => tree.omitting(binary),
                     None => tree,
                 }
