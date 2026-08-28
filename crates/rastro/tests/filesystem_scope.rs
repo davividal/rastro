@@ -231,6 +231,35 @@ fn the_collector_fails_the_facet_when_the_claims_did_not_resolve() {
 }
 
 #[test]
+fn the_collector_omits_the_executable_it_is_running_from() {
+    // Arrange: the test binary is the observer here, and its own directory is the root, so
+    // the walk is guaranteed to reach it.
+    let observer = std::env::current_exe().expect("a running test has an executable");
+    let directory = observer
+        .parent()
+        .expect("an executable lives in a directory");
+    let collector = FilesystemCollector::walking(
+        vec![AbsolutePath::new(directory.to_str().expect("utf-8"), "root").expect("legal")],
+        WalkPolicy::new(vec![PolicyRule::shipped(
+            WalkedTree::new("/").expect("a legal tree"),
+            ContentPolicy::MetadataOnly,
+        )])
+        .expect("a legal table"),
+    );
+
+    // Act
+    let observed = collector.collect().expect("the tree is readable");
+
+    // Assert: rastro is not state on the box it is fingerprinting. Its neighbours are, so
+    // the omission is one path rather than a directory going quiet.
+    let paths = keys_of(&observed);
+    assert!(
+        !paths.contains(&observer.to_string_lossy().into_owned()),
+        "the observer reported itself"
+    );
+    assert!(paths.len() > 1, "only the observer should be missing");
+}
+#[test]
 fn the_collector_collapses_a_path_two_walks_both_reached() {
     // Arrange: the same root twice, which is what a mount point reached from its parent
     // filesystem and as its own root looks like.

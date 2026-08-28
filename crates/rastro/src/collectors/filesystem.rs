@@ -31,7 +31,7 @@ pub use value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
 };
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
@@ -103,6 +103,19 @@ impl FilesystemCollector {
             None => MountedFilesystems::of_this_host().walked(),
         }
     }
+
+    /// The executable this run is reading the host from.
+    ///
+    /// `std::env::current_exe` reads `/proc/self/exe` on Linux, so it is the path the kernel
+    /// says is running rather than whatever `argv[0]` claims, and it survives the `mktemp`
+    /// name `rastro-ssh` stages the binary under.
+    ///
+    /// `None` where the kernel will not answer, and then the walk reports the binary like any
+    /// other file. A run that cannot tell which file it is should report one entry too many
+    /// rather than guess at a path and omit somebody else's.
+    fn observer() -> Option<PathBuf> {
+        std::env::current_exe().ok()
+    }
 }
 
 impl Default for FilesystemCollector {
@@ -141,14 +154,19 @@ impl Collector for FilesystemCollector {
             .iter()
             .map(|boundary| Path::new(boundary.as_str()))
             .collect();
+        let observer = Self::observer();
 
         let inventories = walked
             .roots()
             .iter()
             .map(|root| {
-                FileTree::at(Path::new(root.as_str()))
-                    .stopping_at(&boundaries)
-                    .walk(policy)
+                let tree = FileTree::at(Path::new(root.as_str())).stopping_at(&boundaries);
+
+                match &observer {
+                    Some(binary) => tree.omitting(binary),
+                    None => tree,
+                }
+                .walk(policy)
             })
             .collect::<Result<Vec<FilesystemInventory>, CollectionError>>()?;
 
