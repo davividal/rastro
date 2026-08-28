@@ -128,13 +128,38 @@ fn parse_port(column: &str) -> Result<Option<u16>, CollectionError> {
 /// rather than filing a path under a name a later read would try to `sudo` to.
 fn owner_and_data_directory(rest: &[&str]) -> (String, Option<String>) {
     match rest.first() {
-        Some(first) if first.starts_with('/') => (String::new(), Some((*first).to_owned())),
-        Some(first) => (
-            (*first).to_owned(),
-            rest.get(1)
-                .filter(|directory| directory.starts_with('/'))
-                .map(|directory| (*directory).to_owned()),
-        ),
+        Some(first) if first.starts_with('/') => (String::new(), whole_path_of(rest)),
+        Some(first) => ((*first).to_owned(), whole_path_of(&rest[1..])),
         None => (String::new(), None),
+    }
+}
+
+/// The data directory, when the row can be split into whole paths at all.
+///
+/// **A path with a space in it splits into tokens no rule can rejoin.** `pg_createcluster
+/// --datadir '/srv/postgres data/main'` is legal, and `pg_lsclusters` prints its columns
+/// whitespace-separated and unquoted, so the row itself stops saying where the path ends.
+/// The tell is the token after the first: every column here is an absolute path, so a
+/// follower that does not start with `/` is the rest of a split path rather than the log
+/// file.
+///
+/// Absent rather than truncated, because the truncation is the dangerous answer: `/srv/
+/// postgres` is a real directory, a shorter one, and an unrelated one. The filesystem walk
+/// seals the tree this column names, so a truncated path would remove somebody else's
+/// subtree from the document while the cluster it was meant to cover kept being hashed.
+/// Absent means no claim, which reports one tree too many rather than the wrong one.
+///
+/// A space in the *log file* leaves the data directory unambiguous and is left alone: extra
+/// trailing tokens say nothing about where the first path ended. The one case this cannot
+/// see is a data directory whose own space is followed by a `/`, which no `mkdir` a person
+/// meant to type produces.
+fn whole_path_of(columns: &[&str]) -> Option<String> {
+    let split_path = columns
+        .get(1)
+        .is_some_and(|follower| !follower.starts_with('/'));
+
+    match split_path {
+        true => None,
+        false => columns.first().map(|path| (*path).to_owned()),
     }
 }

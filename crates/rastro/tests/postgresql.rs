@@ -443,6 +443,39 @@ fn parse_refuses_a_row_it_cannot_tell_a_cluster_from() {
 }
 
 #[test]
+fn parse_records_no_data_directory_where_the_row_cannot_be_split_into_whole_paths() {
+    // Arrange: `pg_createcluster --datadir` accepts a path with a space in it, and
+    // `pg_lsclusters` prints its columns whitespace-separated and unquoted, so the row
+    // itself no longer says where the path ends.
+    let spaced = "16 main 5432 online postgres /srv/postgres data/main /var/log/pg.log\n";
+
+    // Act
+    let clusters = registered(spaced);
+
+    // Assert: absent, not truncated. `/srv/postgres` exists, is a different directory, and
+    // recording it would name the wrong tree in every reader that trusts this column.
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(clusters[0].data_directory, None);
+}
+
+#[test]
+fn parse_keeps_a_data_directory_when_only_the_log_file_carries_a_space() {
+    // Arrange: the log file is read by nobody here, so its ambiguity is not the data
+    // directory's problem.
+    let spaced = "16 main 5432 online postgres /var/lib/pg /var/log/pg log.log\n";
+
+    // Act
+    let clusters = registered(spaced);
+
+    // Assert
+    assert_eq!(
+        clusters[0].data_directory.as_deref(),
+        Some("/var/lib/pg"),
+        "only a split data directory is ambiguous"
+    );
+}
+
+#[test]
 fn parse_refuses_a_status_that_is_neither_online_nor_down() {
     // Act: the facet branches on this, so a word rastro does not know cannot be guessed.
     let refused =
@@ -1378,4 +1411,27 @@ fn the_collector_claims_nothing_without_postgresql_common() {
 
     // Act & Assert: no cluster to own means no tree to claim.
     assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn the_collector_claims_no_tree_for_a_data_directory_the_row_could_not_spell() {
+    // Arrange: a data directory with a space in it, which `pg_lsclusters` prints unquoted.
+    // The first cluster's column is ambiguous; the second one's is not.
+    let listed = "\
+Ver Cluster Port Status Owner    Datadir              Logfile
+16  main    5433 online postgres /srv/postgres data/main /var/log/pg-16.log
+17  main    5432 online postgres /var/lib/postgresql/17/main /var/log/pg-17.log";
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-spaced",
+        listed,
+    ))));
+
+    // Act
+    let claims = collector.filesystem_claims();
+
+    // Assert: sealing a truncated path would remove `/srv/postgres` from the document and
+    // leave the real cluster hashed. One tree too many is the safe direction; the wrong tree
+    // is not.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    assert_eq!(trees, vec!["/var/lib/postgresql/17/main"]);
 }
