@@ -30,15 +30,16 @@ pub mod value_objects;
 
 pub use model::{
     AvailableExtension, Cluster, ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings,
-    ClusterHbaRules, ClusterMemberships, ClusterRoleSettings, ClusterRoles, ClusterSettings,
-    Clusters, ControlData, Database, DatabaseExtensions, DatabaseGrants, Extension, FileSetting,
-    Grant, HbaRule, Membership, Postmaster, ReadLens, Role, RoleSetting, Setting,
+    ClusterHbaRules, ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings,
+    ClusterRoles, ClusterSettings, Clusters, ControlData, Database, DatabaseExtensions,
+    DatabaseGrants, Extension, FileSetting, Grant, HbaRule, Membership, Postmaster, ReadLens,
+    ReplicationSlot, Role, RoleSetting, Setting,
 };
 pub use source::{
     ClusterInventory, PostgresqlClusters, PostmasterPid, PsqlAvailableExtensions, PsqlControlData,
     PsqlDatabaseGrants, PsqlDatabases, PsqlExtensions, PsqlFileSettings, PsqlHbaRules,
-    PsqlMemberships, PsqlReadLens, PsqlResultSet, PsqlRoleSettings, PsqlRoles, PsqlSettings,
-    RegisteredCluster,
+    PsqlMemberships, PsqlReadLens, PsqlReplicationSlots, PsqlResultSet, PsqlRoleSettings,
+    PsqlRoles, PsqlSettings, RegisteredCluster,
 };
 pub use value_objects::{
     ClusterId, ClusterStatus, DatabaseName, DatabasePrivilege, ExtensionName, Grantee,

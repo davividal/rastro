@@ -17,14 +17,15 @@ use super::psql_file_settings::PsqlFileSettings;
 use super::psql_hba_rules::PsqlHbaRules;
 use super::psql_memberships::PsqlMemberships;
 use super::psql_read_lens::PsqlReadLens;
+use super::psql_replication_slots::PsqlReplicationSlots;
 use super::psql_role_settings::PsqlRoleSettings;
 use super::psql_roles::PsqlRoles;
 use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
     Cluster, ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings, ClusterHbaRules,
-    ClusterMemberships, ClusterRoleSettings, ClusterRoles, ClusterSettings, Clusters, ControlData,
-    Database, DatabaseGrants, Postmaster, ReadLens,
+    ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings, ClusterRoles,
+    ClusterSettings, Clusters, ControlData, Database, DatabaseGrants, Postmaster, ReadLens,
 };
 
 /// postgresql-common's register of the box.
@@ -123,6 +124,14 @@ const EXTENSIONS_QUERY: &str = "SELECT e.extname, e.extversion, n.nspname FROM p
 /// `ORDER BY` is absent because the model keys by name and the format owns the order.
 const AVAILABLE_EXTENSIONS_QUERY: &str =
     "SELECT name, default_version, installed_version FROM pg_available_extensions";
+
+/// The six columns [`PsqlReplicationSlots`] reads, in the order it expects them.
+///
+/// The stable subset of `pg_replication_slots`: a slot's identity and shape, never its LSNs
+/// or its active flag, which move as it works. A slot appearing is a subscription pointed at
+/// this cluster, which is worth a diff. `ORDER BY` is absent because the model keys by name.
+const REPLICATION_SLOTS_QUERY: &str = "SELECT slot_name, plugin, slot_type, database, \
+     temporary, two_phase FROM pg_replication_slots";
 
 /// The three columns [`PsqlRoleSettings`] reads, in the order it expects them.
 ///
@@ -297,6 +306,7 @@ impl PostgresqlClusters {
             control: read.as_ref().map(|read| read.control.clone()),
             hba_rules: read.as_ref().map(|read| read.hba_rules.clone()),
             available_extensions: read.as_ref().map(|read| read.available_extensions.clone()),
+            replication_slots: read.as_ref().map(|read| read.replication_slots.clone()),
             databases: read.map(|read| read.databases),
         })
     }
@@ -398,6 +408,12 @@ impl PostgresqlClusters {
             lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
             control: PsqlControlData::parse(&self.ask(client, port, database, CONTROL_QUERY)?)?,
             hba_rules: PsqlHbaRules::parse(&self.ask(client, port, database, hba_query)?)?,
+            replication_slots: PsqlReplicationSlots::parse(&self.ask(
+                client,
+                port,
+                database,
+                REPLICATION_SLOTS_QUERY,
+            )?)?,
             available_extensions: PsqlAvailableExtensions::parse(&self.ask(
                 client,
                 port,
@@ -554,6 +570,7 @@ struct ClusterReading {
     control: ControlData,
     hba_rules: ClusterHbaRules,
     available_extensions: ClusterAvailableExtensions,
+    replication_slots: ClusterReplicationSlots,
     memberships: ClusterMemberships,
     databases: ClusterDatabases,
 }

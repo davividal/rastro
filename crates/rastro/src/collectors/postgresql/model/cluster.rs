@@ -4,8 +4,8 @@ use rastro_collector::Observation;
 
 use crate::collectors::postgresql::model::{
     ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings, ClusterHbaRules,
-    ClusterMemberships, ClusterRoleSettings, ClusterRoles, ClusterSettings, ControlData,
-    Postmaster, ReadLens,
+    ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings, ClusterRoles,
+    ClusterSettings, ControlData, Postmaster, ReadLens,
 };
 use crate::collectors::postgresql::value_objects::ClusterStatus;
 
@@ -30,6 +30,7 @@ pub struct Cluster {
     pub observed: Option<Postmaster>,
     pub control: Option<ControlData>,
     pub hba_rules: Option<ClusterHbaRules>,
+    pub replication_slots: Option<ClusterReplicationSlots>,
     pub lens: Option<ReadLens>,
     pub settings: Option<ClusterSettings>,
     pub file_settings: Option<ClusterFileSettings>,
@@ -92,6 +93,15 @@ impl From<&Cluster> for Observation {
             "hba_rules",
             match &cluster.hba_rules {
                 Some(hba_rules) => Observation::from(hba_rules),
+                None => Observation::null(),
+            },
+        ));
+
+        // Replication identity: a slot appearing is a subscription pointed at this cluster.
+        entries.push((
+            "replication_slots",
+            match &cluster.replication_slots {
+                Some(replication_slots) => Observation::from(replication_slots),
                 None => Observation::null(),
             },
         ));

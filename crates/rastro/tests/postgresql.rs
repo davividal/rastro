@@ -13,8 +13,9 @@ use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwn
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
     PostgresqlCollector, PostmasterStatus, PsqlAvailableExtensions, PsqlControlData, PsqlDatabases,
-    PsqlFileSettings, PsqlHbaRules, PsqlMemberships, PsqlReadLens, PsqlRoleSettings, PsqlRoles,
-    PsqlSettings, RegisteredCluster, Setting, SettingName, SettingSource,
+    PsqlFileSettings, PsqlHbaRules, PsqlMemberships, PsqlReadLens, PsqlReplicationSlots,
+    PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster, Setting, SettingName,
+    SettingSource,
 };
 use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
@@ -103,6 +104,13 @@ const HBA_RULES: &str = "\
 const AVAILABLE_EXTENSIONS: &str = "\
 plpgsql,1.0,1.0
 pg_stat_statements,1.11,
+";
+
+/// The six stable columns the replication-slots query asks for: a physical slot and a
+/// logical one, the latter bound to a database and decoding two-phase commits.
+const REPLICATION_SLOTS: &str = "\
+standby_1,,physical,,f,f
+sub_slot,pgoutput,logical,orders,f,t
 ";
 
 fn parsed(csv: &str) -> Vec<Setting> {
@@ -410,6 +418,7 @@ fn clusters_render_in_one_deterministic_key_order() {
                 file_settings: None,
                 control: None,
                 hba_rules: None,
+                replication_slots: None,
                 available_extensions: None,
                 observed: None,
                 lens: None,
@@ -441,6 +450,9 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         file_settings: Some(PsqlFileSettings::parse(FILE_SETTINGS).expect("well formed")),
         control: Some(PsqlControlData::parse(CONTROL).expect("well formed")),
         hba_rules: Some(PsqlHbaRules::parse(HBA_RULES).expect("well formed")),
+        replication_slots: Some(
+            PsqlReplicationSlots::parse(REPLICATION_SLOTS).expect("well formed"),
+        ),
         available_extensions: Some(
             PsqlAvailableExtensions::parse(AVAILABLE_EXTENSIONS).expect("well formed"),
         ),
@@ -459,6 +471,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        replication_slots: None,
         available_extensions: None,
         observed: None,
         lens: None,
@@ -553,6 +566,7 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        replication_slots: None,
         available_extensions: None,
         observed: None,
         lens: None,
@@ -627,6 +641,7 @@ fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        replication_slots: None,
         available_extensions: None,
         observed: None,
         databases: None,
@@ -702,6 +717,7 @@ fn answering_every_query() -> String {
          *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
          *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
          *pg_available_extensions*) cat <<'EOF'\n{AVAILABLE_EXTENSIONS}EOF\n ;;\n\
+         *pg_replication_slots*) cat <<'EOF'\n{REPLICATION_SLOTS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
@@ -900,6 +916,28 @@ fn read_carries_a_running_clusters_available_extensions() {
 }
 
 #[test]
+fn read_carries_a_running_clusters_replication_slots() {
+    // Act
+    let clusters = read_with(
+        "replication-slots",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: a slot appearing is a subscription pointed at this cluster, so the stable
+    // subset is read.
+    let slots = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .replication_slots
+        .as_ref()
+        .expect("a running cluster is asked for its replication slots");
+    assert_eq!(slots.slots().len(), 2);
+}
+
+#[test]
 fn read_carries_the_lens_the_settings_were_read_through() {
     // Act
     let clusters = read_with(
@@ -935,6 +973,7 @@ fn a_non_privileged_read_marks_the_settings_incomplete() {
         file_settings: None,
         control: None,
         hba_rules: None,
+        replication_slots: None,
         available_extensions: None,
         observed: None,
         databases: None,
@@ -993,6 +1032,7 @@ orders,postgres,t,-1,f
          *pg_control_system*) cat <<'EOF'\n{CONTROL}EOF\n ;;\n\
          *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES}EOF\n ;;\n\
          *pg_available_extensions*) cat <<'EOF'\n{AVAILABLE_EXTENSIONS}EOF\n ;;\n\
+         *pg_replication_slots*) cat <<'EOF'\n{REPLICATION_SLOTS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
          *pg_database*) cat <<'EOF'\n{without_postgres}EOF\n ;;\n\
