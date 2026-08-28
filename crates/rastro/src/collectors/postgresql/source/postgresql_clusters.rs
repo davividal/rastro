@@ -11,6 +11,7 @@ use super::postmaster_pid::PostmasterPid;
 use super::psql_database_grants::PsqlDatabaseGrants;
 use super::psql_databases::PsqlDatabases;
 use super::psql_extensions::PsqlExtensions;
+use super::psql_file_settings::PsqlFileSettings;
 use super::psql_memberships::PsqlMemberships;
 use super::psql_read_lens::PsqlReadLens;
 use super::psql_role_settings::PsqlRoleSettings;
@@ -18,8 +19,8 @@ use super::psql_roles::PsqlRoles;
 use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
-    Cluster, ClusterDatabases, ClusterMemberships, ClusterRoleSettings, ClusterRoles,
-    ClusterSettings, Clusters, Database, DatabaseGrants, Postmaster, ReadLens,
+    Cluster, ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings,
+    ClusterRoles, ClusterSettings, Clusters, Database, DatabaseGrants, Postmaster, ReadLens,
 };
 
 /// postgresql-common's register of the box.
@@ -124,6 +125,16 @@ const ROLE_SETTINGS_QUERY: &str = "SELECT coalesce(d.datname, ''), coalesce(r.ro
      unnest(s.setconfig) FROM pg_db_role_setting s \
      LEFT JOIN pg_database d ON d.oid = s.setdatabase \
      LEFT JOIN pg_roles r ON r.oid = s.setrole";
+
+/// The seven columns [`PsqlFileSettings`] reads, in the order it expects them.
+///
+/// `pg_file_settings` re-parses the configuration files, so it sees the half `pg_settings`
+/// cannot: a value edited without a reload, and a line that will not apply. Superuser only,
+/// which is the privilege the roles read already needs, so it never narrows a readable
+/// cluster. `ORDER BY` is deliberately absent: the model sorts by `seqno`, because that order
+/// is a contract rastro keeps rather than one it asks the server for.
+const FILE_SETTINGS_QUERY: &str = "SELECT seqno, sourcefile, sourceline, name, setting, \
+     applied, error FROM pg_file_settings";
 
 /// Read nothing of the invoking account's, print no header, quote every value.
 ///
@@ -240,6 +251,7 @@ impl PostgresqlClusters {
             roles: read.as_ref().map(|read| read.roles.clone()),
             memberships: read.as_ref().map(|read| read.memberships.clone()),
             role_settings: read.as_ref().map(|read| read.role_settings.clone()),
+            file_settings: read.as_ref().map(|read| read.file_settings.clone()),
             databases: read.map(|read| read.databases),
         })
     }
@@ -333,6 +345,12 @@ impl PostgresqlClusters {
         Ok(ClusterReading {
             lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
             settings: PsqlSettings::parse(&self.ask(client, port, database, SETTINGS_QUERY)?)?,
+            file_settings: PsqlFileSettings::parse(&self.ask(
+                client,
+                port,
+                database,
+                FILE_SETTINGS_QUERY,
+            )?)?,
             roles: PsqlRoles::parse(&self.ask(client, port, database, ROLES_QUERY)?)?,
             role_settings: PsqlRoleSettings::parse(&self.ask(
                 client,
@@ -472,6 +490,7 @@ struct ClusterReading {
     settings: ClusterSettings,
     roles: ClusterRoles,
     role_settings: ClusterRoleSettings,
+    file_settings: ClusterFileSettings,
     memberships: ClusterMemberships,
     databases: ClusterDatabases,
 }

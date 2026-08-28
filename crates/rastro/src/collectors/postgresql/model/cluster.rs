@@ -3,8 +3,8 @@
 use rastro_collector::Observation;
 
 use crate::collectors::postgresql::model::{
-    ClusterDatabases, ClusterMemberships, ClusterRoleSettings, ClusterRoles, ClusterSettings,
-    Postmaster, ReadLens,
+    ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings, ClusterRoles,
+    ClusterSettings, Postmaster, ReadLens,
 };
 use crate::collectors::postgresql::value_objects::ClusterStatus;
 
@@ -29,6 +29,7 @@ pub struct Cluster {
     pub observed: Option<Postmaster>,
     pub lens: Option<ReadLens>,
     pub settings: Option<ClusterSettings>,
+    pub file_settings: Option<ClusterFileSettings>,
     pub roles: Option<ClusterRoles>,
     pub memberships: Option<ClusterMemberships>,
     pub role_settings: Option<ClusterRoleSettings>,
@@ -99,6 +100,14 @@ impl From<&Cluster> for Observation {
             "settings",
             match &cluster.settings {
                 Some(settings) => Observation::from(settings),
+                None => Observation::null(),
+            },
+        ));
+
+        entries.push((
+            "file_settings",
+            match &cluster.file_settings {
+                Some(file_settings) => Observation::from(file_settings),
                 None => Observation::null(),
             },
         ));

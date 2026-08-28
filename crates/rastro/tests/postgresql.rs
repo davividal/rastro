@@ -12,9 +12,9 @@ use std::os::unix::fs::PermissionsExt;
 use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
-    PostgresqlCollector, PostmasterStatus, PsqlDatabases, PsqlMemberships, PsqlReadLens,
-    PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster, Setting, SettingName,
-    SettingSource,
+    PostgresqlCollector, PostmasterStatus, PsqlDatabases, PsqlFileSettings, PsqlMemberships,
+    PsqlReadLens, PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster, Setting,
+    SettingName, SettingSource,
 };
 use rastro_collector::{Collector, Observation, Presence};
 use support::fs_tree::scratch_tree;
@@ -75,6 +75,14 @@ orders,migrator,search_path=public
 /// peer authentication, in the database that answered.
 const LENS: &str = "\
 postgres,postgres,t,t
+";
+
+/// The seven columns the file-settings query asks for: a plain line, a credential-bearing
+/// one, and a drop-in that will not apply, which is the typo a file comparison reads past.
+const FILE_SETTINGS: &str = "\
+1,/etc/postgresql/17/main/postgresql.conf,110,max_connections,100,t,
+2,/etc/postgresql/17/main/postgresql.conf,112,archive_command,rsync %p backup:%f,t,
+3,/etc/postgresql/17/main/conf.d/10-bad.conf,4,shared_buffers,notasize,f,invalid value for parameter shared_buffers
 ";
 
 fn parsed(csv: &str) -> Vec<Setting> {
@@ -379,6 +387,7 @@ fn clusters_render_in_one_deterministic_key_order() {
                 roles: None,
                 memberships: None,
                 role_settings: None,
+                file_settings: None,
                 observed: None,
                 lens: None,
                 databases: None,
@@ -406,6 +415,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         roles: Some(PsqlRoles::parse(ROLES).expect("well formed")),
         memberships: Some(PsqlMemberships::parse(MEMBERSHIPS).expect("well formed")),
         role_settings: Some(PsqlRoleSettings::parse(ROLE_SETTINGS).expect("well formed")),
+        file_settings: Some(PsqlFileSettings::parse(FILE_SETTINGS).expect("well formed")),
         observed: None,
         lens: Some(PsqlReadLens::parse(LENS).expect("well formed")),
         databases: Some(PsqlDatabases::parse(DATABASES).expect("well formed")),
@@ -418,6 +428,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         roles: None,
         memberships: None,
         role_settings: None,
+        file_settings: None,
         observed: None,
         lens: None,
         databases: None,
@@ -508,6 +519,7 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         roles: None,
         memberships: None,
         role_settings: None,
+        file_settings: None,
         observed: None,
         lens: None,
         databases: None,
@@ -578,6 +590,7 @@ fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
         roles: None,
         memberships: None,
         role_settings: None,
+        file_settings: None,
         observed: None,
         databases: None,
     };
@@ -648,6 +661,7 @@ fn answering_every_query() -> String {
         "case \"$*\" in\n\
          *pg_read_all_settings*) cat <<'EOF'\n{LENS}EOF\n ;;\n\
          *pg_db_role_setting*) cat <<'EOF'\n{ROLE_SETTINGS}EOF\n ;;\n\
+         *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *pg_auth_members*) cat <<'EOF'\n{MEMBERSHIPS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
@@ -758,6 +772,28 @@ fn read_carries_a_running_clusters_role_settings() {
 }
 
 #[test]
+fn read_carries_a_running_clusters_file_settings() {
+    // Act
+    let clusters = read_with(
+        "file-settings",
+        "17  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_every_query(),
+    );
+
+    // Assert: the configuration-file lines are read apart from the effective settings, so a
+    // value edited without a reload, and a line that will not apply, are both visible.
+    let file_settings = clusters
+        .clusters()
+        .values()
+        .next()
+        .expect("one cluster")
+        .file_settings
+        .as_ref()
+        .expect("a running cluster is asked for its file settings");
+    assert_eq!(file_settings.settings().len(), 3);
+}
+
+#[test]
 fn read_carries_the_lens_the_settings_were_read_through() {
     // Act
     let clusters = read_with(
@@ -790,6 +826,7 @@ fn a_non_privileged_read_marks_the_settings_incomplete() {
         roles: None,
         memberships: None,
         role_settings: None,
+        file_settings: None,
         observed: None,
         databases: None,
     };
@@ -843,6 +880,7 @@ orders,postgres,t,-1,f
          case \"$*\" in\n\
          *pg_read_all_settings*) cat <<'EOF'\n{LENS}EOF\n ;;\n\
          *pg_db_role_setting*) cat <<'EOF'\n{ROLE_SETTINGS}EOF\n ;;\n\
+         *pg_file_settings*) cat <<'EOF'\n{FILE_SETTINGS}EOF\n ;;\n\
          *pg_settings*) cat <<'EOF'\n{SETTINGS}EOF\n ;;\n\
          *aclexplode*) cat <<'EOF'\n{DATABASE_GRANTS}EOF\n ;;\n\
          *pg_database*) cat <<'EOF'\n{without_postgres}EOF\n ;;\n\

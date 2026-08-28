@@ -29,14 +29,14 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    Cluster, ClusterDatabases, ClusterMemberships, ClusterRoleSettings, ClusterRoles,
-    ClusterSettings, Clusters, Database, DatabaseExtensions, DatabaseGrants, Extension, Grant,
-    Membership, Postmaster, ReadLens, Role, RoleSetting, Setting,
+    Cluster, ClusterDatabases, ClusterFileSettings, ClusterMemberships, ClusterRoleSettings,
+    ClusterRoles, ClusterSettings, Clusters, Database, DatabaseExtensions, DatabaseGrants,
+    Extension, FileSetting, Grant, Membership, Postmaster, ReadLens, Role, RoleSetting, Setting,
 };
 pub use source::{
     ClusterInventory, PostgresqlClusters, PostmasterPid, PsqlDatabaseGrants, PsqlDatabases,
-    PsqlExtensions, PsqlMemberships, PsqlReadLens, PsqlResultSet, PsqlRoleSettings, PsqlRoles,
-    PsqlSettings, RegisteredCluster,
+    PsqlExtensions, PsqlFileSettings, PsqlMemberships, PsqlReadLens, PsqlResultSet,
+    PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster,
 };
 pub use value_objects::{
     ClusterId, ClusterStatus, DatabaseName, DatabasePrivilege, ExtensionName, Grantee,
