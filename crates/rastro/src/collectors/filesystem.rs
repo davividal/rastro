@@ -97,6 +97,9 @@ impl FilesystemCollector {
     ///
     /// What a bind mount looks like to the walk: a directory of the tree being walked that is
     /// also a mount point, so it shares the device and must still stop the walk.
+    ///
+    /// Reports the running binary, like [`Self::walking`]: only a caller that says it staged
+    /// a temporary copy gets the omission, and this constructor is handed no such decision.
     pub fn walking_within(
         roots: Vec<AbsolutePath>,
         boundaries: Vec<AbsolutePath>,
@@ -105,7 +108,7 @@ impl FilesystemCollector {
         Self::of(
             Some(WalkBoundaries::of(roots, boundaries)),
             Ok(policy),
-            Self::running_binary(),
+            None,
         )
     }
 

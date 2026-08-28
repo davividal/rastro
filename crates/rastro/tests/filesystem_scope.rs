@@ -285,11 +285,26 @@ fn a_local_run_reports_the_executable_it_is_running_from() {
 
     // Assert: a rastro installed on a box is part of that box, and a swapped binary is
     // exactly the change a fingerprint should catch. Only a caller that says it staged a
-    // temporary copy gets the omission.
-    assert!(
-        keys_of(&observed).contains(&observer.to_string_lossy().into_owned()),
-        "a local run must report its own binary"
-    );
+    // temporary copy gets the omission, whichever constructor named the roots.
+    let root = AbsolutePath::new(directory.to_str().expect("utf-8"), "root").expect("legal");
+    let within = FilesystemCollector::walking_within(
+        vec![root.clone()],
+        vec![root],
+        WalkPolicy::new(vec![PolicyRule::shipped(
+            WalkedTree::new("/").expect("a legal tree"),
+            ContentPolicy::MetadataOnly,
+        )])
+        .expect("a legal table"),
+    )
+    .collect()
+    .expect("the tree is readable");
+
+    for reported in [&observed, &within] {
+        assert!(
+            keys_of(reported).contains(&observer.to_string_lossy().into_owned()),
+            "an unstaged run must report its own binary"
+        );
+    }
 }
 
 #[test]
