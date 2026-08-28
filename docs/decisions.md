@@ -48,6 +48,9 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [Device numbers](#a-device-node-records-its-major-and-minor-numbers) | a device node's state is its major and minor, split out of the packed `st_rdev` |
 | [Hardened open](#hashing-opens-with-o_nofollow-and-o_nonblock) | the stat and the open are two calls, so the open refuses a swapped-in symlink or fifo |
 | [Attributes owed](#acls-and-extended-attributes-are-owed-not-dropped) | ACLs and xattrs are one decision, deferred whole rather than built a third at a time |
+| [pg_settings is one session's view](#pg_settings-is-one-sessions-view-not-the-clusters) | the facet compensates with the lens, role settings, and file settings rather than trusting it |
+| [Running vs configured port](#a-clusters-running-port-comes-from-postmasterpid-its-configured-port-from-pg_lsclusters) | postmaster.pid is the observed half, kept apart from what pg_lsclusters configures |
+| [Stable columns only](#only-the-stable-columns-of-a-moving-catalogue-are-read) | slots and pg_control give identity and shape, never the LSNs and counters that move |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1053,3 +1056,57 @@ settled.
 
 **Cost:** until it lands, a capability-only or label-only change is invisible to
 rastro, and that is a known false negative rather than an unknown one.
+# PostgreSQL: the server's effective and observed state
+
+_2026-08._ The facet grew from reading a cluster's settings to reading what the
+server is actually running with, and these are the decisions that shaped it.
+
+## pg_settings is one session's view, not the cluster's
+
+`pg_settings` is a projection of the connecting backend's own GUC array, not a
+cluster-wide catalogue. It folds the reading role's and database's `ALTER ROLE` /
+`ALTER DATABASE` defaults into its map as though they were global, and it silently
+drops the 21 `GUC_SUPERUSER_ONLY` rows for a role that is neither a superuser nor a
+member of `pg_read_all_settings`. Read alone, it is confidently wrong in ways a
+diff cannot see.
+
+So the facet does not trust it alone. It records the **lens** the settings were
+read through (role, database, superuser, `pg_read_all_settings`) and derives
+**`settings_complete`**, which goes false when that lens dropped the privileged
+rows. It reads **`pg_db_role_setting`** apart, so the scoped defaults are visible
+as scoped rather than folded into the map. And it reads **`pg_file_settings`**,
+which re-parses the files, so a value edited without a reload, and a line that will
+not apply at all, are both seen.
+
+**Cost:** several more reads per cluster, all server-wide from the one connection
+the facet already opens. The credential-bearing settings are redacted by name, so
+the added reads do not widen what leaks.
+
+## A cluster's running port comes from postmaster.pid, its configured port from pg_lsclusters
+
+The same rule the `exporters` and `sockets` facets already follow: a configured
+fact and an observed fact are kept apart so they can disagree. `pg_lsclusters`
+prints the port from `postgresql.conf`, which is stale the moment the file is
+edited without a reload; `postmaster.pid` line 4 is the port the server is actually
+serving on. The facet records both, and connects on the observed one, so a
+stale-config port can no longer make a live cluster read as `down`. `postmaster.pid`
+also carries `PM_STATUS`, which tells a standby deliberately refusing connections
+apart from a broken cluster.
+
+**Cost:** a privileged file read at the data directory pg_lsclusters names. Absent
+is not a failure: a cleanly stopped cluster has removed the file.
+
+## Only the stable columns of a moving catalogue are read
+
+`pg_control` and `pg_replication_slots` each carry a mix of state and motion. The
+facet takes the stable half and leaves the rest: from `pg_control`, the system
+identifier and the timeline (which say which cluster this is and whether it was
+promoted), never the LSNs, xids and checkpoint time that move on every checkpoint;
+from a replication slot, its identity and shape, never its `restart_lsn`,
+`confirmed_flush_lsn`, `wal_status` or `active` flag. `pg_hba_file_rules` is read
+version-aware, because `rule_number` and `file_name` are PostgreSQL 16 additions
+and asking for them on 15 would fail the read.
+
+**Cost:** the moving columns are genuinely useful to an operator watching a slot
+catch up, and a fingerprint deliberately does not carry them. That is a job for a
+monitor, not a diff.

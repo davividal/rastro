@@ -110,8 +110,9 @@ no `pg_lsclusters` means no Debian-managed cluster, which is state. A cluster
 built from source and started by hand is missed, and that is a named gap rather
 than a claim.
 
-A stopped cluster is neither of those. It is recorded, with its settings null,
-because a server that is not running has no effective configuration to read.
+A stopped cluster is neither of those. It is recorded, with its settings and the
+rest of its server state null, because a server that is not running has no
+effective configuration to read.
 Substituting its `postgresql.conf` would report a file as the state of
 something not applying it.
 
