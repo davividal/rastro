@@ -1078,6 +1078,14 @@ as scoped rather than folded into the map. And it reads **`pg_file_settings`**,
 which re-parses the files, so a value edited without a reload, and a line that will
 not apply at all, are both seen.
 
+**Verified on PostgreSQL 17.11:** a superuser saw 380 settings and a non-superuser
+role 358, silently, with no error either side; `SHOW data_directory` as that role
+raised `permission denied to examine "data_directory"` (42501), and its lens read
+`is_superuser=f, pg_read_all_settings=f`, so `settings_complete` is false. Querying
+`pg_file_settings` in one session flipped `max_connections`'s `pending_restart`
+from false to true, while a fresh session read it false again, which is why each
+catalogue is read on its own connection.
+
 **Cost:** several more reads per cluster, all server-wide from the one connection
 the facet already opens. The credential-bearing settings are redacted by name, so
 the added reads do not widen what leaks.
@@ -1093,6 +1101,11 @@ stale-config port can no longer make a live cluster read as `down`. `postmaster.
 also carries `PM_STATUS`, which tells a standby deliberately refusing connections
 apart from a broken cluster.
 
+**Verified on Debian 12 / PostgreSQL 15:** with the port edited to 5433 in
+`postgresql.conf` and not reloaded, `pg_lsclusters` reported 5433 while
+`postmaster.pid` line 4 and the running server stayed on 5432. The pid file's line
+8 was `ready` (space-padded), lines 1 and 3 the volatile PID and start time.
+
 **Cost:** a privileged file read at the data directory pg_lsclusters names. Absent
 is not a failure: a cleanly stopped cluster has removed the file.
 
@@ -1106,6 +1119,13 @@ from a replication slot, its identity and shape, never its `restart_lsn`,
 `confirmed_flush_lsn`, `wal_status` or `active` flag. `pg_hba_file_rules` is read
 version-aware, because `rule_number` and `file_name` are PostgreSQL 16 additions
 and asking for them on 15 would fail the read.
+
+**Verified on a box:** `pg_control_system()` returned the system identifier for a
+non-superuser role on PostgreSQL 17, confirming the `pg_control_*` family is
+EXECUTE-to-PUBLIC. On Debian 12 / PostgreSQL 15, `pg_hba_file_rules` had nine
+columns (no `rule_number`, no `file_name`), and hiding the server binary made
+`pg_lsclusters` print `down,binaries_missing`, the qualifier the status parser now
+records rather than fails on.
 
 **Cost:** the moving columns are genuinely useful to an operator watching a slot
 catch up, and a fingerprint deliberately does not carry them. That is a job for a
