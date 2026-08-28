@@ -225,6 +225,26 @@ fn claimed_reads_a_claimed_tree_the_way_its_claimant_asked() {
 }
 
 #[test]
+fn claimed_reads_a_metadata_only_claim_as_metadata_only() {
+    // Arrange: the level no built-in claimant uses yet, for a tree too large to hash whose
+    // stamps are still the signal: a media store, where a new file arriving is exactly what
+    // an operator wants to see.
+    let store = tree("/srv/media");
+
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("media"), &[FilesystemClaim::metadata_only(store)])
+        .expect("a tree no shipped rule names");
+
+    // Assert: content unread, and nothing else stepped back. That is the difference from
+    // `Churns`, where the size, the inode and both stamps go volatile as well.
+    let rule = rule_for(&policy, "/srv/media");
+    assert_eq!(rule.content, ContentPolicy::MetadataOnly);
+    assert!(!rule.content.churns());
+    assert!(rule.content.is_descended());
+}
+
+#[test]
 fn claimed_carries_the_shipped_rules_through_untouched() {
     // Arrange
     let claims = [FilesystemClaim::churns(tree("/var/lib/dpkg"))];
