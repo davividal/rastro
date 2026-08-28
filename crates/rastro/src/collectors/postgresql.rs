@@ -3,12 +3,22 @@
 //! The walk from a Layer 2 signal to service-internal state, and the first collector to
 //! read a service rather than the kernel or the package manager.
 //!
-//! **The server's own view, not `postgresql.conf`.** A cluster's effective configuration
-//! is not what the file says: an `ALTER SYSTEM`, a command-line override or a value the
-//! build defaults to are all invisible in the file, and a file edited without a reload is
-//! a value the server is not using. `pg_settings` answers all of that in one place, and
-//! carries the two columns a file never can: where each value came from, and whether the
-//! running server has taken it up yet.
+//! **The server's own view, not `postgresql.conf`.** A cluster's effective configuration is
+//! not what the file says: an `ALTER SYSTEM`, a command-line override or a value the build
+//! defaults to are all invisible in the file, and a file edited without a reload is a value
+//! the server is not using. `pg_settings` carries the two columns a file never can: where
+//! each value came from, and whether the running server has taken it up yet.
+//!
+//! **But `pg_settings` is one session's view, not the cluster's**, and the reads around it
+//! exist to make that honest. It is a projection of the connecting backend's own GUC array,
+//! so it folds in the reading role's and database's `ALTER ROLE`/`ALTER DATABASE` defaults as
+//! though they were cluster-wide, and it silently drops the `GUC_SUPERUSER_ONLY` rows for a
+//! role that is not privileged to see them. So the settings map is recorded alongside: the
+//! `lens` it was read through, `settings_complete` when that lens dropped rows, and
+//! `role_settings` from the shared `pg_db_role_setting` catalogue, which is where those
+//! per-role and per-database defaults actually live. The configured port and status from
+//! `pg_lsclusters` are likewise kept apart from the `observed` half read from
+//! `postmaster.pid`, so a stale-config value shows as a disagreement rather than a fact.
 //!
 //! **Keyed by cluster**, because one box legitimately runs several: an upgrade leaves
 //! `16/main` and `15/main` side by side, each on its own port with its own effective
