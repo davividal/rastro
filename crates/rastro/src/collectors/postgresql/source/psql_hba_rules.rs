@@ -38,29 +38,9 @@ impl PsqlHbaRules {
                 COLUMNS_V16 => HbaRule {
                     rule_number: whole_number(&record[0])?,
                     file_name: present(&record[1]),
-                    line_number: whole_number(&record[2])?,
-                    connection_type: present(&record[3]),
-                    databases: present(&record[4]),
-                    users: present(&record[5]),
-                    address: present(&record[6]),
-                    netmask: present(&record[7]),
-                    auth_method: present(&record[8]),
-                    options: present(&record[9]),
-                    error: present(&record[10]),
+                    ..rule_from_common_columns(&record[2..])?
                 },
-                COLUMNS_V15 => HbaRule {
-                    rule_number: None,
-                    file_name: None,
-                    line_number: whole_number(&record[0])?,
-                    connection_type: present(&record[1]),
-                    databases: present(&record[2]),
-                    users: present(&record[3]),
-                    address: present(&record[4]),
-                    netmask: present(&record[5]),
-                    auth_method: present(&record[6]),
-                    options: present(&record[7]),
-                    error: present(&record[8]),
-                },
+                COLUMNS_V15 => rule_from_common_columns(&record[..])?,
                 other => {
                     return Err(CollectionError::new(format!(
                         "pg_hba_file_rules printed a row of {other} fields, where 9 (PostgreSQL \
@@ -74,6 +54,25 @@ impl PsqlHbaRules {
 
         ClusterHbaRules::new(rules)
     }
+}
+
+/// The nine columns both shapes share, read from wherever they begin: index 0 on the
+/// PostgreSQL 15 view, index 2 on 16 and later once `rule_number` and `file_name` are taken
+/// off the front. Those two version-specific fields are left absent for the caller to fill.
+fn rule_from_common_columns(columns: &[String]) -> Result<HbaRule, CollectionError> {
+    Ok(HbaRule {
+        rule_number: None,
+        file_name: None,
+        line_number: whole_number(&columns[0])?,
+        connection_type: present(&columns[1]),
+        databases: present(&columns[2]),
+        users: present(&columns[3]),
+        address: present(&columns[4]),
+        netmask: present(&columns[5]),
+        auth_method: present(&columns[6]),
+        options: present(&columns[7]),
+        error: present(&columns[8]),
+    })
 }
 
 /// An empty column is an absent number.
