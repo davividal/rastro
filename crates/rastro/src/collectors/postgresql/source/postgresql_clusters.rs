@@ -386,8 +386,14 @@ impl PostgresqlClusters {
             }
         }
 
+        // The candidate database is rarely why this fails: a missing `postgres` is far less
+        // likely than the wrong port, a standby refusing connections under `hot_standby =
+        // off`, or `max_connections` exhausted. So the message reports the per-attempt reasons
+        // rather than blaming the databases, which the two candidates could not fix anyway.
         Err(CollectionError::new(format!(
-            "cluster {} answered on no database tried ({})",
+            "cluster {} could not be read on any database tried, which is rarely the database's \
+             fault: look to the connection, a standby refusing connections, or exhausted \
+             connections. The attempts reported: {}",
             cluster.id.as_str(),
             refusals.join("; ")
         )))
