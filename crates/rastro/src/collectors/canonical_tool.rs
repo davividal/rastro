@@ -55,6 +55,7 @@ pub use tool_output::ToolOutput;
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use rastro_collector::CollectionError;
@@ -62,6 +63,15 @@ use subprocess::{Exec, ExecExt, ExitStatus, Job, JobExt, Redirection};
 
 /// How much of a failing tool's stderr is quoted back.
 const STDERR_QUOTED: usize = 512;
+
+/// Linux `ETXTBSY`: a file still open for writing cannot be executed.
+const TEXT_FILE_BUSY: i32 = 26;
+
+/// How long a spawn keeps retrying while the binary is briefly held open for writing.
+const SPAWN_BUSY_BUDGET: Duration = Duration::from_secs(1);
+
+/// The pause between those retries; the condition clears in well under this.
+const SPAWN_BUSY_PAUSE: Duration = Duration::from_millis(5);
 
 /// What to say when a tool failed and said nothing, which is how many signal by status alone.
 ///
@@ -174,10 +184,7 @@ impl CanonicalTool {
     /// unchanged: same bounds, same group kill, same refusal of a non-zero exit and of
     /// invalid UTF-8.
     pub fn run_capturing_stderr(&self, arguments: &[&str]) -> Result<ToolOutput, CollectionError> {
-        let mut job = self
-            .command(arguments)
-            .start()
-            .map_err(|error| self.failure(format!("could not be started: {error}")))?;
+        let mut job = self.started_tool(arguments)?;
 
         // Both run before either is propagated, so the child is always reaped, and the read's
         // own diagnosis wins over the wait's when both fail.
@@ -198,6 +205,32 @@ impl CanonicalTool {
             stdout: self.decoded(stdout, "stdout")?,
             stderr: self.decoded(stderr, "stderr")?,
         })
+    }
+
+    /// Starts the tool, retrying only the transient `ETXTBSY`.
+    ///
+    /// A binary still held open for writing cannot be exec'd (`ETXTBSY`, "text file busy").
+    /// rastro never writes the tools it runs, so on a real host this only appears when another
+    /// process is mid-write to the binary, a package upgrade rewriting it, and it clears in
+    /// milliseconds. A bounded retry turns that spurious failure into a successful run without
+    /// relaxing any guarantee: the resolved path, argument vector, cleared environment and run
+    /// bounds are identical on every attempt.
+    fn started_tool(&self, arguments: &[&str]) -> Result<Job, CollectionError> {
+        let deadline = Instant::now() + SPAWN_BUSY_BUDGET;
+        loop {
+            match self.command(arguments).start() {
+                Ok(job) => return Ok(job),
+                Err(error)
+                    if error.raw_os_error() == Some(TEXT_FILE_BUSY)
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(SPAWN_BUSY_PAUSE);
+                }
+                Err(error) => {
+                    return Err(self.failure(format!("could not be started: {error}")));
+                }
+            }
+        }
     }
 
     /// One stream, refused rather than repaired when it is not UTF-8.
