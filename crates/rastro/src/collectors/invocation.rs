@@ -59,14 +59,23 @@ pub struct InvocationCollector {
     name: FacetName,
     identity: CollectorIdentity,
     effective_config: Observation,
+    walk_policy: Observation,
 }
 
 impl InvocationCollector {
-    /// Takes the effective config rather than reading one, so the document's
-    /// self-description is whatever the composition root actually resolved.
-    pub fn new(effective_config: Observation) -> Self {
+    /// Takes the effective config and the effective walk table rather than reading either,
+    /// so the document's self-description is whatever the composition root actually
+    /// resolved.
+    ///
+    /// The walk table belongs here for the same reason the config does: it is a decision
+    /// this run made, not state observed on the host, and a reader looking at a tree with no
+    /// digests needs one place that says which rule applied and which facet asked for it.
+    /// `null` where the table could not be resolved, which is the conflict the `filesystem`
+    /// facet reports as its error.
+    pub fn new(effective_config: Observation, walk_policy: Observation) -> Self {
         Self {
             effective_config,
+            walk_policy,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
@@ -101,6 +110,7 @@ impl Collector for InvocationCollector {
             ("rastro_version", Observation::text(RASTRO_VERSION)),
             ("config", self.effective_config.clone()),
             ("started_at", Observation::integer(started_at).volatile()),
+            ("walk_policy", self.walk_policy.clone()),
         ]))
     }
 }

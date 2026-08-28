@@ -51,6 +51,11 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [pg_settings is one session's view](#pg_settings-is-one-sessions-view-not-the-clusters) | the facet compensates with the lens, role settings, and file settings rather than trusting it |
 | [Running vs configured port](#a-clusters-running-port-comes-from-postmasterpid-its-configured-port-from-pg_lsclusters) | postmaster.pid is the observed half, kept apart from what pg_lsclusters configures |
 | [Stable columns only](#only-the-stable-columns-of-a-moving-catalogue-are-read) | slots and pg_control give identity and shape, never the LSNs and counters that move |
+| [Derived stamps are volatile](#a-directorys-stamps-and-link-count-are-derived-so-they-are-volatile) | a directory summarises children the walk already reports one by one |
+| [Collectors claim their own trees](#a-collector-claims-the-trees-it-owns-and-the-walk-narrows-to-fit) | the owner of a tree knows where it is and what already reports it; a claim only narrows |
+| [A contested tree fails the facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet) | no winner is picked, because two rules for one tree is a bug in a collector pair |
+| [Churn stops reporting what moves](#a-tree-that-churns-without-meaning-stops-reporting-the-attributes-that-move) | withholding only the digest left the journals in the diff on mtime alone |
+| [The walk table is self-description](#the-effective-walk-table-travels-in-the-invocation-facet) | one place says which rule applied to a tree and which facet asked for it |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1130,3 +1135,140 @@ records rather than fails on.
 **Cost:** the moving columns are genuinely useful to an operator watching a slot
 catch up, and a fingerprint deliberately does not carry them. That is a job for a
 monitor, not a diff.
+
+# Layer 1: the noise a real before-and-after produced
+
+Dated 2026-08-28. Driven by the first full cycle against the reference box, where
+applying an Ansible role added 22 packages: 568 entries added, 2 removed, 163
+modified, and a two-run noise floor of six paths measured before any of it was
+attributed to the change.
+
+## A directory's stamps and link count are derived, so they are volatile
+
+Refines [Neither is volatile](#an-inodes-timestamps-are-nanoseconds-since-the-epoch-and-atime-is-not-recorded),
+which said the answer to stamp churn is the walker's exclusion scope. That holds for
+a file, and it does not hold for a directory, because a directory's `st_mtim`,
+`st_ctim` and `st_nlink` are not observations of the directory at all: they are a
+summary of the entries under it, and the walk reports every one of those entries in
+its own right. So the value moves on its own as far as the reader is concerned, and
+it says nothing the neighbouring keys do not already say.
+
+`FileKind::summarises_what_is_inside_it` is the whole rule, and it is `true` for a
+directory only. A regular file keeps both stamps and its link count in the diffable
+view: nothing derives them, an in-place rewrite that kept the size moves the mtime
+and only the mtime, and the link count is how a hardlink shows at all.
+
+**Measured, not assumed.** Of the 163 modified entries in the reference cycle, 104
+were directories whose only change was these three fields, and 64 of those had an
+added or removed child in the same document. The remaining 40 are apt, dpkg and man
+cache directories, where the fact that something churned inside is exactly what the
+entries inside report.
+
+**Volatile, not dropped.** The stamps are still read and still rendered, so
+`--include-volatile` answers the operator who does want to know when a directory
+moved. Derived is not unobserved.
+
+**Cost:** a directory whose child was created and deleted between two runs now shows
+nothing in the diffable view, where before it showed a stamp. That is the intended
+trade: the diffable view carries what a reader can act on, and an event with no
+surviving trace is not that.
+
+## A collector claims the trees it owns, and the walk narrows to fit
+
+The filesystem walk is agnostic by design and that is its whole value: it reads every
+mount that holds files and needs no declaration to find anything. It is also why it
+cannot know that `/var/lib/postgresql/17/main` is a cluster whose catalogues the
+`postgresql` facet already reports properly, or that reading it on a real database
+server means hashing a petabyte.
+
+The collector that owns the tree knows both. `Collector::filesystem_claims` is how it
+says so, and the vocabulary is three steps back from the default: `MetadataOnly` (stat
+everything, open nothing), `Churns` (and the attributes that move on their own are
+volatile), `Sealed` (record the tree's own directory and do not descend).
+
+**A claim only narrows, and the type is what enforces it.** `ClaimedReading` cannot
+spell "hash this", so no claim can widen the walk, ask for an algorithm, or reach a
+tree the operator excluded. The config layer follows the same rule by policy; here it
+is unspellable.
+
+**Through the port, so nobody depends on anybody.** `WalkedTree` and the claim types
+live in `rastro-collector`, which both sides already depend on. The walk consumes
+claims without knowing who wrote them, a claimant names a tree without knowing
+anything about walking, and `collectors.rs` is the only place that knows both, because
+registration is already its job.
+
+**Resolved from the host, not declared.** A claim names the path the collector found,
+not the one its distribution's default would use, for the same reason the facet reads
+`pg_lsclusters` rather than assuming a data directory. A claim that cannot be resolved
+is left unmade: the walk's own default is the safe direction to be wrong in, and it is
+loud rather than silent.
+
+**Asked of every built-in collector, including one the config excludes.** The narrower
+of two wrong answers. Releasing a claim because its facet was excluded would make an
+exclusion *widen* the walk, so `--exclude postgresql` would quietly put a cluster's
+data directory back under the hashing default and hash 300 MB of WAL on the way past.
+
+**Cost:** a claimant's mistake is now a fingerprint's blind spot, and it is a mistake
+made in a different file from the one whose output changes. The effective table is what
+makes it visible, which is why the next entry is not optional.
+
+## The effective walk table travels in the `invocation` facet
+
+Three doc comments already promised this and nothing implemented it: the `invocation`
+facet carried `excluded_collectors`, `source` and `view`, and no reader could tell a
+missing digest from a policy decision. With collectors able to change that policy, the
+promise became load-bearing.
+
+The table renders keyed by tree, each rule carrying its `reading` and the facet that
+asked, `claimed_by`. rastro's own shipped rules name the `filesystem` facet, so every
+rule has a claimant and there is no absent case to interpret.
+
+**In `invocation` rather than in `filesystem`.** It is a decision this run made, not
+state observed on the host, and that is exactly what the `invocation` facet is for. It
+also keeps the largest facet in the document from carrying its own legend.
+
+**Cost:** one more object in the envelope, and a diff of two hosts with different
+claimants now differs there as well as in the entries. That is the point: a table that
+moved is a change worth seeing.
+
+## A tree two collectors claim fails the `filesystem` facet
+
+Two rules for one tree leave no most specific answer, and every way of picking a winner
+would be rastro deciding for the operator which of two collectors was right about a
+tree neither should have been arguing over. It is a bug in a collector pair, and the
+box that produces it is real: a MySQL and a MariaDB collector both naming the same data
+directory because neither resolved it from the host.
+
+So the fold fails, and the message names the tree and both claimants. A claim that
+merely repeats a shipped rule is a conflict too, because agreeing by accident is not
+agreement, and the next release moving either side would turn a silent duplicate into a
+silent disagreement.
+
+**The facet, not the run.** The conflict makes the walk unanswerable and leaves every
+other facet as true as it was, so `FilesystemCollector` holds the unresolved table and
+reports the conflict as its own `error`. Failing the run would cost an operator the
+whole document over a bug in two collectors they did not write.
+
+**Cost:** the largest facet in the document can be lost to a mistake in an unrelated
+collector, and the walk is where it surfaces rather than where it was made. The message
+carries both names for exactly that reason.
+
+## A tree that churns without meaning stops reporting the attributes that move
+
+`CHURNS_WITHOUT_MEANING` was `MetadataOnly`, which withheld the digest and nothing
+else. Measured on the reference cycle, that left the very noise the list exists to
+remove: both journals and the timesync clock still in the diff on mtime alone, and
+`/var/cache` on size and inode. So the shipped list is `Churns`, and size, inode and
+both stamps are volatile under it.
+
+What survives is presence, kind, permissions and ownership, which is what an operator
+can act on in a tree that writes to itself. `Sealed` churns too, since the only entry
+it produces is a directory whose stamps move for contents nothing is going to report.
+
+**Measured:** with the derived-stamp rule and this one together, the 163 modified
+entries of the reference cycle become 17, and with the three claims that follow, one:
+`/etc/ld.so.cache`, which genuinely changed because 22 packages landed.
+
+**Cost:** a log file rewritten to a different size no longer shows in the diffable
+view, and neither does a journal replaced wholesale. The complete view still carries
+both, and `/var/log` was never the tree a fingerprint was watching.

@@ -10,7 +10,6 @@ mod digest_algorithm;
 mod file_kind;
 mod file_mode;
 mod nanoseconds_since_epoch;
-mod walked_tree;
 
 pub use content_policy::ContentPolicy;
 pub use device_number::DeviceNumber;
@@ -19,4 +18,3 @@ pub use digest_algorithm::DigestAlgorithm;
 pub use file_kind::FileKind;
 pub use file_mode::FileMode;
 pub use nanoseconds_since_epoch::NanosecondsSinceEpoch;
-pub use walked_tree::WalkedTree;

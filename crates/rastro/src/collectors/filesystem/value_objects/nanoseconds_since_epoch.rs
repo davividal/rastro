@@ -11,11 +11,13 @@ use rastro_collector::Observation;
 /// would mean rastro being right about every zone and leap-second rule to gain
 /// readability and no signal.
 ///
-/// **Not volatile**, which is the difference from a systemd timer's moment: a file that
-/// nobody touched carries the same stamp on both runs, so the byte-identical guarantee
-/// holds with these in the document. Stamp and lock files whose only churn *is* their
-/// mtime are noise in a diff, but they are real changes, and the answer to them is the
-/// walker's exclusion scope rather than pretending the value moves on its own.
+/// **Not volatile of itself**, which is the difference from a systemd timer's moment: a
+/// file that nobody touched carries the same stamp on both runs, so the byte-identical
+/// guarantee holds with these in the document. Where a stamp is a *summary* rather than
+/// an observation, the entry carrying it says so: a directory's stamps are annotated
+/// volatile by [`FileEntry`](crate::collectors::filesystem::FileEntry), because the walk
+/// reports the children they move for. Stamp and lock files whose only churn *is* their
+/// mtime stay, because those are real changes to a real file.
 ///
 /// **There is no access time here on purpose.** rastro reads a file's content to hash it,
 /// which moves that file's atime, so recording atime would report the tool's own visit as

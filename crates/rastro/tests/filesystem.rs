@@ -1,10 +1,24 @@
-//! The walker's policy table: which trees get their content read, and which are
-//! known by their metadata alone.
+//! The walker's policy table: which trees get their content read, which are known by
+//! their metadata alone, and what a collector's claim over its own tree does to it.
 
-use rastro::collectors::filesystem::{
-    ContentPolicy, DigestAlgorithm, PolicyRule, WalkPolicy, WalkedTree,
-};
-use rastro_collector::AbsolutePath;
+mod support;
+
+use rastro::collectors::filesystem::{ContentPolicy, DigestAlgorithm, PolicyRule, WalkPolicy};
+use rastro_collector::{AbsolutePath, FacetName, FilesystemClaim, Observation, WalkedTree};
+use support::observation::{field, text};
+
+fn facet(name: &str) -> FacetName {
+    FacetName::new(name).expect("a legal facet name")
+}
+
+/// The rule a table holds for exactly this tree, rather than the one resolved for a path.
+fn rule_for<'a>(policy: &'a WalkPolicy, tree: &str) -> &'a PolicyRule {
+    policy
+        .rules()
+        .iter()
+        .find(|rule| rule.tree.as_str() == tree)
+        .unwrap_or_else(|| panic!("expected a rule for {tree:?}"))
+}
 
 fn tree(value: &str) -> WalkedTree {
     WalkedTree::new(value).expect("a legal tree")
@@ -19,10 +33,7 @@ fn hashed() -> ContentPolicy {
 }
 
 fn rule(value: &str, content: ContentPolicy) -> PolicyRule {
-    PolicyRule {
-        tree: tree(value),
-        content,
-    }
+    PolicyRule::shipped(tree(value), content)
 }
 
 fn table(rules: Vec<PolicyRule>) -> WalkPolicy {
@@ -171,12 +182,14 @@ fn built_in_hashes_what_it_was_not_told_to_leave_alone() {
 }
 
 #[test]
-fn built_in_downgrades_the_trees_that_churn_without_meaning() {
+fn built_in_marks_the_trees_that_churn_without_meaning_as_churning() {
     // Arrange
     let policy = WalkPolicy::built_in();
 
     // Act & Assert: measured on an idle Debian 12, where the only entries that moved
-    // in ninety seconds were two journals and the timesync clock.
+    // in ninety seconds were two journals and the timesync clock. `Churns` rather than
+    // `MetadataOnly`, because withholding only the digest left those same journals in the
+    // diff of a real cycle on their mtime alone.
     for churning in [
         "/tmp/scratch",
         "/var/tmp/staged",
@@ -188,10 +201,112 @@ fn built_in_downgrades_the_trees_that_churn_without_meaning() {
     ] {
         assert_eq!(
             policy.policy_for(&walked(churning)),
-            &ContentPolicy::MetadataOnly,
+            &ContentPolicy::Churns,
             "{churning} changes without meaning changing"
         );
     }
+}
+
+#[test]
+fn claimed_reads_a_claimed_tree_the_way_its_claimant_asked() {
+    // Arrange
+    let cluster = tree("/var/lib/postgresql/17/main");
+
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("postgresql"), &[FilesystemClaim::sealed(cluster)])
+        .expect("a tree no shipped rule names");
+
+    // Assert: the claim decides the reading, and the table records who asked, because a
+    // reader of a tree with no entries under it is owed the name of whoever removed them.
+    let rule = rule_for(&policy, "/var/lib/postgresql/17/main");
+    assert_eq!(rule.content, ContentPolicy::Sealed);
+    assert_eq!(rule.claimant.as_str(), "postgresql");
+}
+
+#[test]
+fn claimed_carries_the_shipped_rules_through_untouched() {
+    // Arrange
+    let claims = [FilesystemClaim::churns(tree("/var/lib/dpkg"))];
+
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("packages"), &claims)
+        .expect("a tree no shipped rule names");
+
+    // Assert: a claim narrows one tree and says nothing about any other, so `/usr` is still
+    // hashed and the shipped churn list still churns.
+    assert_eq!(policy.policy_for(&walked("/usr/bin/ls")), &hashed());
+    assert_eq!(
+        policy.policy_for(&walked("/var/log/syslog")),
+        &ContentPolicy::Churns
+    );
+    assert_eq!(
+        policy.policy_for(&walked("/var/lib/dpkg/status")),
+        &ContentPolicy::Churns
+    );
+}
+
+#[test]
+fn claimed_refuses_a_tree_another_rule_already_governs() {
+    // Arrange: two collectors claiming one tree is a bug in a collector pair, and the box
+    // that produces it is real: a MySQL and a MariaDB collector both naming the same data
+    // directory because neither resolved it from the host.
+    let contested = tree("/var/lib/mysql");
+    let claimed = WalkPolicy::built_in()
+        .claimed(
+            &facet("mysql"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("the first claim stands");
+
+    // Act
+    let refused = claimed.claimed(&facet("mariadb"), &[FilesystemClaim::sealed(contested)]);
+
+    // Assert: no winner is picked. The message names the tree and both claimants, because
+    // that is what makes it fixable, and the walk fails rather than reading a table with no
+    // most specific answer.
+    let message = refused.expect_err("one tree, two rules").to_string();
+    assert!(message.contains("/var/lib/mysql"), "got {message}");
+    assert!(message.contains("mariadb"), "got {message}");
+    assert!(message.contains("mysql"), "got {message}");
+}
+
+#[test]
+fn claimed_refuses_a_claim_that_repeats_a_shipped_rule() {
+    // Act
+    let refused = WalkPolicy::built_in().claimed(
+        &facet("journald"),
+        &[FilesystemClaim::churns(tree("/var/log"))],
+    );
+
+    // Assert: agreeing by accident is not agreement. Accepting the duplicate would leave the
+    // table silently ambiguous the moment either side moved.
+    assert!(refused.is_err());
+}
+
+#[test]
+fn the_effective_table_renders_every_rule_with_its_claimant() {
+    // Arrange
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("postgresql"),
+            &[FilesystemClaim::sealed(tree("/var/lib/postgresql/17/main"))],
+        )
+        .expect("a tree no shipped rule names");
+
+    // Act
+    let rendered = Observation::from(&policy);
+
+    // Assert: this is the legend for every absent digest in the document, so it carries the
+    // tree as its key, the reading, and the facet that asked for it.
+    let cluster = field(&rendered, "/var/lib/postgresql/17/main");
+    assert_eq!(text(&field(&cluster, "reading")), "sealed");
+    assert_eq!(text(&field(&cluster, "claimed_by")), "postgresql");
+
+    let root = field(&rendered, "/");
+    assert_eq!(text(&field(&root, "reading")), "hashed");
+    assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
 }
 
 #[test]

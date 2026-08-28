@@ -19,7 +19,7 @@ pub use value_objects::{
 // collector written outside this repo looks exactly like this.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 pub struct PackagesCollector {
@@ -93,5 +93,36 @@ impl Collector for PackagesCollector {
             .collect::<Result<Vec<_>, CollectionError>>()?;
 
         Ok(Observation::from(&PackageInventory::new(found)?))
+    }
+
+    /// The database of each manager that is here, as a tree that churns.
+    ///
+    /// dpkg's `/var/lib/dpkg` and apk's `/lib/apk/db` are where this facet's own answer
+    /// comes from, so hashing them adds a second, worse account of the same fact: "something
+    /// in the package database changed" where the facet already says which package, at which
+    /// version. They churn as well - `status-old`, the lock files and the trigger state all
+    /// move during any install - and on the reference cycle five of them were in the diff on
+    /// nothing but an inode or an mtime.
+    ///
+    /// Claimed per manager found rather than as a fixed pair, so an Alpine box claims apk's
+    /// database and not a Debian path it does not have.
+    ///
+    /// **Not sealed.** The files are few and their presence, mode and ownership are worth
+    /// seeing: a world-readable `/var/lib/dpkg` is a finding, and a missing one says the
+    /// manager was removed.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        self.sources
+            .iter()
+            .filter_map(|source| WalkedTree::new(database_of(source.manager())).ok())
+            .map(FilesystemClaim::churns)
+            .collect()
+    }
+}
+
+/// Where a manager keeps the database this facet reads.
+fn database_of(manager: PackageManager) -> &'static str {
+    match manager {
+        PackageManager::Apk => "/lib/apk/db",
+        PackageManager::Dpkg => "/var/lib/dpkg",
     }
 }

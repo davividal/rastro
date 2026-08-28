@@ -271,6 +271,36 @@ impl PostgresqlClusters {
         &self.inventory
     }
 
+    /// The data directories postgresql-common registered, for the trees the facet claims.
+    ///
+    /// Resolved rather than assumed, because `/var/lib/postgresql/<version>/<cluster>` is
+    /// Debian's default and not a rule: `pg_createcluster --datadir` puts a cluster
+    /// anywhere, and a claim over the default would then seal a directory that holds
+    /// nothing while hashing the one that holds a database.
+    ///
+    /// **A failed read makes no claim.** An unreadable register is a fact this facet reports
+    /// as its own `error`; making it fail the walk as well would cost the whole filesystem
+    /// over a missing PostgreSQL. The walk's own default is the safe direction to be wrong
+    /// in, and it is loud rather than silent.
+    ///
+    /// This runs `pg_lsclusters` a second time in a run, since claims are gathered before
+    /// any facet is collected. One bounded tool invocation is the honest price of not
+    /// caching a host reading between two questions that are asked at different times.
+    pub fn data_directories(&self) -> Vec<String> {
+        let Ok(listed) = self.inventory.run(&[]) else {
+            return Vec::new();
+        };
+
+        let Ok(registered) = ClusterInventory::parse(&listed) else {
+            return Vec::new();
+        };
+
+        registered
+            .into_iter()
+            .filter_map(|cluster| cluster.data_directory)
+            .collect()
+    }
+
     /// Enumerates the clusters, then reads the settings of each one that is running.
     pub fn read(&self) -> Result<Clusters, CollectionError> {
         let registered = ClusterInventory::parse(&self.inventory.run(&[])?)?;

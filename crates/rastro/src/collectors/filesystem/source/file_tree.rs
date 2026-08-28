@@ -92,6 +92,7 @@ impl FileTree {
             let entry = self.entry_of(&path, &metadata, policy)?;
 
             if entry.kind == FileKind::Directory
+                && entry.reading.is_descended()
                 && metadata.dev() == device
                 && !self.boundaries.contains(&path)
             {
@@ -130,6 +131,8 @@ impl FileTree {
         let recorded = absolute(path)?;
         let kind = kind_of(metadata);
 
+        let reading = policy.policy_for(&recorded).clone();
+
         Ok(FileEntry {
             kind,
             mode: FileMode::of(metadata.mode()),
@@ -152,7 +155,8 @@ impl FileTree {
             link_count: count(metadata.nlink(), "a link count", path)?,
             link_target: link_target_of(kind, path)?,
             device: device_of(kind, metadata),
-            digest: self.digest_of(kind, path, policy.policy_for(&recorded))?,
+            digest: self.digest_of(kind, path, &reading)?,
+            reading,
             path: recorded,
         })
     }

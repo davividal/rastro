@@ -10,10 +10,9 @@ mod support;
 use std::fs;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, DigestAlgorithm, FilesystemCollector, MountedFilesystems, PolicyRule,
-    WalkPolicy, WalkedTree,
+    ContentPolicy, DigestAlgorithm, FilesystemCollector, MountedFilesystems, PolicyRule, WalkPolicy,
 };
-use rastro_collector::{AbsolutePath, Collector, Presence};
+use rastro_collector::{AbsolutePath, CollectionError, Collector, Presence, WalkedTree};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::keys_of;
 
@@ -177,10 +176,10 @@ fn the_collector_reports_every_entry_under_the_roots_it_walks() {
             AbsolutePath::new(first.to_str().expect("utf-8"), "root").expect("legal"),
             AbsolutePath::new(second.to_str().expect("utf-8"), "root").expect("legal"),
         ],
-        WalkPolicy::new(vec![PolicyRule {
-            tree: WalkedTree::new("/").expect("a legal tree"),
-            content: ContentPolicy::Hashed(DigestAlgorithm::Sha256),
-        }])
+        WalkPolicy::new(vec![PolicyRule::shipped(
+            WalkedTree::new("/").expect("a legal tree"),
+            ContentPolicy::Hashed(DigestAlgorithm::Sha256),
+        )])
         .expect("a legal table"),
     );
 
@@ -215,6 +214,23 @@ fn the_collector_fails_rather_than_reporting_a_host_with_no_files() {
 }
 
 #[test]
+fn the_collector_fails_the_facet_when_the_claims_did_not_resolve() {
+    // Arrange: what two collectors claiming one tree leaves behind. The conflict is
+    // detected while the table is assembled, before any collector runs.
+    let conflicted = FilesystemCollector::under(Err(CollectionError::new(
+        "\"/var/lib/mysql\" is claimed by mariadb and already ruled by mysql",
+    )));
+
+    // Act
+    let refused = conflicted.collect();
+
+    // Assert: this facet and no other. A bug in a collector pair costs the walk, not the
+    // document, and the reason travels with it.
+    let failure = refused.expect_err("an unresolved table cannot be walked");
+    assert!(failure.to_string().contains("/var/lib/mysql"));
+}
+
+#[test]
 fn the_collector_collapses_a_path_two_walks_both_reached() {
     // Arrange: the same root twice, which is what a mount point reached from its parent
     // filesystem and as its own root looks like.
@@ -223,10 +239,10 @@ fn the_collector_collapses_a_path_two_walks_both_reached() {
     let path = AbsolutePath::new(root.to_str().expect("utf-8"), "root").expect("legal");
     let collector = FilesystemCollector::walking(
         vec![path.clone(), path],
-        WalkPolicy::new(vec![PolicyRule {
-            tree: WalkedTree::new("/").expect("a legal tree"),
-            content: ContentPolicy::MetadataOnly,
-        }])
+        WalkPolicy::new(vec![PolicyRule::shipped(
+            WalkedTree::new("/").expect("a legal tree"),
+            ContentPolicy::MetadataOnly,
+        )])
         .expect("a legal table"),
     );
 
@@ -248,10 +264,10 @@ fn the_collector_refuses_two_readings_of_one_path_that_disagree() {
     let root = scratch_tree("collector_disagree", &[]);
     write(&root, "greeting", "hello\n");
     let path = AbsolutePath::new(root.to_str().expect("utf-8"), "root").expect("legal");
-    let hashing = WalkPolicy::new(vec![PolicyRule {
-        tree: WalkedTree::new("/").expect("a legal tree"),
-        content: ContentPolicy::Hashed(DigestAlgorithm::Sha256),
-    }])
+    let hashing = WalkPolicy::new(vec![PolicyRule::shipped(
+        WalkedTree::new("/").expect("a legal tree"),
+        ContentPolicy::Hashed(DigestAlgorithm::Sha256),
+    )])
     .expect("a legal table");
 
     let first = FilesystemCollector::walking(vec![path.clone()], hashing.clone())

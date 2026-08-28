@@ -1,9 +1,13 @@
-//! Which trees the walker reads, and which it only measures.
+//! Which trees the walker reads, which it only measures, and which it stops at.
 
-use rastro_collector::{AbsolutePath, CollectionError};
+use std::collections::BTreeMap;
+
+use rastro_collector::{
+    AbsolutePath, CollectionError, FacetName, FilesystemClaim, Observation, WalkedTree,
+};
 
 use crate::collectors::filesystem::model::PolicyRule;
-use crate::collectors::filesystem::value_objects::{ContentPolicy, DigestAlgorithm, WalkedTree};
+use crate::collectors::filesystem::value_objects::{ContentPolicy, DigestAlgorithm};
 
 /// The trees whose content changes on an idle host without its meaning changing.
 ///
@@ -16,6 +20,11 @@ use crate::collectors::filesystem::value_objects::{ContentPolicy, DigestAlgorith
 /// instrument rather than a performance one: these trees are a seventh of the bytes on
 /// that box, while `/usr` is two thirds of them and is the tree a replaced binary hides
 /// in.
+///
+/// They are `Churns` rather than merely unhashed, because leaving their stamps and sizes
+/// alone left them producing the very noise the list exists to remove: two journals and
+/// the timesync clock were still in the diff of the reference cycle on mtime alone, and
+/// `/var/cache` on size and inode.
 const CHURNS_WITHOUT_MEANING: [&str; 6] = [
     "/tmp",
     "/var/tmp",
@@ -76,7 +85,7 @@ impl WalkPolicy {
     /// include what they already knew to look for, which is the premise this tool
     /// rejects.
     pub fn built_in() -> Self {
-        let mut rules = vec![Self::rule(
+        let mut rules = vec![Self::shipped_rule(
             "/",
             ContentPolicy::Hashed(DigestAlgorithm::Sha256),
         )];
@@ -84,10 +93,49 @@ impl WalkPolicy {
         rules.extend(
             CHURNS_WITHOUT_MEANING
                 .iter()
-                .map(|tree| Self::rule(tree, ContentPolicy::MetadataOnly)),
+                .map(|tree| Self::shipped_rule(tree, ContentPolicy::Churns)),
         );
 
         Self::new(rules).expect("the built-in table names each tree once and covers /")
+    }
+
+    /// The same table, with one collector's claims folded in.
+    ///
+    /// **A conflict fails rather than resolving.** Two rules for one tree leave no most
+    /// specific answer, and every way of picking a winner would be rastro deciding for the
+    /// operator which of two collectors was right about a tree neither of them should have
+    /// been arguing over. It is a bug in a collector pair, so it reads as one: the walk
+    /// fails, loudly, naming both claimants and the tree.
+    ///
+    /// A claim that merely repeats what the shipped table already says is still a conflict.
+    /// Agreeing by accident is not agreement, and the next release moving one of the two
+    /// would turn a silent duplicate into a silent disagreement.
+    pub fn claimed(
+        self,
+        claimant: &FacetName,
+        claims: &[FilesystemClaim],
+    ) -> Result<Self, CollectionError> {
+        let mut rules = self.rules;
+
+        for claim in claims {
+            if let Some(existing) = rules.iter().find(|rule| &rule.tree == claim.tree()) {
+                return Err(CollectionError::new(format!(
+                    "{:?} is claimed by {} and already ruled by {}, so no rule for it is \
+                     the most specific one",
+                    claim.tree().as_str(),
+                    claimant.as_str(),
+                    existing.claimant.as_str()
+                )));
+            }
+
+            rules.push(PolicyRule {
+                tree: claim.tree().clone(),
+                content: ContentPolicy::from(claim.reading()),
+                claimant: claimant.clone(),
+            });
+        }
+
+        Self::new(rules)
     }
 
     /// What to do with a path, according to the most specific tree that contains it.
@@ -109,10 +157,29 @@ impl WalkPolicy {
         &self.rules
     }
 
-    fn rule(tree: &str, content: ContentPolicy) -> PolicyRule {
-        PolicyRule {
-            tree: WalkedTree::new(tree).expect("a built-in tree is an absolute path"),
+    /// A rule rastro ships, named by the tree it governs.
+    fn shipped_rule(tree: &str, content: ContentPolicy) -> PolicyRule {
+        PolicyRule::shipped(
+            WalkedTree::new(tree).expect("a built-in tree is an absolute path"),
             content,
-        }
+        )
+    }
+}
+
+impl From<&WalkPolicy> for Observation {
+    /// The effective table, keyed by tree.
+    ///
+    /// Keyed rather than listed for the reason every other keyed facet gives: a tree
+    /// appears once by construction, so the key loses nothing and removes the ordering
+    /// churn a list would carry whenever a claimant came or went. `BTreeMap` because the
+    /// shape is open, so the order is sorted rather than declared.
+    fn from(policy: &WalkPolicy) -> Self {
+        let table: BTreeMap<String, Observation> = policy
+            .rules()
+            .iter()
+            .map(|rule| (rule.tree.as_str().to_owned(), Observation::from(rule)))
+            .collect();
+
+        Observation::object(table)
     }
 }

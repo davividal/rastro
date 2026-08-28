@@ -34,8 +34,11 @@ pub use value_objects::{
 // collector written outside this repo looks exactly like this.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
+
+/// Where apt keeps what it fetched from the repositories this facet reports.
+const APT_INDEXES: &str = "/var/lib/apt";
 
 pub struct RepositoriesCollector {
     name: FacetName,
@@ -109,5 +112,28 @@ impl Collector for RepositoriesCollector {
             .collect::<Result<Vec<_>, CollectionError>>()?;
 
         Ok(Observation::from(&RepositoryInventory::new(found)?))
+    }
+
+    /// apt's fetched indexes, as a tree that churns.
+    ///
+    /// `/var/lib/apt` is not host state: it is a cache of what the repositories this facet
+    /// reports were serving the last time somebody ran `apt update`. Hashing it records a
+    /// remote party's release file as if it were a local change, and on the reference cycle
+    /// that produced four entries in the diff, two of them on nothing but an inode.
+    ///
+    /// What the box is *configured* to fetch from lives in `/etc/apt`, which is hashed like
+    /// the rest of `/etc` and is the half this facet reads. The two are deliberately
+    /// separate: a source added by hand is a change, and an index refreshed by a timer is
+    /// not.
+    ///
+    /// apk gets no claim of its own, because its index cache is under `/var/cache`, which the
+    /// shipped table already covers. A rule for it would be a duplicate the table refuses.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        self.sources
+            .iter()
+            .filter(|source| source.system() == RepositorySystem::Apt)
+            .filter_map(|_| WalkedTree::new(APT_INDEXES).ok())
+            .map(FilesystemClaim::churns)
+            .collect()
     }
 }

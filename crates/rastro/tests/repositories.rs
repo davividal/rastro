@@ -13,7 +13,7 @@ use rastro::collectors::repositories::{
     Repository, RepositoryInventory, RepositorySet, RepositorySource, RepositorySystem, apt_deb822,
     apt_one_line,
 };
-use rastro_collector::{Collector, Presence};
+use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Content, Observation};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, object_of};
@@ -644,4 +644,38 @@ fn collect_reads_the_system_it_was_given() {
         Content::List(items) => assert_eq!(items.len(), 1),
         other => panic!("expected a list of repositories, got {other:?}"),
     }
+}
+
+#[test]
+fn the_collector_claims_apts_fetched_indexes() {
+    // Arrange
+    let root = tree("claims-apt");
+    write(&root, "sources.list.d/debian.sources", DEB822);
+    let collector =
+        RepositoriesCollector::reading(vec![RepositorySource::Apt(AptSources::at(&root))]);
+
+    // Act
+    let claims = collector.filesystem_claims();
+
+    // Assert: what apt fetched churns; what the box is configured to fetch lives in
+    // `/etc/apt` and stays hashed, because a source added by hand is a change and an index
+    // refreshed by a timer is not.
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].tree().as_str(), "/var/lib/apt");
+    assert_eq!(claims[0].reading(), ClaimedReading::Churns);
+}
+
+#[test]
+fn the_collector_claims_nothing_for_apk() {
+    // Arrange
+    let path = tree("claims-apk").join("repositories");
+
+    // Act
+    let claims =
+        RepositoriesCollector::reading(vec![RepositorySource::Apk(ApkRepositories::at(&path))])
+            .filesystem_claims();
+
+    // Assert: apk's index cache is under `/var/cache`, which the shipped table already
+    // covers, and a second rule for a tree inside it would be noise in the effective table.
+    assert!(claims.is_empty());
 }

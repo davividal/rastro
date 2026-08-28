@@ -13,9 +13,11 @@ mod byte_size;
 mod non_empty_text;
 mod process_name;
 mod setting_value;
+mod walked_tree;
 
 pub use absolute_path::AbsolutePath;
 pub use byte_size::ByteSize;
 pub use non_empty_text::NonEmptyText;
 pub use process_name::ProcessName;
 pub use setting_value::SettingValue;
+pub use walked_tree::WalkedTree;
