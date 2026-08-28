@@ -35,8 +35,18 @@ pub struct Setting {
 
 impl From<&Setting> for Observation {
     fn from(setting: &Setting) -> Self {
+        // Redaction is a property of the name, not the value: a value that merely looks like
+        // a secret is left alone, and a named credential-bearing setting is withheld even
+        // when the box happens to have left it empty.
+        let value = Observation::text(setting.value.as_str());
+        let value = if setting.name.holds_credential() {
+            value.sensitive()
+        } else {
+            value
+        };
+
         Observation::object([
-            ("value", Observation::text(setting.value.as_str())),
+            ("value", value),
             (
                 "unit",
                 match &setting.unit {

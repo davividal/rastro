@@ -1,18 +1,25 @@
 //! Finding the clusters, and asking each running one what it is configured with.
 
+use std::fs;
+use std::io;
+use std::path::Path;
+
 use rastro_collector::CollectionError;
 
 use super::cluster_inventory::{ClusterInventory, RegisteredCluster};
+use super::postmaster_pid::PostmasterPid;
 use super::psql_database_grants::PsqlDatabaseGrants;
 use super::psql_databases::PsqlDatabases;
 use super::psql_extensions::PsqlExtensions;
 use super::psql_memberships::PsqlMemberships;
+use super::psql_read_lens::PsqlReadLens;
+use super::psql_role_settings::PsqlRoleSettings;
 use super::psql_roles::PsqlRoles;
 use super::psql_settings::PsqlSettings;
 use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
-    Cluster, ClusterDatabases, ClusterMemberships, ClusterRoles, ClusterSettings, Clusters,
-    Database, DatabaseGrants,
+    Cluster, ClusterDatabases, ClusterMemberships, ClusterRoleSettings, ClusterRoles,
+    ClusterSettings, Clusters, Database, DatabaseGrants, Postmaster, ReadLens,
 };
 
 /// postgresql-common's register of the box.
@@ -20,6 +27,9 @@ const INVENTORY_PROGRAM: &str = "pg_lsclusters";
 
 /// The client, run as the cluster's owner.
 const CLIENT_PROGRAM: &str = "psql";
+
+/// The file postgresql-common's data directory holds while the server runs.
+const PID_FILE: &str = "postmaster.pid";
 
 /// The six columns [`PsqlSettings`] reads, in the order it expects them.
 ///
@@ -29,6 +39,17 @@ const CLIENT_PROGRAM: &str = "psql";
 /// and is recorded.
 const SETTINGS_QUERY: &str =
     "SELECT name, setting, unit, source, context, pending_restart FROM pg_settings";
+
+/// The four columns [`PsqlReadLens`] reads, in the order it expects them.
+///
+/// The session the settings were read through, not the host: `pg_settings` is a projection
+/// of the connecting backend's own GUC array, so which role and database answered decides
+/// which `ALTER ... SET` defaults it folded in and whether the `GUC_SUPERUSER_ONLY` rows
+/// were dropped. `is_superuser` is cast to a boolean so it reads back as one; `pg_has_role`
+/// already answers as one.
+const LENS_QUERY: &str = "SELECT current_user, current_database(), \
+     current_setting('is_superuser')::boolean, \
+     pg_has_role(current_user, 'pg_read_all_settings', 'usage')";
 
 /// The ten columns [`PsqlRoles`] reads, in the order it expects them.
 ///
@@ -87,6 +108,22 @@ const DATABASE_GRANTS_QUERY: &str = "SELECT d.datname, \
 /// shared. `pg_namespace` gives the schema its objects live in.
 const EXTENSIONS_QUERY: &str = "SELECT e.extname, e.extversion, n.nspname FROM pg_extension e \
      JOIN pg_namespace n ON n.oid = e.extnamespace";
+
+/// The three columns [`PsqlRoleSettings`] reads, in the order it expects them.
+///
+/// `pg_db_role_setting` holds the `ALTER ROLE`/`ALTER DATABASE` defaults `pg_settings`
+/// silently folds into one session's map. It is a shared catalog with no `REVOKE`, so this
+/// read is cluster-wide from whichever database already answered and needs no privilege.
+///
+/// `unnest(s.setconfig)` expands the stored `text[]` to one `name=value` per row, so the
+/// parser splits a single assignment rather than an array literal. The `coalesce`s turn the
+/// null oid of an unscoped default into an empty column. `ORDER BY` is deliberately absent:
+/// the model sorts, because list order is a contract rastro keeps rather than one it asks the
+/// server for.
+const ROLE_SETTINGS_QUERY: &str = "SELECT coalesce(d.datname, ''), coalesce(r.rolname, ''), \
+     unnest(s.setconfig) FROM pg_db_role_setting s \
+     LEFT JOIN pg_database d ON d.oid = s.setdatabase \
+     LEFT JOIN pg_roles r ON r.oid = s.setrole";
 
 /// Read nothing of the invoking account's, print no header, quote every value.
 ///
@@ -183,23 +220,50 @@ impl PostgresqlClusters {
     /// `postgresql.conf` would report a file as the state of a server that is not applying
     /// it, which is the substitution this whole collector exists to refuse.
     fn resolve(&self, cluster: &RegisteredCluster) -> Result<Cluster, CollectionError> {
-        let read = if cluster.status.is_online() {
-            Some(self.query(cluster)?)
+        let (read, observed) = if cluster.status.is_online() {
+            let observed = self.observe(cluster)?;
+            let read = self.query(cluster, observed.as_ref())?;
+            (Some(read), observed)
         } else {
-            None
+            (None, None)
         };
 
         // Split here rather than held as one option, because the document's shape is one
         // field per catalogue and a stopped cluster leaves every one of them null.
         Ok(Cluster {
-            status: cluster.status,
+            status: cluster.status.clone(),
             port: cluster.port,
             owner: cluster.owner.clone(),
+            observed,
+            lens: read.as_ref().map(|read| read.lens.clone()),
             settings: read.as_ref().map(|read| read.settings.clone()),
             roles: read.as_ref().map(|read| read.roles.clone()),
             memberships: read.as_ref().map(|read| read.memberships.clone()),
+            role_settings: read.as_ref().map(|read| read.role_settings.clone()),
             databases: read.map(|read| read.databases),
         })
+    }
+
+    /// Reads a running cluster's observed half from `postmaster.pid`.
+    ///
+    /// **Absent is not a failure.** A register row that named no data directory, or a pid
+    /// file that is not there, yields `None`: a cleanly stopped cluster removes the file, and
+    /// a row without a directory cannot be pointed at one. Any other read error is loud,
+    /// because rastro runs as root and a pid file it cannot read is a fact worth surfacing.
+    fn observe(&self, cluster: &RegisteredCluster) -> Result<Option<Postmaster>, CollectionError> {
+        let Some(directory) = &cluster.data_directory else {
+            return Ok(None);
+        };
+        let path = Path::new(directory).join(PID_FILE);
+
+        match fs::read_to_string(&path) {
+            Ok(content) => Ok(Some(PostmasterPid::parse(&content)?)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(CollectionError::new(format!(
+                "could not read {}: {error}",
+                path.display()
+            ))),
+        }
     }
 
     /// Asks one running cluster for its effective configuration, as the account that owns it.
@@ -208,17 +272,36 @@ impl PostgresqlClusters {
     /// which is what [`TargetUser`] validates for: the value reaches sudo as an argument and
     /// was read from the host.
     ///
+    /// **The running port is preferred over the configured one.** `pg_lsclusters` prints the
+    /// port from the config file, which is stale the moment it is edited without a reload,
+    /// while `postmaster.pid` holds the port the server is serving on. Connecting on the
+    /// stale one is how a live cluster reads as `down`.
+    ///
     /// Every candidate database is tried before the cluster is called unreadable, and the
     /// reasons are reported together: told only that `template1` failed, an operator cannot
     /// see that `postgres` was missing, which is the fact that explains the rest.
-    fn query(&self, cluster: &RegisteredCluster) -> Result<ClusterReading, CollectionError> {
+    fn query(
+        &self,
+        cluster: &RegisteredCluster,
+        observed: Option<&Postmaster>,
+    ) -> Result<ClusterReading, CollectionError> {
         // Validated whichever client is used, so a name read from the host is never trusted.
         let owner = TargetUser::new(cluster.owner.as_str())?;
         let client = match &self.client {
             Some(named) => named.clone(),
             None => ToolAsUser::located(CLIENT_PROGRAM, &owner)?,
         };
-        let port = cluster.port.to_string();
+        let port = observed
+            .map(|observed| observed.port)
+            .or(cluster.port)
+            .ok_or_else(|| {
+                CollectionError::new(format!(
+                    "cluster {} is online, but neither pg_lsclusters nor postmaster.pid gave a \
+                     port to connect on",
+                    cluster.id.as_str()
+                ))
+            })?
+            .to_string();
         let mut refusals = Vec::new();
 
         for database in CANDIDATE_DATABASES {
@@ -248,8 +331,15 @@ impl PostgresqlClusters {
         database: &str,
     ) -> Result<ClusterReading, CollectionError> {
         Ok(ClusterReading {
+            lens: PsqlReadLens::parse(&self.ask(client, port, database, LENS_QUERY)?)?,
             settings: PsqlSettings::parse(&self.ask(client, port, database, SETTINGS_QUERY)?)?,
             roles: PsqlRoles::parse(&self.ask(client, port, database, ROLES_QUERY)?)?,
+            role_settings: PsqlRoleSettings::parse(&self.ask(
+                client,
+                port,
+                database,
+                ROLE_SETTINGS_QUERY,
+            )?)?,
             memberships: PsqlMemberships::parse(&self.ask(
                 client,
                 port,
@@ -378,8 +468,10 @@ impl PostgresqlClusters {
 ///
 /// A named type rather than a pair, so the caller reads what each half is at the call site.
 struct ClusterReading {
+    lens: ReadLens,
     settings: ClusterSettings,
     roles: ClusterRoles,
+    role_settings: ClusterRoleSettings,
     memberships: ClusterMemberships,
     databases: ClusterDatabases,
 }
