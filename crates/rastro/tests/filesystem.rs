@@ -164,21 +164,31 @@ fn new_refuses_the_root_named_twice_under_two_spellings() {
 }
 
 #[test]
-fn built_in_hashes_what_it_was_not_told_to_leave_alone() {
-    // Act
+fn built_in_opens_no_file_anywhere() {
+    // Arrange: hashing every regular file on every mount was measured on a production
+    // PostgreSQL host at 84 GB read and climbing, 10.4M read syscalls, and a run killed
+    // at 51 minutes having produced nothing. The walk stays total; what narrowed is the
+    // reading, which is a cost question rather than a scope one.
     let policy = WalkPolicy::built_in();
 
-    // Assert: hashing is the default because config can only narrow. A table that
-    // had to name the trees worth hashing would be an inclusion list.
-    assert_eq!(
-        policy.policy_for(&walked("/etc/ssh/sshd_config")),
-        &hashed()
-    );
-    assert_eq!(policy.policy_for(&walked("/usr/bin/ls")), &hashed());
-    assert_eq!(
-        policy.policy_for(&walked("/usr/local/bin/node_exporter")),
-        &hashed()
-    );
+    // Act & Assert: no tree is read, including the ones a config file would never have
+    // thought to name. Detection survives on stat alone, because a write moves mtime and
+    // ctime and ctime has no userspace setter at all.
+    for stated in [
+        "/etc/ssh/sshd_config",
+        "/usr/bin/ls",
+        "/usr/local/bin/node_exporter",
+        "/root/.ssh/authorized_keys",
+        "/srv/app/config.yml",
+        "/home/dvidal/.bashrc",
+        "/var/lib/postgresql/17/main/base/1/2337",
+    ] {
+        assert_eq!(
+            policy.policy_for(&walked(stated)),
+            &ContentPolicy::MetadataOnly,
+            "{stated} is known by its metadata, not by its content"
+        );
+    }
 }
 
 #[test]
@@ -254,9 +264,12 @@ fn claimed_carries_the_shipped_rules_through_untouched() {
         .claimed(&facet("packages"), &claims)
         .expect("a tree no shipped rule names");
 
-    // Assert: a claim narrows one tree and says nothing about any other, so `/usr` is still
-    // hashed and the shipped churn list still churns.
-    assert_eq!(policy.policy_for(&walked("/usr/bin/ls")), &hashed());
+    // Assert: a claim narrows one tree and says nothing about any other, so `/usr` still
+    // reports its metadata and the shipped churn list still churns.
+    assert_eq!(
+        policy.policy_for(&walked("/usr/bin/ls")),
+        &ContentPolicy::MetadataOnly
+    );
     assert_eq!(
         policy.policy_for(&walked("/var/log/syslog")),
         &ContentPolicy::Churns
@@ -325,7 +338,7 @@ fn the_effective_table_renders_every_rule_with_its_claimant() {
     assert_eq!(text(&field(&cluster, "claimed_by")), "postgresql");
 
     let root = field(&rendered, "/");
-    assert_eq!(text(&field(&root, "reading")), "hashed");
+    assert_eq!(text(&field(&root, "reading")), "metadata_only");
     assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
 }
 

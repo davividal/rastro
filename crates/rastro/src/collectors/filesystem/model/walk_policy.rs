@@ -7,7 +7,7 @@ use rastro_collector::{
 };
 
 use crate::collectors::filesystem::model::PolicyRule;
-use crate::collectors::filesystem::value_objects::{ContentPolicy, DigestAlgorithm};
+use crate::collectors::filesystem::value_objects::ContentPolicy;
 
 /// The trees whose content changes on an idle host without its meaning changing.
 ///
@@ -15,13 +15,13 @@ use crate::collectors::filesystem::value_objects::{ContentPolicy, DigestAlgorith
 /// ninety seconds were two journals and the timesync clock. `/var/log/journal` needs no
 /// entry of its own because `/var/log` already covers it.
 ///
-/// Short on purpose. Every entry is a place rastro stops being able to report a content
-/// change, so the list earns each line by the noise it removes, and it is a noise
-/// instrument rather than a performance one: these trees are a seventh of the bytes on
-/// that box, while `/usr` is two thirds of them and is the tree a replaced binary hides
-/// in.
+/// Short on purpose, and it survives on its noise argument alone. It never was a
+/// performance instrument, and now that the walk opens no file it cannot be mistaken for
+/// one: what each line still buys is the stamps, the size and the inode going volatile,
+/// which is the difference between a quiet diff and one carrying two journals every run.
+/// Do not retire the list on the grounds that nothing is hashed any more.
 ///
-/// They are `Churns` rather than merely unhashed, because leaving their stamps and sizes
+/// They are `Churns` rather than merely unread, because leaving their stamps and sizes
 /// alone left them producing the very noise the list exists to remove: two journals and
 /// the timesync clock were still in the diff of the reference cycle on mtime alone, and
 /// `/var/cache` on size and inode.
@@ -77,18 +77,31 @@ impl WalkPolicy {
         Ok(Self { rules })
     }
 
-    /// The table rastro ships with: hash everything, then step back from the trees that
-    /// churn without meaning.
+    /// The table rastro ships with: stat everything, open nothing, then step back from
+    /// the trees whose stamps churn without meaning.
     ///
-    /// Hashing is the default because config can only narrow. A table that had to name
-    /// the trees worth hashing would be an inclusion list, and an operator can only
-    /// include what they already knew to look for, which is the premise this tool
-    /// rejects.
+    /// **What narrowed is the reading, not the scope.** The walk is still total over every
+    /// mount that holds files, and every path it reaches is still in the document, so no
+    /// state surface left it and this is not the inclusion list the earlier default was
+    /// written to avoid. A tree the table says nothing about loses one attribute, not its
+    /// existence.
+    ///
+    /// Hashing everything was measured on a production PostgreSQL host: 84 GB read and
+    /// climbing, 10.4M read syscalls, and a run killed at 51 minutes having produced
+    /// nothing. What it bought over stat was detection of a content change that preserved
+    /// every attribute, which needs `touch -r` *and* a moved clock, because ctime has no
+    /// userspace setter. That is deliberate evasion, and this tool is not an intrusion
+    /// detector. An ordinary write moves mtime, ctime and usually size, so a change at any
+    /// path is still detected here.
+    ///
+    /// Opening no file is also what makes the walk leave nothing behind: no atime moves,
+    /// and no file data enters the page cache, so rastro cannot evict the working set of
+    /// the database it is fingerprinting.
+    ///
+    /// Content hashing returns as an opt-in collector over trees the operator names, which
+    /// is where the cost can be consented to rather than discovered.
     pub fn built_in() -> Self {
-        let mut rules = vec![Self::shipped_rule(
-            "/",
-            ContentPolicy::Hashed(DigestAlgorithm::Sha256),
-        )];
+        let mut rules = vec![Self::shipped_rule("/", ContentPolicy::MetadataOnly)];
 
         rules.extend(
             CHURNS_WITHOUT_MEANING
