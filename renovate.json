@@ -1,6 +1,49 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Renovate rather than Dependabot for one reason: Dependabot has no mise ecosystem, so the Rust toolchain in mise.toml would have stayed a pin nobody was watching.",
+    "helpers:pinGitHubActionDigests is for the next action somebody adds. One already written as `<sha> # v4` is updated in place either way, comment and all; without the preset an unpinned one stays unpinned and the convention erodes an entry at a time.",
+    "JSON carries no comments, so the reasoning lives in these description fields, and at length in docs/decisions.md."
+  ],
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "lockFileMaintenance": {
+    "description": "Every job passes --locked, so Cargo.lock is the graph cargo-deny audits and the one CI builds. Left alone it drifts from the registry until some unrelated change forces a large, unreviewable refresh.",
+    "enabled": true,
+    "schedule": [
+      "before 6am on the first day of the month"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "One pull request for all of them: these move together, and reviewing nine separate SHA bumps is how a stale pin gets rubber-stamped.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Majors stay ungrouped, so a breaking bump arrives alone and legible rather than buried in a batch CI reports as one red run.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "cargo (minor and patch)"
+    },
+    {
+      "description": "The toolchain is never grouped. A Rust bump can change what clippy rejects and what rustfmt produces, so it needs a run of its own to be attributable.",
+      "matchManagers": [
+        "mise"
+      ],
+      "commitMessageTopic": "the {{depName}} toolchain"
+    }
   ]
 }

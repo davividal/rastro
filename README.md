@@ -150,6 +150,29 @@ jump hosts and host-key checking included.
 One host per invocation, as ever. A fleet is a `for` loop, and `xargs -P` does
 the parallel version better than rastro would.
 
+## Getting the binary
+
+There is no release yet. The newest `master` commit that passes CI is republished as
+the `nightly` pre-release, which is a development build and says so: it is replaced
+on every push and is unrelated to any version.
+
+```sh
+base=https://github.com/davividal/rastro/releases/download/nightly
+curl -fLO $base/rastro-x86_64-unknown-linux-musl
+curl -fLO $base/rastro-x86_64-unknown-linux-musl.sha256
+sha256sum -c rastro-x86_64-unknown-linux-musl.sha256
+gh attestation verify rastro-x86_64-unknown-linux-musl --repo davividal/rastro
+chmod +x rastro-x86_64-unknown-linux-musl
+```
+
+The checksum catches a corrupted download. The attestation is the one that matters:
+it is signed by GitHub at build time and ties these bytes to the commit and the
+workflow run that produced them, which a checksum published beside the file cannot
+do. Skip it and you are trusting the download, not the build.
+
+A release asset carries no permission bits, hence the `chmod`. A pull request build
+is not published this way; it stays an artifact on its own CI run.
+
 ## Building
 
 ```sh

@@ -5,15 +5,17 @@ on:
     branches: [master]
   pull_request:
 
-# No job writes anything. Stated explicitly so the grant survives a change to
-# the repository or organisation default.
+# Stated rather than inherited, so the grant survives a change to the repository or
+# organisation default.
 permissions:
   contents: read
 
-# A superseded push has nothing worth finishing.
+# A superseded pull request has nothing worth finishing. A superseded master push does:
+# a signal landing between `rolling-build`'s upload and its tag move would leave the two
+# describing different commits, with no failed run to say so.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,9 +36,8 @@ jobs:
           fallback: none
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      # The suite runs once, under coverage: cargo-llvm-cov runs every test with
-      # instrumentation, so a separate `cargo test` would only run the same suite twice.
-      # The SonarQube job consumes this report through the uploaded artifact.
+      # There is no separate `cargo test`: llvm-cov already runs the whole suite, only
+      # instrumented, so a second invocation would buy a second identical run.
       - run: mkdir -p target/llvm-cov && cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info --locked
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -52,12 +53,11 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
-      # SonarCloud imports Rust coverage from an external LCOV report; it never
-      # computes that report during the scan itself. The report is produced once by
-      # the `check` job and handed over as an artifact.
+          fetch-depth: 0  # Blame data: Sonar attributes new code by commit date.
+      # SonarCloud never computes Rust coverage itself, it only imports a report, so the
+      # scan depends on the one `check` produced rather than measuring anything here.
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: lcov
@@ -76,10 +76,10 @@ jobs:
       # dereferences to, not to the annotated tag object, which would not resolve.
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
-          # Root-level args, so they go here rather than in `command-arguments`, and the
-          # action's own `--all-features` default has to be restated to keep it. `--locked`
-          # matters most in this job of all: it is the one auditing the dependency graph, so
-          # it must audit the same graph the other jobs build.
+          # These are cargo-deny's root-level args, hence `arguments` and not
+          # `command-arguments`, and restating `--all-features` is what keeps the action's
+          # own default. `--locked` matters most here of all four jobs: this is the one
+          # auditing the dependency graph, so it must audit the graph the others build.
           arguments: --all-features --locked
 
   static-binary:
@@ -99,10 +99,65 @@ jobs:
           file target/x86_64-unknown-linux-musl/release/rastro
           file target/x86_64-unknown-linux-musl/release/rastro | grep -q 'static'
       - run: ./target/x86_64-unknown-linux-musl/release/rastro --version
-      # Keeps the binary downloadable from the run that built it, so it can be
-      # scp'd to a box without waiting for a release pipeline.
+      # Keeps the binary downloadable from the run that built it, which is what a
+      # pull request gets: `rolling-build` publishes master only.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rastro-x86_64-unknown-linux-musl
           path: target/x86_64-unknown-linux-musl/release/rastro
           if-no-files-found: error
+
+  # Republishes the `nightly` pre-release on every master push that passes the rest of
+  # this workflow, so the newest build has one anonymous URL instead of living behind a
+  # signed-in run page. Not a release: no version, no notes, no promise that yesterday's
+  # bytes are still there.
+  rolling-build:
+    name: rolling development build
+    # Every gating job, not just the one that produced the artifact: a binary people are
+    # invited to curl and run as root should not come from a commit whose tests failed.
+    # SonarQube is absent because it uploads the analysis and exits without waiting for
+    # the Quality Gate, so depending on it would buy a wait and no verdict.
+    needs: [check, supply-chain, static-binary]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    # Deliberately not granted to the job that compiles, where a build script of any
+    # dependency would run beside a token that can push to the repository.
+    permissions:
+      contents: write
+      # Provenance is signed against a short-lived OIDC identity rather than a stored key.
+      id-token: write
+      attestations: write
+    env:
+      ASSET: rastro-x86_64-unknown-linux-musl
+      # `gh` takes the repository from a git remote and from no environment variable of
+      # its own, and this job has no checkout to give it one.
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: rastro-x86_64-unknown-linux-musl
+      - name: Name and hash the asset
+        run: |
+          mv rastro "$ASSET"
+          sha256sum "$ASSET" > "$ASSET.sha256"
+      # The checksum only says the download did not corrupt, which is worth little when
+      # the thing being downloaded is trusted with root. This binds the bytes to the
+      # workflow and commit that produced them: `gh attestation verify` checks it.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.ASSET }}
+      - name: Publish the build as the `nightly` pre-release
+        run: |
+          notes="Built from ${GITHUB_SHA}. Replaced on every push to master, and unrelated to any released version. Verify with \`gh attestation verify --repo $GH_REPO\`, then \`chmod +x\`."
+          # Never deleted, only overwritten, so a publish that dies partway leaves a stale
+          # `nightly` rather than a 404. Creation does anything only the first time.
+          gh release create nightly --prerelease --target "$GITHUB_SHA" \
+            --title "Rolling development build" --notes "$notes" || true
+          gh release upload nightly "$ASSET" "$ASSET.sha256" --clobber
+          # A release ignores its target_commitish once its tag exists, so moving the tag
+          # takes the refs API. It and the notes go last because both describe bytes that
+          # are already uploaded.
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" \
+            -f sha="$GITHUB_SHA" -F force=true
+          gh release edit nightly --notes "$notes"

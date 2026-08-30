@@ -58,6 +58,9 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [The walk table is self-description](#the-effective-walk-table-travels-in-the-invocation-facet) | one place says which rule applied to a tree and which facet asked for it |
 | [The observer is not state](#superseded-rastro-omits-the-file-it-is-running-from) | the running binary is omitted unconditionally. **Superseded** |
 | [Only a staged run omits it](#only-a-staged-run-omits-the-binary-and-the-caller-says-so) | an installed rastro is part of the box; only the caller that staged a copy knows it is transient |
+| [A rolling build, not a release](#the-newest-master-build-is-a-moving-pre-release-not-a-release) | one anonymous URL for the newest master build; the tag moves, and the release job is still owed |
+| [The Sonar check waits for its verdict](#the-required-sonarqube-check-waits-for-the-quality-gate) | a required check that could not fail on a quality regression now can |
+| [Renovate, not Dependabot](#renovate-not-dependabot-because-the-toolchain-is-a-dependency-too) | mise has no Dependabot ecosystem, and the toolchain pin is the one that decides what the compiler does |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1358,3 +1361,132 @@ tree on every run and breaks for a non-root operator.
 **Cost:** a flag that a caller must remember, and a wrapper is the only caller that
 should. Forgetting it costs one entry of noise per run; passing it wrongly on an
 installed binary hides one file, and the effective config says so in the default view.
+
+# Distribution: getting the binary before there is a release
+
+Dated 2026-08-30. rastro is at 0.0.0 and the tag-triggered release job is still
+owed. This group covers only the gap: how somebody gets the newest build in the
+meantime.
+
+## The newest master build is a moving pre-release, not a release
+
+CI has always built the musl binary and uploaded it as a run artifact. That is not
+nothing, and it is nearly unusable: an Actions artifact cannot be downloaded
+anonymously even from a public repository, so there is no `curl` on the target box,
+only a signed-in browser or `gh run download`. It arrives zipped, it expires after
+90 days, and it has no stable address: you navigate to the newest green run to find
+it.
+
+**So every master push that passes CI republishes a `nightly` pre-release** carrying
+the binary and its SHA-256. One URL, no login, no expiry, no zip. The per-run artifact
+stays, because a pull request still needs its own build and `rolling-build` fires on
+master only.
+
+**It waits for every gating job, not just the one that produced the binary.** Depending
+on `static-binary` alone would have been enough to get the file, and would have
+published a binary from a commit whose tests failed: that job proves the thing compiles
+and links statically, nothing about whether it works. Anything invited into a `curl |
+chmod +x` on somebody's server has to clear the same bar as the rest of the tree, so
+`check` and `supply-chain` gate it too. SonarQube does not, being a report rather than
+a gate, and it needs a secret a fork cannot have.
+
+**The tag moves, which this repository otherwise refuses to do.** Actions here are
+pinned by commit precisely because a tag can be moved under you. A rolling build is
+the one case where that mutability is the feature rather than the hazard, and the
+distinction that makes it safe is who is trusting what: CI pins actions because it
+must get the same code twice, whereas a person fetching `nightly` is asking for
+whatever is newest. The release body names the commit it was built from, so the
+bytes are still attributable after the tag has moved on.
+
+**The release is moved and overwritten, never deleted.** The obvious way to move a
+tag is to delete the release with its tag and make it again, and it has a window in
+the middle where the URL 404s. Overwriting has no such state: the worst a half-finished
+publish leaves is a `nightly` that is stale, never one that is missing. It costs one
+awkwardness, that a release ignores the commit it is asked to point at once its tag
+exists, so the tag is moved through the git refs API rather than through the release.
+
+**And a master push is no longer cancelled by the next one.** Publishing is a sequence
+of writes to something outside the run, and this workflow used to cancel a superseded
+run wherever it had got to, which made every window in that sequence reachable. Killed
+between the upload and the tag move, it would leave the assets and the tag describing
+different commits, quietly, with no red run to say so. Cancellation now applies to pull
+requests only, where a superseded run genuinely has nothing worth finishing, and master
+pushes queue. Overwriting instead of deleting is still worth having: it bounds the
+damage from a publish that fails for some reason other than being interrupted.
+
+**The write grant is on a job that does not compile.** `rolling-build` downloads the
+artifact `static-binary` produced and calls `gh`; it never runs cargo. Putting
+`contents: write` on the build job instead would put a token that can push to the
+repository in the same process as the build script of every dependency in the graph,
+which is a supply-chain hole opened for no gain.
+
+**The bytes carry provenance, not just a checksum.** A SHA-256 published beside a file
+answers "did this download corrupt", which is the easy half and the half nobody was
+worried about. It cannot answer "did this come from rastro's own CI", because whoever
+could replace the binary could replace the checksum in the same motion. GitHub signs a
+provenance attestation at build time against a short-lived OIDC identity, binding the
+artifact to the workflow and the commit, and `gh attestation verify` checks it without
+trusting the release page at all. For a tool whose entire claim is a trustworthy record
+of a server, and which the README invites people to run as root, publishing a download
+with no answer to that question was not defensible.
+
+**Rejected: nightly.link**, a third-party proxy that hands out anonymous URLs for
+public-repo artifacts, needing no CI change and no write grant at all. It puts a
+third party in the distribution path of a binary meant to run as root on somebody's
+server, which is a poor trade for a tool whose entire claim is a trustworthy record
+of that server.
+
+**Cost, and it is not only the moved tag.** The workflow is no longer write-free, so
+the guarantee that read the strongest is now a per-job claim. Release assets carry no
+permission bits, so a downloaded binary still needs `chmod +x`, exactly as the zipped
+artifact did. Watchers subscribed to releases may get a notification per master push;
+at 0.0.0 that is nobody, and it would be a reason to reconsider later rather than now.
+And a moving pre-release is a poor place to build habits: the eventual release job
+must not inherit any of this, which is why `nightly` says in its own body that it is
+unrelated to any released version.
+
+# CI: which checks gate, and what keeps them current
+
+Dated 2026-08-30. An audit of the workflow found a required check that could not fail
+for the reason its name implies, and a set of pins nothing was watching.
+
+## The required SonarQube check waits for the Quality Gate
+
+The `SonarQube` job was required by the branch ruleset and could not fail on a quality
+regression. The scanner uploads an analysis and exits; the verdict is computed
+afterwards, server-side, and arrives as a *different* check posted by Sonar's own GitHub
+App, which the ruleset did not require. Four green required checks therefore said nothing
+about whether the gate had passed, while looking exactly as though they did.
+
+**`sonar.qualitygate.wait=true` makes the job wait for its own verdict.** No ruleset
+change: the required context keeps its name and its integration, and only stops lying.
+Requiring Sonar's app check instead would have worked equally well for gating, and was
+rejected for a mechanical reason: an Actions job always emits a check of its own, so that
+route leaves two checks on every pull request where the point was to have one.
+
+**Cost:** a SonarCloud outage is now a merge outage, where before it was invisible. That
+is the correct direction for a gate to fail, and it is a real cost on a bad day.
+
+## Renovate, not Dependabot, because the toolchain is a dependency too
+
+Pinning actions by commit trades a moving target for a silent one: nothing announces
+that a pin has gone stale, and several were whole majors behind before an audit looked.
+Dependabot was written first and then dropped, because it has no mise ecosystem and would
+have left `mise.toml` unwatched, which is the pin that decides what the compiler does.
+Renovate covers the same two ecosystems plus mise, verified against its source rather
+than its documentation: its mise manager parses the `[tools.rust]` table form and rewrites
+only `version`, leaving `components` and `targets` alone.
+
+**`helpers:pinGitHubActionDigests` guards the next action, not the ones already pinned.**
+An action written as `<sha> # v4` is updated in place regardless, comment and all;
+Renovate does not unpin what is pinned. The preset matters for whatever gets added later,
+which would otherwise stay on a floating tag and erode the convention an entry at a time.
+
+**Cost, and it is the reason this is a decision rather than a detail:** Dependabot is
+GitHub's own and needs no grant, whereas hosted Renovate is a third-party app with write
+access to the repository, added to a project whose supply-chain posture is otherwise
+strict enough to pin every action by hand. The trade was accepted because an unwatched
+toolchain pin is a standing risk and the app's blast radius is a pull request that still
+has to pass the same gates as any other. Self-hosting Renovate as a workflow removes the
+third party and costs a job and a token to maintain; it is the reversal to reach for if
+that trade stops looking right.
