@@ -1377,7 +1377,7 @@ only a signed-in browser or `gh run download`. It arrives zipped, it expires aft
 90 days, and it has no stable address: you navigate to the newest green run to find
 it.
 
-**So every master push that passes CI republishes a `nightly` pre-release** carrying
+**So every master push that passes CI republishes a `rolling` pre-release** carrying
 the binary and its SHA-256. One URL, no login, no expiry, no zip. The per-run artifact
 stays, because a pull request still needs its own build and `rolling-build` fires on
 master only.
@@ -1395,14 +1395,14 @@ protection would refuse to merge.
 pinned by commit precisely because a tag can be moved under you. A rolling build is
 the one case where that mutability is the feature rather than the hazard, and the
 distinction that makes it safe is who is trusting what: CI pins actions because it
-must get the same code twice, whereas a person fetching `nightly` is asking for
+must get the same code twice, whereas a person fetching `rolling` is asking for
 whatever is newest. The release body names the commit it was built from, so the
 bytes are still attributable after the tag has moved on.
 
 **The release is moved and overwritten, never deleted.** The obvious way to move a
 tag is to delete the release with its tag and make it again, and it has a window in
 the middle where the URL 404s. Overwriting keeps the release object alive instead, so
-the worst a half-finished publish leaves is a `nightly` that is stale rather than one
+the worst a half-finished publish leaves is a `rolling` that is stale rather than one
 that is missing. It costs one awkwardness, that a release ignores the commit it is asked
 to point at once its tag exists, so the tag is moved through the git refs API rather
 than through the release.
@@ -1415,6 +1415,24 @@ one file the whole feature exists to serve. So each new file is uploaded under a
 `.incoming` name first and takes over only once it has landed whole: what is serving is
 never removed for something that has not arrived. The remaining window is a rename, not
 a transfer.
+
+**Immutable releases had to be turned off, and the tag is called `rolling` because of
+it.** GitHub's repository setting of that name freezes a published release: its assets
+and its tag can never change. That is the right setting for a release and the exact
+opposite of this one, and the collision is not a detail to work around, it is the two
+features meaning contradictory things. The first live run proved it in the loudest
+possible way, publishing a release with the correct notes, the correct target, and no
+binary at all, because the upload was refused with `422 Cannot upload assets to an
+immutable release`. The setting is now off.
+
+**Deleting that release did not undo it.** The tag name stays burned: GitHub refuses to
+create `nightly` again, saying the name `was used by an immutable release`, and no
+amount of deleting the release or the tag frees it. So the rolling build lives at
+`rolling` instead, which is a better name anyway and a poor way to have arrived at it.
+
+**Cost:** the tag-triggered release job that is still owed will not get immutability
+either, unless the setting is turned back on at that point and the rolling build is
+moved off releases entirely. That is a real trade and it is deferred, not solved.
 
 **And a master push is no longer cancelled by the next one.** Publishing is a sequence
 of writes to something outside the run, and this workflow used to cancel a superseded
@@ -1453,7 +1471,7 @@ permission bits, so a downloaded binary still needs `chmod +x`, exactly as the z
 artifact did. Watchers subscribed to releases may get a notification per master push;
 at 0.0.0 that is nobody, and it would be a reason to reconsider later rather than now.
 And a moving pre-release is a poor place to build habits: the eventual release job
-must not inherit any of this, which is why `nightly` says in its own body that it is
+must not inherit any of this, which is why `rolling` says in its own body that it is
 unrelated to any released version.
 
 # CI: which checks gate, and what keeps them current

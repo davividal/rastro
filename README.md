@@ -153,11 +153,11 @@ the parallel version better than rastro would.
 ## Getting the binary
 
 There is no release yet. The newest `master` commit that passes CI is republished as
-the `nightly` pre-release, which is a development build and says so: it is replaced
+the `rolling` pre-release, which is a development build and says so: it is replaced
 on every push and is unrelated to any version.
 
 ```sh
-base=https://github.com/davividal/rastro/releases/download/nightly
+base=https://github.com/davividal/rastro/releases/download/rolling
 curl -fLO $base/rastro-x86_64-unknown-linux-musl
 curl -fLO $base/rastro-x86_64-unknown-linux-musl.sha256
 sha256sum -c rastro-x86_64-unknown-linux-musl.sha256
