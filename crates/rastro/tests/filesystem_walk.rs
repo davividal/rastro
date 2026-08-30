@@ -510,32 +510,44 @@ fn walk_records_a_socket_and_a_fifo_as_having_no_content() {
 /// outright, so the case can only be arranged where it can actually happen.
 #[cfg(target_os = "linux")]
 #[test]
-fn walk_refuses_a_path_that_is_not_utf8_rather_than_substituting() {
+fn walk_records_a_path_that_will_not_decode_and_keeps_going() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
-    // Arrange
-    let root = scratch_tree("walk_refuses_a_non_utf8_path", &[]);
+    // Arrange: one byte, and until this test was written it cost the whole facet. That is not
+    // hypothetical — the fixture this test used to leave behind sat in the target directory,
+    // which a walk of the real host covers, and it refused the `filesystem` facet of every
+    // later run in the suite. An archive extracted with a mojibake name does the same to a
+    // real server, and nothing in the document said why.
+    let root = scratch_tree("walk_records_a_non_utf8_path", &[]);
+    write(&root, "readable.conf", HELLO);
     fs::write(root.join(OsStr::from_bytes(b"\xff")), HELLO).expect("a writable tree");
 
     // Act
-    let refused = FileTree::at(&root).walk(&hashing_everything());
-
-    // Removed before the assertion, and this is not tidiness. `CARGO_TARGET_TMPDIR` is inside
-    // the target directory, which a whole-filesystem walk covers, so a byte left here refuses
-    // the entire `filesystem` facet of every later run in this suite. That is the defect this
-    // test documents, and leaving the fixture behind would inflict it on the tests that walk
-    // the real host.
+    let inventory = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("one unspellable name does not cost the facet");
+    let rendered = inventory.observation(Detail::Summary);
     let _ = fs::remove_dir_all(&root);
 
-    // Assert: substituting `U+FFFD` would put a path in the document that is not on the
-    // box and that nobody can act on, which is the refusal `canonical_tool` already makes.
-    let message = refused
-        .expect_err("a path that will not decode")
-        .to_string();
+    // Assert: reported, and reported exactly. Substituting `U+FFFD` would put a path in the
+    // document that is not on the box, so the bytes are given as bytes and the directory that
+    // holds them as the text it is — enough to go and look, without claiming a name.
+    let unspellable = field(&rendered, "unspellable");
+    let first = &support::observation::items_of(&unspellable)[0];
+    assert_eq!(text(&field(first, "name_bytes")), "ff");
+    assert_eq!(
+        text(&field(first, "directory")),
+        root.to_str().expect("a UTF-8 scratch root")
+    );
+
+    // Assert: and the neighbour it used to take down with it is still there.
     assert!(
-        message.contains("not valid UTF-8"),
-        "the refusal should say why, got {message:?}"
+        keys_of(&rendered)
+            .iter()
+            .any(|key| key.ends_with("readable.conf")),
+        "got {:?}",
+        keys_of(&rendered)
     );
 }
 

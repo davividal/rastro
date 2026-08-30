@@ -96,6 +96,7 @@ fn an_inventory_refuses_a_path_that_was_both_described_and_refused() {
             contested,
             "could not be listed: Permission denied (os error 13)",
         )],
+        Vec::new(),
     );
 
     // Assert: the message names the path, because that is what makes it fixable.
@@ -120,6 +121,7 @@ fn an_inventory_carries_refusals_of_different_paths_side_by_side() {
                 "could not be listed: Permission denied (os error 13)",
             ),
         ],
+        Vec::new(),
     )
     .expect("distinct paths are no contradiction");
 
@@ -142,6 +144,7 @@ fn a_refused_path_renders_only_the_reason_it_could_not_be_read() {
             "/srv/store",
             "could not be listed: Permission denied (os error 13)",
         )],
+        Vec::new(),
     )
     .expect("one refusal is a legal inventory");
 

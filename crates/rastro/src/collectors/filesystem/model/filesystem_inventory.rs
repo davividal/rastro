@@ -2,7 +2,7 @@
 
 use rastro_collector::{CollectionError, Observation};
 
-use crate::collectors::filesystem::model::{FileEntry, UnreadablePath};
+use crate::collectors::filesystem::model::{FileEntry, UnreadablePath, UnspellablePath};
 use crate::collectors::filesystem::value_objects::Detail;
 
 /// The entries of one or more walks, ordered by path.
@@ -25,15 +25,18 @@ use crate::collectors::filesystem::value_objects::Detail;
 pub struct FilesystemInventory {
     entries: Vec<FileEntry>,
     unreadable: Vec<UnreadablePath>,
+    unspellable: Vec<UnspellablePath>,
 }
 
 impl FilesystemInventory {
     pub fn new(
         mut entries: Vec<FileEntry>,
         mut unreadable: Vec<UnreadablePath>,
+        mut unspellable: Vec<UnspellablePath>,
     ) -> Result<Self, CollectionError> {
         entries.sort_by(|left, right| left.path.cmp(&right.path));
         unreadable.sort_by(|left, right| left.path.cmp(&right.path));
+        unspellable.sort();
 
         if let Some(conflicting) = entries
             .windows(2)
@@ -48,6 +51,7 @@ impl FilesystemInventory {
 
         entries.dedup();
         unreadable.dedup();
+        unspellable.dedup();
 
         if let Some(contested) = unreadable
             .iter()
@@ -67,6 +71,7 @@ impl FilesystemInventory {
         Ok(Self {
             entries,
             unreadable,
+            unspellable,
         })
     }
 
@@ -78,19 +83,25 @@ impl FilesystemInventory {
         &self.unreadable
     }
 
+    pub fn unspellable(&self) -> &[UnspellablePath] {
+        &self.unspellable
+    }
+
     /// Everything found by several walks, as one inventory.
     pub fn merged(
         inventories: impl IntoIterator<Item = FilesystemInventory>,
     ) -> Result<Self, CollectionError> {
         let mut entries = Vec::new();
         let mut unreadable = Vec::new();
+        let mut unspellable = Vec::new();
 
         for inventory in inventories {
             entries.extend(inventory.entries);
             unreadable.extend(inventory.unreadable);
+            unspellable.extend(inventory.unspellable);
         }
 
-        Self::new(entries, unreadable)
+        Self::new(entries, unreadable, unspellable)
     }
 
     /// Every path this walk reached, keyed by path.
@@ -108,6 +119,16 @@ impl FilesystemInventory {
             .iter()
             .map(|refused| (refused.path.as_str(), Observation::from(refused)));
 
-        Observation::object(described.chain(refused))
+        let named = described.chain(refused);
+
+        // Only when there is one, and the key is not a path, which is the whole point: these
+        // entries have no name to be keyed by. A `/`-leading key can never collide with it.
+        match self.unspellable.is_empty() {
+            true => Observation::object(named),
+            false => Observation::object(named.chain([(
+                "unspellable",
+                Observation::list(self.unspellable.iter().map(Observation::from)),
+            )])),
+        }
     }
 }

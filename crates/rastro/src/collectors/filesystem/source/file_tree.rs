@@ -24,9 +24,10 @@
 //! **One path's failure is that path's failure.** A path that vanished mid-walk is omitted
 //! and one that will not be read is recorded with the reason, so a log rotating under the
 //! walk or an unreadable fuse mount costs one entry rather than the whole facet. Two failures
-//! stay fatal, and for the same reason as each other: the root's own stat, because a walk that
-//! cannot start is not an empty host, and a path that is not UTF-8, because the document is
-//! keyed by path and there is nowhere to file a refusal without a key.
+//! stay fatal: the root's own stat, because a walk that cannot start is not an empty host, and
+//! a path whose *bytes* cannot be read at all. A name that is merely not UTF-8 is reported in
+//! a list of its own, because it has no key to be filed under but is still a fact about the
+//! box — and one such name used to cost the entire facet.
 //!
 //! **Still owed, and deliberately not here yet:**
 //!
@@ -37,6 +38,7 @@
 
 use std::fs::{self, Metadata};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
@@ -44,7 +46,7 @@ use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 use sha2::{Digest as _, Sha256};
 
 use crate::collectors::filesystem::model::{
-    FileEntry, FilesystemInventory, UnreadablePath, WalkPolicy, is_absence,
+    FileEntry, FilesystemInventory, UnreadablePath, UnspellablePath, WalkPolicy, is_absence,
 };
 use crate::collectors::filesystem::value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
@@ -106,6 +108,7 @@ impl FileTree {
     pub fn walk(&self, policy: &WalkPolicy) -> Result<FilesystemInventory, CollectionError> {
         let mut entries = Vec::new();
         let mut unreadable = Vec::new();
+        let mut unspellable = Vec::new();
         let mut pending = vec![self.root.clone()];
         let device = fs::symlink_metadata(&self.root)
             .map_err(|error| {
@@ -121,10 +124,18 @@ impl FileTree {
                 continue;
             }
 
-            // Hoisted above everything tolerated below, because it is the one failure that
-            // cannot be recorded: the document is keyed by path, so a path that will not
-            // spell has no key to file a refusal under.
-            let recorded = absolute(&path)?;
+            // A path that will not decode has no key to be filed under, so it is reported in
+            // a list of its own rather than costing the facet. Recorded and not descended
+            // into: every name beneath it is unspellable too, and the directory is the fact.
+            let Some(recorded) = absolute(&path) else {
+                unspellable.push(UnspellablePath::of(
+                    path.file_name().unwrap_or(path.as_os_str()).as_bytes(),
+                    path.parent()
+                        .and_then(|parent| parent.to_str())
+                        .map(str::to_owned),
+                ));
+                continue;
+            };
 
             let metadata = match fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
@@ -167,7 +178,7 @@ impl FileTree {
             entries.push(entry);
         }
 
-        FilesystemInventory::new(entries, unreadable)
+        FilesystemInventory::new(entries, unreadable, unspellable)
     }
 
     /// The paths directly inside a directory.
@@ -408,8 +419,13 @@ fn stamp(
     })
 }
 
-fn absolute(path: &Path) -> Result<AbsolutePath, CollectionError> {
-    AbsolutePath::new(text_of(path)?, "walked path")
+/// The path as the document keys it, or nothing when it will not decode.
+///
+/// An `Option` rather than a failure, because the caller reports the undecodable name in a
+/// list of its own and carries on. `AbsolutePath::new` cannot fail for a walked path: the
+/// walk starts at an absolute root and only ever appends to it.
+fn absolute(path: &Path) -> Option<AbsolutePath> {
+    AbsolutePath::new(path.to_str()?, "walked path").ok()
 }
 
 fn count(value: u64, kind: &str, path: &Path) -> Result<i64, Refusal> {
