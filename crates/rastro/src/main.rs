@@ -6,6 +6,7 @@
 
 use std::error::Error;
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
@@ -45,10 +46,14 @@ fn run() -> Result<String, Box<dyn Error>> {
         invocation.staged_binary(),
         detail,
     );
-    let selection = collectors::selected(
-        collectors::built_in(effective, invocation.staged_binary(), detail),
-        &config,
-    )?;
+    let run = collectors::Run {
+        effective_config: effective,
+        staged_binary: invocation.staged_binary(),
+        detail,
+        started_at: collectors::seconds_since_epoch(SystemTime::now()),
+        hostname: collectors::read_hostname(),
+    };
+    let selection = collectors::selected(collectors::built_in(run), &config)?;
     for name in selection.excluded() {
         eprintln!("rastro: {name} excluded by config, so it is not in this fingerprint");
     }

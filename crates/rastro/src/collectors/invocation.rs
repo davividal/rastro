@@ -74,6 +74,7 @@ pub struct InvocationCollector {
     effective_config: Observation,
     walk_policy: Observation,
     observer: Option<String>,
+    started_at: Result<i64, CollectionError>,
 }
 
 impl InvocationCollector {
@@ -93,11 +94,13 @@ impl InvocationCollector {
         effective_config: Observation,
         walk_policy: Observation,
         observer: Option<String>,
+        started_at: Result<i64, CollectionError>,
     ) -> Self {
         Self {
             effective_config,
             walk_policy,
             observer,
+            started_at,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
@@ -126,7 +129,7 @@ impl Collector for InvocationCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let started_at = seconds_since_epoch(SystemTime::now())?;
+        let started_at = self.started_at.as_ref().map_err(|error| error.clone())?;
 
         Ok(Observation::object([
             ("rastro_version", Observation::text(RASTRO_VERSION)),
@@ -138,7 +141,7 @@ impl Collector for InvocationCollector {
                     None => Observation::null(),
                 },
             ),
-            ("started_at", Observation::integer(started_at).volatile()),
+            ("started_at", Observation::integer(*started_at).volatile()),
             ("walk_policy", self.walk_policy.clone()),
         ]))
     }

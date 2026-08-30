@@ -33,7 +33,7 @@ pub use cron::CronCollector;
 pub use exporters::ExportersCollector;
 pub use filesystem::FilesystemCollector;
 pub use firewall::FirewallCollector;
-pub use host::HostCollector;
+pub use host::{HostCollector, read_hostname};
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use locale::LocaleCollector;
 pub use modules::ModulesCollector;
@@ -89,42 +89,53 @@ pub enum SelectionError {
 ///
 /// `staged_binary` says the executable is a temporary copy the caller will delete, and only
 /// then is it left out of the walk. A rastro installed on a box is part of that box.
-pub fn built_in(
-    effective_config: Observation,
-    staged_binary: bool,
-    detail: Detail,
-) -> Vec<Box<dyn Collector>> {
-    let mut collectors = state_collectors();
+/// What the composition root resolved before any collector ran.
+///
+/// A named type rather than a parameter list, because every one of these is a decision the
+/// run made rather than something a collector may read for itself: the clock and the hostname
+/// because the output filename carries both and a second read could disagree with the
+/// document, the rest because they came from the command line.
+pub struct Run {
+    pub effective_config: Observation,
+    pub staged_binary: bool,
+    pub detail: Detail,
+    pub started_at: Result<i64, CollectionError>,
+    pub hostname: Result<String, String>,
+}
+
+pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
+    let mut collectors = state_collectors(run.hostname);
     let policy = claimed_policy(&collectors);
     let table = match &policy {
         Ok(resolved) => Observation::from(resolved),
         Err(_) => Observation::null(),
     };
-    let staged = match staged_binary {
+    let staged = match run.staged_binary {
         true => FilesystemCollector::running_binary(),
         false => None,
     };
 
     collectors.push(Box::new(
-        FilesystemCollector::under(policy, staged.clone()).in_detail(detail),
+        FilesystemCollector::under(policy, staged.clone()).in_detail(run.detail),
     ));
     collectors.push(Box::new(InvocationCollector::new(
-        effective_config,
+        run.effective_config,
         table,
         staged.map(|binary| binary.to_string_lossy().into_owned()),
+        run.started_at,
     )));
     collectors
 }
 
 /// The collectors that observe the host, filesystem aside.
-fn state_collectors() -> Vec<Box<dyn Collector>> {
+fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(AccountsCollector::new()),
         Box::new(BlockDevicesCollector::new()),
         Box::new(CronCollector::new()),
         Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
-        Box::new(HostCollector::new()),
+        Box::new(HostCollector::reading(hostname)),
         Box::new(LocaleCollector::new()),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),

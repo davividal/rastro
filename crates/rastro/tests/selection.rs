@@ -9,17 +9,26 @@ fn effective(config: &Config) -> Observation {
     collectors::effective_config(config, View::Diffable, false, Detail::Summary)
 }
 
+/// A run resolved as the composition root would, with the two host readings supplied so this
+/// test needs neither a clock nor a `/proc`.
+fn run(effective_config: Observation) -> collectors::Run {
+    collectors::Run {
+        effective_config,
+        staged_binary: false,
+        detail: Detail::Summary,
+        started_at: Ok(1_786_632_455),
+        hostname: Ok("reference-box".to_owned()),
+    }
+}
+
 fn names(config: &str) -> Vec<String> {
     let config = Config::parse(config).expect("this config is well formed");
-    collectors::selected(
-        collectors::built_in(effective(&config), false, Detail::Summary),
-        &config,
-    )
-    .expect("this config is acceptable")
-    .running()
-    .iter()
-    .map(|collector| collector.name().as_str().to_owned())
-    .collect()
+    collectors::selected(collectors::built_in(run(effective(&config))), &config)
+        .expect("this config is acceptable")
+        .running()
+        .iter()
+        .map(|collector| collector.name().as_str().to_owned())
+        .collect()
 }
 
 #[test]
@@ -31,7 +40,7 @@ fn every_collector_runs_when_nothing_is_excluded() {
     // nobody documented.
     assert_eq!(
         running.len(),
-        collectors::built_in(Observation::null(), false, Detail::Summary).len()
+        collectors::built_in(run(Observation::null())).len()
     );
 }
 
@@ -44,7 +53,7 @@ fn an_excluded_collector_does_not_run() {
     assert!(!running.contains(&"mounts".to_owned()));
     assert_eq!(
         running.len(),
-        collectors::built_in(Observation::null(), false, Detail::Summary).len() - 1
+        collectors::built_in(run(Observation::null())).len() - 1
     );
 }
 
@@ -54,11 +63,8 @@ fn selected_reports_what_it_excluded_so_the_operator_can_be_told() {
     let config = Config::parse("[collectors]\nexclude = [\"mounts\"]\n").expect("well formed");
 
     // Act
-    let selection = collectors::selected(
-        collectors::built_in(effective(&config), false, Detail::Summary),
-        &config,
-    )
-    .expect("acceptable");
+    let selection = collectors::selected(collectors::built_in(run(effective(&config))), &config)
+        .expect("acceptable");
 
     // Assert: omitted from the document entirely, so the only trace is the
     // warning and the effective config in the envelope.
@@ -72,10 +78,7 @@ fn selected_refuses_a_collector_name_that_does_not_exist() {
     let config = Config::parse("[collectors]\nexclude = [\"mount\"]\n").expect("well formed");
 
     // Act
-    let result = collectors::selected(
-        collectors::built_in(effective(&config), false, Detail::Summary),
-        &config,
-    );
+    let result = collectors::selected(collectors::built_in(run(effective(&config))), &config);
 
     // Assert
     let failure = result.expect_err("an unknown collector must not be ignored");
@@ -93,10 +96,7 @@ fn selected_refuses_to_exclude_a_metadata_collector() {
     let config = Config::parse("[collectors]\nexclude = [\"invocation\"]\n").expect("well formed");
 
     // Act
-    let result = collectors::selected(
-        collectors::built_in(effective(&config), false, Detail::Summary),
-        &config,
-    );
+    let result = collectors::selected(collectors::built_in(run(effective(&config))), &config);
 
     // Assert: without it a fingerprint cannot be told apart from another, so
     // asking is a config mistake rather than something to quietly ignore.
@@ -110,11 +110,5 @@ fn the_host_collector_cannot_be_excluded_either() {
     let config = Config::parse("[collectors]\nexclude = [\"host\"]\n").expect("well formed");
 
     // Act & Assert
-    assert!(
-        collectors::selected(
-            collectors::built_in(effective(&config), false, Detail::Summary),
-            &config
-        )
-        .is_err()
-    );
+    assert!(collectors::selected(collectors::built_in(run(effective(&config))), &config).is_err());
 }

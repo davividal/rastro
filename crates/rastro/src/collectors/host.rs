@@ -18,11 +18,23 @@ const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
 pub struct HostCollector {
     name: FacetName,
     identity: CollectorIdentity,
+    hostname: Result<String, String>,
 }
 
 impl HostCollector {
     pub fn new() -> Self {
+        Self::reading(read_hostname())
+    }
+
+    /// The same collector over a reading somebody else took.
+    ///
+    /// The composition root reads the hostname, because the default output filename carries
+    /// it and a second read could disagree with the one in the document. Carried as a
+    /// `Result` so an unreadable hostname is still this facet's recorded error rather than
+    /// the end of the run.
+    pub fn reading(hostname: Result<String, String>) -> Self {
         Self {
+            hostname,
             name: FacetName::new("host").expect("`host` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("host").expect("`host` is a legal collector id"),
@@ -60,13 +72,21 @@ impl Collector for HostCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let hostname = fs::read_to_string(HOSTNAME_PATH).map_err(|error| {
-            CollectionError::new(format!("could not read {HOSTNAME_PATH}: {error}"))
-        })?;
+        let hostname = self.hostname.as_ref().map_err(CollectionError::new)?;
 
         Ok(Observation::object([(
             "hostname",
             Observation::text(hostname.trim()),
         )]))
     }
+}
+
+/// The live hostname, or why it could not be read.
+///
+/// Public because the composition root reads it and hands it both to this collector and to
+/// the output filename: one read, so the document and the file it lands in cannot disagree.
+pub fn read_hostname() -> Result<String, String> {
+    fs::read_to_string(HOSTNAME_PATH)
+        .map(|hostname| hostname.trim().to_owned())
+        .map_err(|error| format!("could not read {HOSTNAME_PATH}: {error}"))
 }
