@@ -48,6 +48,39 @@ fn assert_keys_in_order(rendered: &str, keys: &[&str]) {
     );
 }
 
+/// Every shape a collector can hand the renderer, in one facet.
+///
+/// Deliberately exhaustive over `Content` and `Scalar` plus both ways a view drops a value,
+/// because this is the fixture behind the golden-bytes test below.
+fn every_shape() -> Observation {
+    Observation::object([
+        ("absent", Observation::null()),
+        ("enabled", Observation::boolean(true)),
+        ("count", Observation::integer(-7)),
+        ("name", Observation::text("keep \"me\"\n")),
+        (
+            "nested",
+            Observation::object([
+                ("inner", Observation::text("deep")),
+                ("dropped_leaf", Observation::integer(1).volatile()),
+            ]),
+        ),
+        (
+            "items",
+            Observation::list([
+                Observation::integer(1),
+                Observation::text("two"),
+                Observation::null(),
+            ]),
+        ),
+        (
+            "dropped_subtree",
+            Observation::object([("gone", Observation::text("with it"))]).volatile(),
+        ),
+        ("secret", Observation::text("kept, marked").sensitive()),
+    ])
+}
+
 fn processes_facet(pid: i64) -> Facet {
     facet(
         "processes",
@@ -239,4 +272,113 @@ fn to_canonical_json_ends_with_a_newline() {
 
     // Assert
     assert!(rendered.ends_with("}\n"));
+}
+
+#[test]
+fn to_canonical_json_renders_this_exact_document() {
+    // Arrange: every `Content` and `Scalar` variant, a nested object, a list, a volatile leaf
+    // and a wholly volatile subtree. Pinned to the byte because the format *is* the contract
+    // and the determinism harness compares raw bytes — so any later change to how the tree is
+    // serialised has to prove itself here rather than be argued about.
+    let document = fingerprint_of([facet(
+        "shapes",
+        CollectorCategory::State,
+        FacetOutcome::Ok {
+            observation: every_shape(),
+        },
+    )]);
+
+    // Act
+    let rendered = to_canonical_json(&document, View::Diffable);
+
+    // Assert
+    assert_eq!(
+        rendered,
+        r#"{
+  "schema_version": 1,
+  "metadata": [],
+  "facets": [
+    {
+      "name": "shapes",
+      "collector": {
+        "id": "shapes",
+        "version": "1"
+      },
+      "status": "ok",
+      "data": {
+        "absent": null,
+        "count": -7,
+        "enabled": true,
+        "items": [
+          1,
+          "two",
+          null
+        ],
+        "name": "keep \"me\"\n",
+        "nested": {
+          "inner": "deep"
+        },
+        "secret": "kept, marked"
+      }
+    }
+  ]
+}
+"#
+    );
+}
+
+#[test]
+fn to_canonical_json_renders_this_exact_document_in_the_complete_view() {
+    // Arrange: the same fixture, so the two goldens together pin what a view changes and
+    // nothing else. `View::Complete` pays a full clone today for zero benefit, and this is
+    // what will prove that removing the clone changed no byte.
+    let document = fingerprint_of([facet(
+        "shapes",
+        CollectorCategory::State,
+        FacetOutcome::Ok {
+            observation: every_shape(),
+        },
+    )]);
+
+    // Act
+    let rendered = to_canonical_json(&document, View::Complete);
+
+    // Assert
+    assert_eq!(
+        rendered,
+        r#"{
+  "schema_version": 1,
+  "metadata": [],
+  "facets": [
+    {
+      "name": "shapes",
+      "collector": {
+        "id": "shapes",
+        "version": "1"
+      },
+      "status": "ok",
+      "data": {
+        "absent": null,
+        "count": -7,
+        "dropped_subtree": {
+          "gone": "with it"
+        },
+        "enabled": true,
+        "items": [
+          1,
+          "two",
+          null
+        ],
+        "name": "keep \"me\"\n",
+        "nested": {
+          "dropped_leaf": 1,
+          "inner": "deep"
+        },
+        "secret": "kept, marked"
+      }
+    }
+  ]
+}
+"#
+    );
 }
