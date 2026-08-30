@@ -19,6 +19,7 @@ fn run(effective_config: Observation) -> collectors::Run {
         started_at: Ok(1_786_632_455),
         hostname: Ok("reference-box".to_owned()),
         output: None,
+        progress: None,
     }
 }
 

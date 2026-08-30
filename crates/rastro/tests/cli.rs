@@ -573,3 +573,61 @@ fn the_effective_config_records_which_detail_the_run_was_taken_at() {
     assert_eq!(recorded(&summary), "summary");
     assert_eq!(recorded(&full), "full");
 }
+
+#[test]
+fn debug_reports_a_line_per_collector_on_stderr() {
+    // Act
+    let output = run(&["--debug"]);
+
+    // Assert: on stderr, because stdout carries only the fingerprint, and named per collector
+    // because "it took 40 seconds" is not actionable while "the filesystem walk took 39 of
+    // them" is.
+    assert!(output.status.success(), "rastro should have succeeded");
+    let reported = String::from_utf8_lossy(&output.stderr);
+    assert!(reported.contains("filesystem"), "got {reported}");
+    assert!(reported.contains("invocation"), "got {reported}");
+    assert!(reported.contains("total"), "got {reported}");
+}
+
+#[test]
+fn debug_reports_what_the_walk_cost_and_where_the_document_went() {
+    // Act
+    let output = run(&["--debug"]);
+
+    // Assert: the two questions an operator actually has after a slow run, and the reason
+    // this exists at all: `time ./rastro > file` answers neither.
+    let reported = String::from_utf8_lossy(&output.stderr);
+    assert!(reported.contains("entries"), "got {reported}");
+    assert!(reported.contains("wrote"), "got {reported}");
+}
+
+#[test]
+fn debug_writes_no_timing_into_the_document() {
+    // Act
+    let document = document(&["--debug", "--include-volatile"]);
+
+    // Assert: a fingerprint records what a box *is*, not what it is doing, so a duration has
+    // no place in it — and it would be volatile anyway, so the default view would drop it and
+    // two runs would stop being comparable at the complete view.
+    let rendered = serde_json::to_string(&document).expect("a document re-serialises");
+    for forbidden in ["elapsed", "duration", "seconds_taken", "milliseconds"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "the document carries {forbidden:?}"
+        );
+    }
+}
+
+#[test]
+fn a_clean_run_without_debug_still_says_nothing_on_stderr() {
+    // Act
+    let output = run(&[]);
+
+    // Assert: the contract `--debug` must not quietly break. Diagnostics belong on stderr, and
+    // a clean run has none.
+    assert!(
+        output.stderr.is_empty(),
+        "got {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -35,12 +35,15 @@ pub use value_objects::{
 };
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
     AbsolutePath, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, FacetName, Observation, Presence,
 };
+
+use crate::progress::WalkProgress;
 
 /// Reports every entry on every filesystem that holds files.
 pub struct FilesystemCollector {
@@ -51,6 +54,7 @@ pub struct FilesystemCollector {
     observer: Option<PathBuf>,
     output: Option<PathBuf>,
     detail: Detail,
+    progress: Option<Rc<dyn WalkProgress>>,
 }
 
 impl FilesystemCollector {
@@ -149,6 +153,7 @@ impl FilesystemCollector {
             observer,
             output: None,
             detail: Detail::Summary,
+            progress: None,
         }
     }
 
@@ -170,6 +175,13 @@ impl FilesystemCollector {
     /// there is no file to leave out.
     pub fn writing_to(mut self, output: Option<PathBuf>) -> Self {
         self.output = output;
+
+        self
+    }
+
+    /// The same collector, counting what the walk does for whoever is watching.
+    pub fn reporting_to(mut self, progress: Rc<dyn WalkProgress>) -> Self {
+        self.progress = Some(progress);
 
         self
     }
@@ -238,7 +250,13 @@ impl Collector for FilesystemCollector {
             .map(|root| {
                 let tree = FileTree::at(Path::new(root.as_str())).stopping_at(&boundaries);
 
-                tree.omitting(&self.omitted()).walk(policy)
+                let tree = tree.omitting(&self.omitted());
+
+                match &self.progress {
+                    Some(progress) => tree.reporting_to(Rc::clone(progress)),
+                    None => tree,
+                }
+                .walk(policy)
             })
             .collect::<Result<Vec<FilesystemInventory>, CollectionError>>()?;
 

@@ -236,3 +236,81 @@ fn two_collectors_claiming_the_same_facet_name_fail_the_run() {
         })
     );
 }
+
+/// A caller that records what it was told, which is all a progress sink ever does.
+struct Recording {
+    events: Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+impl fingerprint_host::RunProgress for Recording {
+    fn collector_started(&self, name: &FacetName) {
+        self.events
+            .borrow_mut()
+            .push(format!("started {}", name.as_str()));
+    }
+
+    fn collector_finished(&self, name: &FacetName, outcome: &FacetOutcome) {
+        let status = match outcome {
+            FacetOutcome::Ok { .. } => "ok",
+            FacetOutcome::Absent => "absent",
+            FacetOutcome::Error { .. } => "error",
+        };
+        self.events
+            .borrow_mut()
+            .push(format!("finished {} {status}", name.as_str()));
+    }
+}
+
+#[test]
+fn a_reported_run_names_each_collector_starting_and_finishing_in_registration_order() {
+    // Arrange: registration order, not completion order and not slowest-first, so two runs of
+    // `--debug` are comparable line by line.
+    let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let collectors: Vec<Box<dyn Collector>> = vec![
+        Box::new(StubCollector::new(
+            "mounts",
+            Presence::Present,
+            Ok(Observation::null()),
+        )),
+        Box::new(StubCollector::new(
+            "nginx",
+            Presence::Absent,
+            Ok(Observation::null()),
+        )),
+    ];
+
+    // Act
+    fingerprint_host::run_reporting(
+        &collectors,
+        &Recording {
+            events: Rc::clone(&events),
+        },
+    )
+    .expect("distinct facet names");
+
+    // Assert: an absent collector is still reported as finished, because a caller timing the
+    // run needs every collector accounted for, not only the ones that had something to say.
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            "started mounts",
+            "finished mounts ok",
+            "started nginx",
+            "finished nginx absent",
+        ]
+    );
+}
+
+#[test]
+fn an_unreported_run_is_what_run_has_always_been() {
+    // Arrange
+    let collectors: Vec<Box<dyn Collector>> = vec![Box::new(StubCollector::new(
+        "mounts",
+        Presence::Present,
+        Ok(Observation::null()),
+    ))];
+
+    // Act & Assert: the sink is optional, so nothing outside this crate has to grow a
+    // parameter it does not care about.
+    assert!(fingerprint_host::run(&collectors).is_ok());
+}

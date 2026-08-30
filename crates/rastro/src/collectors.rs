@@ -51,12 +51,14 @@ pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation};
 
 use thiserror::Error;
 
 use crate::collectors::filesystem::{Detail, WalkPolicy};
+use crate::progress::WalkProgress;
 
 use crate::config::Config;
 
@@ -108,6 +110,8 @@ pub struct Run {
     /// The walk leaves it out and the `invocation` facet declares it, from this one value, so
     /// the omission and the admission cannot disagree.
     pub output: Option<PathBuf>,
+    /// Where the walk reports its counters, when anybody asked for them.
+    pub progress: Option<Rc<dyn WalkProgress>>,
 }
 
 pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
@@ -122,11 +126,15 @@ pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
         false => None,
     };
 
-    collectors.push(Box::new(
-        FilesystemCollector::under(policy, staged.clone())
+    collectors.push(Box::new(match run.progress {
+        Some(progress) => FilesystemCollector::under(policy, staged.clone())
+            .in_detail(run.detail)
+            .writing_to(run.output.clone())
+            .reporting_to(progress),
+        None => FilesystemCollector::under(policy, staged.clone())
             .in_detail(run.detail)
             .writing_to(run.output.clone()),
-    ));
+    }));
     collectors.push(Box::new(InvocationCollector::new(
         run.effective_config,
         table,

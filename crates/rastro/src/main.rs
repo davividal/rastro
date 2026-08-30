@@ -5,14 +5,17 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 use std::error::Error;
+use std::io;
 use std::process::ExitCode;
 use std::time::SystemTime;
 
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro::output::{self, Destination, Written};
+use rastro::progress::{Reporting, WalkProgress};
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
+use std::rc::Rc;
 
 fn main() -> ExitCode {
     match run() {
@@ -31,6 +34,11 @@ fn run() -> Result<Written, Box<dyn Error>> {
         Some(path) => Config::load(path)?,
         None => Config::default(),
     };
+
+    // One sink, watching both the collectors and the walk inside one of them. Built before
+    // anything runs, because the total it reports is the whole run rather than the part after
+    // somebody thought to start a clock.
+    let reporting = invocation.debug().then(|| Rc::new(Reporting::new()));
 
     let detail = match invocation.full_detail() {
         true => Detail::Full,
@@ -63,18 +71,32 @@ fn run() -> Result<Written, Box<dyn Error>> {
             Destination::File(path) => Some(path.clone()),
             Destination::Stdout => None,
         },
+        progress: reporting.clone().map(|sink| sink as Rc<dyn WalkProgress>),
     };
     let selection = collectors::selected(collectors::built_in(run), &config)?;
     for name in selection.excluded() {
         eprintln!("rastro: {name} excluded by config, so it is not in this fingerprint");
     }
 
-    let fingerprint = fingerprint_host::run(selection.running())?;
+    let fingerprint = match &reporting {
+        Some(sink) => fingerprint_host::run_reporting(selection.running(), sink.as_ref())?,
+        None => fingerprint_host::run(selection.running())?,
+    };
 
-    Ok(output::write(
+    let written = output::write(
         &destination,
         &fingerprint,
         invocation.view(),
         invocation.force(),
-    )?)
+    )?;
+
+    if let Some(sink) = &reporting {
+        let wrote = match &written.destination {
+            Destination::File(path) => format!("{} ({})", path.display(), written.bytes),
+            Destination::Stdout => format!("stdout ({})", written.bytes),
+        };
+        sink.report(&mut io::stderr(), &wrote)?;
+    }
+
+    Ok(written)
 }

@@ -41,6 +41,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 use sha2::{Digest as _, Sha256};
@@ -51,6 +52,7 @@ use crate::collectors::filesystem::model::{
 use crate::collectors::filesystem::value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
 };
+use crate::progress::WalkProgress;
 
 /// A tree to walk, rooted where the caller says.
 ///
@@ -60,6 +62,7 @@ pub struct FileTree {
     root: PathBuf,
     boundaries: Vec<PathBuf>,
     omitted: Vec<PathBuf>,
+    progress: Option<Rc<dyn WalkProgress>>,
 }
 
 impl FileTree {
@@ -68,6 +71,7 @@ impl FileTree {
             root: root.to_path_buf(),
             boundaries: Vec::new(),
             omitted: Vec::new(),
+            progress: None,
         }
     }
 
@@ -84,6 +88,16 @@ impl FileTree {
     /// `rastro` is theirs and belongs in the document.
     pub fn omitting(mut self, paths: &[PathBuf]) -> Self {
         self.omitted = paths.to_vec();
+
+        self
+    }
+
+    /// The same walk, counting what it does for whoever is watching.
+    ///
+    /// `Rc` rather than a borrow, because collectors live in a `Vec<Box<dyn Collector>>` and a
+    /// lifetime here would infect that whole registry. Nothing in it crosses a thread today.
+    pub fn reporting_to(mut self, progress: Rc<dyn WalkProgress>) -> Self {
+        self.progress = Some(progress);
 
         self
     }
@@ -174,6 +188,10 @@ impl FileTree {
                         continue;
                     }
                 }
+            }
+
+            if let Some(progress) = &self.progress {
+                progress.entry_walked();
             }
 
             entries.push(entry);

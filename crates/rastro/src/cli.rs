@@ -58,6 +58,15 @@ pub struct Cli {
     #[arg(long)]
     force: bool,
 
+    /// Report what the run cost, on stderr: per collector, plus what the walk read.
+    ///
+    /// `time ./rastro > file` answers neither "which collector was slow" nor
+    /// "where did the document go", and those are the two questions a slow run
+    /// actually raises. Never written into the document: a fingerprint records
+    /// what a box is, not what it is doing.
+    #[arg(long)]
+    debug: bool,
+
     /// Record every attribute of every walked path, rather than one digest of them.
     ///
     /// The default records a digest per path, which answers what a fingerprint is
@@ -101,6 +110,11 @@ impl Cli {
     /// Whether the operator said an existing output file may be replaced.
     pub fn force(&self) -> bool {
         self.force
+    }
+
+    /// Whether the operator asked for a report of what the run cost.
+    pub fn debug(&self) -> bool {
+        self.debug
     }
 
     /// Whether the operator asked for every attribute rather than a digest of them.
