@@ -115,7 +115,7 @@ jobs:
           path: target/x86_64-unknown-linux-musl/release/rastro
           if-no-files-found: error
 
-  # Republishes the `nightly` pre-release on every master push that passes the rest of
+  # Republishes the `rolling` pre-release on every master push that passes the rest of
   # this workflow, so the newest build has one anonymous URL instead of living behind a
   # signed-in run page. Not a release: no version, no notes, no promise that yesterday's
   # bytes are still there.
@@ -155,12 +155,12 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ env.ASSET }}
-      - name: Publish the build as the `nightly` pre-release
+      - name: Publish the build as the `rolling` pre-release
         run: |
           notes="Built from ${GITHUB_SHA}. Replaced on every push to master, and unrelated to any released version. Verify with \`gh attestation verify --repo $GH_REPO\`, then \`chmod +x\`."
           # Never deleted, only overwritten, so a publish that dies partway leaves a stale
-          # `nightly` rather than a 404. Creation does anything only the first time.
-          gh release create nightly --prerelease --target "$GITHUB_SHA" \
+          # `rolling` rather than a 404. Creation does anything only the first time.
+          gh release create rolling --prerelease --target "$GITHUB_SHA" \
             --title "Rolling development build" --notes "$notes" || true
           # `--clobber` deletes an asset before uploading its replacement, and says so in
           # its own help: a transfer that fails takes the published file with it. So the
@@ -168,15 +168,15 @@ jobs:
           # what is already serving.
           for name in "$ASSET" "$ASSET.sha256"; do
             cp "$name" "$name.incoming"
-            gh release upload nightly "$name.incoming" --clobber
-            gh release delete-asset nightly "$name" --yes || true
-            incoming_id=$(gh api "repos/$GH_REPO/releases/tags/nightly" \
+            gh release upload rolling "$name.incoming" --clobber
+            gh release delete-asset rolling "$name" --yes || true
+            incoming_id=$(gh api "repos/$GH_REPO/releases/tags/rolling" \
               -q ".assets[] | select(.name == \"$name.incoming\") | .id")
             gh api -X PATCH "repos/$GH_REPO/releases/assets/$incoming_id" -f name="$name"
           done
           # A release ignores its target_commitish once its tag exists, so moving the tag
           # takes the refs API. It and the notes go last because both describe bytes that
           # are already uploaded.
-          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" \
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/rolling" \
             -f sha="$GITHUB_SHA" -F force=true
-          gh release edit nightly --notes "$notes"
+          gh release edit rolling --notes "$notes"
