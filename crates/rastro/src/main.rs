@@ -16,7 +16,7 @@ use rastro::preflight;
 use rastro::progress::{self, Reporting, WalkProgress};
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn main() -> ExitCode {
     match run() {
@@ -41,7 +41,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
     // whole run rather than the part after somebody thought to start a clock.
     let live = invocation.show_progress(progress::stderr_is_a_terminal());
     let debug = invocation.debug();
-    let reporting = (live || debug).then(|| Rc::new(Reporting::new(live)));
+    let reporting = (live || debug).then(|| Arc::new(Reporting::new(live)));
 
     let detail = match invocation.full_detail() {
         true => Detail::Full,
@@ -74,7 +74,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
             Destination::File(path) => Some(path.clone()),
             Destination::Stdout => None,
         },
-        progress: reporting.clone().map(|sink| sink as Rc<dyn WalkProgress>),
+        progress: reporting.clone().map(|sink| sink as Arc<dyn WalkProgress>),
     };
     // Before the walk, because the point is to change the operator's mind while they still
     // have one to change. A warning, never a limit: a budget an operator must tune presupposes

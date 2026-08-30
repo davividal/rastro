@@ -1,8 +1,23 @@
 //! The use case: fingerprint this host.
 
-use crate::{Collector, Presence};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::{Collector, Concurrency, Presence};
 use rastro_fingerprint::FingerprintError;
 use rastro_fingerprint::{Facet, FacetName, FacetOutcome, Fingerprint};
+
+/// How many collectors run at once.
+///
+/// Four rather than one per core. Almost every collector spawns a subprocess, and a fingerprint
+/// that starts twenty tools at once on a production box is an intrusion of its own — the thing
+/// this tool exists not to be. What the wait is made of is latency rather than CPU, so a small
+/// pool recovers nearly all of it: 0.69 s of serial subprocess time on a reference box becomes
+/// roughly a quarter of that.
+const AT_ONCE: usize = 4;
+
+/// The collectors of one kind, in the order they were registered.
+type Registered<'a> = Vec<&'a dyn Collector>;
 
 /// What a caller wants to be told while a run is under way.
 ///
@@ -13,9 +28,14 @@ use rastro_fingerprint::{Facet, FacetName, FacetOutcome, Fingerprint};
 /// reach the document, and a library that cannot see a clock cannot put one there.
 ///
 /// Every method does nothing by default, so a caller implements only the ones it
-/// wants. `&self`, so state lives behind a `Cell` in the caller and no collector
-/// has to become mutable to be reported on.
-pub trait RunProgress {
+/// wants. `&self`, so no collector has to become mutable to be reported on — and
+/// `Send + Sync`, because collectors run concurrently and these fire from whichever
+/// worker got there, which is also why a caller's counters have to be atomic.
+///
+/// **Told in completion order, not registration order.** The point of hearing about a
+/// collector starting is to say so while it is still running, so the events cannot be held
+/// back and reordered. A caller that wants a stable report sorts what it collected.
+pub trait RunProgress: Send + Sync {
     fn collector_started(&self, name: &FacetName) {
         let _ = name;
     }
@@ -41,24 +61,62 @@ pub fn run(collectors: &[Box<dyn Collector>]) -> Result<Fingerprint, Fingerprint
 
 /// The same run, telling `progress` about each collector as it goes.
 ///
-/// Collectors are asked in registration order and the document is sorted by name
-/// afterwards, so what a caller is told is deterministic and independent of what
-/// ends up where in the document.
+/// **Shared collectors run together on a small pool; exclusive ones run alone afterwards.**
+/// Most of a run is spent waiting for a subprocess to answer, so waiting in parallel is where
+/// the remaining time is. The filesystem walk is the one collector that cannot tolerate
+/// company — see [`Concurrency`] — and it runs last, by itself, with nothing else able to
+/// disturb the tree it is describing.
+///
+/// The order facets come back in does not matter: [`Fingerprint::from_facets`] sorts by name,
+/// so the document is identical however the workers were scheduled.
 pub fn run_reporting(
     collectors: &[Box<dyn Collector>],
     progress: &dyn RunProgress,
 ) -> Result<Fingerprint, FingerprintError> {
-    let facets = collectors.iter().map(|collector| {
-        let collector = collector.as_ref();
-        progress.collector_started(collector.name());
+    let (shared, alone): (Registered, Registered) = collectors
+        .iter()
+        .map(Box::as_ref)
+        .partition(|collector| collector.concurrency() == Concurrency::Shared);
 
-        let facet = facet_of(collector);
-        progress.collector_finished(&facet.name, &facet.outcome);
+    let collected = Mutex::new(Vec::with_capacity(collectors.len()));
+    let next = AtomicUsize::new(0);
 
-        facet
+    std::thread::scope(|scope| {
+        for _ in 0..AT_ONCE.min(shared.len()) {
+            scope.spawn(|| {
+                // A shared cursor rather than a slice each, because the collectors differ by
+                // orders of magnitude in cost and a fixed split would leave workers idle
+                // while one of them finished `systemctl`.
+                while let Some(collector) = shared.get(next.fetch_add(1, Ordering::SeqCst)) {
+                    let facet = reported(*collector, progress);
+                    collected
+                        .lock()
+                        .expect("a collector that panicked would have unwound the scope")
+                        .push(facet);
+                }
+            });
+        }
     });
 
+    let mut facets = collected
+        .into_inner()
+        .expect("the scope has joined every worker");
+
+    for collector in alone {
+        facets.push(reported(collector, progress));
+    }
+
     Fingerprint::from_facets(facets)
+}
+
+/// One collector's facet, with the caller told before and after.
+fn reported(collector: &dyn Collector, progress: &dyn RunProgress) -> Facet {
+    progress.collector_started(collector.name());
+
+    let facet = facet_of(collector);
+    progress.collector_finished(&facet.name, &facet.outcome);
+
+    facet
 }
 
 /// Turns one collector's answers into a facet.

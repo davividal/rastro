@@ -51,7 +51,7 @@ pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation};
 
@@ -111,7 +111,7 @@ pub struct Run {
     /// the omission and the admission cannot disagree.
     pub output: Option<PathBuf>,
     /// Where the walk reports its counters, when anybody asked for them.
-    pub progress: Option<Rc<dyn WalkProgress>>,
+    pub progress: Option<Arc<dyn WalkProgress>>,
 }
 
 pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {

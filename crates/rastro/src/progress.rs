@@ -7,11 +7,17 @@
 //!
 //! Two sinks are needed and one type provides both, because they see different things.
 //! `RunProgress` is the port every collector passes through, so it can time each facet but
-//! cannot see inside one. The filesystem walk is the collector that needed watching — it was
-//! 99.8% of a measured run — and it reports its own counters through [`WalkProgress`].
+//! cannot see inside one. The filesystem walk reports its own progress through
+//! [`WalkProgress`], because from the outside it is one collector that takes a while.
+//!
+//! **Everything here is shared across threads**, since collectors run concurrently: the
+//! counters are atomic, and the one line the live counter draws on is behind a mutex so two
+//! workers cannot interleave escape sequences on it.
 
-use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use rastro_collector::fingerprint_host::RunProgress;
@@ -29,15 +35,11 @@ const CHECK_EVERY: u64 = 512;
 /// A second trait rather than more methods on `RunProgress`, because that port sees a collector
 /// from the outside: it knows the walk started and finished, and nothing about the tens of
 /// thousands of entries in between. This is the seam that makes a long run legible.
-pub trait WalkProgress {
+/// `Send + Sync` because the walk is one collector among several running at once, and this is
+/// shared with whoever is watching all of them.
+pub trait WalkProgress: Send + Sync {
     fn entry_walked(&self) {
         // Called once per path, so a default that does nothing has to cost nothing.
-    }
-
-    fn file_opened(&self) {}
-
-    fn bytes_hashed(&self, bytes: u64) {
-        let _ = bytes;
     }
 }
 
@@ -48,15 +50,19 @@ pub trait WalkProgress {
 pub struct Reporting {
     live: bool,
     started: Instant,
-    current: RefCell<Option<(String, Instant)>>,
-    collectors: RefCell<Vec<Timing>>,
-    entries: Cell<u64>,
-    files_opened: Cell<u64>,
-    bytes_hashed: Cell<u64>,
-    last_drawn: Cell<Option<Instant>>,
+    /// When each in-flight collector started, keyed by name.
+    ///
+    /// A map rather than one slot, because several run at once and a single "current" would
+    /// attribute one collector's time to another.
+    running: Mutex<HashMap<String, Instant>>,
+    finished: Mutex<Vec<Timing>>,
+    entries: AtomicU64,
+    /// Held across a redraw, so two workers cannot interleave escape sequences on one line.
+    drawing: Mutex<Option<Instant>>,
 }
 
 /// One collector's turn, named rather than a bare triple.
+#[derive(Clone)]
 struct Timing {
     name: String,
     elapsed: Duration,
@@ -72,12 +78,10 @@ impl Reporting {
         Self {
             live,
             started: Instant::now(),
-            current: RefCell::new(None),
-            collectors: RefCell::new(Vec::new()),
-            entries: Cell::new(0),
-            files_opened: Cell::new(0),
-            bytes_hashed: Cell::new(0),
-            last_drawn: Cell::new(None),
+            running: Mutex::new(HashMap::new()),
+            finished: Mutex::new(Vec::new()),
+            entries: AtomicU64::new(0),
+            drawing: Mutex::new(None),
         }
     }
 
@@ -87,21 +91,33 @@ impl Reporting {
             return;
         }
 
-        let mut stderr = std::io::stderr();
+        let _held = self.drawing.lock();
+        let mut stderr = std::io::stderr().lock();
         let _ = write!(stderr, "\r\x1b[K");
         let _ = stderr.flush();
     }
 
     /// The `--debug` report, written after the document is safely on disk.
     ///
-    /// In registration order rather than slowest-first, so two runs are comparable line by
-    /// line. Peak resident memory from `VmHWM`, because that is the number that decides
-    /// whether the walk needs to stop building the document in memory at all, and guessing at
-    /// it is what made this change take two attempts.
+    /// **Sorted by name, not by cost and not by the order they finished.** Collectors run
+    /// concurrently, so completion order is whichever worker got there and would differ
+    /// between two runs of an unchanged host — which is exactly what a report meant for
+    /// comparing runs must not do. Name order is deterministic and matches the document's own.
+    ///
+    /// Peak resident memory from `VmHWM`, because that is the number that decides whether the
+    /// walk needs to stop building the document in memory at all, and guessing at it is what
+    /// made this change take two attempts.
     pub fn report(&self, out: &mut impl Write, wrote: &str) -> std::io::Result<()> {
         writeln!(out, "rastro: debug")?;
 
-        for timing in self.collectors.borrow().iter() {
+        let mut timings = self
+            .finished
+            .lock()
+            .expect("a panicking collector would have unwound the run")
+            .clone();
+        timings.sort_by(|left, right| left.name.cmp(&right.name));
+
+        for timing in &timings {
             writeln!(
                 out,
                 "  {:<24}{:>9.3} s  {}",
@@ -119,10 +135,8 @@ impl Reporting {
         )?;
         writeln!(
             out,
-            "  walk: {} entries, {} files opened, {} hashed",
-            self.entries.get(),
-            self.files_opened.get(),
-            human_bytes(self.bytes_hashed.get())
+            "  walk: {} entries",
+            self.entries.load(Ordering::Relaxed)
         )?;
         writeln!(out, "  wrote {wrote}")?;
 
@@ -146,29 +160,30 @@ impl Reporting {
             return;
         }
 
+        // One lock for the throttle and the write together, so two workers cannot interleave
+        // escape sequences on the one line they share.
+        let Ok(mut last_drawn) = self.drawing.lock() else {
+            return;
+        };
+
         let now = Instant::now();
-        let too_soon = self
-            .last_drawn
-            .get()
-            .is_some_and(|last| now.duration_since(last) < REDRAW_EVERY);
+        let too_soon = last_drawn.is_some_and(|last| now.duration_since(last) < REDRAW_EVERY);
         if too_soon && !force {
             return;
         }
-        self.last_drawn.set(Some(now));
+        *last_drawn = Some(now);
 
-        let running = self
-            .current
-            .borrow()
-            .as_ref()
-            .map(|(name, _)| name.clone())
-            .unwrap_or_default();
-
+        let in_flight = self
+            .running
+            .lock()
+            .map(|running| running.len())
+            .unwrap_or(0);
         let elapsed = self.started.elapsed().as_secs();
-        let mut stderr = std::io::stderr();
+        let mut stderr = std::io::stderr().lock();
         let _ = write!(
             stderr,
-            "\r\x1b[K{running:<16} {} entries  {:02}:{:02}",
-            self.entries.get(),
+            "\r\x1b[K{in_flight} collecting  {} entries  {:02}:{:02}",
+            self.entries.load(Ordering::Relaxed),
             elapsed / 60,
             elapsed % 60
         );
@@ -178,17 +193,19 @@ impl Reporting {
 
 impl RunProgress for Reporting {
     fn collector_started(&self, name: &FacetName) {
-        *self.current.borrow_mut() = Some((name.as_str().to_owned(), Instant::now()));
+        if let Ok(mut running) = self.running.lock() {
+            running.insert(name.as_str().to_owned(), Instant::now());
+        }
         self.draw(true);
     }
 
     fn collector_finished(&self, name: &FacetName, outcome: &FacetOutcome) {
         let elapsed = self
-            .current
-            .borrow_mut()
-            .take()
-            .filter(|(started, _)| started == name.as_str())
-            .map(|(_, at)| at.elapsed())
+            .running
+            .lock()
+            .ok()
+            .and_then(|mut running| running.remove(name.as_str()))
+            .map(|at| at.elapsed())
             .unwrap_or_default();
 
         let status = match outcome {
@@ -197,30 +214,24 @@ impl RunProgress for Reporting {
             FacetOutcome::Error { .. } => "error",
         };
 
-        self.collectors.borrow_mut().push(Timing {
-            name: name.as_str().to_owned(),
-            elapsed,
-            status,
-        });
+        if let Ok(mut finished) = self.finished.lock() {
+            finished.push(Timing {
+                name: name.as_str().to_owned(),
+                elapsed,
+                status,
+            });
+        }
+        self.draw(false);
     }
 }
 
 impl WalkProgress for Reporting {
     fn entry_walked(&self) {
-        let seen = self.entries.get() + 1;
-        self.entries.set(seen);
+        let seen = self.entries.fetch_add(1, Ordering::Relaxed) + 1;
 
         if seen.is_multiple_of(CHECK_EVERY) {
             self.draw(false);
         }
-    }
-
-    fn file_opened(&self) {
-        self.files_opened.set(self.files_opened.get() + 1);
-    }
-
-    fn bytes_hashed(&self, bytes: u64) {
-        self.bytes_hashed.set(self.bytes_hashed.get() + bytes);
     }
 }
 

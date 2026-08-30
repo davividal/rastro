@@ -41,7 +41,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 use sha2::{Digest as _, Sha256};
@@ -62,7 +62,7 @@ pub struct FileTree {
     root: PathBuf,
     boundaries: Vec<PathBuf>,
     omitted: Vec<PathBuf>,
-    progress: Option<Rc<dyn WalkProgress>>,
+    progress: Option<Arc<dyn WalkProgress>>,
 }
 
 impl FileTree {
@@ -94,9 +94,11 @@ impl FileTree {
 
     /// The same walk, counting what it does for whoever is watching.
     ///
-    /// `Rc` rather than a borrow, because collectors live in a `Vec<Box<dyn Collector>>` and a
-    /// lifetime here would infect that whole registry. Nothing in it crosses a thread today.
-    pub fn reporting_to(mut self, progress: Rc<dyn WalkProgress>) -> Self {
+    /// `Arc` rather than a borrow, because collectors live in a `Vec<Box<dyn Collector>>` and
+    /// a lifetime here would infect that whole registry — and shared rather than owned,
+    /// because the sink watching this walk is watching every other collector too, from
+    /// whichever thread each is running on.
+    pub fn reporting_to(mut self, progress: Arc<dyn WalkProgress>) -> Self {
         self.progress = Some(progress);
 
         self

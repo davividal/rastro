@@ -35,12 +35,12 @@ pub use value_objects::{
 };
 
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
     AbsolutePath, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, Concurrency, FacetName, Observation, Presence,
 };
 
 use crate::progress::WalkProgress;
@@ -54,7 +54,7 @@ pub struct FilesystemCollector {
     observer: Option<PathBuf>,
     output: Option<PathBuf>,
     detail: Detail,
-    progress: Option<Rc<dyn WalkProgress>>,
+    progress: Option<Arc<dyn WalkProgress>>,
 }
 
 impl FilesystemCollector {
@@ -180,7 +180,7 @@ impl FilesystemCollector {
     }
 
     /// The same collector, counting what the walk does for whoever is watching.
-    pub fn reporting_to(mut self, progress: Rc<dyn WalkProgress>) -> Self {
+    pub fn reporting_to(mut self, progress: Arc<dyn WalkProgress>) -> Self {
         self.progress = Some(progress);
 
         self
@@ -214,6 +214,22 @@ impl Default for FilesystemCollector {
 }
 
 impl Collector for FilesystemCollector {
+    /// Alone, with nothing else in flight.
+    ///
+    /// **The one collector that can notice the others.** It observes every mount, so a
+    /// temporary file another collector's subprocess created and deleted while this walked
+    /// would be recorded in one run and not the next — and two runs of an unchanged host
+    /// being byte-identical is the contract the whole format rests on. Running collectors one
+    /// at a time made that impossible by accident; running them together makes it possible,
+    /// so this says so.
+    ///
+    /// It costs almost nothing. The walk measured 0.145 s of a 0.839 s run on the reference
+    /// box, against 0.69 s of collectors waiting on subprocesses, so overlapping *those* is
+    /// where the time was and this gives none of it back.
+    fn concurrency(&self) -> Concurrency {
+        Concurrency::Exclusive
+    }
+
     fn name(&self) -> &FacetName {
         &self.name
     }
@@ -253,7 +269,7 @@ impl Collector for FilesystemCollector {
                 let tree = tree.omitting(&self.omitted());
 
                 match &self.progress {
-                    Some(progress) => tree.reporting_to(Rc::clone(progress)),
+                    Some(progress) => tree.reporting_to(Arc::clone(progress)),
                     None => tree,
                 }
                 .walk(policy)
