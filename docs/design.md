@@ -211,6 +211,10 @@ it; the root requirement arrives with Layer 1.
 
 ## Verification
 
+Collectors run on a pool of four, since most of a run is spent waiting for a tool
+to answer. The filesystem walk runs alone afterwards, because it is the only
+collector that could observe another one's side effects and report them once.
+
 **The determinism harness is the flagship test:** a full run twice in an idle
 container, diffable sections byte-identical. It catches map-order leaks and
 unannotated volatile fields at CI time instead of on a production box.

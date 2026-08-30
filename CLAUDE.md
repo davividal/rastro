@@ -113,6 +113,10 @@ Clean Code wins where they conflict. Three Clean Code positions are wrong here:
 
 - Debian/systemd first; choices must not need breaking changes to generalise.
 - **Planned, not built:** a tag-triggered release job with checksums.
+- **Collectors run concurrently**, on a pool of four, because most of a run is
+  waiting for subprocesses. The filesystem walk declares itself `Exclusive` and
+  runs alone: it is the one collector that would notice another's temp file and
+  report it in one run but not the next.
 - **Separation is enforced by cargo.** `rastro-fingerprint` (the document)
   depends on nothing of ours; `rastro-collector` (the port, and what an outside
   contributor depends on) depends on it; `rastro` (the tool) on both. Neither

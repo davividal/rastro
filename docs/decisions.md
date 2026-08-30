@@ -74,6 +74,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [The renderer streams](#the-renderer-streams-and-the-document-is-never-copied-to-filter-it) | four copies at peak became one, proved byte-neutral by golden tests |
 | [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
 | [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
+| [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1896,3 +1897,50 @@ something rastro can arrange after the fact.
 **Worth revisiting as a Layer-3-style specialisation**: if a run finds btrfs or ZFS with a
 usable prior snapshot, it could narrow the walk. It would be optimising a step that now costs
 about a second.
+
+## Collectors run concurrently, and the walk runs alone
+
+`--debug` measured where a run actually goes on the reference box: the filesystem walk 0.145 s
+of 0.839 s, and the rest waiting for subprocesses to answer — `exporters` 0.33 s, `postgresql`
+0.31 s, `units` 0.29 s. So 83% of the run was latency, one tool at a time.
+
+Collectors now run on a pool of four. Measured: **0.839 s → 0.455 s**, with those same three
+collectors summing to 0.94 s of work inside a 0.45 s run.
+
+**Four, not one per core.** Almost every collector spawns a subprocess, and a fingerprint that
+starts twenty tools at once on a production box is an intrusion of its own — the thing this
+tool exists not to be. The wait is latency rather than CPU, so a small pool recovers nearly all
+of it.
+
+**`Collector: Send + Sync`, which is a breaking change to the published port and cost nothing.**
+All 22 built-in collectors satisfied it already: each holds validated owned values, detection
+happens eagerly at construction rather than being memoised, and there is no interior
+mutability anywhere outside the progress sink. An out-of-tree collector that holds an `Rc` or a
+`RefCell` will have to change, which is the price.
+
+**The filesystem walk declares itself `Exclusive`, and this is the substance of the entry.**
+It is the one collector that can notice the others: it observes every mount, so a temporary
+file another collector's subprocess created and deleted *while it walked* would be recorded in
+one run and not the next. That is the byte-identical contract gone, for a second saved.
+Running collectors one at a time made it impossible by accident; running them together makes
+it possible, so the walk now says it needs the box to itself and runs last, alone.
+
+The cost of that isolation is nothing measurable, because the walk was 17% of the run and the
+other 83% is what overlaps. Verified: five consecutive runs to one path on the reference box,
+byte-identical.
+
+**Two hazards checked rather than assumed.** The `processes` collector annotates every process
+volatile, so catching a sibling's subprocess in `/proc` cannot reach the default view. And
+`subprocess` creates its pipes with `pipe2(O_CLOEXEC)` and puts each child in its own process
+group, so concurrent spawns neither leak descriptors into each other's children nor kill each
+other's tools on a timeout.
+
+**What a caller is told changed shape.** Progress callbacks fire in completion order, from
+whichever worker got there, because the point of hearing that a collector started is to say so
+while it is still running. The `--debug` table is therefore sorted **by name** rather than by
+registration or by cost: name order is deterministic and matches the document's own, which is
+what makes two runs comparable line by line. The live counter shows how many collectors are in
+flight rather than naming one, since naming one of four would be a lie.
+
+Also removed here: `WalkProgress::file_opened` and `bytes_hashed`, declared but never called
+and structurally zero since nothing opens a file any more.
