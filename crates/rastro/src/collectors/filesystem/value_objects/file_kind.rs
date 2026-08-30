@@ -43,4 +43,14 @@ impl FileKind {
     pub fn is_device(&self) -> bool {
         matches!(self, Self::BlockDevice | Self::CharacterDevice)
     }
+
+    /// Whether the entry's own stamps and link count are a summary of what is inside it.
+    ///
+    /// True for a directory and nothing else. A directory's `st_mtim`, `st_ctim` and
+    /// `st_nlink` all move when an entry is created or removed under it, and the walk
+    /// reports every one of those entries in its own right, so the summary carries no
+    /// fact of its own while churning on every change beneath it.
+    pub fn summarises_what_is_inside_it(&self) -> bool {
+        matches!(self, Self::Directory)
+    }
 }

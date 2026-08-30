@@ -14,14 +14,19 @@
 #![deny(unsafe_code)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod claims;
 pub mod fingerprint_host;
 pub mod value_objects;
 
 use thiserror::Error;
 
-/// The vocabulary collectors share, re-exported so one import still covers a
-/// collector's needs.
-pub use value_objects::{AbsolutePath, ByteSize, NonEmptyText, ProcessName, SettingValue};
+/// The vocabulary collectors share, re-exported so a collector's needs are still one
+/// import: the value objects, and the claim types a collector uses to say which trees it
+/// owns.
+pub use claims::{ClaimedReading, FilesystemClaim};
+pub use value_objects::{
+    AbsolutePath, ByteSize, NonEmptyText, ProcessName, SettingValue, WalkedTree,
+};
 
 /// Everything a collector author needs from the document model, under exactly
 /// the names the trait signatures use.
@@ -89,6 +94,25 @@ pub trait Collector {
     /// Only called once presence is established, so it never has to express
     /// absence.
     fn collect(&self) -> Result<Observation, CollectionError>;
+
+    /// The trees this collector owns, and how much of each the filesystem walk should
+    /// read.
+    ///
+    /// Empty for almost every collector, which is why it defaults. A collector that owns
+    /// a tree knows two things the walk cannot: where that tree actually is on this host,
+    /// and whether its content is already reported properly elsewhere in the document.
+    ///
+    /// Answered from the host wherever the collector can, for the same reason its facet
+    /// is: a claim naming the path a distribution's default *would* use seals or spares
+    /// the wrong tree on a box that put it somewhere else. A claim it cannot resolve is
+    /// better left unmade, since the walk's own default is the safe direction to be wrong
+    /// in.
+    ///
+    /// Called before the walk runs and independently of [`Self::presence`], so a claim
+    /// must not assume its subject is there.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        Vec::new()
+    }
 }
 
 impl CollectionError {

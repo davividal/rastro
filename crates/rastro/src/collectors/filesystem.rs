@@ -28,11 +28,10 @@ pub mod value_objects;
 pub use model::{FileEntry, FilesystemInventory, PolicyRule, WalkPolicy};
 pub use source::{FileTree, MountedFilesystems, WalkBoundaries};
 pub use value_objects::{
-    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode,
-    NanosecondsSinceEpoch, WalkedTree,
+    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
 };
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
@@ -45,36 +44,95 @@ pub struct FilesystemCollector {
     name: FacetName,
     identity: CollectorIdentity,
     walked: Option<WalkBoundaries>,
-    policy: WalkPolicy,
+    policy: Result<WalkPolicy, CollectionError>,
+    observer: Option<PathBuf>,
 }
 
 impl FilesystemCollector {
     pub fn new() -> Self {
-        Self::of(None, WalkPolicy::built_in())
+        Self::of(None, Ok(WalkPolicy::built_in()), None)
+    }
+
+    /// The same collector, under a table somebody else resolved, omitting the binary this
+    /// run is reading from.
+    ///
+    /// The table arrives as a `Result` because folding the other collectors' claims into it
+    /// can fail, and that failure belongs to this facet: a conflict makes the walk
+    /// unanswerable, and nothing else in the document is any less true for it. The
+    /// alternative was failing the whole run, which would cost an operator every other
+    /// facet over a bug in a collector pair.
+    ///
+    /// The observer is passed in rather than read here, because the `invocation` facet
+    /// reports the same path and the two must not disagree.
+    pub fn under(policy: Result<WalkPolicy, CollectionError>, observer: Option<PathBuf>) -> Self {
+        Self::of(None, policy, observer)
     }
 
     /// The same collector over roots the caller names.
     ///
     /// The escape hatch that makes the whole collector testable without a mount: with the
     /// roots given, the walk, the policy and the render can be exercised against a scratch
-    /// tree on any host.
+    /// tree on any host. It reports the running binary like any other file, which is what a
+    /// local run does.
     pub fn walking(roots: Vec<AbsolutePath>, policy: WalkPolicy) -> Self {
-        Self::of(Some(WalkBoundaries::of(roots.clone(), roots)), policy)
+        Self::of(
+            Some(WalkBoundaries::of(roots.clone(), roots)),
+            Ok(policy),
+            None,
+        )
+    }
+
+    /// The same over named roots, as a staged run: the running binary is left out.
+    ///
+    /// What `rastro-ssh` produces, with the roots named so a test can reach it.
+    pub fn walking_staged(roots: Vec<AbsolutePath>, policy: WalkPolicy) -> Self {
+        Self::of(
+            Some(WalkBoundaries::of(roots.clone(), roots)),
+            Ok(policy),
+            Self::running_binary(),
+        )
     }
 
     /// The same, with the boundaries named separately from the roots.
     ///
     /// What a bind mount looks like to the walk: a directory of the tree being walked that is
     /// also a mount point, so it shares the device and must still stop the walk.
+    ///
+    /// Reports the running binary, like [`Self::walking`]: only a caller that says it staged
+    /// a temporary copy gets the omission, and this constructor is handed no such decision.
     pub fn walking_within(
         roots: Vec<AbsolutePath>,
         boundaries: Vec<AbsolutePath>,
         policy: WalkPolicy,
     ) -> Self {
-        Self::of(Some(WalkBoundaries::of(roots, boundaries)), policy)
+        Self::of(
+            Some(WalkBoundaries::of(roots, boundaries)),
+            Ok(policy),
+            None,
+        )
     }
 
-    fn of(walked: Option<WalkBoundaries>, policy: WalkPolicy) -> Self {
+    /// The executable this run is reading the host from.
+    ///
+    /// `std::env::current_exe` reads `/proc/self/exe` on Linux, so it is the path the kernel
+    /// says is running rather than whatever `argv[0]` claims, and it survives the `mktemp`
+    /// name `rastro-ssh` stages the binary under.
+    ///
+    /// `None` where the kernel will not answer, and then the walk reports the binary like any
+    /// other file. A run that cannot tell which file it is should report one entry too many
+    /// rather than guess at a path and omit somebody else's.
+    ///
+    /// Public because the `invocation` facet accounts for the omission and has to name the
+    /// same path: one definition, so the two cannot disagree.
+    pub fn running_binary() -> Option<PathBuf> {
+        std::env::current_exe().ok()
+    }
+
+    fn of(
+        walked: Option<WalkBoundaries>,
+        policy: Result<WalkPolicy, CollectionError>,
+        observer: Option<PathBuf>,
+    ) -> Self {
         Self {
             name: FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
             identity: CollectorIdentity::new(
@@ -83,6 +141,7 @@ impl FilesystemCollector {
             ),
             walked,
             policy,
+            observer,
         }
     }
 
@@ -124,6 +183,7 @@ impl Collector for FilesystemCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
+        let policy = self.policy.as_ref().map_err(Clone::clone)?;
         let walked = self.walked()?;
         let boundaries: Vec<&Path> = walked
             .boundaries()
@@ -135,9 +195,13 @@ impl Collector for FilesystemCollector {
             .roots()
             .iter()
             .map(|root| {
-                FileTree::at(Path::new(root.as_str()))
-                    .stopping_at(&boundaries)
-                    .walk(&self.policy)
+                let tree = FileTree::at(Path::new(root.as_str())).stopping_at(&boundaries);
+
+                match &self.observer {
+                    Some(binary) => tree.omitting(binary),
+                    None => tree,
+                }
+                .walk(policy)
             })
             .collect::<Result<Vec<FilesystemInventory>, CollectionError>>()?;
 

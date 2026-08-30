@@ -1,12 +1,17 @@
-//! A subtree of the filesystem, as a policy names it.
+//! A subtree of the filesystem, as a policy or a claim names it.
 
-use rastro_collector::{AbsolutePath, CollectionError};
+use crate::CollectionError;
+use crate::value_objects::AbsolutePath;
 
-/// The root of a subtree a policy rule applies to.
+/// The root of a subtree a policy rule or a collector's claim applies to.
 ///
 /// Absolute, and spelled without a trailing separator, so `/var/log/` and `/var/log`
 /// are one tree rather than two. Normalising here rather than at every comparison is
 /// what stops a rule that reads correctly from matching nothing at all.
+///
+/// Shared vocabulary rather than the walker's own, because a collector claiming a tree
+/// it owns has to spell one the same way the walk does, and the two live in different
+/// crates.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WalkedTree(AbsolutePath);
 

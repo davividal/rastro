@@ -26,6 +26,20 @@ pub struct Cli {
     /// stale file lying beside the binary cannot quietly narrow a run.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
+
+    /// This binary is a temporary copy, so do not report it as part of the host.
+    ///
+    /// For a caller that staged the executable and will delete it, which is what
+    /// `rastro-ssh` does with `mktemp /var/tmp/rastro.XXXXXXXX`. Without this the
+    /// walk reports the file it is running from like any other, because a rastro
+    /// installed on a box *is* part of that box and a swapped binary is exactly
+    /// the change a fingerprint should catch.
+    ///
+    /// rastro cannot tell the two apart by itself: the staged copy and an
+    /// installed one are byte-identical and the kernel vouches for both, so the
+    /// only party that knows is the one that made the copy.
+    #[arg(long)]
+    staged: bool,
 }
 
 impl Cli {
@@ -46,6 +60,11 @@ impl Cli {
         } else {
             View::Diffable
         }
+    }
+
+    /// Whether the caller said this binary is a temporary copy of itself.
+    pub fn staged_binary(&self) -> bool {
+        self.staged
     }
 }
 

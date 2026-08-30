@@ -15,9 +15,10 @@ use std::process::Command;
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, DigestAlgorithm, FileKind, FileTree, PolicyRule, WalkPolicy, WalkedTree,
+    ContentPolicy, DigestAlgorithm, FileKind, FileTree, PolicyRule, WalkPolicy,
 };
-use rastro_fingerprint::Observation;
+use rastro_collector::WalkedTree;
+use rastro_fingerprint::{Observation, View};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, integer, is_null, keys_of, text};
 
@@ -26,26 +27,26 @@ const HELLO_DIGEST: &str = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286
 const HELLO: &str = "hello\n";
 
 fn hashing_everything() -> WalkPolicy {
-    WalkPolicy::new(vec![PolicyRule {
-        tree: WalkedTree::new("/").expect("a legal tree"),
-        content: ContentPolicy::Hashed(DigestAlgorithm::Sha256),
-    }])
+    WalkPolicy::new(vec![PolicyRule::shipped(
+        WalkedTree::new("/").expect("a legal tree"),
+        ContentPolicy::Hashed(DigestAlgorithm::Sha256),
+    )])
     .expect("a legal table")
 }
 
 /// Hashing everywhere except one tree, named absolutely because a policy names real
 /// paths and the scratch root is where this walk really happens.
-fn metadata_only_under(root: &Path, relative: &str) -> WalkPolicy {
+fn reading_under(root: &Path, relative: &str, content: ContentPolicy) -> WalkPolicy {
     WalkPolicy::new(vec![
-        PolicyRule {
-            tree: WalkedTree::new("/").expect("a legal tree"),
-            content: ContentPolicy::Hashed(DigestAlgorithm::Sha256),
-        },
-        PolicyRule {
-            tree: WalkedTree::new(root.join(relative).to_str().expect("a UTF-8 path"))
+        PolicyRule::shipped(
+            WalkedTree::new("/").expect("a legal tree"),
+            ContentPolicy::Hashed(DigestAlgorithm::Sha256),
+        ),
+        PolicyRule::shipped(
+            WalkedTree::new(root.join(relative).to_str().expect("a UTF-8 path"))
                 .expect("a legal tree"),
-            content: ContentPolicy::MetadataOnly,
-        },
+            content,
+        ),
     ])
     .expect("a legal table")
 }
@@ -55,6 +56,22 @@ fn walked(
     policy: &WalkPolicy,
 ) -> Vec<(String, rastro::collectors::filesystem::FileEntry)> {
     FileTree::at(root)
+        .walk(policy)
+        .expect("a readable tree")
+        .entries()
+        .iter()
+        .map(|entry| (relative(root, entry.path.as_str()), entry.clone()))
+        .collect()
+}
+
+/// The same walk, with one path the observer must not report.
+fn walked_omitting(
+    root: &Path,
+    policy: &WalkPolicy,
+    observer: &Path,
+) -> Vec<(String, rastro::collectors::filesystem::FileEntry)> {
+    FileTree::at(root)
+        .omitting(observer)
         .walk(policy)
         .expect("a readable tree")
         .entries()
@@ -162,7 +179,10 @@ fn walk_leaves_a_metadata_only_tree_undigested() {
     let root = tree_with_a_file("walk_leaves_metadata_only");
 
     // Act
-    let entries = walked(&root, &metadata_only_under(&root, "etc"));
+    let entries = walked(
+        &root,
+        &reading_under(&root, "etc", ContentPolicy::MetadataOnly),
+    );
 
     // Assert: the entry is still recorded. Only its content goes unread, which is the
     // difference between a downgraded tree and an excluded one.
@@ -186,6 +206,117 @@ fn walk_records_a_directory_without_a_digest() {
     assert_eq!(directory.kind, FileKind::Directory);
     assert!(directory.digest.is_none());
     assert!(directory.size.is_none());
+}
+
+#[test]
+fn walk_omits_the_observers_own_executable() {
+    // Arrange: `rastro-ssh` stages the binary as `mktemp /var/tmp/rastro.XXXXXXXX` and
+    // `/var/tmp` is walked on purpose, so every run otherwise reports one added and one
+    // removed file that is nothing but the tool's own footprint.
+    let root = tree_with_a_file("walk_omits_the_observer");
+    write(&root, "etc/rastro.zDeJEVKF", HELLO);
+    let observer = root.join("etc/rastro.zDeJEVKF");
+
+    // Act
+    let entries = walked_omitting(&root, &hashing_everything(), &observer);
+
+    // Assert: the observer is not state. Its neighbour in the same directory is.
+    assert_eq!(names(&entries), vec!["", "etc", "etc/greeting"]);
+}
+
+#[test]
+fn walk_omits_nothing_when_the_observer_is_elsewhere() {
+    // Arrange
+    let root = tree_with_a_file("walk_omits_nothing");
+
+    // Act
+    let entries = walked_omitting(&root, &hashing_everything(), Path::new("/usr/bin/rastro"));
+
+    // Assert: the rule is one path, not a name pattern. A file the operator called `rastro`
+    // is theirs, and it stays in the document.
+    assert_eq!(names(&entries), vec!["", "etc", "etc/greeting"]);
+}
+
+#[test]
+fn walk_records_a_sealed_tree_as_its_own_directory_and_goes_no_further() {
+    // Arrange: a tree a claimant sealed, standing in for a data directory whose files are
+    // too many to enumerate and whose content another facet reports properly.
+    let root = tree_with_a_file("walk_seals_a_tree");
+    write(&root, "etc/second", HELLO);
+
+    // Act
+    let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Sealed));
+
+    // Assert: the root entry stays, because a sealed tree that vanished would be an
+    // omission nothing in the document accounts for. Nothing under it is read at all.
+    assert_eq!(names(&entries), vec!["", "etc"]);
+    let sealed = entry_at(&entries, "etc");
+    assert_eq!(sealed.kind, FileKind::Directory);
+}
+
+#[test]
+fn walk_seals_only_the_tree_that_was_claimed() {
+    // Arrange
+    let root = scratch_tree("walk_seals_one_tree", &["etc", "opt"]);
+    write(&root, "etc/greeting", HELLO);
+    write(&root, "opt/payload", HELLO);
+
+    // Act
+    let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Sealed));
+
+    // Assert: a seal is a rule about one tree, so its neighbour is walked and hashed as
+    // before.
+    assert_eq!(names(&entries), vec!["", "etc", "opt", "opt/payload"]);
+    assert!(entry_at(&entries, "opt/payload").digest.is_some());
+}
+
+#[test]
+fn an_entry_in_a_churning_tree_omits_the_attributes_that_move() {
+    // Arrange: what a journal or a WAL segment looks like to the walk.
+    let root = tree_with_a_file("entry_in_a_churning_tree");
+
+    // Act
+    let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Churns));
+    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+        .in_view(View::Diffable)
+        .expect("an entry is not volatile as a whole");
+
+    // Assert: presence, kind, permissions and ownership survive, because those are what an
+    // operator can act on in a tree that writes to itself. Everything that moves on its own
+    // leaves the diffable view rather than the document.
+    assert_eq!(text(&field(&rendered, "kind")), "regular");
+    assert_eq!(text(&field(&rendered, "mode")), "0644");
+    assert!(keys_of(&rendered).contains(&"owner".to_owned()));
+    assert!(keys_of(&rendered).contains(&"group".to_owned()));
+    for moving in [
+        "size",
+        "inode",
+        "modified_nanoseconds_since_epoch",
+        "changed_nanoseconds_since_epoch",
+    ] {
+        assert!(
+            !keys_of(&rendered).contains(&moving.to_owned()),
+            "a churning tree's {moving} is noise"
+        );
+    }
+}
+
+#[test]
+fn an_entry_in_a_churning_tree_keeps_everything_in_the_complete_view() {
+    // Arrange
+    let root = tree_with_a_file("entry_in_a_churning_tree_complete");
+
+    // Act
+    let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Churns));
+    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+        .in_view(View::Complete)
+        .expect("an entry is not volatile as a whole");
+
+    // Assert: the walk still reads all of it. Churning is a statement about the diff, not
+    // about what was observed.
+    assert_eq!(integer(&field(&rendered, "size")), HELLO.len() as i64);
+    assert!(integer(&field(&rendered, "inode")) > 0);
+    assert!(integer(&field(&rendered, "modified_nanoseconds_since_epoch")) > 0);
 }
 
 #[test]
@@ -274,7 +405,7 @@ fn walk_sees_a_rewrite_that_left_the_size_and_the_policy_unchanged() {
     // Arrange: a metadata-only tree, so no digest can be the thing that notices, and a
     // replacement of exactly the same length, so the size cannot be either.
     let root = tree_with_a_file("walk_sees_a_same_size_rewrite");
-    let policy = metadata_only_under(&root, "etc");
+    let policy = reading_under(&root, "etc", ContentPolicy::MetadataOnly);
     let before = entry_at(&walked(&root, &policy), "etc/greeting").clone();
     write(&root, "etc/greeting", "HELLO\n");
 
@@ -449,6 +580,68 @@ fn an_entry_renders_what_it_does_not_have_as_null() {
             "a directory has no {absent}"
         );
     }
+}
+
+#[test]
+fn an_entry_marks_a_directorys_stamps_and_link_count_volatile() {
+    // Arrange: a directory whose only child is a file the walk reports in its own right.
+    let root = tree_with_a_file("entry_directory_stamps_are_derived");
+    let entries = walked(&root, &hashing_everything());
+
+    // Act
+    let rendered = Observation::from(entry_at(&entries, "etc"))
+        .in_view(View::Diffable)
+        .expect("an entry is not volatile as a whole");
+
+    // Assert: a directory's mtime, ctime and link count are a summary of the entries under
+    // it, so they move whenever a child appears and say nothing those children do not.
+    for derived in [
+        "modified_nanoseconds_since_epoch",
+        "changed_nanoseconds_since_epoch",
+        "link_count",
+    ] {
+        assert!(
+            !keys_of(&rendered).contains(&derived.to_owned()),
+            "a directory's {derived} is derived from its children"
+        );
+    }
+    assert_eq!(text(&field(&rendered, "mode")), "0755");
+}
+
+#[test]
+fn an_entry_keeps_a_directorys_stamps_in_the_complete_view() {
+    // Arrange
+    let root = tree_with_a_file("entry_directory_stamps_are_observed");
+    let entries = walked(&root, &hashing_everything());
+
+    // Act
+    let rendered = Observation::from(entry_at(&entries, "etc"))
+        .in_view(View::Complete)
+        .expect("an entry is not volatile as a whole");
+
+    // Assert: derived is not unobserved. The stamp is still read and still reported, so
+    // `--include-volatile` answers the operator who wants to know when a directory moved.
+    assert!(integer(&field(&rendered, "modified_nanoseconds_since_epoch")) > 0);
+    assert!(integer(&field(&rendered, "changed_nanoseconds_since_epoch")) > 0);
+    assert!(integer(&field(&rendered, "link_count")) >= 2);
+}
+
+#[test]
+fn an_entry_keeps_a_regular_files_stamps_and_link_count_in_the_diffable_view() {
+    // Arrange
+    let root = tree_with_a_file("entry_file_stamps_are_state");
+    let entries = walked(&root, &hashing_everything());
+
+    // Act
+    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+        .in_view(View::Diffable)
+        .expect("an entry is not volatile as a whole");
+
+    // Assert: nothing derives a file's own stamps, and its link count is how a hardlink
+    // shows at all. An in-place rewrite that kept the size moves the mtime and only that.
+    assert!(integer(&field(&rendered, "modified_nanoseconds_since_epoch")) > 0);
+    assert!(integer(&field(&rendered, "changed_nanoseconds_since_epoch")) > 0);
+    assert_eq!(integer(&field(&rendered, "link_count")), 1);
 }
 
 #[test]

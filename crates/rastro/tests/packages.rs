@@ -8,7 +8,7 @@ use rastro::collectors::packages::{
     ApkDatabase, DpkgQuery, Package, PackageInventory, PackageManager, PackageName, PackageSet,
     PackageSource, PackagesCollector,
 };
-use rastro_collector::{Collector, Presence};
+use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
 
 /// Six tab-separated fields, the format rastro asks dpkg for.
@@ -425,5 +425,43 @@ fn dpkg_is_read_through_the_tool_rastro_actually_runs() {
             .state
             .as_str(),
         "installed"
+    );
+}
+
+#[test]
+fn the_collector_claims_the_database_of_every_manager_it_found() {
+    // Arrange: a box with both, which is not a real Debian or a real Alpine but is exactly
+    // what the per-manager rule has to get right.
+    let path = fixture("claims", APK_DATABASE);
+    // Any located tool will do: a claim is about where the manager keeps its database, so
+    // this one is never run.
+    let dpkg = CanonicalTool::located_in("sh", &["/bin"]).expect("/bin/sh is on every unix");
+    let collector = PackagesCollector::reading(vec![
+        PackageSource::Apk(ApkDatabase::at(&path)),
+        PackageSource::Dpkg(DpkgQuery::using(dpkg)),
+    ]);
+
+    // Act
+    let claims = collector.filesystem_claims();
+
+    // Assert: each manager's own database, churning. Hashing them would report "the package
+    // database changed" where this facet already names the package and the version.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    assert_eq!(trees, vec!["/lib/apk/db", "/var/lib/dpkg"]);
+    assert!(
+        claims
+            .iter()
+            .all(|claim| claim.reading() == ClaimedReading::Churns)
+    );
+}
+
+#[test]
+fn the_collector_claims_no_database_of_a_manager_that_is_not_here() {
+    // Act & Assert: a box rastro found no manager on claims nothing, so an rpm host's
+    // `/var/lib` stays hashed rather than being spared a tree rastro cannot read anyway.
+    assert!(
+        PackagesCollector::reading(Vec::new())
+            .filesystem_claims()
+            .is_empty()
     );
 }

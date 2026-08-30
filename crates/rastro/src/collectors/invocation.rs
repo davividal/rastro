@@ -27,7 +27,12 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// secret: hashing it as `sensitive` would destroy the only thing it is for,
 /// and omitting it for privacy would be incoherent in a tool that fingerprints
 /// `/home` and the user accounts anyway.
-pub fn effective_config(config: &Config, view: View) -> Observation {
+///
+/// `staged_binary` is in here because it changes what the walk reports about one
+/// path, and an omission the document does not admit to is the one thing this
+/// format does not do. Recorded even when false, so the key is part of the shape
+/// rather than a hint that appears only on remote runs.
+pub fn effective_config(config: &Config, view: View, staged_binary: bool) -> Observation {
     Observation::object([
         (
             "excluded_collectors",
@@ -45,6 +50,7 @@ pub fn effective_config(config: &Config, view: View) -> Observation {
                 None => Observation::null(),
             },
         ),
+        ("staged_binary", Observation::boolean(staged_binary)),
         (
             "view",
             Observation::text(match view {
@@ -59,14 +65,32 @@ pub struct InvocationCollector {
     name: FacetName,
     identity: CollectorIdentity,
     effective_config: Observation,
+    walk_policy: Observation,
+    observer: Option<String>,
 }
 
 impl InvocationCollector {
-    /// Takes the effective config rather than reading one, so the document's
-    /// self-description is whatever the composition root actually resolved.
-    pub fn new(effective_config: Observation) -> Self {
+    /// Takes the effective config, the effective walk table and the binary this run is
+    /// reading from, rather than reading any of them, so the document's self-description is
+    /// whatever the composition root actually resolved.
+    ///
+    /// The walk table belongs here for the same reason the config does: it is a decision
+    /// this run made, not state observed on the host, and a reader looking at a tree with no
+    /// digests needs one place that says which rule applied and which facet asked for it.
+    /// `null` where the table could not be resolved, which is the conflict the `filesystem`
+    /// facet reports as its error.
+    ///
+    /// The observer is here because the walk leaves it out, and an omission nothing accounts
+    /// for is the one thing this format does not do.
+    pub fn new(
+        effective_config: Observation,
+        walk_policy: Observation,
+        observer: Option<String>,
+    ) -> Self {
         Self {
             effective_config,
+            walk_policy,
+            observer,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
@@ -100,7 +124,15 @@ impl Collector for InvocationCollector {
         Ok(Observation::object([
             ("rastro_version", Observation::text(RASTRO_VERSION)),
             ("config", self.effective_config.clone()),
+            (
+                "observer",
+                match &self.observer {
+                    Some(binary) => Observation::text(binary.as_str()).volatile(),
+                    None => Observation::null(),
+                },
+            ),
             ("started_at", Observation::integer(started_at).volatile()),
+            ("walk_policy", self.walk_policy.clone()),
         ]))
     }
 }

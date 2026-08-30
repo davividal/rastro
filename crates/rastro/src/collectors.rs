@@ -50,11 +50,11 @@ pub use time::TimeCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
-use rastro_collector::{Collector, CollectorCategory};
+use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation};
 
 use thiserror::Error;
 
-use rastro_collector::Observation;
+use crate::collectors::filesystem::WalkPolicy;
 
 use crate::config::Config;
 
@@ -81,16 +81,44 @@ pub enum SelectionError {
 /// Order is irrelevant to the document, which sorts facets by name. The
 /// effective config is a parameter only because one collector reports it; no
 /// other registration reads it.
-pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
+///
+/// Two collectors are appended rather than listed, because each needs something the others
+/// produce: the filesystem walk runs under the table the others' claims resolve to, and the
+/// `invocation` facet reports that table. Gathering the claims here is what keeps the two
+/// collectors ignorant of each other.
+///
+/// `staged_binary` says the executable is a temporary copy the caller will delete, and only
+/// then is it left out of the walk. A rastro installed on a box is part of that box.
+pub fn built_in(effective_config: Observation, staged_binary: bool) -> Vec<Box<dyn Collector>> {
+    let mut collectors = state_collectors();
+    let policy = claimed_policy(&collectors);
+    let table = match &policy {
+        Ok(resolved) => Observation::from(resolved),
+        Err(_) => Observation::null(),
+    };
+    let staged = match staged_binary {
+        true => FilesystemCollector::running_binary(),
+        false => None,
+    };
+
+    collectors.push(Box::new(FilesystemCollector::under(policy, staged.clone())));
+    collectors.push(Box::new(InvocationCollector::new(
+        effective_config,
+        table,
+        staged.map(|binary| binary.to_string_lossy().into_owned()),
+    )));
+    collectors
+}
+
+/// The collectors that observe the host, filesystem aside.
+fn state_collectors() -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(AccountsCollector::new()),
         Box::new(BlockDevicesCollector::new()),
         Box::new(CronCollector::new()),
         Box::new(ExportersCollector::new()),
-        Box::new(FilesystemCollector::new()),
         Box::new(FirewallCollector::new()),
         Box::new(HostCollector::new()),
-        Box::new(InvocationCollector::new(effective_config)),
         Box::new(LocaleCollector::new()),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
@@ -106,6 +134,23 @@ pub fn built_in(effective_config: Observation) -> Vec<Box<dyn Collector>> {
         Box::new(TimersCollector::new()),
         Box::new(UnitsCollector::new()),
     ]
+}
+
+/// The shipped table with every collector's claims folded in, or the conflict that stopped
+/// it resolving.
+///
+/// A claim is asked of every built-in collector, including one the config will exclude in a
+/// moment. That is deliberate and it is the narrower of the two wrong answers: releasing a
+/// claim because its facet was excluded would make an exclusion *widen* the walk, and
+/// `--exclude postgresql` would silently put a cluster's data directory back under the
+/// hashing default.
+fn claimed_policy(collectors: &[Box<dyn Collector>]) -> Result<WalkPolicy, CollectionError> {
+    collectors
+        .iter()
+        .map(AsRef::as_ref)
+        .try_fold(WalkPolicy::built_in(), |policy, collector| {
+            policy.claimed(collector.name(), &collector.filesystem_claims())
+        })
 }
 
 /// The collectors a config leaves running, and the ones it took away.

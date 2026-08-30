@@ -3,7 +3,7 @@
 use rastro_collector::{AbsolutePath, ByteSize, Observation};
 
 use crate::collectors::filesystem::value_objects::{
-    DeviceNumber, Digest, FileKind, FileMode, NanosecondsSinceEpoch,
+    ContentPolicy, DeviceNumber, Digest, FileKind, FileMode, NanosecondsSinceEpoch,
 };
 
 /// What the walk recorded about one path.
@@ -30,6 +30,17 @@ use crate::collectors::filesystem::value_objects::{
 /// purpose: a same-size edit under a metadata-only policy moves the mtime and nothing
 /// else, and the ctime is the one an operator cannot set, so a backdating `touch -d`
 /// leaves the two disagreeing.
+///
+/// **On a directory those two and `link_count` are annotated volatile**, because there
+/// they are a summary of entries the walk reports individually rather than an observation
+/// of the directory: all three move when a child appears, and the child's own entry is
+/// the fact. Read and rendered as always, so the complete view still carries them.
+///
+/// `reading` is the policy the entry was recorded under, and it is on the entry rather
+/// than looked up again at render time because it decides two things here: a tree whose
+/// rule says it churns has its `size`, `inode` and both stamps annotated volatile too, and
+/// a sealed tree's own directory is where the walk stopped. Which rule that was, and who
+/// asked for it, is in the effective table in the `invocation` facet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
     pub path: AbsolutePath,
@@ -45,10 +56,21 @@ pub struct FileEntry {
     pub link_target: Option<String>,
     pub device: Option<DeviceNumber>,
     pub digest: Option<Digest>,
+    pub reading: ContentPolicy,
 }
 
 impl From<&FileEntry> for Observation {
     fn from(entry: &FileEntry) -> Self {
+        // Two reasons a value here is volatile, and they are different facts: a directory
+        // summarises children the walk reports one by one, and a claimed tree was declared
+        // to move on its own. A stamp on a directory in a churning tree is both.
+        let derived = entry.kind.summarises_what_is_inside_it();
+        let churns = entry.reading.churns();
+        let volatile_if = |condition: bool, value: Observation| match condition {
+            true => value.volatile(),
+            false => value,
+        };
+
         Observation::object([
             ("kind", Observation::text(entry.kind.as_str())),
             ("mode", Observation::text(entry.mode.as_str())),
@@ -56,21 +78,30 @@ impl From<&FileEntry> for Observation {
             ("group", Observation::integer(entry.group)),
             (
                 "size",
-                match entry.size {
-                    Some(size) => Observation::integer(size.bytes()),
-                    None => Observation::null(),
-                },
+                volatile_if(
+                    churns,
+                    match entry.size {
+                        Some(size) => Observation::integer(size.bytes()),
+                        None => Observation::null(),
+                    },
+                ),
             ),
             (
                 "modified_nanoseconds_since_epoch",
-                Observation::from(&entry.modified),
+                volatile_if(derived || churns, Observation::from(&entry.modified)),
             ),
             (
                 "changed_nanoseconds_since_epoch",
-                Observation::from(&entry.changed),
+                volatile_if(derived || churns, Observation::from(&entry.changed)),
             ),
-            ("inode", Observation::integer(entry.inode)),
-            ("link_count", Observation::integer(entry.link_count)),
+            (
+                "inode",
+                volatile_if(churns, Observation::integer(entry.inode)),
+            ),
+            (
+                "link_count",
+                volatile_if(derived, Observation::integer(entry.link_count)),
+            ),
             (
                 "link_target",
                 match &entry.link_target {

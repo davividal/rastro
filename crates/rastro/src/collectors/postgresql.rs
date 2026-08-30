@@ -50,7 +50,7 @@ pub use value_objects::{
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 pub struct PostgresqlCollector {
@@ -120,5 +120,35 @@ impl Collector for PostgresqlCollector {
         })?;
 
         Ok(Observation::from(&clusters.read()?))
+    }
+
+    /// Each cluster's data directory, sealed.
+    ///
+    /// **Sealed rather than merely unhashed, and that is the strongest claim in the
+    /// vocabulary.** A cluster directory is the one tree on a database server where the
+    /// walk's agnosticism turns against it: on a real server it is most of the bytes and
+    /// can be most of the files, hashing it means reading a database through a fingerprint
+    /// tool, and every attribute that survives moves on the next write anyway. What is
+    /// actually in there - the databases, the roles, the extensions, the settings, the
+    /// cluster's own identity from `pg_control` - this facet reports properly, from the
+    /// server rather than from its files.
+    ///
+    /// The root entry stays, so a reader still sees the directory, its mode and its owner,
+    /// and the effective table in the `invocation` facet names this facet as the reason
+    /// nothing is under it.
+    ///
+    /// One claim per registered cluster, because a box legitimately runs several and an
+    /// upgrade leaves `16/main` beside `17/main`, each with its own directory.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        let Some(clusters) = &self.clusters else {
+            return Vec::new();
+        };
+
+        clusters
+            .data_directories()
+            .into_iter()
+            .filter_map(|directory| WalkedTree::new(directory).ok())
+            .map(FilesystemClaim::sealed)
+            .collect()
     }
 }
