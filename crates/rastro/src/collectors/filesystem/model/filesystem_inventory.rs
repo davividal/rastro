@@ -3,6 +3,7 @@
 use rastro_collector::{CollectionError, Observation};
 
 use crate::collectors::filesystem::model::{FileEntry, UnreadablePath};
+use crate::collectors::filesystem::value_objects::Detail;
 
 /// The entries of one or more walks, ordered by path.
 ///
@@ -16,6 +17,7 @@ use crate::collectors::filesystem::model::{FileEntry, UnreadablePath};
 /// the root of its own walk. Both readings are of the same directory and agree, so the
 /// duplicate is collapsed. Two readings that *disagree* are refused, because that means the
 /// path changed between them and neither describes one moment.
+///
 /// **A path is described or refused, never both.** Two walks reaching one path and
 /// disagreeing about whether it could be read is the same contradiction as disagreeing about
 /// its mode, one level out, so it is refused for the same reason.
@@ -90,17 +92,18 @@ impl FilesystemInventory {
 
         Self::new(entries, unreadable)
     }
-}
 
-impl From<&FilesystemInventory> for Observation {
+    /// Every path this walk reached, keyed by path.
+    ///
     /// Both lists under one key each, because a reader looks a path up rather than asking
-    /// which of two collections it landed in.
-    fn from(inventory: &FilesystemInventory) -> Self {
-        let described = inventory
+    /// which of two collections it landed in. A described path carries what `detail` asks for;
+    /// a refused one carries the reason either way, since there is no less of it to record.
+    pub fn observation(&self, detail: Detail) -> Observation {
+        let described = self
             .entries()
             .iter()
-            .map(|entry| (entry.path.as_str(), Observation::from(entry)));
-        let refused = inventory
+            .map(|entry| (entry.path.as_str(), entry.observation(detail)));
+        let refused = self
             .unreadable()
             .iter()
             .map(|refused| (refused.path.as_str(), Observation::from(refused)));

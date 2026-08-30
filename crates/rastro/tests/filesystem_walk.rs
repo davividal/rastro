@@ -5,6 +5,10 @@
 //! reading it works) are exactly the ones a mock would have to invent.
 //! `CARGO_TARGET_TMPDIR` is cargo's own per-target scratch directory, so this needs no
 //! dependency.
+//!
+//! The rendering assertions here ask for `Detail::Full`, because what they are about is the
+//! attributes themselves. What the default view records per path is one digest of them, and
+//! that is `filesystem_digest.rs`.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
@@ -16,10 +20,10 @@ use std::time::{Duration, SystemTime};
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, DigestAlgorithm, FileKind, FileTree, PolicyRule, WalkPolicy,
+    ContentPolicy, Detail, DigestAlgorithm, FileKind, FileTree, PolicyRule, WalkPolicy,
 };
 use rastro_collector::WalkedTree;
-use rastro_fingerprint::{Observation, View};
+use rastro_fingerprint::View;
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, integer, is_null, keys_of, text};
 
@@ -278,7 +282,8 @@ fn an_entry_in_a_churning_tree_omits_the_attributes_that_move() {
 
     // Act
     let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Churns));
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+    let rendered = entry_at(&entries, "etc/greeting")
+        .observation(Detail::Full)
         .in_view(View::Diffable)
         .expect("an entry is not volatile as a whole");
 
@@ -309,7 +314,8 @@ fn an_entry_in_a_churning_tree_keeps_everything_in_the_complete_view() {
 
     // Act
     let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Churns));
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+    let rendered = entry_at(&entries, "etc/greeting")
+        .observation(Detail::Full)
         .in_view(View::Complete)
         .expect("an entry is not volatile as a whole");
 
@@ -533,7 +539,7 @@ fn an_entry_renders_every_field_it_owns() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"));
+    let rendered = entry_at(&entries, "etc/greeting").observation(Detail::Full);
 
     // Assert: an observation object keeps its keys sorted, so this is both the field list
     // and the order two runs are byte-identical in. Adding a field changes this line,
@@ -571,7 +577,7 @@ fn an_entry_renders_what_it_does_not_have_as_null() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc"));
+    let rendered = entry_at(&entries, "etc").observation(Detail::Full);
 
     // Assert: the key stays and the value is null, so a diff of two hosts lines the
     // entries up on the same keys whatever kind each path turned out to be.
@@ -590,7 +596,8 @@ fn an_entry_marks_a_directorys_stamps_and_link_count_volatile() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc"))
+    let rendered = entry_at(&entries, "etc")
+        .observation(Detail::Full)
         .in_view(View::Diffable)
         .expect("an entry is not volatile as a whole");
 
@@ -616,7 +623,8 @@ fn an_entry_keeps_a_directorys_stamps_in_the_complete_view() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc"))
+    let rendered = entry_at(&entries, "etc")
+        .observation(Detail::Full)
         .in_view(View::Complete)
         .expect("an entry is not volatile as a whole");
 
@@ -634,7 +642,8 @@ fn an_entry_keeps_a_regular_files_stamps_and_link_count_in_the_diffable_view() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+    let rendered = entry_at(&entries, "etc/greeting")
+        .observation(Detail::Full)
         .in_view(View::Diffable)
         .expect("an entry is not volatile as a whole");
 
@@ -653,7 +662,7 @@ fn an_entry_renders_a_device_as_its_two_numbers() {
         .expect("a readable device node");
 
     // Act
-    let rendered = Observation::from(&inventory.entries()[0]);
+    let rendered = inventory.entries()[0].observation(Detail::Full);
 
     // Assert: one leaf per number, under the key the kind gives meaning to.
     let device = field(&rendered, "device");
@@ -668,11 +677,10 @@ fn an_inventory_is_keyed_by_path_in_path_order() {
     write(&root, "alpha", HELLO);
 
     // Act
-    let rendered = Observation::from(
-        &FileTree::at(&root)
-            .walk(&hashing_everything())
-            .expect("a readable tree"),
-    );
+    let rendered = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("a readable tree")
+        .observation(Detail::Summary);
 
     // Assert: a path is unique, so keying by it loses nothing and removes the ordering
     // churn a list would carry every time an entry appears or goes.
@@ -721,7 +729,7 @@ fn walk_records_an_entry_it_cannot_describe_and_keeps_going() {
     let inventory = FileTree::at(&root)
         .walk(&hashing_everything())
         .expect("one undescribable entry does not fail the walk");
-    let rendered = Observation::from(&inventory);
+    let rendered = inventory.observation(Detail::Full);
 
     // Assert: the entry is its attributes or the reason it has none, never a partial set
     // pretending to be complete — the facet's own `data`-or-`error` contract, one level down.

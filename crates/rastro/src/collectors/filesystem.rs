@@ -30,7 +30,8 @@ pub use model::{
 };
 pub use source::{FileTree, MountedFilesystems, WalkBoundaries};
 pub use value_objects::{
-    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
+    CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
+    FileMode, MetadataDigest, NanosecondsSinceEpoch,
 };
 
 use std::path::{Path, PathBuf};
@@ -48,6 +49,7 @@ pub struct FilesystemCollector {
     walked: Option<WalkBoundaries>,
     policy: Result<WalkPolicy, CollectionError>,
     observer: Option<PathBuf>,
+    detail: Detail,
 }
 
 impl FilesystemCollector {
@@ -144,7 +146,19 @@ impl FilesystemCollector {
             walked,
             policy,
             observer,
+            detail: Detail::Summary,
         }
+    }
+
+    /// The same collector, recording every attribute rather than one digest of them.
+    ///
+    /// A builder rather than a sixth constructor parameter: the detail is a rendering
+    /// decision the five ways of constructing this collector all share, and threading it
+    /// through each of them would say nothing about any of them.
+    pub fn in_detail(mut self, detail: Detail) -> Self {
+        self.detail = detail;
+
+        self
     }
 
     /// The mount points to walk, asked of the kernel unless the caller named them.
@@ -207,8 +221,6 @@ impl Collector for FilesystemCollector {
             })
             .collect::<Result<Vec<FilesystemInventory>, CollectionError>>()?;
 
-        Ok(Observation::from(&FilesystemInventory::merged(
-            inventories,
-        )?))
+        Ok(FilesystemInventory::merged(inventories)?.observation(self.detail))
     }
 }

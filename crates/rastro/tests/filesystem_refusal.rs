@@ -11,10 +11,10 @@ use std::io::ErrorKind;
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, FileEntry, FileKind, FileMode, FilesystemInventory, NanosecondsSinceEpoch,
-    UnreadablePath, is_absence,
+    ContentPolicy, Detail, FileEntry, FileKind, FileMode, FilesystemInventory,
+    NanosecondsSinceEpoch, UnreadablePath, is_absence,
 };
-use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
+use rastro_collector::{AbsolutePath, NonEmptyText};
 use support::observation::{field, keys_of, text};
 
 fn path(value: &str) -> AbsolutePath {
@@ -146,7 +146,7 @@ fn a_refused_path_renders_only_the_reason_it_could_not_be_read() {
     .expect("one refusal is a legal inventory");
 
     // Act
-    let rendered = Observation::from(&inventory);
+    let rendered = inventory.observation(Detail::Summary);
 
     // Assert: attributes or the reason, never a partial set pretending to be complete. A mode
     // and an owner beside a failed listing would read as a description of a directory nobody
