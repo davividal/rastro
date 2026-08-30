@@ -41,6 +41,23 @@ pub struct Cli {
     #[arg(long)]
     staged: bool,
 
+    /// Where to write the fingerprint. `-` means stdout.
+    ///
+    /// Without this the document goes to `./rastro-<host>-<UTC>.json`, because a
+    /// fingerprint of a real host is megabytes and a default that puts megabytes
+    /// on a terminal punishes the first run. The file is created `0600`: it names
+    /// every path on the box.
+    #[arg(short = 'o', long, value_name = "PATH")]
+    output: Option<PathBuf>,
+
+    /// Overwrite the output file if it is already there.
+    ///
+    /// Off by default because the workflow is a `before` and an `after`, and
+    /// replacing the `before` destroys the only record of the state being
+    /// compared against. That is the one irreversible thing rastro can do.
+    #[arg(long)]
+    force: bool,
+
     /// Record every attribute of every walked path, rather than one digest of them.
     ///
     /// The default records a digest per path, which answers what a fingerprint is
@@ -74,6 +91,16 @@ impl Cli {
     /// Whether the caller said this binary is a temporary copy of itself.
     pub fn staged_binary(&self) -> bool {
         self.staged
+    }
+
+    /// Where the operator asked for the document, if anywhere in particular.
+    pub fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
+    }
+
+    /// Whether the operator said an existing output file may be replaced.
+    pub fn force(&self) -> bool {
+        self.force
     }
 
     /// Whether the operator asked for every attribute rather than a digest of them.

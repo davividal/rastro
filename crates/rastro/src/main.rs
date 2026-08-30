@@ -10,16 +10,13 @@ use std::time::SystemTime;
 
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
+use rastro::output::{self, Destination, Written};
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
-use rastro_fingerprint::json;
 
 fn main() -> ExitCode {
     match run() {
-        Ok(document) => {
-            print!("{document}");
-            ExitCode::SUCCESS
-        }
+        Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("rastro: {error}");
             ExitCode::FAILURE
@@ -27,7 +24,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<String, Box<dyn Error>> {
+fn run() -> Result<Written, Box<dyn Error>> {
     let invocation = cli::parse();
 
     let config = match invocation.config_path() {
@@ -46,12 +43,22 @@ fn run() -> Result<String, Box<dyn Error>> {
         invocation.staged_binary(),
         detail,
     );
+    // Both read once, here, because the output filename carries the same instant and the
+    // same hostname as the document does. Two reads could disagree.
+    let started_at = collectors::seconds_since_epoch(SystemTime::now());
+    let hostname = collectors::read_hostname();
+    let destination = Destination::resolve(
+        invocation.output(),
+        hostname.as_deref().ok(),
+        started_at.as_ref().copied().unwrap_or_default(),
+    );
+
     let run = collectors::Run {
         effective_config: effective,
         staged_binary: invocation.staged_binary(),
         detail,
-        started_at: collectors::seconds_since_epoch(SystemTime::now()),
-        hostname: collectors::read_hostname(),
+        started_at,
+        hostname,
     };
     let selection = collectors::selected(collectors::built_in(run), &config)?;
     for name in selection.excluded() {
@@ -60,5 +67,10 @@ fn run() -> Result<String, Box<dyn Error>> {
 
     let fingerprint = fingerprint_host::run(selection.running())?;
 
-    Ok(json::to_canonical_json(&fingerprint, invocation.view()))
+    Ok(output::write(
+        &destination,
+        &fingerprint,
+        invocation.view(),
+        invocation.force(),
+    )?)
 }

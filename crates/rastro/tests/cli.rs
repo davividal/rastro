@@ -10,8 +10,20 @@ use serde_json::{Value, json};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
 
+/// Runs the binary, sending the document to stdout unless the caller named a destination.
+///
+/// The default is a file now, so a bare `run(&[])` would drop a fingerprint into whatever
+/// directory the test happened to run in. `-o -` is also what every assertion on `stdout`
+/// here needs, and what `rastro-ssh` passes for the same reason.
 fn run(arguments: &[&str]) -> Output {
-    Command::new(BINARY)
+    let names_output = arguments.contains(&"-o");
+    let mut command = Command::new(BINARY);
+
+    if !names_output {
+        command.args(["-o", "-"]);
+    }
+
+    command
         .args(arguments)
         .output()
         .expect("the binary under test should be executable")
@@ -191,6 +203,10 @@ fn a_bare_run_omits_the_run_timestamp() {
 }
 
 #[test]
+/// Compared on stdout rather than on two files, and that is not incidental: a fingerprint
+/// written anywhere on real disk is an entry of the next run's document, so two runs writing
+/// to files would differ for a reason that has nothing to do with the renderer. Do not
+/// "fix" this back to comparing files.
 fn two_bare_runs_produce_byte_identical_output() {
     // Act
     let first = run(&[]).stdout;
