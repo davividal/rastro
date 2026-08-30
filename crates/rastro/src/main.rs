@@ -12,6 +12,7 @@ use std::time::SystemTime;
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro::output::{self, Destination, Written};
+use rastro::preflight;
 use rastro::progress::{self, Reporting, WalkProgress};
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
@@ -75,6 +76,19 @@ fn run() -> Result<Written, Box<dyn Error>> {
         },
         progress: reporting.clone().map(|sink| sink as Rc<dyn WalkProgress>),
     };
+    // Before the walk, because the point is to change the operator's mind while they still
+    // have one to change. A warning, never a limit: a budget an operator must tune presupposes
+    // they already investigated the box, which is the work rastro is here to do.
+    if let Destination::File(path) = &destination
+        && let Some(estimate) = preflight::estimate()
+        && let Some(concern) = preflight::concern(estimate, preflight::free_bytes_at(path))
+    {
+        if let Some(sink) = &reporting {
+            sink.clear();
+        }
+        eprintln!("rastro: {concern}");
+    }
+
     let selection = collectors::selected(collectors::built_in(run), &config)?;
     for name in selection.excluded() {
         if let Some(sink) = &reporting {

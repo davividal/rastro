@@ -11,4 +11,5 @@ pub mod cli;
 pub mod collectors;
 pub mod config;
 pub mod output;
+pub mod preflight;
 pub mod progress;
