@@ -54,7 +54,7 @@ use rastro_collector::{CollectionError, Collector, CollectorCategory, Observatio
 
 use thiserror::Error;
 
-use crate::collectors::filesystem::WalkPolicy;
+use crate::collectors::filesystem::{Detail, WalkPolicy};
 
 use crate::config::Config;
 
@@ -89,7 +89,11 @@ pub enum SelectionError {
 ///
 /// `staged_binary` says the executable is a temporary copy the caller will delete, and only
 /// then is it left out of the walk. A rastro installed on a box is part of that box.
-pub fn built_in(effective_config: Observation, staged_binary: bool) -> Vec<Box<dyn Collector>> {
+pub fn built_in(
+    effective_config: Observation,
+    staged_binary: bool,
+    detail: Detail,
+) -> Vec<Box<dyn Collector>> {
     let mut collectors = state_collectors();
     let policy = claimed_policy(&collectors);
     let table = match &policy {
@@ -101,7 +105,9 @@ pub fn built_in(effective_config: Observation, staged_binary: bool) -> Vec<Box<d
         false => None,
     };
 
-    collectors.push(Box::new(FilesystemCollector::under(policy, staged.clone())));
+    collectors.push(Box::new(
+        FilesystemCollector::under(policy, staged.clone()).in_detail(detail),
+    ));
     collectors.push(Box::new(InvocationCollector::new(
         effective_config,
         table,

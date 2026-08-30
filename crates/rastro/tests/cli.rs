@@ -23,6 +23,24 @@ fn document(arguments: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should carry a JSON document")
 }
 
+/// The filesystem facet's entries, or a failure naming why the walk did not finish.
+///
+/// A walk of the real host is only as good as the host: one path that will not decode as
+/// UTF-8 anywhere on the box refuses the whole facet, so a bare `expect` here would report
+/// "no entries" for something that is really a named refusal.
+fn walked_paths(document: &Value) -> &serde_json::Map<String, Value> {
+    let facet = facet(document, "facets", "filesystem");
+    assert_eq!(
+        facet["status"], "ok",
+        "the filesystem facet did not survive this host: {}",
+        facet["error"]
+    );
+
+    facet["data"]
+        .as_object()
+        .expect("the filesystem facet is keyed by path")
+}
+
 fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {
     document[section]
         .as_array()
@@ -477,4 +495,65 @@ fn excluding_a_metadata_collector_fails_the_run() {
     // Assert
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn a_bare_run_records_each_walked_path_as_one_digest() {
+    // Act
+    let document = document(&[]);
+
+    // Assert: the default view answers "did anything about this path change", and a digest is
+    // the whole of that answer. Listing eleven attributes per path cost 444 bytes an entry
+    // against 81 for this, on a document that is 80% filesystem facet.
+    let entries = walked_paths(&document);
+    let (path, digest) = entries
+        .iter()
+        .find(|(_, value)| value.is_string())
+        .expect("at least one path is described rather than refused");
+    let digest = digest.as_str().expect("a described path is its digest");
+
+    assert_eq!(digest.len(), 16, "{path} rendered as {digest:?}");
+    assert!(
+        digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()),
+        "{path} rendered as {digest:?}"
+    );
+}
+
+#[test]
+fn detail_records_every_attribute_the_walk_read() {
+    // Act
+    let document = document(&["--detail"]);
+
+    // Assert: the digest says a path moved and not which attribute did, so this is how to ask.
+    // It has to be asked at the time: a summary taken yesterday cannot be expanded today.
+    let entries = walked_paths(&document);
+    let (path, attributes) = entries
+        .iter()
+        .find(|(_, value)| value.get("kind").is_some())
+        .expect("at least one path is described in full");
+
+    assert!(attributes["mode"].is_string(), "{path}: {attributes}");
+    assert!(attributes["owner"].is_i64(), "{path}: {attributes}");
+    assert!(attributes["inode"].is_i64(), "{path}: {attributes}");
+}
+
+#[test]
+fn the_effective_config_records_which_detail_the_run_was_taken_at() {
+    // Act
+    let summary = document(&[]);
+    let full = document(&["--detail"]);
+
+    // Assert: two documents taken at different detail cannot be diffed against each other, so
+    // the difference has to show in the envelope rather than being inferred from the shape.
+    let recorded = |document: &Value| {
+        facet(document, "metadata", "invocation")["data"]["config"]["detail"]
+            .as_str()
+            .expect("the effective config names the detail")
+            .to_owned()
+    };
+
+    assert_eq!(recorded(&summary), "summary");
+    assert_eq!(recorded(&full), "full");
 }

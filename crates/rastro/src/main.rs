@@ -7,6 +7,7 @@
 use std::error::Error;
 use std::process::ExitCode;
 
+use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
@@ -33,10 +34,19 @@ fn run() -> Result<String, Box<dyn Error>> {
         None => Config::default(),
     };
 
-    let effective =
-        collectors::effective_config(&config, invocation.view(), invocation.staged_binary());
+    let detail = match invocation.full_detail() {
+        true => Detail::Full,
+        false => Detail::Summary,
+    };
+
+    let effective = collectors::effective_config(
+        &config,
+        invocation.view(),
+        invocation.staged_binary(),
+        detail,
+    );
     let selection = collectors::selected(
-        collectors::built_in(effective, invocation.staged_binary()),
+        collectors::built_in(effective, invocation.staged_binary(), detail),
         &config,
     )?;
     for name in selection.excluded() {

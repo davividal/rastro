@@ -521,6 +521,13 @@ fn walk_refuses_a_path_that_is_not_utf8_rather_than_substituting() {
     // Act
     let refused = FileTree::at(&root).walk(&hashing_everything());
 
+    // Removed before the assertion, and this is not tidiness. `CARGO_TARGET_TMPDIR` is inside
+    // the target directory, which a whole-filesystem walk covers, so a byte left here refuses
+    // the entire `filesystem` facet of every later run in this suite. That is the defect this
+    // test documents, and leaving the fixture behind would inflict it on the tests that walk
+    // the real host.
+    let _ = fs::remove_dir_all(&root);
+
     // Assert: substituting `U+FFFD` would put a path in the document that is not on the
     // box and that nobody can act on, which is the refusal `canonical_tool` already makes.
     let message = refused

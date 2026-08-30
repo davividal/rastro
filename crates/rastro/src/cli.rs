@@ -40,6 +40,15 @@ pub struct Cli {
     /// only party that knows is the one that made the copy.
     #[arg(long)]
     staged: bool,
+
+    /// Record every attribute of every walked path, rather than one digest of them.
+    ///
+    /// The default records a digest per path, which answers what a fingerprint is
+    /// taken to answer — did anything about this path change — and costs a fifth
+    /// of the document. This asks *which* attribute moved, and it has to be asked
+    /// at the time: a summary taken yesterday cannot be expanded today.
+    #[arg(long)]
+    detail: bool,
 }
 
 impl Cli {
@@ -65,6 +74,16 @@ impl Cli {
     /// Whether the caller said this binary is a temporary copy of itself.
     pub fn staged_binary(&self) -> bool {
         self.staged
+    }
+
+    /// Whether the operator asked for every attribute rather than a digest of them.
+    ///
+    /// A `bool` rather than the `Detail` it selects, because this module knows nothing
+    /// about collectors and `Detail` is one collector's vocabulary. The composition
+    /// root maps it, which is the same shape as `--include-volatile` becoming a `View`
+    /// except that `View` belongs to the document model and may be named here.
+    pub fn full_detail(&self) -> bool {
+        self.detail
     }
 }
 

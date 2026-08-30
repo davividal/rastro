@@ -9,6 +9,7 @@ use rastro_collector::{
     CollectorVersion, FacetName, Observation, Presence, View,
 };
 
+use crate::collectors::filesystem::Detail;
 use crate::config::Config;
 
 const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -32,8 +33,14 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// path, and an omission the document does not admit to is the one thing this
 /// format does not do. Recorded even when false, so the key is part of the shape
 /// rather than a hint that appears only on remote runs.
-pub fn effective_config(config: &Config, view: View, staged_binary: bool) -> Observation {
+pub fn effective_config(
+    config: &Config,
+    view: View,
+    staged_binary: bool,
+    detail: Detail,
+) -> Observation {
     Observation::object([
+        ("detail", Observation::text(detail.as_str())),
         (
             "excluded_collectors",
             Observation::list(
