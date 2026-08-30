@@ -2,7 +2,7 @@
 
 use rastro_collector::{CollectionError, Observation};
 
-use crate::collectors::filesystem::model::FileEntry;
+use crate::collectors::filesystem::model::{FileEntry, UnreadablePath};
 
 /// The entries of one or more walks, ordered by path.
 ///
@@ -16,14 +16,22 @@ use crate::collectors::filesystem::model::FileEntry;
 /// the root of its own walk. Both readings are of the same directory and agree, so the
 /// duplicate is collapsed. Two readings that *disagree* are refused, because that means the
 /// path changed between them and neither describes one moment.
+/// **A path is described or refused, never both.** Two walks reaching one path and
+/// disagreeing about whether it could be read is the same contradiction as disagreeing about
+/// its mode, one level out, so it is refused for the same reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilesystemInventory {
     entries: Vec<FileEntry>,
+    unreadable: Vec<UnreadablePath>,
 }
 
 impl FilesystemInventory {
-    pub fn new(mut entries: Vec<FileEntry>) -> Result<Self, CollectionError> {
+    pub fn new(
+        mut entries: Vec<FileEntry>,
+        mut unreadable: Vec<UnreadablePath>,
+    ) -> Result<Self, CollectionError> {
         entries.sort_by(|left, right| left.path.cmp(&right.path));
+        unreadable.sort_by(|left, right| left.path.cmp(&right.path));
 
         if let Some(conflicting) = entries
             .windows(2)
@@ -37,34 +45,66 @@ impl FilesystemInventory {
         }
 
         entries.dedup();
+        unreadable.dedup();
 
-        Ok(Self { entries })
+        if let Some(contested) = unreadable
+            .iter()
+            .find(|refused| {
+                entries
+                    .binary_search_by(|entry| entry.path.cmp(&refused.path))
+                    .is_ok()
+            })
+            .map(|refused| refused.path.as_str())
+        {
+            return Err(CollectionError::new(format!(
+                "{contested:?} was both described and refused, so the walk did not see one \
+                 moment of this host"
+            )));
+        }
+
+        Ok(Self {
+            entries,
+            unreadable,
+        })
     }
 
     pub fn entries(&self) -> &[FileEntry] {
         &self.entries
     }
 
+    pub fn unreadable(&self) -> &[UnreadablePath] {
+        &self.unreadable
+    }
+
     /// Everything found by several walks, as one inventory.
     pub fn merged(
         inventories: impl IntoIterator<Item = FilesystemInventory>,
     ) -> Result<Self, CollectionError> {
-        Self::new(
-            inventories
-                .into_iter()
-                .flat_map(|inventory| inventory.entries)
-                .collect(),
-        )
+        let mut entries = Vec::new();
+        let mut unreadable = Vec::new();
+
+        for inventory in inventories {
+            entries.extend(inventory.entries);
+            unreadable.extend(inventory.unreadable);
+        }
+
+        Self::new(entries, unreadable)
     }
 }
 
 impl From<&FilesystemInventory> for Observation {
+    /// Both lists under one key each, because a reader looks a path up rather than asking
+    /// which of two collections it landed in.
     fn from(inventory: &FilesystemInventory) -> Self {
-        Observation::object(
-            inventory
-                .entries()
-                .iter()
-                .map(|entry| (entry.path.as_str(), Observation::from(entry))),
-        )
+        let described = inventory
+            .entries()
+            .iter()
+            .map(|entry| (entry.path.as_str(), Observation::from(entry)));
+        let refused = inventory
+            .unreadable()
+            .iter()
+            .map(|refused| (refused.path.as_str(), Observation::from(refused)));
+
+        Observation::object(described.chain(refused))
     }
 }

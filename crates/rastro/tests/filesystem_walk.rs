@@ -11,6 +11,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 mod support;
 
@@ -685,6 +686,65 @@ fn an_inventory_is_keyed_by_path_in_path_order() {
         })
         .collect();
     assert_eq!(keys_of(&rendered), expected);
+}
+
+#[test]
+fn walk_records_an_entry_it_cannot_describe_and_keeps_going() {
+    // Arrange: ext4 stores mtime in 34 bits of seconds, so a stamp past 2262 is storable on
+    // disk yet overflows the i64 nanoseconds the document holds. Today that one file fails
+    // the whole facet, which is the same class of failure a log rotating mid-walk or an
+    // unreadable fuse mount causes on a live host — and the only one of that class a test
+    // can arrange deterministically as root, which is what CI and a real run both are.
+    let root = scratch_tree("walk-undescribable", &[]);
+    write(&root, "readable.conf", HELLO);
+    write(&root, "far-future.stamp", HELLO);
+
+    let stamped = root.join("far-future.stamp");
+    let far_future = SystemTime::UNIX_EPOCH + Duration::from_secs(10_400_000_000);
+    let handle = fs::File::options()
+        .write(true)
+        .open(&stamped)
+        .expect("a writable scratch file");
+    if handle
+        .set_times(fs::FileTimes::new().set_modified(far_future))
+        .is_err()
+        || fs::symlink_metadata(&stamped)
+            .expect("a stat of a file just written")
+            .mtime()
+            < 9_300_000_000
+    {
+        eprintln!("skipped: this filesystem clamped the stamp, so there is nothing to record");
+        return;
+    }
+
+    // Act
+    let inventory = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("one undescribable entry does not fail the walk");
+    let rendered = Observation::from(&inventory);
+
+    // Assert: the entry is its attributes or the reason it has none, never a partial set
+    // pretending to be complete — the facet's own `data`-or-`error` contract, one level down.
+    let refused = field(&rendered, stamped.to_str().expect("a UTF-8 path"));
+    assert!(
+        text(&field(&refused, "error")).contains("too far from the epoch"),
+        "got {refused:?}"
+    );
+    assert!(
+        !keys_of(&refused).contains(&"kind".to_owned()),
+        "got {refused:?}"
+    );
+
+    // Assert: and the rest of the tree is intact, which is the point.
+    let intact = field(
+        &rendered,
+        root.join("readable.conf").to_str().expect("a UTF-8 path"),
+    );
+    assert_eq!(text(&field(&intact, "kind")), "regular");
+    assert_eq!(
+        text(&field(&field(&intact, "digest"), "value")),
+        HELLO_DIGEST
+    );
 }
 
 #[test]

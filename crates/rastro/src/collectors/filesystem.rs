@@ -25,7 +25,9 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{FileEntry, FilesystemInventory, PolicyRule, WalkPolicy};
+pub use model::{
+    FileEntry, FilesystemInventory, PolicyRule, UnreadablePath, WalkPolicy, is_absence,
+};
 pub use source::{FileTree, MountedFilesystems, WalkBoundaries};
 pub use value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
