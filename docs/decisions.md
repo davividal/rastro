@@ -1387,8 +1387,9 @@ on `static-binary` alone would have been enough to get the file, and would have
 published a binary from a commit whose tests failed: that job proves the thing compiles
 and links statically, nothing about whether it works. Anything invited into a `curl |
 chmod +x` on somebody's server has to clear the same bar as the rest of the tree, so
-`check` and `supply-chain` gate it too. SonarQube does not, being a report rather than
-a gate, and it needs a secret a fork cannot have.
+every gating job is in `needs`, SonarQube included: once it waits for its own Quality
+Gate it is a gate like the others, and leaving it out would publish a commit the branch
+protection would refuse to merge.
 
 **The tag moves, which this repository otherwise refuses to do.** Actions here are
 pinned by commit precisely because a tag can be moved under you. A rolling build is
@@ -1400,10 +1401,20 @@ bytes are still attributable after the tag has moved on.
 
 **The release is moved and overwritten, never deleted.** The obvious way to move a
 tag is to delete the release with its tag and make it again, and it has a window in
-the middle where the URL 404s. Overwriting has no such state: the worst a half-finished
-publish leaves is a `nightly` that is stale, never one that is missing. It costs one
-awkwardness, that a release ignores the commit it is asked to point at once its tag
-exists, so the tag is moved through the git refs API rather than through the release.
+the middle where the URL 404s. Overwriting keeps the release object alive instead, so
+the worst a half-finished publish leaves is a `nightly` that is stale rather than one
+that is missing. It costs one awkwardness, that a release ignores the commit it is asked
+to point at once its tag exists, so the tag is moved through the git refs API rather
+than through the release.
+
+**Replacing an asset needed the same care, and nearly did not get it.** `gh release
+upload --clobber` reads like an overwrite and is not one: it deletes the existing asset
+and then uploads, and its own help says the original is lost if the upload fails. Used
+plainly it would have reintroduced exactly the hole the paragraph above avoids, on the
+one file the whole feature exists to serve. So each new file is uploaded under an
+`.incoming` name first and takes over only once it has landed whole: what is serving is
+never removed for something that has not arrived. The remaining window is a rename, not
+a transfer.
 
 **And a master push is no longer cancelled by the next one.** Publishing is a sequence
 of writes to something outside the run, and this workflow used to cancel a superseded
