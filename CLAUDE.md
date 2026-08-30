@@ -12,8 +12,8 @@ server, via before/after fingerprints and a plain diff.
 **It runs.** Both views work, config narrows a run. `built_in()` in
 `crates/rastro/src/collectors.rs` says which collectors ship.
 
-**Not built:** the Layer 1 walker, the rest of Layer 2, Layer 3, the exec
-contract, redaction.
+**Not built:** the rest of Layer 2, Layer 3, the exec contract, redaction, and
+the opt-in collector that hashes file content over trees the operator names.
 
 The toolchain is pinned in `mise.toml`, and CI reads the same file.
 
@@ -77,7 +77,12 @@ Violating one is a plan change, not a detail.
   version and the effective config.
 - **Secrets** are hashed by default, `--raw` opts out. Redaction is a collector
   responsibility, an option not a guarantee.
-- **stdout carries only the fingerprint.**
+- **Layer 1 reads metadata and opens no file.** An entry is one XXH3-64 digest of
+  its attributes, taken over exactly those the view keeps, so a volatile stamp
+  cannot break byte-identity. `--detail` records the attributes themselves.
+- **The document goes to a file by default**, `0600`, `-o -` for stdout. stdout
+  carries only the fingerprint, which with the document in a file means nothing at
+  all. Progress and `--debug` timings go to stderr, and never into the document.
 - v1 boundaries: single box, generate-only, no network I/O, JSON only.
 
 ## Comment scope

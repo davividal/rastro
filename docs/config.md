@@ -15,13 +15,30 @@ The path is always given; there is no auto-discovery.
 exclude = ["mounts"]
 ```
 
-| collector    | category | excludable |
-| ------------ | -------- | ---------- |
-| `host`       | metadata | no         |
-| `invocation` | metadata | no         |
-| `modules`    | state    | yes        |
-| `mounts`     | state    | yes        |
-| `packages`   | state    | yes        |
+| collector      | category | excludable |
+| -------------- | -------- | ---------- |
+| `host`         | metadata | no         |
+| `invocation`   | metadata | no         |
+| `accounts`     | state    | yes        |
+| `block_devices`| state    | yes        |
+| `cron`         | state    | yes        |
+| `exporters`    | state    | yes        |
+| `filesystem`   | state    | yes        |
+| `firewall`     | state    | yes        |
+| `locale`       | state    | yes        |
+| `modules`      | state    | yes        |
+| `mounts`       | state    | yes        |
+| `network`      | state    | yes        |
+| `packages`     | state    | yes        |
+| `postgresql`   | state    | yes        |
+| `processes`    | state    | yes        |
+| `repositories` | state    | yes        |
+| `sockets`      | state    | yes        |
+| `ssh_access`   | state    | yes        |
+| `sysctl`       | state    | yes        |
+| `time`         | state    | yes        |
+| `timers`       | state    | yes        |
+| `units`        | state    | yes        |
 
 Metadata collectors cannot be excluded: without them one fingerprint cannot be
 told apart from another.
@@ -34,8 +51,10 @@ view, because both change what is in the document:
 
 ```json
 "config": {
+  "detail": "summary",
   "excluded_collectors": ["mounts"],
   "source": "/etc/rastro.toml",
+  "staged_binary": false,
   "view": "diffable"
 }
 ```
@@ -57,3 +76,13 @@ include one and a whole state surface is missing, with nothing in the output
 saying so. Even an exclusion made by mistake stays discoverable, because
 `excluded_collectors` is in the `invocation` facet, so a diff shows the scope
 changed. A missing inclusion leaves no trace at all.
+
+## What a config cannot do
+
+**Where the document goes is not configurable.** A config may only *narrow* a run, and
+choosing an output path narrows nothing, so `-o` is a command-line option and only that.
+
+**Nor can a config narrow the walk.** The only lever over which trees the filesystem walk
+reads is a collector's claim over a tree it owns, resolved from the host rather than
+declared. `--exclude filesystem` drops the whole facet; there is nothing between that and
+everything. This is a known gap: it is what made a runaway walk unfixable without a rebuild.
