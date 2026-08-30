@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro::output::{self, Destination, Written};
-use rastro::progress::{Reporting, WalkProgress};
+use rastro::progress::{self, Reporting, WalkProgress};
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
 use std::rc::Rc;
@@ -35,10 +35,12 @@ fn run() -> Result<Written, Box<dyn Error>> {
         None => Config::default(),
     };
 
-    // One sink, watching both the collectors and the walk inside one of them. Built before
-    // anything runs, because the total it reports is the whole run rather than the part after
-    // somebody thought to start a clock.
-    let reporting = invocation.debug().then(|| Rc::new(Reporting::new()));
+    // One sink, watching both the collectors and the walk inside one of them. Present when
+    // either half was asked for, and built before anything runs so the total it reports is the
+    // whole run rather than the part after somebody thought to start a clock.
+    let live = invocation.show_progress(progress::stderr_is_a_terminal());
+    let debug = invocation.debug();
+    let reporting = (live || debug).then(|| Rc::new(Reporting::new(live)));
 
     let detail = match invocation.full_detail() {
         true => Detail::Full,
@@ -75,6 +77,9 @@ fn run() -> Result<Written, Box<dyn Error>> {
     };
     let selection = collectors::selected(collectors::built_in(run), &config)?;
     for name in selection.excluded() {
+        if let Some(sink) = &reporting {
+            sink.clear();
+        }
         eprintln!("rastro: {name} excluded by config, so it is not in this fingerprint");
     }
 
@@ -91,11 +96,16 @@ fn run() -> Result<Written, Box<dyn Error>> {
     )?;
 
     if let Some(sink) = &reporting {
-        let wrote = match &written.destination {
-            Destination::File(path) => format!("{} ({})", path.display(), written.bytes),
-            Destination::Stdout => format!("stdout ({})", written.bytes),
-        };
-        sink.report(&mut io::stderr(), &wrote)?;
+        // The counter shares the line the report is about to use.
+        sink.clear();
+
+        if debug {
+            let wrote = match &written.destination {
+                Destination::File(path) => format!("{} ({} bytes)", path.display(), written.bytes),
+                Destination::Stdout => format!("stdout ({} bytes)", written.bytes),
+            };
+            sink.report(&mut io::stderr(), &wrote)?;
+        }
     }
 
     Ok(written)

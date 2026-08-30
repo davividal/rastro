@@ -58,6 +58,21 @@ pub struct Cli {
     #[arg(long)]
     force: bool,
 
+    /// Show a live counter on stderr while the run is happening.
+    ///
+    /// On by default when stderr is a terminal and off when it is redirected,
+    /// because a spinner in a log file is noise nobody asked for. These force it
+    /// either way.
+    ///
+    /// A counter and not a bar: the walk discovers its own work as it goes, so a
+    /// percentage would need a denominator nobody has.
+    #[arg(long, conflicts_with = "no_progress")]
+    progress: bool,
+
+    /// Never show the live counter, whatever stderr is attached to.
+    #[arg(long)]
+    no_progress: bool,
+
     /// Report what the run cost, on stderr: per collector, plus what the walk read.
     ///
     /// `time ./rastro > file` answers neither "which collector was slow" nor
@@ -110,6 +125,18 @@ impl Cli {
     /// Whether the operator said an existing output file may be replaced.
     pub fn force(&self) -> bool {
         self.force
+    }
+
+    /// Whether to draw the live counter.
+    ///
+    /// Auto by default, so the contract that a clean redirected run says nothing on stderr
+    /// holds by construction rather than by anybody remembering it.
+    pub fn show_progress(&self, stderr_is_a_terminal: bool) -> bool {
+        match (self.progress, self.no_progress) {
+            (true, _) => true,
+            (_, true) => false,
+            _ => stderr_is_a_terminal,
+        }
     }
 
     /// Whether the operator asked for a report of what the run cost.

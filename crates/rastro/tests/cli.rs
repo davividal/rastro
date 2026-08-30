@@ -631,3 +631,45 @@ fn a_clean_run_without_debug_still_says_nothing_on_stderr() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn progress_forced_on_reaches_stderr_even_when_it_is_not_a_terminal() {
+    // Act: forced, because a test's stderr is a pipe and the counter is off there by default.
+    // This is the only way to exercise the renderer without a pty.
+    let output = run(&["--progress"]);
+
+    // Assert: a counter, not a bar. The walk discovers its own work as it goes, so a
+    // percentage would need a denominator nobody has, and a number that moves smoothly and
+    // means nothing is worse than no number.
+    assert!(output.status.success(), "rastro should have succeeded");
+    let shown = String::from_utf8_lossy(&output.stderr);
+    assert!(shown.contains("entries"), "got {shown}");
+    assert!(
+        !shown.contains('%'),
+        "a percentage would be invented: {shown}"
+    );
+}
+
+#[test]
+fn no_progress_keeps_stderr_empty_even_on_a_terminal() {
+    // Act
+    let output = run(&["--no-progress"]);
+
+    // Assert
+    assert!(
+        output.stderr.is_empty(),
+        "got {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn progress_and_no_progress_together_are_refused() {
+    // Act
+    let output = run(&["--progress", "--no-progress"]);
+
+    // Assert: asking for both is a mistake in a script, and guessing which was meant would
+    // hide it. clap refuses it before the run starts.
+    assert!(!output.status.success(), "rastro should have refused");
+    assert!(output.stdout.is_empty());
+}
