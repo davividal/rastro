@@ -1,6 +1,6 @@
 use rastro_fingerprint::Observation;
 use rastro_fingerprint::View;
-use rastro_fingerprint::json::to_canonical_json;
+use rastro_fingerprint::json::{to_canonical_json, to_canonical_json_writer};
 use rastro_fingerprint::{CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion};
 use rastro_fingerprint::{Facet, FacetName, FacetOutcome, Fingerprint};
 use serde_json::{Value, json};
@@ -381,4 +381,57 @@ fn to_canonical_json_renders_this_exact_document_in_the_complete_view() {
 }
 "#
     );
+}
+
+#[test]
+fn to_canonical_json_writer_and_to_canonical_json_agree_byte_for_byte() {
+    // Arrange: the same fixture the golden tests pin, so this compares the two paths against
+    // each other and the goldens pin what they both produce.
+    let document = fingerprint_of([facet(
+        "shapes",
+        CollectorCategory::State,
+        FacetOutcome::Ok {
+            observation: every_shape(),
+        },
+    )]);
+
+    for view in [View::Diffable, View::Complete] {
+        // Act
+        let mut streamed = Vec::new();
+        to_canonical_json_writer(&document, view, &mut streamed).expect("a Vec accepts every byte");
+
+        // Assert: a document of tens of thousands of entries should not exist twice in memory
+        // just to be written, and the way to be sure that change cost nothing is to compare
+        // the bytes rather than to reason about them.
+        assert_eq!(
+            String::from_utf8(streamed).expect("the document is UTF-8"),
+            to_canonical_json(&document, view),
+            "{view:?}"
+        );
+    }
+}
+
+#[test]
+fn to_canonical_json_writer_reports_a_write_that_failed() {
+    // Arrange: a writer that refuses, standing in for the disk filling up half way through a
+    // fingerprint. The caller names the path, because this module has no business knowing it.
+    struct Refuses;
+    impl std::io::Write for Refuses {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("no space left on device"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // Act
+    let refused = to_canonical_json_writer(
+        &fingerprint_of([processes_facet(991)]),
+        View::Diffable,
+        &mut Refuses,
+    );
+
+    // Assert
+    assert!(refused.is_err());
 }

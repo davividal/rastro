@@ -20,6 +20,8 @@
 //! purpose is to be read by `diff`(1), and `diff` on a single-line document
 //! tells you nothing.
 
+use std::io;
+
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -32,12 +34,38 @@ use crate::{Fingerprint, SCHEMA_VERSION};
 
 /// Renders a fingerprint as canonical JSON, with a trailing newline so the
 /// document is a well-formed text file.
+///
+/// Prefer [`to_canonical_json_writer`] for anything but a small document: this
+/// materialises the whole thing as one `String` first, and a fingerprint of a
+/// real host is tens of megabytes.
 pub fn to_canonical_json(fingerprint: &Fingerprint, view: View) -> String {
+    let mut rendered = Vec::new();
+    to_canonical_json_writer(fingerprint, view, &mut rendered).expect("a Vec accepts every byte");
+
+    String::from_utf8(rendered).expect("a fingerprint document is always UTF-8")
+}
+
+/// Writes a fingerprint as canonical JSON, straight into `out`.
+///
+/// The document is never assembled in memory as a whole: a host with half a
+/// million walked paths would otherwise pay for a second copy of itself purely
+/// to be written out.
+///
+/// **Only the io failure is reachable.** `serde_json` can fail either because a
+/// value will not serialise or because the writer refused, and the first cannot
+/// happen here: every leaf is `null`, a bool, an `i64` or a `String`, and the
+/// format admits no float or non-string key. So a failure out of this is the
+/// disk, and the caller names the path, since this module has no business
+/// knowing where the bytes were going.
+pub fn to_canonical_json_writer(
+    fingerprint: &Fingerprint,
+    view: View,
+    out: &mut impl io::Write,
+) -> io::Result<()> {
     let document = WireDocument { fingerprint, view };
-    let mut rendered = serde_json::to_string_pretty(&document)
-        .expect("a fingerprint document is always valid JSON");
-    rendered.push('\n');
-    rendered
+    serde_json::to_writer_pretty(&mut *out, &document)?;
+
+    out.write_all(b"\n")
 }
 
 /// The document: how to read it, who ran, then what was found.
