@@ -76,7 +76,7 @@ fn walked_omitting(
     observer: &Path,
 ) -> Vec<(String, rastro::collectors::filesystem::FileEntry)> {
     FileTree::at(root)
-        .omitting(observer)
+        .omitting(&[observer.to_path_buf()])
         .walk(policy)
         .expect("a readable tree")
         .entries()

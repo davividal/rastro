@@ -49,6 +49,7 @@ pub struct FilesystemCollector {
     walked: Option<WalkBoundaries>,
     policy: Result<WalkPolicy, CollectionError>,
     observer: Option<PathBuf>,
+    output: Option<PathBuf>,
     detail: Detail,
 }
 
@@ -146,6 +147,7 @@ impl FilesystemCollector {
             walked,
             policy,
             observer,
+            output: None,
             detail: Detail::Summary,
         }
     }
@@ -159,6 +161,29 @@ impl FilesystemCollector {
         self.detail = detail;
 
         self
+    }
+
+    /// The same collector, leaving out the document this run is about to write.
+    ///
+    /// Passed in rather than resolved here, because the `invocation` facet declares the same
+    /// path and the two must not disagree. `None` when the document is going to stdout, where
+    /// there is no file to leave out.
+    pub fn writing_to(mut self, output: Option<PathBuf>) -> Self {
+        self.output = output;
+
+        self
+    }
+
+    /// rastro's own footprint: the staged binary and the document being written.
+    ///
+    /// Absolute where it can be, because the walk compares whole paths and `-o before.json`
+    /// is relative to a working directory the walk knows nothing about.
+    fn omitted(&self) -> Vec<PathBuf> {
+        [self.observer.clone(), self.output.clone()]
+            .into_iter()
+            .flatten()
+            .map(|path| std::path::absolute(&path).unwrap_or(path))
+            .collect()
     }
 
     /// The mount points to walk, asked of the kernel unless the caller named them.
@@ -213,11 +238,7 @@ impl Collector for FilesystemCollector {
             .map(|root| {
                 let tree = FileTree::at(Path::new(root.as_str())).stopping_at(&boundaries);
 
-                match &self.observer {
-                    Some(binary) => tree.omitting(binary),
-                    None => tree,
-                }
-                .walk(policy)
+                tree.omitting(&self.omitted()).walk(policy)
             })
             .collect::<Result<Vec<FilesystemInventory>, CollectionError>>()?;
 

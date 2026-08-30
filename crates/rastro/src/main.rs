@@ -59,6 +59,10 @@ fn run() -> Result<Written, Box<dyn Error>> {
         detail,
         started_at,
         hostname,
+        output: match &destination {
+            Destination::File(path) => Some(path.clone()),
+            Destination::Stdout => None,
+        },
     };
     let selection = collectors::selected(collectors::built_in(run), &config)?;
     for name in selection.excluded() {

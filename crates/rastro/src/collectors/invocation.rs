@@ -74,6 +74,7 @@ pub struct InvocationCollector {
     effective_config: Observation,
     walk_policy: Observation,
     observer: Option<String>,
+    output: Option<String>,
     started_at: Result<i64, CollectionError>,
 }
 
@@ -95,11 +96,13 @@ impl InvocationCollector {
         walk_policy: Observation,
         observer: Option<String>,
         started_at: Result<i64, CollectionError>,
+        output: Option<String>,
     ) -> Self {
         Self {
             effective_config,
             walk_policy,
             observer,
+            output,
             started_at,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
@@ -138,6 +141,13 @@ impl Collector for InvocationCollector {
                 "observer",
                 match &self.observer {
                     Some(binary) => Observation::text(binary.as_str()).volatile(),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "output",
+                match &self.output {
+                    Some(path) => Observation::text(path.as_str()).volatile(),
                     None => Observation::null(),
                 },
             ),

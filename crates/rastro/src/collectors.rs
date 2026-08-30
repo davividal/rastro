@@ -50,6 +50,8 @@ pub use time::TimeCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
+use std::path::PathBuf;
+
 use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation};
 
 use thiserror::Error;
@@ -101,6 +103,11 @@ pub struct Run {
     pub detail: Detail,
     pub started_at: Result<i64, CollectionError>,
     pub hostname: Result<String, String>,
+    /// The document this run is about to write, when it is going to a file.
+    ///
+    /// The walk leaves it out and the `invocation` facet declares it, from this one value, so
+    /// the omission and the admission cannot disagree.
+    pub output: Option<PathBuf>,
 }
 
 pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
@@ -116,13 +123,21 @@ pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
     };
 
     collectors.push(Box::new(
-        FilesystemCollector::under(policy, staged.clone()).in_detail(run.detail),
+        FilesystemCollector::under(policy, staged.clone())
+            .in_detail(run.detail)
+            .writing_to(run.output.clone()),
     ));
     collectors.push(Box::new(InvocationCollector::new(
         run.effective_config,
         table,
         staged.map(|binary| binary.to_string_lossy().into_owned()),
         run.started_at,
+        run.output.map(|path| {
+            std::path::absolute(&path)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        }),
     )));
     collectors
 }

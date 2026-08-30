@@ -311,3 +311,74 @@ fn the_default_file_name_agrees_with_the_started_at_in_the_document() {
         "{name} does not carry {started_at}"
     );
 }
+
+#[test]
+fn a_run_leaves_its_own_output_file_out_of_the_document() {
+    // Arrange: run one writes the file; run two's walk finds it sitting there. Without the
+    // omission the most natural use of `-o` breaks the byte-identical guarantee by a megabyte,
+    // at the one facet that dominates the document.
+    let directory = scratch("output-left-out-of-the-walk");
+    let target = directory.join("fingerprint.json");
+    assert!(
+        run_in(&directory, &["-o", "fingerprint.json"])
+            .status
+            .success(),
+        "the first run should have succeeded"
+    );
+    assert!(target.exists(), "the first run should have written it");
+
+    // Act
+    assert!(
+        run_in(&directory, &["-o", "fingerprint.json", "--force"])
+            .status
+            .success(),
+        "the second run should have succeeded"
+    );
+    let document: Value =
+        serde_json::from_slice(&std::fs::read(&target).expect("a readable document"))
+            .expect("a JSON document");
+
+    // Assert: asserted on the one path rather than on the whole document, because sibling
+    // tests in this binary write files of their own while this runs. Whole-document identity
+    // is the determinism harness's job, and it has no such neighbours.
+    let walked = facet(&document, "facets", "filesystem")["data"]
+        .as_object()
+        .expect("the filesystem facet is keyed by path");
+    let named = target.to_str().expect("a UTF-8 scratch path");
+    assert!(
+        !walked.contains_key(named),
+        "the run reported the document it was writing"
+    );
+    assert!(
+        walked
+            .keys()
+            .any(|key| key.starts_with(directory.to_str().expect("a UTF-8 scratch path"))),
+        "the scratch directory itself should still be walked"
+    );
+}
+
+#[test]
+fn the_invocation_facet_admits_the_output_file_it_left_out() {
+    // Arrange
+    let directory = scratch("output-is-declared");
+
+    // Act
+    run_in(
+        &directory,
+        &["-o", "fingerprint.json", "--include-volatile"],
+    );
+    let document: Value = serde_json::from_slice(
+        &std::fs::read(directory.join("fingerprint.json")).expect("a readable document"),
+    )
+    .expect("a JSON document");
+
+    // Assert: an omission the document does not admit to is the one thing this format does
+    // not do. Volatile for the same reason the observer is: the path carries a timestamp.
+    let output = &facet(&document, "metadata", "invocation")["data"]["output"];
+    assert!(
+        output
+            .as_str()
+            .is_some_and(|path| path.ends_with("fingerprint.json")),
+        "got {output}"
+    );
+}

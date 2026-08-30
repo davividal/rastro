@@ -59,7 +59,7 @@ use crate::collectors::filesystem::value_objects::{
 pub struct FileTree {
     root: PathBuf,
     boundaries: Vec<PathBuf>,
-    observer: Option<PathBuf>,
+    omitted: Vec<PathBuf>,
 }
 
 impl FileTree {
@@ -67,22 +67,23 @@ impl FileTree {
         Self {
             root: root.to_path_buf(),
             boundaries: Vec::new(),
-            observer: None,
+            omitted: Vec::new(),
         }
     }
 
-    /// The same walk, reporting everything but this one file.
+    /// The same walk, reporting everything but these files.
     ///
-    /// For exactly one caller and exactly one path: the executable rastro is running from.
-    /// `rastro-ssh` stages the binary as `mktemp /var/tmp/rastro.XXXXXXXX` and `/var/tmp` is
-    /// walked on purpose, so without this every remote run reports one added and one removed
-    /// file under a fresh name, and the tool's own footprint is the largest single entry in
-    /// its noise floor.
+    /// Two paths reach here, and both are rastro's own footprint rather than the host's. The
+    /// executable, when a caller staged a temporary copy: `rastro-ssh` puts it in `/var/tmp`,
+    /// which is walked on purpose, so without this every remote run reports one added and one
+    /// removed file under a fresh name. And the document this run is about to write, because
+    /// the second run of `-o before.json` would otherwise find the first one sitting there and
+    /// two runs of an unchanged host would stop being byte-identical.
     ///
-    /// One path, compared whole. Not a name pattern, because a file an operator called
+    /// Whole paths, compared whole. Not a name pattern, because a file an operator called
     /// `rastro` is theirs and belongs in the document.
-    pub fn omitting(mut self, observer: &Path) -> Self {
-        self.observer = Some(observer.to_path_buf());
+    pub fn omitting(mut self, paths: &[PathBuf]) -> Self {
+        self.omitted = paths.to_vec();
 
         self
     }
@@ -120,7 +121,7 @@ impl FileTree {
             .dev();
 
         while let Some(path) = pending.pop() {
-            if self.observer.as_deref() == Some(path.as_path()) {
+            if self.omitted.contains(&path) {
                 continue;
             }
 

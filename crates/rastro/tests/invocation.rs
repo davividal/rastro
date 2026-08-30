@@ -61,6 +61,7 @@ fn the_invocation_facet_carries_the_effective_walk_table() {
         Observation::from(&claimed),
         None,
         Ok(0),
+        None,
     );
 
     // Act
@@ -84,6 +85,7 @@ fn the_invocation_facet_names_the_binary_the_walk_left_out() {
         Observation::null(),
         Some("/var/tmp/rastro.zDeJEVKF".to_owned()),
         Ok(0),
+        None,
     );
 
     // Act
@@ -103,7 +105,8 @@ fn the_invocation_facet_names_the_binary_the_walk_left_out() {
 #[test]
 fn the_invocation_facet_reports_no_observer_when_the_kernel_would_not_say() {
     // Arrange
-    let collector = InvocationCollector::new(Observation::null(), Observation::null(), None, Ok(0));
+    let collector =
+        InvocationCollector::new(Observation::null(), Observation::null(), None, Ok(0), None);
 
     // Act
     let reported = collector
@@ -125,6 +128,7 @@ fn the_invocation_facet_reports_the_clock_reading_it_was_given() {
         Observation::null(),
         None,
         Ok(1_786_632_455),
+        None,
     );
 
     // Act
@@ -146,6 +150,7 @@ fn a_clock_set_before_1970_fails_the_invocation_facet_rather_than_the_run() {
         Observation::null(),
         None,
         seconds_since_epoch(UNIX_EPOCH - Duration::from_secs(1)),
+        None,
     );
 
     // Act
