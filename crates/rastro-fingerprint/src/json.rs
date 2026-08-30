@@ -1,8 +1,10 @@
 //! The wire shape of a fingerprint, and the only place that knows it.
 //!
 //! Encoding only. Which values belong in a view is a rule about observations
-//! and lives in the domain, so this module receives an already-filtered tree
-//! and never asks whether anything is volatile.
+//! and lives in the domain, so this module receives an already-filtered *view*
+//! of a tree and never asks whether anything is volatile. Borrowed rather than
+//! copied: a filtered clone of a document with half a million walked paths costs
+//! as much as the document.
 //!
 //! Determinism needs a *fixed* key order, and sorting is only one way to get
 //! one, so the two kinds of object here are ordered differently:
@@ -10,11 +12,11 @@
 //! - **Fixed shapes** (document, facet, collector) are written by the `Wire*`
 //!   types below, which emit entries in the order the statements appear. That
 //!   order is chosen to read well: a facet leads with its `name`.
-//! - **Open shapes** (whatever a collector observed) go through
-//!   [`serde_json::Value`], whose map is a `BTreeMap`, so their keys sort
-//!   themselves. Sorting is the only fixed order available when the shape is
-//!   not known in advance. Enabling serde_json's `preserve_order` feature would
-//!   silently break that.
+//! - **Open shapes** (whatever a collector observed) are written straight out
+//!   of the domain's own `BTreeMap`, so their keys sort themselves. Sorting is
+//!   the only fixed order available when the shape is not known in advance, and
+//!   taking it from the model rather than from `serde_json::Map` is what retires
+//!   the `preserve_order` hazard entirely: no map of serde_json's is involved.
 //!
 //! Output is pretty-printed rather than compact, because a fingerprint's
 //! purpose is to be read by `diff`(1), and `diff` on a single-line document
@@ -22,13 +24,12 @@
 
 use std::io;
 
-use serde::ser::SerializeMap;
+use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
-use serde_json::{Map, Value};
 
 use crate::collector::{CollectorCategory, CollectorIdentity};
 use crate::facet::{Facet, FacetOutcome};
-use crate::observation::{Content, Observation, Scalar};
+use crate::observation::{Scalar, Visible, VisibleContent};
 use crate::view::View;
 use crate::{Fingerprint, SCHEMA_VERSION};
 
@@ -116,8 +117,8 @@ impl Serialize for WireFacet<'_> {
         match &self.facet.outcome {
             FacetOutcome::Ok { observation } => {
                 entries.serialize_entry("status", "ok")?;
-                if let Some(visible) = observation.in_view(self.view) {
-                    entries.serialize_entry("data", &observation_value(&visible))?;
+                if let Some(visible) = observation.visible_in(self.view) {
+                    entries.serialize_entry("data", &WireObservation(visible))?;
                 }
             }
             FacetOutcome::Absent => {
@@ -142,28 +143,33 @@ impl Serialize for WireCollector<'_> {
     }
 }
 
-/// Whatever a collector observed, as JSON.
+/// Whatever a collector observed, written straight out of the tree it lives in.
 ///
-/// The shape is open, so keys sort themselves through the `BTreeMap` behind
-/// [`serde_json::Value`].
-fn observation_value(observation: &Observation) -> Value {
-    match observation.content() {
-        Content::Scalar(scalar) => scalar_value(scalar),
-        Content::Object(entries) => Value::Object(
-            entries
-                .iter()
-                .map(|(key, child)| (key.clone(), observation_value(child)))
-                .collect::<Map<String, Value>>(),
-        ),
-        Content::List(items) => Value::Array(items.iter().map(observation_value).collect()),
-    }
-}
+/// The shape is open, so keys sort themselves: they come from the domain's own
+/// `BTreeMap`, which is where the fixed order for an unknown shape comes from.
+struct WireObservation<'a>(Visible<'a>);
 
-fn scalar_value(scalar: &Scalar) -> Value {
-    match scalar {
-        Scalar::Null => Value::Null,
-        Scalar::Boolean(value) => Value::Bool(*value),
-        Scalar::Integer(value) => Value::from(*value),
-        Scalar::Text(value) => Value::String(value.clone()),
+impl Serialize for WireObservation<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.content() {
+            VisibleContent::Scalar(Scalar::Null) => serializer.serialize_unit(),
+            VisibleContent::Scalar(Scalar::Boolean(value)) => serializer.serialize_bool(*value),
+            VisibleContent::Scalar(Scalar::Integer(value)) => serializer.serialize_i64(*value),
+            VisibleContent::Scalar(Scalar::Text(value)) => serializer.serialize_str(value),
+            VisibleContent::Object(entries) => {
+                let mut object = serializer.serialize_map(None)?;
+                for (key, child) in entries.iter() {
+                    object.serialize_entry(key, &WireObservation(child))?;
+                }
+                object.end()
+            }
+            VisibleContent::List(items) => {
+                let mut list = serializer.serialize_seq(None)?;
+                for item in items.iter() {
+                    list.serialize_element(&WireObservation(item))?;
+                }
+                list.end()
+            }
+        }
     }
 }

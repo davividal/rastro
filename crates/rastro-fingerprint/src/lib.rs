@@ -30,7 +30,10 @@ pub mod view;
 pub use collector::{CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion};
 pub use error::FingerprintError;
 pub use facet::{Facet, FacetName, FacetOutcome};
-pub use observation::{Content, Observation, Scalar, Sensitivity, Volatility};
+pub use observation::{
+    Content, Observation, Scalar, Sensitivity, Visible, VisibleContent, VisibleList, VisibleObject,
+    Volatility,
+};
 pub use view::View;
 
 use crate::collector::CollectorCategory as Category;
