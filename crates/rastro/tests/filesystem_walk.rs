@@ -781,6 +781,61 @@ fn walk_records_an_entry_it_cannot_describe_and_keeps_going() {
 }
 
 #[test]
+fn walk_records_a_child_it_cannot_stat_and_keeps_going() {
+    // Arrange: a directory carrying read but not execute permission. The kernel wants the read
+    // bit to *enumerate* a directory and the execute bit to resolve a path *through* it, so
+    // `read_dir` returns the names inside and `stat` of each one then fails with EACCES. That
+    // is the second way one path can fail to describe itself, and unlike the overflowing stamp
+    // below it is the way that happens on a real host every day.
+    //
+    // It is a recorded refusal rather than an omission because it reproduces at the same path
+    // on every run: a directory rastro cannot see into is a lasting blind spot, and hiding it
+    // from the diffable view would be hiding the gap rather than reporting it.
+    let root = scratch_tree("walk-unstattable", &["closed"]);
+    let closed = root.join("closed");
+    write(&closed, "secret.conf", HELLO);
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o400))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::symlink_metadata(closed.join("secret.conf")).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE`, which ignores the mode bits, so there is nothing
+        // here to refuse. The unprivileged CI runner is where this arm gets exercised.
+        fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user traverses a directory without the execute bit");
+        return;
+    }
+
+    // Act
+    let rendered = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("an unstattable child does not fail the walk")
+        .observation(Detail::Summary);
+
+    // Reopened before the assertions, so a failing one still leaves a removable scratch tree.
+    fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+
+    // Assert: the child is the reason it has no attributes.
+    let refused = field(
+        &rendered,
+        closed.join("secret.conf").to_str().expect("a UTF-8 path"),
+    );
+    assert!(
+        text(&field(&refused, "error")).contains("could not be read"),
+        "got {refused:?}"
+    );
+
+    // Assert: and the directory itself is described, because its own stat went through the
+    // parent, which is traversable. A description beats a refusal, one path at a time.
+    let listed = field(&rendered, closed.to_str().expect("a UTF-8 path"));
+    assert_eq!(
+        text(&listed).len(),
+        16,
+        "the directory is its own metadata digest rather than a refusal, got {listed:?}"
+    );
+}
+
+#[test]
 fn walk_refuses_a_root_that_is_not_there() {
     // Act
     let refused = FileTree::at(Path::new("/rastro-no-such-root")).walk(&hashing_everything());
