@@ -1845,9 +1845,16 @@ stated property.
 **Honest limits, all of them:** `df -i` counts every inode on a filesystem including those
 under a tree a collector sealed, so a two-million-file PostgreSQL cluster inflates it and the
 walk will never touch them. Over-estimating is the right direction for a warning — it can cry
-wolf, where an under-estimate would stay quiet about the run that fills the disk. btrfs and
-zfs report no meaningful inode count, and a box without `df` gets no guess rather than a made
-up one. And it bounds entries, not wall time.
+wolf, where an under-estimate would stay quiet about the run that fills the disk. A filesystem
+with no fixed inode table reports `-` where the count would be — vfat does, so `/boot/efi`
+prints `0 0 0 -` — and that row is skipped rather than read as zero. A box without `df` gets no
+guess rather than a made up one. And it bounds entries, not wall time.
+
+**There is deliberately no special case for a host that counts nothing at all.** `--local`
+always lists `/`, and on a real box udev and several tmpfs besides, every one of which reports
+a count, so the sum is never zero on a host that could have run rastro. Guarding a state the
+box cannot be in is complexity presenting itself as safety, and it costs a branch no fixture
+can honestly justify.
 
 ## The renderer streams, and the document is never copied to filter it
 

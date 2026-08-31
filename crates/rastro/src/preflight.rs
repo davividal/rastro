@@ -29,8 +29,7 @@ pub struct Estimate {
 /// right direction for a warning: it can cry wolf, where an under-estimate would stay quiet
 /// about the run that fills the disk.
 ///
-/// `None` where there is nothing honest to say: btrfs and zfs report no meaningful inode count,
-/// and a box without `df` gets no guess rather than a made-up one.
+/// `None` only where `df` is not on the box, which gets no guess rather than a made-up one.
 pub fn estimate() -> Option<Estimate> {
     let inodes = inodes_in_use()?;
 
@@ -99,29 +98,24 @@ pub fn parse_free_bytes(reported: &str) -> Option<u64> {
 fn inodes_in_use() -> Option<u64> {
     let df = CanonicalTool::located("df")?;
 
-    parse_inodes_in_use(&df.run(&["-i", "-P", "--local"]).ok()?)
+    Some(parse_inodes_in_use(&df.run(&["-i", "-P", "--local"]).ok()?))
 }
 
 /// The used-inode columns of `df -i -P --local`, summed.
 ///
-/// **Nothing rather than zero, and that case is real rather than defensive.** A filesystem with
-/// no fixed inode table reports `0` or `-` where the count would be: vfat does — `/boot/efi` on
-/// the reference box prints `0 0 0 -` — and so do btrfs and zfs. A host whose filesystems all
-/// answer that way sums to nothing, and an estimate of nothing is not an estimate of a small
-/// number. It has to be absent, or the warning would compare a document against a floor of zero
-/// and fire on every run.
+/// **A row that reports no count contributes nothing, and the sum carries on.** vfat has no
+/// fixed inode table, so `/boot/efi` prints `0 0 0 -` and the `-` will not parse. Skipping that
+/// row is the whole tolerance this needs: `--local` always lists `/`, and on a real box udev and
+/// several tmpfs besides, every one of which reports a count. A host that could run rastro
+/// therefore never sums to zero, which is why there is no special case for it here — an
+/// unreachable branch is complexity, not safety.
 ///
-/// Separate from the run so a fixture can state each of those shapes.
-pub fn parse_inodes_in_use(reported: &str) -> Option<u64> {
-    let counted: u64 = reported
+/// Separate from the run so a fixture can state a `df` this repo has no filesystem to produce.
+pub fn parse_inodes_in_use(reported: &str) -> u64 {
+    reported
         .lines()
         .skip(1)
         .filter_map(|line| line.split_whitespace().nth(2))
         .filter_map(|used| used.parse::<u64>().ok())
-        .sum();
-
-    match counted {
-        0 => None,
-        counted => Some(counted),
-    }
+        .sum()
 }

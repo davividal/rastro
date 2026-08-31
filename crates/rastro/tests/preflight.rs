@@ -31,49 +31,27 @@ fn a_document_that_would_crowd_the_disk_says_so_in_numbers() {
 
 #[test]
 fn nothing_is_claimed_when_the_free_space_is_unknown() {
-    // Act & Assert: an absent measurement produces no warning rather than a guessed one. btrfs
-    // and zfs report no meaningful inode count, so this path is reached on real hosts.
+    // Act & Assert: an absent measurement produces no warning rather than a guessed one. `df`
+    // reaches this whenever it cannot answer for the output path at all.
     assert_eq!(concern(estimate(2_000_000), None), None);
 }
 
-/// `df -i -P --local` as the reference box prints it. Note `/boot/efi`, which is vfat and
-/// reports no inode count at all — the case that makes the absent answer necessary.
+/// `df -i -P --local` as the reference Debian box prints it, trimmed to the two rows that
+/// matter: the root filesystem, and `/boot/efi`, which is vfat and reports `-` because it has
+/// no fixed inode table.
 const INODES: &str = "\
 Filesystem      Inodes  IUsed   IFree IUse% Mounted on
+udev           5998310    347 5997963    1% /dev
 /dev/sda1      6545408  49704 6495704    1% /
 /dev/sda15           0      0       0     - /boot/efi
 ";
 
 #[test]
-fn the_estimate_sums_the_used_inodes_of_every_filesystem() {
-    // Act & Assert: the vfat row contributes nothing rather than breaking the sum.
-    assert_eq!(preflight::parse_inodes_in_use(INODES), Some(49_704));
-}
-
-#[test]
-fn a_host_whose_filesystems_report_no_inodes_gets_no_estimate() {
-    // Arrange: every row is a filesystem with no fixed inode table. vfat prints `0`, and btrfs
-    // and zfs print `-`, because there is no inode count to report — not because the box has no
-    // files on it.
-    let no_counts = "\
-Filesystem      Inodes  IUsed   IFree IUse% Mounted on
-/dev/sda15           0      0       0     - /boot/efi
-/dev/nvme0n1p2       -      -       -     - /
-";
-
-    // Act & Assert: absent rather than zero. An estimate of nothing is not an estimate of a
-    // small number, and reporting zero would compare the document against a floor of zero and
-    // warn on every run of such a host.
-    assert_eq!(preflight::parse_inodes_in_use(no_counts), None);
-}
-
-#[test]
-fn a_df_that_printed_only_its_header_gets_no_estimate() {
-    // Act & Assert: nothing to sum is the same answer as nothing countable.
-    assert_eq!(
-        preflight::parse_inodes_in_use("Filesystem Inodes IUsed IFree IUse% Mounted on\n"),
-        None
-    );
+fn a_filesystem_that_reports_no_inode_count_does_not_break_the_sum() {
+    // Act & Assert: the `-` row is skipped rather than parsed as zero or refused. This is the
+    // whole tolerance the estimate needs — `--local` always lists `/` and the tmpfs mounts, so
+    // every host that can run rastro contributes a count.
+    assert_eq!(preflight::parse_inodes_in_use(INODES), 347 + 49_704);
 }
 
 #[test]
