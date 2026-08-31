@@ -147,9 +147,7 @@ impl FileTree {
             let Some(recorded) = absolute(&path) else {
                 unspellable.push(UnspellablePath::of(
                     path.file_name().unwrap_or(path.as_os_str()).as_bytes(),
-                    path.parent()
-                        .and_then(|parent| parent.to_str())
-                        .map(str::to_owned),
+                    path.parent().and_then(Path::to_str).map(str::to_owned),
                 ));
                 continue;
             };
