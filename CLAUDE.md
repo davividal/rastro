@@ -124,8 +124,11 @@ Clean Code wins where they conflict. Three Clean Code positions are wrong here:
   `main.rs` is the composition root and holds no decision worth testing.
 - Adding a collector: one file under `crates/rastro/src/collectors/`, a `mod`
   and `pub use` line, and an entry in `built_in()`.
-- The flagship test is the **determinism harness**: two runs, byte-identical.
-  Any new collector or format change must keep it green.
+- The flagship test is the **determinism harness**: two runs, byte-identical. It
+  is in two halves, because a whole-host walk on a machine in use is not a walk of
+  an unchanged host: `tests/cli.rs` compares the envelope and every other facet
+  through the real binary, and `tests/determinism.rs` compares the filesystem facet
+  over a tree it owns. Any new collector or format change must keep both green.
 - **TDD.** A new feature starts with a test that fails.
 - **Commit at every green.** A red-green cycle is one commit.
 - **A commit message is a subject line.** Imperative, under 50 characters, no

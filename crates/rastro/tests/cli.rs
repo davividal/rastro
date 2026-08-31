@@ -262,13 +262,23 @@ fn a_bare_run_omits_the_run_timestamp() {
 /// written anywhere on real disk is an entry of the next run's document, so two runs writing
 /// to files would differ for a reason that has nothing to do with the renderer. Do not
 /// "fix" this back to comparing files.
+///
+/// **Without the filesystem facet, and that is not a weakening of the contract but the only
+/// way to state it honestly here.** This walks the machine the suite is running on, which is
+/// not an unchanged host: sibling tests write coverage files into the tree, and a CI runner
+/// writes its own logs while this runs. Comparing whole-host walks would assert that nothing
+/// on the box moved during the test, which is not rastro's promise and not true.
+///
+/// The filesystem facet's own byte-identity is `determinism.rs`, over a tree that test owns —
+/// including the case this one could never arrange, where something volatile really does change
+/// between the two readings and the diffable view has to be identical anyway.
 fn two_bare_runs_produce_byte_identical_output() {
     // Act
-    let first = run(&[]).stdout;
-    let second = run(&[]).stdout;
+    let first = run(&["--config", without_walking()]).stdout;
+    let second = run(&["--config", without_walking()]).stdout;
 
-    // Assert: the determinism contract, end to end through the real binary,
-    // with no flag needed to get it.
+    // Assert: the determinism contract for the envelope and every other facet, end to end
+    // through the real binary.
     //
     // The comparison is on bytes, because bytes are the contract. The *message* is
     // not: this test used to `assert_eq!` the two `Vec<u8>` directly, and when it

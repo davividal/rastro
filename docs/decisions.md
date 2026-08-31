@@ -1951,9 +1951,17 @@ which is the blind spot in comparing bytes and nothing else.
 The property itself holds and is verified where it can be: five consecutive runs to one path on
 the reference box, byte-identical, with the walk included.
 
-**Still owed:** a determinism check over the `filesystem` facet that a busy CI runner cannot
-invalidate. It needs a way to scope the walk, which nothing but a collector's claim can do
-today — the same gap `docs/config.md` records.
+**So the harness was split rather than weakened.** The end-to-end test compares the envelope
+and the other twenty facets through the real binary, which is what it can honestly assert on a
+machine that is being used. The `filesystem` facet's byte-identity moved to a test over a tree
+it owns, where it can assert something the whole-host version never could: that a churning
+tree's size and stamps genuinely moving between two readings leaves the diffable view
+identical, with a counterweight proving a real change still shows.
+
+Asserting whole-host byte-identity on a busy runner would be asserting that nothing on the box
+moved during the test, which is neither rastro's promise nor true. The promise is verified where
+it can be: five consecutive runs to one path on the reference box, walk included,
+byte-identical.
 
 ## Collectors run concurrently, and the walk runs alone
 
