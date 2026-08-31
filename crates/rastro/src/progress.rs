@@ -16,8 +16,8 @@
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use rastro_collector::fingerprint_host::RunProgress;
@@ -168,10 +168,7 @@ impl Reporting {
         // counter: there is no invariant left half-built for this to inherit. Skipping the redraw
         // instead would have been an unreachable branch guarding nothing, and panicking would
         // kill a fingerprint run over a spinner frame.
-        let mut last_drawn = self
-            .drawing
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut last_drawn = self.drawing.lock().unwrap_or_else(PoisonError::into_inner);
 
         let now = Instant::now();
         let too_soon = last_drawn.is_some_and(|last| now.duration_since(last) < REDRAW_EVERY);
