@@ -26,7 +26,14 @@ cargo build --release --target x86_64-unknown-linux-musl
 
 Off Linux there is no `/proc`, so the three `tests/cli.rs` tests that read the real
 host fail while every fixture test passes. Gate those in a container, Alpine as well
-as Debian since the package sources differ:
+as Debian since the package sources differ.
+
+**Run it unprivileged too, at least once per change to the walk or to the output.** CI is not
+root, and three separate defects hid behind that: a test that skipped as root, a mode assertion
+that depended on the caller's umask, and an unreadable mount point that failed a whole facet.
+`useradd -m runnerish` in the container, give them a target directory they own, and run as them.
+
+The container recipe:
 
 ```sh
 podman run --rm -v "$PWD":/w -w /w -e CARGO_TARGET_DIR=/tmp/target \
