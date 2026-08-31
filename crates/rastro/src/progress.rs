@@ -162,9 +162,16 @@ impl Reporting {
 
         // One lock for the throttle and the write together, so two workers cannot interleave
         // escape sequences on the one line they share.
-        let Ok(mut last_drawn) = self.drawing.lock() else {
-            return;
-        };
+        //
+        // **A poisoned lock is taken anyway rather than branched on.** Poisoning means some other
+        // thread panicked while drawing, and what it guards is one timestamp behind a cosmetic
+        // counter: there is no invariant left half-built for this to inherit. Skipping the redraw
+        // instead would have been an unreachable branch guarding nothing, and panicking would
+        // kill a fingerprint run over a spinner frame.
+        let mut last_drawn = self
+            .drawing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let now = Instant::now();
         let too_soon = last_drawn.is_some_and(|last| now.duration_since(last) < REDRAW_EVERY);
