@@ -1974,12 +1974,22 @@ which writes the same lcov report to the same path, so the SonarQube import is u
 observing the machine the suite runs on, so tests interfere through the filesystem rather than
 through memory — and one panicking test cannot take its neighbours down with it.
 
+**A fixture asserts the modes it created.** A file written without saying so takes whatever the
+umask allows: 0644 under the usual 022, 0664 under the 002 a fresh Debian user gets. Three tests
+asserted a literal mode they had never set, so they passed for the GitHub runner and failed for
+anyone whose umask differed. The fixture sets file and directory modes explicitly now.
+
 **It found a latent race immediately.** The accounts fixture named its scratch directory from a
 `static AtomicUsize` counter, which is unique per *process*. Under libtest the whole binary is
 one process, so that held. Under nextest every test is its own process, so all of them started
 at zero, chose `accounts-0`, and `remove_dir_all`'d it out from under each other. The two config
 files the tests write had the same shape of problem, benign only because the contents matched.
 Both are keyed by process id now.
+
+**A failure names the destination, never the staging file.** Also found by running the suite as
+somebody else: an operator who typed `-o closed/before.json` was told about
+`closed/.before.json.1234.partial`, a file they never chose and cannot act on. And the test that
+would have caught it skipped as root, so it had only ever really run on CI.
 
 **Considered and measured: serialising the tests that walk the whole host**, on the reasoning
 that they contend for one disk and write into the tree the others are walking. It cost 77

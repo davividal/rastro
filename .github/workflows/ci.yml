@@ -41,11 +41,14 @@ jobs:
           fallback: none
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # `--no-fail-fast` because nextest stops at the first failure by default, and a CI log
+      # that reports one failure when there are four sends somebody round the loop three more
+      # times. libtest ran everything, so this keeps that.
       # There is no separate test step: llvm-cov already runs the whole suite, only
       # instrumented, so a second invocation would buy a second identical run. The report
       # lands where `sonar-project.properties` looks for it, which is the only contract
       # this step has with the scan job.
-      - run: mkdir -p target/llvm-cov && cargo llvm-cov nextest --workspace --lcov --output-path target/llvm-cov/lcov.info --locked
+      - run: mkdir -p target/llvm-cov && cargo llvm-cov nextest --workspace --lcov --output-path target/llvm-cov/lcov.info --locked --no-fail-fast
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lcov

@@ -286,38 +286,50 @@ fn force_replaces_the_file_and_the_result_is_still_private() {
 }
 
 #[test]
-fn a_write_that_cannot_happen_leaves_no_partial_document() {
-    // Arrange: a directory nobody may write into. Skipped as root, which ignores mode bits
-    // and is what CI and a real run both are.
-    use std::os::unix::fs::PermissionsExt;
+fn a_write_that_cannot_happen_names_the_path_and_leaves_nothing() {
+    // Arrange: a parent that cannot be a directory, so the write fails with `ENOTDIR` for
+    // *any* user. The first version made the parent mode 0500, which root ignores — so it
+    // skipped on every local run and only ever really executed on CI, where it then caught
+    // that the failure named the staging file rather than the path the operator typed.
     let directory = scratch("write-that-fails");
-    let closed = directory.join("closed");
-    std::fs::create_dir(&closed).expect("a writable scratch directory");
-    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o500)).expect("a chmod");
-    if std::fs::File::create(closed.join("probe")).is_ok() {
-        eprintln!("skipped: this process can write into a mode 0500 directory");
-        return;
-    }
+    let blocking = directory.join("notadir");
+    std::fs::write(&blocking, "a file where a directory would have to be").expect("a write");
 
     // Act
     let output = run_in(
         &directory,
-        &["-o", "closed/before.json", "--config", without_walking()],
+        &["-o", "notadir/before.json", "--config", without_walking()],
     );
 
-    // Assert: it fails, it says where, and it leaves nothing half-written behind.
+    // Assert: it fails, and it names the destination rather than the temporary file, because
+    // that is the path the operator chose and the only one they can act on.
     assert!(!output.status.success(), "rastro should have failed");
+    let complaint = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("closed/before.json"),
-        "the failure should name the path"
+        complaint.contains("notadir/before.json"),
+        "the failure should name the destination, got {complaint}"
     );
+    assert!(
+        !complaint.contains(".partial"),
+        "the failure should not send the operator after a temporary file, got {complaint}"
+    );
+
+    // Assert: and nothing was disturbed on the way.
     assert_eq!(
-        std::fs::read_dir(&closed)
-            .expect("a listable directory")
-            .count(),
-        0,
-        "a failed run left something behind"
+        std::fs::read_to_string(&blocking).expect("the blocking file is intact"),
+        "a file where a directory would have to be"
     );
+    let left: Vec<String> = std::fs::read_dir(&directory)
+        .expect("a listable directory")
+        .map(|entry| {
+            entry
+                .expect("a readable entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(left, vec!["notadir".to_owned()], "got {left:?}");
 }
 
 #[test]

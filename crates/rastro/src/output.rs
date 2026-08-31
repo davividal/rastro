@@ -185,13 +185,10 @@ fn to_file(
         // chmod after the fact leaves a window where anybody could read it.
         .mode(0o600)
         .open(&staging)
-        .map_err(|error| {
-            failure(
-                &staging.display().to_string(),
-                "could not be created",
-                &error,
-            )
-        })?;
+        // Named for the destination, not for the temporary file. An operator who typed
+        // `-o closed/before.json` is told about that path; the staging name is rastro's
+        // business and mentioning it would send them looking for a file they never chose.
+        .map_err(|error| failure(&path.display().to_string(), "could not be written", &error))?;
 
     let written = write_and_publish(file, &staging, path, fingerprint, view, force);
     if written.is_err() {
@@ -244,7 +241,9 @@ fn write_and_publish(
     view: View,
     force: bool,
 ) -> Result<u64, OutputError> {
-    let named = staging.display().to_string();
+    // The destination throughout, for the reason above: the staging file is an implementation
+    // detail of getting there, and a disk that filled up is a fact about where this was going.
+    let named = path.display().to_string();
     let mut writer = BufWriter::with_capacity(256 * 1024, file);
 
     let bytes = render(&mut writer, fingerprint, view)
@@ -295,11 +294,13 @@ fn publish(staging: &Path, path: &Path, force: bool) -> Result<(), OutputError> 
         ),
     })?;
 
-    // The document is at its name now; the staging link is what is left to drop.
+    // The document is at its name now; the staging link is what is left to drop. Named for
+    // the staging file here, uniquely, because that *is* the file the operator would have to
+    // go and remove.
     fs::remove_file(staging).map_err(|error| {
         failure(
             &staging.display().to_string(),
-            "could not be unlinked once published",
+            "was published but could not be unlinked",
             &error,
         )
     })
