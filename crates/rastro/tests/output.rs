@@ -10,30 +10,11 @@ use std::process::{Command, Output};
 
 use rastro::output::{Destination, default_file_name, utc_stamp};
 use serde_json::Value;
+mod support;
+
+use support::narrowing::without_walking;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
-
-/// A config that excludes the filesystem walk, for the tests that never read that facet.
-///
-/// These tests are about where a document goes and what the file looks like, not about what is
-/// in it. A walk of the whole runner under a coverage-instrumented binary costs seconds, and
-/// there are a dozen invocations here.
-fn without_walking() -> &'static str {
-    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-    PATH.get_or_init(|| {
-        // Per process, because `cargo nextest` gives each test one: several processes
-        // writing one path would let a reader catch a partial write.
-        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "output-no-filesystem-walk-{}.toml",
-            std::process::id()
-        ));
-        std::fs::write(&path, "[collectors]\nexclude = [\"filesystem\"]\n")
-            .expect("a writable scratch directory");
-
-        path.to_str().expect("a UTF-8 scratch path").to_owned()
-    })
-}
 
 /// The facet a section holds under this name.
 fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {
@@ -254,13 +235,15 @@ fn an_existing_output_file_is_refused_rather_than_overwritten() {
 
 #[test]
 fn force_replaces_the_file_and_the_result_is_still_private() {
-    // Arrange: written 0644 first, which is the trap. A mode applies when a file is created,
-    // so a truncate-in-place would have left this world-readable.
+    // Arrange: written 0640 first, which is the trap. A mode applies when a file is created, so
+    // a truncate-in-place would have left this group-readable rather than tightening it. 0640
+    // rather than 0644 for the same reason the fixtures use it: no test needs to hand the world
+    // a read bit, and granting one is a finding in a scan.
     use std::os::unix::fs::PermissionsExt;
     let directory = scratch("force-replaces");
     let target = directory.join("before.json");
     std::fs::write(&target, "stale").expect("a write");
-    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).expect("a chmod");
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).expect("a chmod");
 
     // Act
     let output = run_in(

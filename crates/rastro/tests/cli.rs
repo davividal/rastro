@@ -4,10 +4,12 @@
 //! because rastro's invariants about streams and exit codes are only
 //! observable from outside the process.
 
-use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
+mod support;
+
+use support::narrowing::without_walking;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
 
@@ -52,32 +54,6 @@ fn walked_paths(document: &Value) -> &serde_json::Map<String, Value> {
     facet["data"]
         .as_object()
         .expect("the filesystem facet is keyed by path")
-}
-
-/// The path of a config that excludes the filesystem walk.
-///
-/// **Written once, for speed rather than for coverage.** A walk of the whole host costs
-/// seconds under a coverage-instrumented binary on a runner whose disk carries a cargo
-/// registry and a target directory, and the tests here invoke the binary dozens of times
-/// between them. The tests that never read the `filesystem` facet skip it, which is the
-/// difference between a suite measured in minutes and one measured in seconds.
-///
-/// It also removes a second problem: an instrumented run drops a `.profraw` file into the
-/// target directory, which a walk of the whole host then reports — so a test that walks
-/// changes what the next walk sees.
-fn without_walking() -> &'static str {
-    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-    PATH.get_or_init(|| {
-        // Per process, because `cargo nextest` gives each test one: several processes
-        // writing one path would let a reader catch a partial write.
-        let path = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("no-filesystem-walk-{}.toml", std::process::id()));
-        std::fs::write(&path, "[collectors]\nexclude = [\"filesystem\"]\n")
-            .expect("a writable scratch directory");
-
-        path.to_str().expect("a UTF-8 scratch path").to_owned()
-    })
 }
 
 fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {

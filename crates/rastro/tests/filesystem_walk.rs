@@ -291,7 +291,7 @@ fn an_entry_in_a_churning_tree_omits_the_attributes_that_move() {
     // operator can act on in a tree that writes to itself. Everything that moves on its own
     // leaves the diffable view rather than the document.
     assert_eq!(text(&field(&rendered, "kind")), "regular");
-    assert_eq!(text(&field(&rendered, "mode")), "0644");
+    assert_eq!(text(&field(&rendered, "mode")), "0640");
     assert!(keys_of(&rendered).contains(&"owner".to_owned()));
     assert!(keys_of(&rendered).contains(&"group".to_owned()));
     for moving in [
@@ -533,13 +533,19 @@ fn walk_records_a_path_that_will_not_decode_and_keeps_going() {
     // Assert: reported, and reported exactly. Substituting `U+FFFD` would put a path in the
     // document that is not on the box, so the bytes are given as bytes and the directory that
     // holds them as the text it is — enough to go and look, without claiming a name.
+    let refused = inventory.unspellable();
+    assert_eq!(refused.len(), 1, "got {refused:?}");
+    assert_eq!(refused[0].name_bytes, "ff");
+    assert_eq!(
+        refused[0].directory.as_deref(),
+        root.to_str(),
+        "the directory holding it is what makes the report actionable"
+    );
+
+    // And the same fact as the document carries it.
     let unspellable = field(&rendered, "unspellable");
     let first = &support::observation::items_of(&unspellable)[0];
     assert_eq!(text(&field(first, "name_bytes")), "ff");
-    assert_eq!(
-        text(&field(first, "directory")),
-        root.to_str().expect("a UTF-8 scratch root")
-    );
 
     // Assert: and the neighbour it used to take down with it is still there.
     assert!(
@@ -581,7 +587,7 @@ fn an_entry_renders_every_field_it_owns() {
         ]
     );
     assert_eq!(text(&field(&rendered, "kind")), "regular");
-    assert_eq!(text(&field(&rendered, "mode")), "0644");
+    assert_eq!(text(&field(&rendered, "mode")), "0640");
     assert_eq!(integer(&field(&rendered, "size")), HELLO.len() as i64);
     assert_eq!(
         text(&field(&field(&rendered, "digest"), "value")),
@@ -632,7 +638,7 @@ fn an_entry_marks_a_directorys_stamps_and_link_count_volatile() {
             "a directory's {derived} is derived from its children"
         );
     }
-    assert_eq!(text(&field(&rendered, "mode")), "0755");
+    assert_eq!(text(&field(&rendered, "mode")), "0750");
 }
 
 #[test]

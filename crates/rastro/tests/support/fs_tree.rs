@@ -10,8 +10,12 @@ use std::path::{Path, PathBuf};
 /// usual 022 and 0664 under the 002 that `useradd` gives a fresh user on Debian. Tests here
 /// assert modes, so leaving that to the ambient umask makes them pass or fail on who is
 /// running them — which is a trap rather than a test.
-const FILE_MODE: u32 = 0o644;
-const DIRECTORY_MODE: u32 = 0o755;
+///
+/// **Nothing for others**, which is not about the tests: these are scratch files, and any mode
+/// works as long as it is fixed. Granting the world a read bit it does not need would be a
+/// finding in a security scan, and being right about it in a fixture costs nothing.
+const FILE_MODE: u32 = 0o640;
+const DIRECTORY_MODE: u32 = 0o750;
 
 pub fn scratch_tree(name: &str, directories: &[&str]) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
