@@ -82,28 +82,36 @@ fn a_path_that_will_not_be_read_is_not_an_absence() {
 }
 
 #[test]
-fn an_inventory_refuses_a_path_that_was_both_described_and_refused() {
-    // Arrange: two walks reach one path when a mount point is both an entry of its parent's
-    // walk and the root of its own. Disagreeing about whether it could be read at all is the
-    // same contradiction as disagreeing about its mode, one level out, so it fails the same
-    // way rather than letting the document carry a path twice under two answers.
+fn a_path_one_walk_described_and_another_could_not_list_keeps_its_description() {
+    // Arrange: the normal case for a mount point, not a contradiction. `/boot/efi` is an entry
+    // of the walk of `/`, which stops there and only stats it, and the root of its own walk,
+    // which tries to list it. Unprivileged — which is what CI is — the listing fails while the
+    // stat had already succeeded, so the same path arrives both described and refused.
     let contested = "/boot/efi";
 
     // Act
-    let refused_inventory = FilesystemInventory::new(
+    let inventory = FilesystemInventory::new(
         vec![described(contested)],
         vec![refused(
             contested,
             "could not be listed: Permission denied (os error 13)",
         )],
         Vec::new(),
-    );
+    )
+    .expect("a mount point read twice is not a contradiction");
 
-    // Assert: the message names the path, because that is what makes it fixable.
-    let message = refused_inventory
-        .expect_err("one path, two answers")
-        .to_string();
-    assert!(message.contains(contested), "got {message}");
+    // Assert: the description wins, because it is strictly more than the refusal — the
+    // attributes were obtained, and that the walk holds no entries beneath it is already what
+    // a boundary looks like. Refusing the pair instead cost the entire facet on every
+    // unprivileged run, and the determinism harness could not see it: two runs failing the
+    // same way are still byte-identical.
+    assert_eq!(inventory.entries().len(), 1);
+    assert_eq!(inventory.entries()[0].path.as_str(), contested);
+    assert!(
+        inventory.unreadable().is_empty(),
+        "got {:?}",
+        inventory.unreadable()
+    );
 }
 
 #[test]

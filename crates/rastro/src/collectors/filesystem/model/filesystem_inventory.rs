@@ -18,9 +18,9 @@ use crate::collectors::filesystem::value_objects::Detail;
 /// duplicate is collapsed. Two readings that *disagree* are refused, because that means the
 /// path changed between them and neither describes one moment.
 ///
-/// **A path is described or refused, never both.** Two walks reaching one path and
-/// disagreeing about whether it could be read is the same contradiction as disagreeing about
-/// its mode, one level out, so it is refused for the same reason.
+/// **Described beats refused.** Two walks reach one mount point by design, and only one of
+/// them tries to list it, so the pair is routine rather than a contradiction: whichever walk
+/// obtained the attributes is the one worth keeping.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilesystemInventory {
     entries: Vec<FileEntry>,
@@ -53,20 +53,17 @@ impl FilesystemInventory {
         unreadable.dedup();
         unspellable.dedup();
 
-        if let Some(contested) = unreadable
-            .iter()
-            .find(|refused| {
-                entries
-                    .binary_search_by(|entry| entry.path.cmp(&refused.path))
-                    .is_ok()
-            })
-            .map(|refused| refused.path.as_str())
-        {
-            return Err(CollectionError::new(format!(
-                "{contested:?} was both described and refused, so the walk did not see one \
-                 moment of this host"
-            )));
-        }
+        // A description beats a refusal of the same path, and that is not a tie-break: it is
+        // the normal case for a mount point. `/boot/efi` is an entry of the walk of `/`, which
+        // stops there and only stats it, and the root of its own walk, which tries to list it.
+        // Unprivileged, the listing fails while the stat had already succeeded. The
+        // description is strictly more than the refusal — the attributes were obtained — and
+        // holding no entries beneath a boundary is exactly what a boundary looks like anyway.
+        unreadable.retain(|refused| {
+            entries
+                .binary_search_by(|entry| entry.path.cmp(&refused.path))
+                .is_err()
+        });
 
         Ok(Self {
             entries,
