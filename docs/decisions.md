@@ -74,6 +74,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [The renderer streams](#the-renderer-streams-and-the-document-is-never-copied-to-filter-it) | four copies at peak became one, proved byte-neutral by golden tests |
 | [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
 | [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
+| [Tests skip the walk they ignore](#a-test-that-is-not-about-the-walk-does-not-pay-for-one) | forty-five whole-host walks made the suite eight minutes, and the harness's own files broke determinism |
 | [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
 
 ## Native collectors, no external tool as a dependency
@@ -1922,6 +1923,37 @@ something rastro can arrange after the fact.
 **Worth revisiting as a Layer-3-style specialisation**: if a run finds btrfs or ZFS with a
 usable prior snapshot, it could narrow the walk. It would be optimising a step that now costs
 about a second.
+
+## A test that is not about the walk does not pay for one
+
+The suite went from about a minute to eight. Not one slow test: the binary is invoked around
+forty-five times across `cli.rs` and `output.rs`, and every invocation walked the whole runner
+— a cargo registry and a coverage-instrumented target directory, hundreds of thousands of
+inodes — through an instrumented binary.
+
+So the tests that never read the `filesystem` facet now pass a config that excludes it. The
+ones that are actually about the walk still pay for it, and so do the three that assert a clean
+run says nothing on stderr, since an exclusion prints a WARN there.
+
+**It also removed a source of flakiness, which is the more interesting half.** An instrumented
+run writes a `.profraw` into the target directory, and the runner writes its own worker log
+while the suite runs — both inside the tree a walk covers. Two runs of "an unchanged host" were
+therefore never comparing an unchanged host, and the determinism harness failed on files the
+test harness itself had created.
+
+**Which exposed something worse: that harness had been passing vacuously on CI.** CI runs
+unprivileged, `/boot/efi` is unreadable there, and until the error-tolerance work a single
+unreadable path failed the whole `filesystem` facet — so both runs errored identically, the
+bytes matched, and the facet that dominates the document was never compared at all. It has been
+that way since the collector was registered. Two runs failing the same way are still identical,
+which is the blind spot in comparing bytes and nothing else.
+
+The property itself holds and is verified where it can be: five consecutive runs to one path on
+the reference box, byte-identical, with the walk included.
+
+**Still owed:** a determinism check over the `filesystem` facet that a busy CI runner cannot
+invalidate. It needs a way to scope the walk, which nothing but a collector's claim can do
+today — the same gap `docs/config.md` records.
 
 ## Collectors run concurrently, and the walk runs alone
 

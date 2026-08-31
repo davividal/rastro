@@ -4,6 +4,7 @@
 //! because rastro's invariants about streams and exit codes are only
 //! observable from outside the process.
 
+use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
@@ -53,6 +54,29 @@ fn walked_paths(document: &Value) -> &serde_json::Map<String, Value> {
         .expect("the filesystem facet is keyed by path")
 }
 
+/// The path of a config that excludes the filesystem walk.
+///
+/// **Written once, for speed rather than for coverage.** A walk of the whole host costs
+/// seconds under a coverage-instrumented binary on a runner whose disk carries a cargo
+/// registry and a target directory, and the tests here invoke the binary dozens of times
+/// between them. The tests that never read the `filesystem` facet skip it, which is the
+/// difference between a suite measured in minutes and one measured in seconds.
+///
+/// It also removes a second problem: an instrumented run drops a `.profraw` file into the
+/// target directory, which a walk of the whole host then reports — so a test that walks
+/// changes what the next walk sees.
+fn without_walking() -> &'static str {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    PATH.get_or_init(|| {
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-filesystem-walk.toml");
+        std::fs::write(&path, "[collectors]\nexclude = [\"filesystem\"]\n")
+            .expect("a writable scratch directory");
+
+        path.to_str().expect("a UTF-8 scratch path").to_owned()
+    })
+}
+
 fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {
     document[section]
         .as_array()
@@ -65,7 +89,7 @@ fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {
 #[test]
 fn run_with_version_flag_prints_the_crate_version() {
     // Act
-    let output = run(&["--version"]);
+    let output = run(&["--version", "--config", without_walking()]);
 
     // Assert
     assert!(output.status.success());
@@ -79,7 +103,7 @@ fn run_with_version_flag_prints_the_crate_version() {
 #[test]
 fn a_bare_run_writes_a_fingerprint_to_stdout() {
     // Act
-    let document = document(&[]);
+    let document = document(&["--config", without_walking()]);
 
     // Assert
     assert_eq!(document["schema_version"], 1);
@@ -90,7 +114,12 @@ fn a_bare_run_writes_a_fingerprint_to_stdout() {
 #[test]
 fn a_bare_run_reports_the_hostname_as_metadata() {
     // Act
-    let host = facet(&document(&[]), "metadata", "host").clone();
+    let host = facet(
+        &document(&["--config", without_walking()]),
+        "metadata",
+        "host",
+    )
+    .clone();
 
     // Assert
     assert_eq!(host["status"], "ok");
@@ -106,7 +135,12 @@ fn a_bare_run_reports_the_hostname_as_metadata() {
 #[test]
 fn a_bare_run_reports_the_mount_table_as_state() {
     // Act
-    let mounts = facet(&document(&[]), "facets", "mounts").clone();
+    let mounts = facet(
+        &document(&["--config", without_walking()]),
+        "facets",
+        "mounts",
+    )
+    .clone();
 
     // Assert
     assert_eq!(mounts["status"], "ok");
@@ -122,7 +156,12 @@ fn a_bare_run_reports_the_mount_table_as_state() {
 #[test]
 fn a_bare_run_reports_the_loaded_modules_as_state() {
     // Act
-    let modules = facet(&document(&[]), "facets", "modules").clone();
+    let modules = facet(
+        &document(&["--config", without_walking()]),
+        "facets",
+        "modules",
+    )
+    .clone();
 
     // Assert: `absent` is a legitimate answer, from a kernel built without
     // `CONFIG_MODULES`, so the status is not asserted to be `ok`. What must hold is
@@ -133,7 +172,12 @@ fn a_bare_run_reports_the_loaded_modules_as_state() {
 #[test]
 fn a_bare_run_reports_the_installed_packages_as_state() {
     // Act
-    let packages = facet(&document(&[]), "facets", "packages").clone();
+    let packages = facet(
+        &document(&["--config", without_walking()]),
+        "facets",
+        "packages",
+    )
+    .clone();
 
     // Assert: always `ok`, on every host. rastro can always report the state of the managers it
     // reads, and both are always named, so a box with neither is described rather than reported
@@ -159,8 +203,9 @@ fn a_bare_run_reports_the_installed_packages_as_state() {
 fn no_kernel_pointer_reaches_the_document() {
     // Act: the complete view is the one that keeps volatile values, so a load address
     // that was merely annotated rather than dropped would surface here.
-    let rendered = String::from_utf8(run(&["--include-volatile"]).stdout)
-        .expect("stdout should carry a UTF-8 document");
+    let rendered =
+        String::from_utf8(run(&["--include-volatile", "--config", without_walking()]).stdout)
+            .expect("stdout should carry a UTF-8 document");
 
     // Assert: `/proc/modules` publishes each module's kernel text address. It changes every
     // boot, so it is noise, and it leaks a KASLR offset into a document that gets copied off
@@ -180,7 +225,12 @@ fn no_kernel_pointer_reaches_the_document() {
 #[test]
 fn including_volatile_values_carries_the_run_timestamp() {
     // Act
-    let invocation = facet(&document(&["--include-volatile"]), "metadata", "invocation").clone();
+    let invocation = facet(
+        &document(&["--include-volatile", "--config", without_walking()]),
+        "metadata",
+        "invocation",
+    )
+    .clone();
 
     // Assert
     assert!(invocation["data"]["started_at"].is_i64());
@@ -189,7 +239,12 @@ fn including_volatile_values_carries_the_run_timestamp() {
 #[test]
 fn a_bare_run_omits_the_run_timestamp() {
     // Act: the diffable view is the default, so this needs no flag.
-    let invocation = facet(&document(&[]), "metadata", "invocation").clone();
+    let invocation = facet(
+        &document(&["--config", without_walking()]),
+        "metadata",
+        "invocation",
+    )
+    .clone();
 
     // Assert
     assert_eq!(
@@ -376,7 +431,7 @@ fn config_file(name: &str, contents: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_run_with_no_config_collects_everything() {
-    // Act
+    // Act: no config, which is the subject. It pays for a whole walk to say so.
     let document = document(&[]);
 
     // Assert: the premise is a box nobody documented, so the default cannot ask
@@ -451,7 +506,7 @@ fn the_effective_config_reaches_the_document() {
 #[test]
 fn a_bare_run_reports_the_binary_it_is_running_from() {
     // Act
-    let document = document(&["--include-volatile"]);
+    let document = document(&["--include-volatile", "--config", without_walking()]);
 
     // Assert: rastro installed on a box is part of that box, and a binary somebody swapped
     // is exactly the change this tool exists to catch. The default hides nothing.
@@ -463,7 +518,12 @@ fn a_bare_run_reports_the_binary_it_is_running_from() {
 fn a_staged_run_says_so_in_the_effective_config() {
     // Act: the flag `rastro-ssh` passes, because the party that made the temporary copy is
     // the only one that knows the file will be gone a second later.
-    let document = document(&["--staged", "--include-volatile"]);
+    let document = document(&[
+        "--staged",
+        "--include-volatile",
+        "--config",
+        without_walking(),
+    ]);
 
     // Assert: an omission the operator can see was requested, rather than a rule that
     // quietly drops a path.
@@ -558,8 +618,8 @@ fn detail_records_every_attribute_the_walk_read() {
 #[test]
 fn the_effective_config_records_which_detail_the_run_was_taken_at() {
     // Act
-    let summary = document(&[]);
-    let full = document(&["--detail"]);
+    let summary = document(&["--config", without_walking()]);
+    let full = document(&["--detail", "--config", without_walking()]);
 
     // Assert: two documents taken at different detail cannot be diffed against each other, so
     // the difference has to show in the envelope rather than being inferred from the shape.
@@ -604,18 +664,41 @@ fn debug_reports_what_the_walk_cost_and_where_the_document_went() {
 #[test]
 fn debug_writes_no_timing_into_the_document() {
     // Act
-    let document = document(&["--debug", "--include-volatile"]);
+    let document = document(&[
+        "--debug",
+        "--include-volatile",
+        "--config",
+        without_walking(),
+    ]);
 
     // Assert: a fingerprint records what a box *is*, not what it is doing, so a duration has
     // no place in it — and it would be volatile anyway, so the default view would drop it and
     // two runs would stop being comparable at the complete view.
-    let rendered = serde_json::to_string(&document).expect("a document re-serialises");
-    for forbidden in ["elapsed", "duration", "seconds_taken", "milliseconds"] {
-        assert!(
-            !rendered.contains(forbidden),
-            "the document carries {forbidden:?}"
-        );
+    //
+    // Asserted on the `invocation` facet, which is where a run describes itself and therefore
+    // the only place a timing could land. Grepping the whole document was the first attempt
+    // and it was wrong: under `--include-volatile` the document carries process command lines
+    // and unit descriptions from the live host, so it failed on whatever happened to be
+    // running rather than on anything rastro wrote.
+    let run = &facet(&document, "metadata", "invocation")["data"];
+    let described = run
+        .as_object()
+        .expect("the invocation facet describes the run")
+        .keys()
+        .cloned()
+        .collect::<Vec<String>>();
+    for key in &described {
+        for forbidden in ["elapsed", "duration", "taken", "seconds", "millis"] {
+            assert!(
+                !key.contains(forbidden),
+                "the invocation facet carries {key:?}"
+            );
+        }
     }
+    assert!(
+        described.contains(&"started_at".to_owned()),
+        "the run should still stamp itself: {described:?}"
+    );
 }
 
 #[test]
@@ -636,7 +719,7 @@ fn a_clean_run_without_debug_still_says_nothing_on_stderr() {
 fn progress_forced_on_reaches_stderr_even_when_it_is_not_a_terminal() {
     // Act: forced, because a test's stderr is a pipe and the counter is off there by default.
     // This is the only way to exercise the renderer without a pty.
-    let output = run(&["--progress"]);
+    let output = run(&["--progress", "--config", without_walking()]);
 
     // Assert: a counter, not a bar. The walk discovers its own work as it goes, so a
     // percentage would need a denominator nobody has, and a number that moves smoothly and
@@ -666,7 +749,7 @@ fn no_progress_keeps_stderr_empty_even_on_a_terminal() {
 #[test]
 fn progress_and_no_progress_together_are_refused() {
     // Act
-    let output = run(&["--progress", "--no-progress"]);
+    let output = run(&["--progress", "--no-progress", "--config", without_walking()]);
 
     // Assert: asking for both is a mistake in a script, and guessing which was meant would
     // hide it. clap refuses it before the run starts.
