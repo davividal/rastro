@@ -132,6 +132,19 @@ impl Config {
     /// A path that was given explicitly and cannot be read is an error, never a
     /// silent fall back to the defaults: the run would then be wider than the
     /// operator asked for, and the diff would not say so.
+    /// The config a run is working from: the named file, or the default when none was named.
+    ///
+    /// Here rather than in `main`, because "no `--config` means exclude nothing" is a decision
+    /// and the composition root is supposed to hold none. It also means both answers are stated
+    /// by a test, where the `None` arm previously needed a bare end-to-end run — which walks
+    /// every mount on the machine to establish that a file was not read.
+    pub fn named_or_default(path: Option<&Path>) -> Result<Self, ConfigError> {
+        match path {
+            Some(path) => Self::load(path),
+            None => Ok(Self::default()),
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let source = path
             .to_str()

@@ -256,8 +256,16 @@ pub fn stderr_is_a_terminal() -> bool {
 /// `None` off Linux and on a kernel that does not report it, because an absent measurement is
 /// better than a made-up one.
 fn peak_resident_kilobytes() -> Option<u64> {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()?
+    peak_resident_in(&std::fs::read_to_string("/proc/self/status").ok()?)
+}
+
+/// The `VmHWM` line of `/proc/self/status`, in kilobytes.
+///
+/// Separate from the read so both answers come from a fixture: a kernel built without `VmHWM`
+/// reports every other field and simply omits that line, which is not something a test can ask
+/// the kernel it is running on to do.
+pub fn peak_resident_in(status: &str) -> Option<u64> {
+    status
         .lines()
         .find_map(|line| line.strip_prefix("VmHWM:"))
         .and_then(|value| value.split_whitespace().next()?.parse().ok())

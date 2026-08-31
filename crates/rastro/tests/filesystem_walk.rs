@@ -782,6 +782,55 @@ fn walk_records_an_entry_it_cannot_describe_and_keeps_going() {
 }
 
 #[test]
+fn walk_records_a_directory_it_cannot_list_and_keeps_going() {
+    // Arrange: the mirror of the test below. Execute without read is the other half of the pair:
+    // the kernel resolves paths *through* the directory, so its own stat succeeds, and refuses to
+    // enumerate it, so `read_dir` fails with EACCES. That is what an unreadable fuse mount or a
+    // `chmod 711` home directory looks like from a walk.
+    let root = scratch_tree("walk-unlistable", &["closed"]);
+    let closed = root.join("closed");
+    write(&closed, "secret.conf", HELLO);
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o100))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::read_dir(&closed).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and lists it regardless of the mode bits.
+        fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user lists a directory without the read bit");
+        return;
+    }
+
+    // Act
+    let rendered = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("an unlistable directory does not fail the walk")
+        .observation(Detail::Summary);
+
+    fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+
+    // Assert: the directory loses its own entry too, and that is deliberate — a path is its
+    // attributes or the reason it has none. Recording mode and owner beside a failed listing
+    // would read as a complete description of a directory nobody could enumerate.
+    let refused = field(&rendered, closed.to_str().expect("a UTF-8 path"));
+    assert!(
+        text(&field(&refused, "error")).contains("could not be listed"),
+        "got {refused:?}"
+    );
+
+    // Assert: and the walk went on. The sibling is the point.
+    let intact = field(
+        &rendered,
+        root.join("closed")
+            .parent()
+            .expect("the root")
+            .to_str()
+            .expect("a UTF-8 path"),
+    );
+    assert_eq!(text(&intact).len(), 16, "the root itself is described");
+}
+
+#[test]
 fn walk_records_a_child_it_cannot_stat_and_keeps_going() {
     // Arrange: a directory carrying read but not execute permission. The kernel wants the read
     // bit to *enumerate* a directory and the execute bit to resolve a path *through* it, so

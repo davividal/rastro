@@ -179,3 +179,30 @@ fn peak_memory_is_reported_at_the_scale_a_human_reads() {
     assert_eq!(progress::human_bytes(1024), "1.0 KiB");
     assert_eq!(progress::human_bytes(19_000_000), "18.1 MiB");
 }
+
+/// `/proc/self/status` as Linux writes it, trimmed to the neighbourhood that matters.
+const STATUS: &str = "\
+Name:\trastro
+VmPeak:\t   21384 kB
+VmHWM:\t   19052 kB
+VmRSS:\t   18604 kB
+";
+
+#[test]
+fn peak_memory_is_read_from_the_high_water_mark() {
+    // Act & Assert: `VmHWM`, not `VmRSS`. The high-water mark is the number that decides whether
+    // the walk can keep building the document in memory at all; what is resident when the report
+    // is written is whatever is left after the document was handed to the writer.
+    assert_eq!(progress::peak_resident_in(STATUS), Some(19_052));
+}
+
+#[test]
+fn a_kernel_that_does_not_report_a_high_water_mark_reports_no_peak() {
+    // Arrange: `VmHWM` is not universal — a kernel built without it omits the line and reports
+    // everything else, which is not a state a test can ask the running kernel for.
+    let without = "Name:\trastro\nVmRSS:\t   18604 kB\n";
+
+    // Act & Assert: absent rather than zero, because an absent measurement is honest and a zero
+    // would read as a run that used no memory.
+    assert_eq!(progress::peak_resident_in(without), None);
+}

@@ -102,10 +102,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
 
 /// Everything the run decides for itself, before it reads anything but the clock.
 fn resolve(invocation: &cli::Cli) -> Result<Resolved, Box<dyn Error>> {
-    let config = match invocation.config_path() {
-        Some(path) => Config::load(path)?,
-        None => Config::default(),
-    };
+    let config = Config::named_or_default(invocation.config_path())?;
 
     // One sink, watching both the collectors and the walk inside one of them. Present when
     // either half was asked for, and built before anything runs so the total it reports is the

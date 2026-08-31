@@ -216,3 +216,32 @@ fn a_config_with_no_filesystem_section_narrows_nothing() {
     assert!(config.walk_churns().is_empty());
     assert!(config.walk_sealed().is_empty());
 }
+
+#[test]
+fn no_config_named_means_the_default_rather_than_a_failure() {
+    // Arrange & Act: what a bare invocation resolves to. Stated here rather than by running the
+    // binary with no arguments, which walks every mount on the machine to establish that a file
+    // was not read.
+    let resolved = Config::named_or_default(None).expect("naming no config is not a failure");
+
+    // Assert: the premise is a box nobody documented, so the default cannot ask the operator
+    // which collectors they want.
+    assert!(resolved.excluded().is_empty());
+    assert_eq!(resolved.source(), None);
+}
+
+#[test]
+fn a_named_config_is_the_one_that_is_read() {
+    // Arrange
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("named-or-default-{}.toml", std::process::id()));
+    std::fs::write(&path, "[collectors]\nexclude = [\"timers\"]\n").expect("a write");
+
+    // Act
+    let resolved = Config::named_or_default(Some(&path)).expect("a well-formed config");
+
+    // Assert: and the source is recorded, because the `invocation` facet declares where the run's
+    // decisions came from.
+    assert_eq!(resolved.excluded(), ["timers"]);
+    assert_eq!(resolved.source(), path.to_str());
+}

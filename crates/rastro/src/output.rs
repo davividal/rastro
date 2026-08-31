@@ -166,14 +166,17 @@ fn to_file(
     // renaming a staged file over either would replace the device or the symlink itself and
     // leave the box worse than this found it. There is nothing to make atomic about a stream:
     // no reader is going to diff it later.
-    if let Ok(existing) = fs::symlink_metadata(path) {
-        if !existing.file_type().is_file() {
-            return straight_into(path, fingerprint, view);
-        }
-
-        if !force {
-            return Err(already_there(path));
-        }
+    //
+    // **This asks what the destination is, never whether it is free.** An existing regular file
+    // is refused by `publish`, from the kernel, at the moment of publication. A check here as
+    // well would be a second answer to one question, sitting before a window it cannot close —
+    // and it would cost the refusal its only test, since no test can win the race that is then
+    // the only way to reach it. What the duplicate bought was skipping a render that follows a
+    // walk of the whole host, which is not a saving worth an untested promise.
+    if let Ok(existing) = fs::symlink_metadata(path)
+        && !existing.file_type().is_file()
+    {
+        return straight_into(path, fingerprint, view);
     }
 
     let staging = staging_path(path);
