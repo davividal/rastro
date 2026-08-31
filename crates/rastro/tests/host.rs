@@ -3,7 +3,7 @@
 mod support;
 
 use rastro::collectors::HostCollector;
-use rastro_collector::Collector;
+use rastro_collector::{Collector, CollectorCategory, Presence};
 use support::observation::{field, text};
 
 #[test]
@@ -32,4 +32,30 @@ fn an_unreadable_hostname_is_an_error_facet_rather_than_an_absent_one() {
     // Assert
     let message = refused.expect_err("an unreadable hostname").to_string();
     assert!(message.contains("hostname"), "got {message}");
+}
+
+#[test]
+fn the_host_collector_reads_the_hostname_itself_when_nobody_hands_it_one() {
+    // Arrange: the constructor `built_in()` uses when there is no composition root to take
+    // the reading, which is how an outside caller gets a working collector out of the port.
+    let collector = HostCollector::new();
+
+    // Assert: what it declares, not what it read. Whether `/proc/sys/kernel/hostname` exists
+    // is the host's business and differs between a Linux runner and a developer's Mac, but a
+    // collector's own identity is the same on every box, and it is what the envelope keys the
+    // facet by.
+    assert_eq!(collector.name().as_str(), "host");
+    assert_eq!(collector.identity().id.as_str(), "host");
+    assert_eq!(collector.category(), CollectorCategory::Metadata);
+    assert_eq!(collector.presence(), Presence::Present);
+}
+
+#[test]
+fn the_default_host_collector_is_the_one_that_reads_for_itself() {
+    // Act & Assert: `Default` exists because a collector with a no-argument constructor
+    // should satisfy it, and it must not become a second, quietly different collector.
+    assert_eq!(
+        HostCollector::default().identity().version.as_str(),
+        HostCollector::new().identity().version.as_str()
+    );
 }
