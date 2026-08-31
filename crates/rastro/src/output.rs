@@ -274,7 +274,14 @@ fn write_and_publish(
 ///
 /// Either way the 0600 from creation is kept, which a `--force` truncate of an existing 0644
 /// file would not have been: a mode applies when a file is made, not when it is written.
-fn publish(staging: &Path, path: &Path, force: bool) -> Result<(), OutputError> {
+///
+/// **Public so its refusals are reachable from a test, and they have to be.** [`to_file`] checks
+/// for an existing destination before it stages anything, so through the command line every
+/// refusal here belongs to the window between that check and this call — a race a test would have
+/// to win rather than arrange. Called directly, each one is one line of setup, which is the
+/// difference between the `link`-not-`rename` decision being guarded and merely being written
+/// down.
+pub fn publish(staging: &Path, path: &Path, force: bool) -> Result<(), OutputError> {
     if force {
         return fs::rename(staging, path).map_err(|error| {
             failure(
@@ -308,7 +315,7 @@ fn publish(staging: &Path, path: &Path, force: bool) -> Result<(), OutputError> 
 
 /// The document, and how many bytes it was.
 fn render(writer: &mut impl Write, fingerprint: &Fingerprint, view: View) -> io::Result<u64> {
-    let mut counted = Counting { writer, bytes: 0 };
+    let mut counted = Counting::over(writer);
     json::to_canonical_json_writer(fingerprint, view, &mut counted)?;
 
     Ok(counted.bytes)
@@ -318,9 +325,21 @@ fn render(writer: &mut impl Write, fingerprint: &Fingerprint, view: View) -> io:
 ///
 /// Counted here rather than by asking the filesystem afterwards, so the figure is the same one
 /// for stdout, where there is nothing to ask.
-struct Counting<'a, W: Write> {
+pub struct Counting<'a, W: Write> {
     writer: &'a mut W,
     bytes: u64,
+}
+
+impl<'a, W: Write> Counting<'a, W> {
+    /// A counter over a writer, at zero.
+    pub fn over(writer: &'a mut W) -> Self {
+        Self { writer, bytes: 0 }
+    }
+
+    /// How many bytes have gone through it.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
 }
 
 impl<W: Write> Write for Counting<'_, W> {

@@ -5,10 +5,12 @@
 //! host covers, and `cli.rs` holds the determinism harness. Two tests in one binary run
 //! concurrently, so a fingerprint written by one would land in the document of the other.
 
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use rastro::output::{Destination, default_file_name, utc_stamp};
+use rastro::output::{Counting, Destination, default_file_name, publish, utc_stamp};
 use serde_json::Value;
 mod support;
 
@@ -615,4 +617,139 @@ fn the_resolved_output_path_reaches_both_the_walk_and_the_envelope() {
         met_as.to_str().expect("a UTF-8 path"),
         "the declared path is not the one the walk would meet"
     );
+}
+
+/// A staged document, and the name it is about to be published under.
+///
+/// `publish` is called directly by the tests below rather than through the binary, because
+/// `to_file` refuses an existing destination before it stages anything: every refusal inside
+/// `publish` belongs to the window between that check and the publication, and a test cannot win
+/// that race. It can state it in two lines.
+fn staged(name: &str) -> PathBuf {
+    let directory = scratch(name);
+    let staging = directory.join(".rastro-staging");
+    std::fs::write(&staging, "a finished document").expect("a write");
+
+    staging
+}
+
+#[test]
+fn a_destination_that_appeared_while_the_document_was_rendering_is_refused() {
+    // Arrange: the race the `link`-not-`rename` decision exists for. A big document takes a while
+    // to write, and `to_file`'s check that the destination was free happened before that; this is
+    // the moment afterwards, with the destination now taken.
+    let staging = staged("publish-refuses-a-latecomer");
+    let target = staging.with_file_name("before.json");
+    std::fs::write(&target, "the state this run would be compared against").expect("a write");
+
+    // Act
+    let refused = publish(&staging, &target, false).expect_err("a destination that is taken");
+
+    // Assert: the kernel decided it, which is the whole point — `rename` would have taken the
+    // file silently, and no earlier check can close a window it sits before.
+    assert!(
+        refused.to_string().contains("already exists"),
+        "got {refused}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("the original is intact"),
+        "the state this run would be compared against"
+    );
+}
+
+#[test]
+fn a_publication_that_fails_for_any_other_reason_names_the_destination() {
+    // Arrange: a destination whose parent is not there, so `link` fails with something other
+    // than EEXIST and the refusal must not claim the file already exists.
+    let staging = staged("publish-names-the-destination");
+    let target = staging.with_file_name("gone").join("before.json");
+
+    // Act
+    let refused = publish(&staging, &target, false).expect_err("a parent that is not there");
+
+    // Assert: named for the destination the operator typed, not for rastro's staging file.
+    let message = refused.to_string();
+    assert!(message.contains("before.json"), "got {message}");
+    assert!(!message.contains("already exists"), "got {message}");
+    assert!(!message.contains(".rastro-staging"), "got {message}");
+}
+
+#[test]
+fn a_forced_publication_that_cannot_replace_the_destination_says_so() {
+    // Arrange: `--force` publishes by rename, and a rename cannot replace a directory with a
+    // file. This is the arm that reports it rather than leaving the operator with a success and
+    // no document.
+    let staging = staged("publish-force-refused");
+    let target = staging.with_file_name("before.json");
+    std::fs::create_dir(&target).expect("a writable scratch directory");
+
+    // Act
+    let refused = publish(&staging, &target, true).expect_err("a directory in the way");
+
+    // Assert
+    assert!(
+        refused
+            .to_string()
+            .contains("could not be replaced with the finished document"),
+        "got {refused}"
+    );
+}
+
+#[test]
+fn a_staging_file_that_outlives_its_publication_is_reported() {
+    // Arrange: the document is published, and then the staging link cannot be dropped. The run
+    // succeeded at what it was for, so this is the one refusal named for the staging file — it is
+    // the file the operator has to go and remove.
+    //
+    // Arranged by publishing *out of* a directory that is read-only: the link into the target
+    // needs no write permission on the source's directory, but unlinking the source does.
+    let staging = staged("publish-leaves-a-staging-file");
+    let closed = staging.parent().expect("a scratch parent").to_owned();
+    let target = closed.join("elsewhere").join("before.json");
+    std::fs::create_dir(target.parent().expect("a parent")).expect("a writable scratch directory");
+
+    let reopened = std::fs::Permissions::from_mode(0o700);
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o500))
+        .expect("a scratch directory this user owns");
+
+    // Act
+    let published = publish(&staging, &target, false);
+
+    std::fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+
+    // Assert
+    if published.is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and unlinks regardless of the mode bits, so there is
+        // nothing to report. The unprivileged CI runner is where this arm is exercised.
+        eprintln!("skipped: this user unlinks from a directory without write permission");
+        return;
+    }
+
+    let message = published
+        .expect_err("an unlinkable staging file")
+        .to_string();
+    assert!(
+        message.contains("was published but could not be unlinked"),
+        "got {message}"
+    );
+    assert!(message.contains(".rastro-staging"), "got {message}");
+    assert!(target.exists(), "the document itself was published");
+}
+
+#[test]
+fn the_counting_writer_reports_what_went_through_it_and_flushes_the_writer() {
+    // Arrange: the byte figure the `--debug` report prints comes from here rather than from
+    // asking the filesystem, because stdout has nothing to ask.
+    let mut sink: Vec<u8> = Vec::new();
+    let mut counted = Counting::over(&mut sink);
+
+    // Act
+    counted.write_all(b"a document").expect("a write to memory");
+    counted.flush().expect("a flush to memory");
+
+    // Assert: and the flush is delegated rather than swallowed. Production never reaches it —
+    // the `BufWriter` sits inside this, not around it — so a writer that quietly dropped a
+    // flush would be a trap laid for the next caller rather than a bug seen today.
+    assert_eq!(counted.bytes(), 10);
+    assert_eq!(sink, b"a document");
 }
