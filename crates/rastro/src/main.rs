@@ -70,8 +70,10 @@ fn run() -> Result<Written, Box<dyn Error>> {
         detail,
         started_at,
         hostname,
+        // Resolved here, once, so the path the walk leaves out and the path the
+        // `invocation` facet declares cannot be two different spellings of one file.
         output: match &destination {
-            Destination::File(path) => Some(path.clone()),
+            Destination::File(path) => Some(output::as_walked(path)),
             Destination::Stdout => None,
         },
         progress: reporting.clone().map(|sink| sink as Arc<dyn WalkProgress>),

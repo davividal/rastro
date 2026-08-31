@@ -188,13 +188,13 @@ impl FilesystemCollector {
 
     /// rastro's own footprint: the staged binary and the document being written.
     ///
-    /// Absolute where it can be, because the walk compares whole paths and `-o before.json`
-    /// is relative to a working directory the walk knows nothing about.
+    /// Both arrive already resolved to the path the walk will meet them under, because the
+    /// caller declares the same paths in the `invocation` facet and the two must not disagree.
+    /// Resolving here as well would be a second answer to one question.
     fn omitted(&self) -> Vec<PathBuf> {
         [self.observer.clone(), self.output.clone()]
             .into_iter()
             .flatten()
-            .map(|path| std::path::absolute(&path).unwrap_or(path))
             .collect()
     }
 

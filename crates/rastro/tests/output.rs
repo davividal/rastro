@@ -382,3 +382,113 @@ fn the_invocation_facet_admits_the_output_file_it_left_out() {
         "got {output}"
     );
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_device_destination_is_written_through_and_not_replaced() {
+    // Arrange: rastro runs as root, so publishing by rename would replace the null device
+    // with a regular file and leave the box worse than it found it. Only meaningful as a
+    // user that could actually do the damage.
+    use std::os::unix::fs::FileTypeExt;
+    let directory = scratch("device-destination");
+
+    // Act
+    let output = run_in(&directory, &["-o", "/dev/null"]);
+
+    // Assert: it worked, and /dev/null is still a character device.
+    assert!(
+        output.status.success(),
+        "writing to /dev/null should work: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        std::fs::metadata("/dev/null")
+            .expect("/dev/null exists")
+            .file_type()
+            .is_char_device(),
+        "the null device was replaced with a regular file"
+    );
+    assert_eq!(
+        std::fs::read_dir(&directory)
+            .expect("a listable directory")
+            .count(),
+        0,
+        "a staging file was left behind"
+    );
+}
+
+#[test]
+fn a_refused_publication_leaves_the_original_and_no_staging_file() {
+    // Arrange
+    let directory = scratch("refused-leaves-nothing");
+    let target = directory.join("before.json");
+    std::fs::write(&target, "the state this run would be compared against").expect("a write");
+
+    // Act
+    let output = run_in(&directory, &["-o", "before.json"]);
+
+    // Assert: the promise is that the `before` survives, and that nothing half-written is
+    // left lying next to it. Published by `link` rather than `rename` so the refusal is
+    // decided by the kernel at publication time rather than by a check taken earlier — the
+    // race itself is not arranged here, since another process would have to win it.
+    assert!(!output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("the original is intact"),
+        "the state this run would be compared against"
+    );
+    let left: Vec<String> = std::fs::read_dir(&directory)
+        .expect("a listable directory")
+        .map(|entry| {
+            entry
+                .expect("a readable entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(left, vec!["before.json".to_owned()], "got {left:?}");
+}
+
+#[test]
+fn an_output_path_through_a_symlinked_directory_is_still_left_out_of_the_walk() {
+    // Arrange: `std::path::absolute` is lexical, so it keeps the symlink in the path. The walk
+    // never follows a symlink, so it meets the file under the real directory instead — and the
+    // two spellings would not match, putting the previous document back in the next run.
+    let directory = scratch("symlinked-output-parent");
+    let real = directory.join("real");
+    let linked = directory.join("linked");
+    std::fs::create_dir(&real).expect("a writable scratch directory");
+    std::os::unix::fs::symlink(&real, &linked).expect("a symlink");
+
+    assert!(
+        run_in(&directory, &["-o", "linked/fingerprint.json"])
+            .status
+            .success(),
+        "the first run should have succeeded"
+    );
+
+    // Act
+    assert!(
+        run_in(&directory, &["-o", "linked/fingerprint.json", "--force"])
+            .status
+            .success(),
+        "the second run should have succeeded"
+    );
+    let document: Value = serde_json::from_slice(
+        &std::fs::read(real.join("fingerprint.json")).expect("a readable document"),
+    )
+    .expect("a JSON document");
+
+    // Assert: keyed by the path the walk met it under, which is the real one.
+    let walked = facet(&document, "facets", "filesystem")["data"]
+        .as_object()
+        .expect("the filesystem facet is keyed by path");
+    let met_as = real
+        .canonicalize()
+        .expect("a real directory")
+        .join("fingerprint.json");
+    assert!(
+        !walked.contains_key(met_as.to_str().expect("a UTF-8 path")),
+        "the run reported the document it was writing"
+    );
+}

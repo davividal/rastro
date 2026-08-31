@@ -1757,6 +1757,15 @@ and reverses only the wording of `docs/design.md`'s Streams section.
   against. That is the one irreversible thing this tool can do to an operator.
 - **`rastro-ssh` passes `-o -`.** Without it every remote run would leave a document in the
   remote working directory — root's home on most boxes, and walked — and return nothing.
+- **A destination that is not a regular file is written *through*, never published over.**
+  Found in review, and it mattered: the first version staged and renamed unconditionally, so
+  `rastro -o /dev/null` as root replaced the null device with a regular file, and `-o
+  /dev/stdout` would have replaced its symlink. A stream has nothing to make atomic anyway.
+- **Without `--force` the refusal is the kernel's.** The overwrite check and the publication
+  are separated by however long the document takes to render, so a check-then-rename could
+  replace a file that appeared in between — the one thing this is here to prevent. Published
+  with `link`, which fails `EEXIST`, rather than `rename`, which would take it. Also found in
+  review.
 
 ## The output file is left out of the walk, and the invocation facet says so
 
@@ -1773,6 +1782,13 @@ same principle, same seam, a second path.
 **Reproduced by accident before it was designed**, which is the only reason it was caught:
 a measurement script wrote three fingerprints into `/` and the last two differed. Written to
 tmpfs, which the walk skips, all three were byte-identical.
+
+**The path has to be resolved, not merely made absolute.** `std::path::absolute` is lexical, so
+`-o linked/fp.json` through a symlinked directory keeps the symlink — while the walk never
+follows one and meets the file under its real directory. The two spellings would not match and
+the document would land back in the next run, silently, for the workflow this entry exists to
+protect. Resolved once in the composition root and handed to both the walk and the facet, so
+there is one answer rather than two. Found in review.
 
 ## Progress is a counter, not a bar, and only on a terminal
 

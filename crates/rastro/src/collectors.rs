@@ -140,12 +140,7 @@ pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
         table,
         staged.map(|binary| binary.to_string_lossy().into_owned()),
         run.started_at,
-        run.output.map(|path| {
-            std::path::absolute(&path)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .into_owned()
-        }),
+        run.output.map(|path| path.to_string_lossy().into_owned()),
     )));
     collectors
 }

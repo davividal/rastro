@@ -7,10 +7,35 @@
 //! This does not weaken "stdout carries only the fingerprint": with the document in a file,
 //! stdout carries nothing at all.
 //!
-//! **Written to a sibling and renamed.** A run killed half way must not leave half a document
-//! to be diffed, which the README already promises, so the bytes land under a temporary name
-//! and the rename publishes them in one step. It is the same thing `rastro-ssh` does with
-//! `mktemp` on the remote side, for the same reason.
+//! **Written to a sibling and published in one step.** A run killed half way must not leave
+//! half a document to be diffed, which the README already promises, so the bytes land under a
+//! temporary name and appear at their own only once complete. It is the same thing
+//! `rastro-ssh` does with `mktemp` on the remote side, for the same reason.
+//!
+//! Two things that shape how that step happens, both because rastro runs as root: a
+//! destination that is not a regular file is written *through* rather than replaced, and
+//! without `--force` the appearance of the document is a `link` so that the kernel refuses an
+//! overwrite rather than a check taken seconds earlier.
+
+/// The path the operator named, as the walk will meet it.
+///
+/// Exported because the composition root resolves it once and hands the same value to the walk
+/// that omits it and to the `invocation` facet that declares it. Resolved rather than merely
+/// made absolute: `std::path::absolute` is lexical, so `-o linked/fp.json` through a symlinked
+/// directory keeps the symlink, while the walk never follows one and meets the file under its
+/// real directory. The two spellings would not match and the previous document would land back
+/// in the next run.
+pub fn as_walked(path: &Path) -> PathBuf {
+    let Some(name) = path.file_name() else {
+        return path.to_path_buf();
+    };
+
+    match path.parent().map(Path::canonicalize) {
+        Some(Ok(directory)) => directory.join(name),
+        // Nothing to resolve against yet, so lexical is the best available answer.
+        _ => std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()),
+    }
+}
 
 mod timestamp;
 
@@ -136,16 +161,19 @@ fn to_file(
     view: View,
     force: bool,
 ) -> Result<u64, OutputError> {
-    // Only a regular file is protected: `-o /dev/null` and `-o /dev/stdout` have to keep
-    // working, and neither is a fingerprint anybody is about to lose.
-    if !force && fs::symlink_metadata(path).is_ok_and(|at| at.file_type().is_file()) {
-        return Err(OutputError {
-            message: format!(
-                "{} already exists, so this run would overwrite a fingerprint that cannot be \
-                 taken again; pass --force to replace it or -o to name another path",
-                path.display()
-            ),
-        });
+    // **A destination that is not a regular file is written through, never published over.**
+    // `-o /dev/null` and `-o /dev/stdout` have to keep working, and rastro runs as root — so
+    // renaming a staged file over either would replace the device or the symlink itself and
+    // leave the box worse than this found it. There is nothing to make atomic about a stream:
+    // no reader is going to diff it later.
+    if let Ok(existing) = fs::symlink_metadata(path) {
+        if !existing.file_type().is_file() {
+            return straight_into(path, fingerprint, view);
+        }
+
+        if !force {
+            return Err(already_there(path));
+        }
     }
 
     let staging = staging_path(path);
@@ -165,7 +193,7 @@ fn to_file(
             )
         })?;
 
-    let written = write_and_publish(file, &staging, path, fingerprint, view);
+    let written = write_and_publish(file, &staging, path, fingerprint, view, force);
     if written.is_err() {
         // Best effort: the run has already failed, and a leftover partial file is the thing
         // the temporary name existed to prevent.
@@ -175,12 +203,46 @@ fn to_file(
     written
 }
 
+/// Writes to a destination that already exists and is not a regular file.
+///
+/// Opened and truncated in place, because the point of naming a device, a FIFO or
+/// `/dev/stdout` is to write *through* it. Not synced either: there is nothing durable behind
+/// it to flush.
+fn straight_into(path: &Path, fingerprint: &Fingerprint, view: View) -> Result<u64, OutputError> {
+    let named = path.display().to_string();
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|error| failure(&named, "could not be opened", &error))?;
+
+    let mut writer = BufWriter::with_capacity(256 * 1024, file);
+    let bytes = render(&mut writer, fingerprint, view)
+        .map_err(|error| failure(&named, "could not be written", &error))?;
+    writer
+        .flush()
+        .map_err(|error| failure(&named, "could not be flushed", &error))?;
+
+    Ok(bytes)
+}
+
+fn already_there(path: &Path) -> OutputError {
+    OutputError {
+        message: format!(
+            "{} already exists, so this run would overwrite a fingerprint that cannot be \
+             taken again; pass --force to replace it or -o to name another path",
+            path.display()
+        ),
+    }
+}
+
 fn write_and_publish(
     file: fs::File,
     staging: &Path,
     path: &Path,
     fingerprint: &Fingerprint,
     view: View,
+    force: bool,
 ) -> Result<u64, OutputError> {
     let named = staging.display().to_string();
     let mut writer = BufWriter::with_capacity(256 * 1024, file);
@@ -199,17 +261,48 @@ fn write_and_publish(
         .sync_all()
         .map_err(|error| failure(&named, "could not be synced", &error))?;
 
-    // The rename keeps the 0600 the creation set, which a `--force` truncate of an existing
-    // 0644 file would not: a mode applies when a file is made, not when it is written.
-    fs::rename(staging, path).map_err(|error| {
-        failure(
-            &path.display().to_string(),
-            "could not be replaced with the finished document",
-            &error,
-        )
-    })?;
+    publish(staging, path, force)?;
 
     Ok(bytes)
+}
+
+/// Moves the finished document into place.
+///
+/// **Without `--force` the refusal is the kernel's, not an earlier check's.** `link` fails with
+/// `EEXIST` if the target is there, so a file that appeared while this run was rendering — a
+/// window as long as the document is big — cannot be silently replaced. A `rename` would take
+/// it, which would break the one promise this module makes about not destroying a `before`.
+///
+/// Either way the 0600 from creation is kept, which a `--force` truncate of an existing 0644
+/// file would not have been: a mode applies when a file is made, not when it is written.
+fn publish(staging: &Path, path: &Path, force: bool) -> Result<(), OutputError> {
+    if force {
+        return fs::rename(staging, path).map_err(|error| {
+            failure(
+                &path.display().to_string(),
+                "could not be replaced with the finished document",
+                &error,
+            )
+        });
+    }
+
+    fs::hard_link(staging, path).map_err(|error| match error.kind() {
+        io::ErrorKind::AlreadyExists => already_there(path),
+        _ => failure(
+            &path.display().to_string(),
+            "could not be created from the finished document",
+            &error,
+        ),
+    })?;
+
+    // The document is at its name now; the staging link is what is left to drop.
+    fs::remove_file(staging).map_err(|error| {
+        failure(
+            &staging.display().to_string(),
+            "could not be unlinked once published",
+            &error,
+        )
+    })
 }
 
 /// The document, and how many bytes it was.
