@@ -245,8 +245,8 @@ impl FileTree {
                 "a status change time",
                 path,
             )?,
-            inode: count(metadata.ino(), "an inode number", path)?,
-            link_count: count(metadata.nlink(), "a link count", path)?,
+            inode: as_document_integer(metadata.ino(), "an inode number", path)?,
+            link_count: as_document_integer(metadata.nlink(), "a link count", path)?,
             link_target: link_target_of(kind, path)?,
             device: device_of(kind, metadata),
             digest: self.digest_of(kind, path, &reading)?,
@@ -426,7 +426,17 @@ fn absolute(path: &Path) -> Option<AbsolutePath> {
     AbsolutePath::new(path.to_str()?, "walked path").ok()
 }
 
-fn count(value: u64, kind: &str, path: &Path) -> Result<i64, Refusal> {
+/// A number the kernel reports as `u64`, as the `i64` the document holds.
+///
+/// **A width boundary rather than a guess about the host.** The document's integers are `i64`
+/// because JSON has no unsigned type and rastro records no floats, so the top half of a `u64` has
+/// no representation and something has to happen at the edge. Refusing the entry is the only
+/// answer that does not lie: truncating would put a different inode number in the fingerprint
+/// than the one on the box.
+///
+/// Public and named for what it produces, because no filesystem allocates an inode near 2^63 —
+/// so the refusal is reachable from a test and from nowhere else.
+pub fn as_document_integer(value: u64, kind: &str, path: &Path) -> Result<i64, Refusal> {
     i64::try_from(value).map_err(|_| {
         Refusal::Unreadable(format!(
             "{kind} of {value} on {} is too large to record as an integer",

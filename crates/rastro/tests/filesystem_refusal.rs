@@ -18,7 +18,8 @@ mod support;
 
 use rastro::collectors::filesystem::{
     ContentPolicy, Detail, FileEntry, FileKind, FileMode, FileTree, FilesystemInventory,
-    NanosecondsSinceEpoch, Refusal, UnreadablePath, WalkPolicy, is_absence, open_without_following,
+    NanosecondsSinceEpoch, Refusal, UnreadablePath, WalkPolicy, as_document_integer, is_absence,
+    open_without_following,
 };
 use rastro_collector::{AbsolutePath, NonEmptyText};
 use support::fs_tree::scratch_tree;
@@ -313,5 +314,33 @@ fn the_same_path_read_twice_and_identically_is_one_entry() {
     assert_eq!(
         keys_of(&inventory.observation(Detail::Summary)),
         vec!["/boot"]
+    );
+}
+
+#[test]
+fn a_kernel_number_too_wide_for_the_document_refuses_the_entry() {
+    // Arrange: an inode number in the top half of a `u64`. The document holds `i64`, because JSON
+    // has no unsigned type and rastro records no floats.
+    let too_wide = u64::MAX;
+
+    // Act
+    let refused = as_document_integer(too_wide, "an inode number", Path::new("/srv/data"));
+
+    // Assert: refused, not truncated. Truncating would put a different inode number in the
+    // fingerprint than the one on the box, and the diff would then be of a number rastro invented.
+    let Err(Refusal::Unreadable(reason)) = refused else {
+        panic!("a number the document cannot hold must refuse the entry");
+    };
+    assert!(reason.contains("an inode number"), "got {reason}");
+    assert!(reason.contains("/srv/data"), "got {reason}");
+    assert!(reason.contains("too large"), "got {reason}");
+}
+
+#[test]
+fn a_kernel_number_the_document_can_hold_is_kept_exactly() {
+    // Act & Assert: every real inode and link count comes through here, so it must not round.
+    assert_eq!(
+        as_document_integer(i64::MAX as u64, "an inode number", Path::new("/srv/data")),
+        Ok(i64::MAX)
     );
 }
