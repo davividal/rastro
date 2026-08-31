@@ -550,3 +550,70 @@ fn an_output_path_through_a_symlinked_directory_is_still_left_out_of_the_walk() 
         "the run reported the document it was writing"
     );
 }
+
+#[test]
+fn a_config_can_seal_a_tree_so_the_walk_stops_there() {
+    // Arrange: the whole point of the feature. Until this existed the only lever over which
+    // trees the walk read was a collector's claim resolved from the host, so a runaway walk
+    // needed a new binary — and CI had no way to say that its own build directory is noise.
+    let directory = scratch("config-seals-a-tree");
+    let noisy = directory.join("noise");
+    std::fs::create_dir(&noisy).expect("a writable scratch directory");
+    std::fs::write(noisy.join("churning.log"), "a line\n").expect("a write");
+    std::fs::write(directory.join("kept.conf"), "a setting\n").expect("a write");
+
+    let config = directory.join("rastro.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[filesystem]\nsealed = [{:?}]\n",
+            noisy.to_str().expect("a UTF-8 scratch path")
+        ),
+    )
+    .expect("a write");
+
+    // Act
+    let output = run_in(
+        &directory,
+        &[
+            "-o",
+            "fingerprint.json",
+            "--config",
+            config.to_str().expect("a UTF-8 scratch path"),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "rastro should have succeeded: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(
+        &std::fs::read(directory.join("fingerprint.json")).expect("a readable document"),
+    )
+    .expect("a JSON document");
+
+    // Assert: the sealed directory is recorded, nothing under it is, and a sibling the config
+    // said nothing about is untouched. A narrowing narrows one tree.
+    let walked = facet(&document, "facets", "filesystem")["data"]
+        .as_object()
+        .expect("the filesystem facet is keyed by path");
+    let named = |path: &std::path::Path| path.to_str().expect("a UTF-8 path").to_owned();
+
+    assert!(
+        walked.contains_key(&named(&noisy)),
+        "the tree itself is state"
+    );
+    assert!(
+        !walked.contains_key(&named(&noisy.join("churning.log"))),
+        "the walk descended into a sealed tree"
+    );
+    assert!(
+        walked.contains_key(&named(&directory.join("kept.conf"))),
+        "a narrowing narrowed something it was not asked to"
+    );
+
+    // Assert: and the envelope says the operator decided it, not rastro.
+    let table = &facet(&document, "metadata", "invocation")["data"]["walk_policy"];
+    assert_eq!(table[named(&noisy)]["reading"], "sealed");
+    assert_eq!(table[named(&noisy)]["claimed_by"], "config");
+}

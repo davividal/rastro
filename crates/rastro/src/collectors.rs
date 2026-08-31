@@ -53,11 +53,11 @@ pub use units::UnitsCollector;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation};
+use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation, WalkedTree};
 
 use thiserror::Error;
 
-use crate::collectors::filesystem::{Detail, WalkPolicy};
+use crate::collectors::filesystem::{ContentPolicy, Detail, PolicyRule, WalkPolicy};
 use crate::progress::WalkProgress;
 
 use crate::config::Config;
@@ -112,11 +112,55 @@ pub struct Run {
     pub output: Option<PathBuf>,
     /// Where the walk reports its counters, when anybody asked for them.
     pub progress: Option<Arc<dyn WalkProgress>>,
+    /// The trees the operator narrowed, in the order metadata-only, churns, sealed.
+    ///
+    /// Carried as paths rather than as rules because `Config` is a plain settings type that
+    /// knows nothing of the walk's vocabulary. Turning a path into a tree, and a key into a
+    /// reading, happens here — which is also where an illegal path becomes a failure of the
+    /// `filesystem` facet rather than of the run.
+    pub narrowed: Narrowed,
+}
+
+/// What the operator's config asked the walk to step back from.
+#[derive(Debug, Clone, Default)]
+pub struct Narrowed {
+    pub metadata_only: Vec<String>,
+    pub churns: Vec<String>,
+    pub sealed: Vec<String>,
+}
+
+impl Narrowed {
+    /// The operator's paths as walk rules, or the first one that is not a legal tree.
+    ///
+    /// A bad path in a config fails the `filesystem` facet rather than the run, for the same
+    /// reason a claim conflict does: an operator's typo should not cost them every other facet
+    /// on a box they were trying to inspect.
+    fn rules(&self) -> Result<Vec<PolicyRule>, CollectionError> {
+        let named = [
+            (&self.metadata_only, ContentPolicy::MetadataOnly),
+            (&self.churns, ContentPolicy::Churns),
+            (&self.sealed, ContentPolicy::Sealed),
+        ];
+
+        let mut rules = Vec::new();
+        for (trees, content) in named {
+            for tree in trees {
+                let tree = WalkedTree::new(tree).map_err(|error| {
+                    CollectionError::new(format!(
+                        "the config named {tree:?} as a tree to narrow, and it is not one: {error}"
+                    ))
+                })?;
+                rules.push(PolicyRule::configured(tree, content.clone()));
+            }
+        }
+
+        Ok(rules)
+    }
 }
 
 pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
     let mut collectors = state_collectors(run.hostname);
-    let policy = claimed_policy(&collectors);
+    let policy = claimed_policy(&collectors, &run.narrowed);
     let table = match &policy {
         Ok(resolved) => Observation::from(resolved),
         Err(_) => Observation::null(),
@@ -179,13 +223,20 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
 /// claim because its facet was excluded would make an exclusion *widen* the walk, and
 /// `--exclude postgresql` would silently put a cluster's data directory back under the
 /// hashing default.
-fn claimed_policy(collectors: &[Box<dyn Collector>]) -> Result<WalkPolicy, CollectionError> {
-    collectors
+fn claimed_policy(
+    collectors: &[Box<dyn Collector>],
+    narrowed: &Narrowed,
+) -> Result<WalkPolicy, CollectionError> {
+    let claimed = collectors
         .iter()
         .map(AsRef::as_ref)
         .try_fold(WalkPolicy::built_in(), |policy, collector| {
             policy.claimed(collector.name(), &collector.filesystem_claims())
-        })
+        })?;
+
+    // The operator last, because their rule beats a claim: a claim is rastro's reckoning about
+    // a tree from the outside, and the operator knows their box.
+    claimed.configured(narrowed.rules()?)
 }
 
 /// The collectors a config leaves running, and the ones it took away.

@@ -63,6 +63,11 @@ fn run() -> Result<Written, Box<dyn Error>> {
             started_at: resolved.started_at.clone(),
             hostname: resolved.hostname.clone(),
             output: walked_output(&resolved.destination),
+            narrowed: collectors::Narrowed {
+                metadata_only: resolved.config.walk_metadata_only().to_vec(),
+                churns: resolved.config.walk_churns().to_vec(),
+                sealed: resolved.config.walk_sealed().to_vec(),
+            },
             progress: resolved
                 .reporting
                 .clone()

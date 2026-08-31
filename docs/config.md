@@ -77,12 +77,47 @@ saying so. Even an exclusion made by mistake stays discoverable, because
 `excluded_collectors` is in the `invocation` facet, so a diff shows the scope
 changed. A missing inclusion leaves no trace at all.
 
+## Narrowing the walk
+
+The filesystem walk reads every mount that holds files, and a config can tell it to step back
+from trees the operator knows are noise. Three keys, and all three withhold:
+
+```toml
+[filesystem]
+# Stat these, open nothing in them.
+metadata_only = ["/srv/media"]
+# And treat what moves in them as moving on its own: size, inode and both stamps go volatile.
+churns = ["/home/runner/actions-runner"]
+# Record the tree's own directory and do not descend.
+sealed = ["/var/lib/mysql", "/usr/share/doc"]
+```
+
+Measured on the reference box, that last one alone took 3,028 entries out of the document.
+
+**There is deliberately no `hashed` key.** A config may only narrow, and asking for content to
+be read would widen the walk — which is the inclusion list this tool exists to refuse. An
+unknown key is an error, so an attempt at one fails rather than quietly doing nothing.
+
+**The operator's rule beats a collector's claim.** A collector that owns a tree claims it from
+the host — `postgresql` seals each cluster's data directory, `packages` churns the package
+database. That is rastro's reckoning about a tree from the outside; the operator knows their
+box, so naming the same tree in a config replaces the claim rather than conflicting with it.
+Naming one tree twice *in the config* is still an error: the operator meant one of them and
+rastro cannot know which.
+
+**Every rule appears in the `invocation` facet**, keyed by tree, with the reading and who asked
+for it — `filesystem` for a shipped rule, a collector's name for a claim, `config` for one of
+these. A tree with no entries under it owes the reader that much:
+
+```json
+"walk_policy": {
+  "/": { "claimed_by": "filesystem", "reading": "metadata_only" },
+  "/usr/share/doc": { "claimed_by": "config", "reading": "sealed" },
+  "/var/lib/postgresql/17/main": { "claimed_by": "config", "reading": "sealed" }
+}
+```
+
 ## What a config cannot do
 
 **Where the document goes is not configurable.** A config may only *narrow* a run, and
 choosing an output path narrows nothing, so `-o` is a command-line option and only that.
-
-**Nor can a config narrow the walk.** The only lever over which trees the filesystem walk
-reads is a collector's claim over a tree it owns, resolved from the host rather than
-declared. `--exclude filesystem` drops the whole facet; there is nothing between that and
-everything. This is a known gap: it is what made a runaway walk unfixable without a rebuild.

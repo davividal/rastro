@@ -75,6 +75,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
 | [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
 | [Tests skip the walk they ignore](#a-test-that-is-not-about-the-walk-does-not-pay-for-one) | forty-five whole-host walks made the suite eight minutes, and the harness's own files broke determinism |
+| [A config narrows the walk](#a-config-can-narrow-the-walk-and-the-operator-outranks-a-collector) | three narrowings, no `hashed`; an operator corrects rastro rather than conflicting with it |
 | [nextest runs the suite](#nextest-runs-the-suite-and-each-test-gets-its-own-process) | 43 s against 64 s, and process isolation found a fixture race libtest had hidden |
 | [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
 
@@ -1963,6 +1964,42 @@ Asserting whole-host byte-identity on a busy runner would be asserting that noth
 moved during the test, which is neither rastro's promise nor true. The promise is verified where
 it can be: five consecutive runs to one path on the reference box, walk included,
 byte-identical.
+
+## A config can narrow the walk, and the operator outranks a collector
+
+The only lever over which trees the walk read was a collector's claim, resolved from the host.
+So the 51-minute run was unfixable without a new binary, and CI had no way to say that its own
+build directory is noise. `docs/config.md` recorded that as a known gap; this closes it.
+
+Three keys — `metadata_only`, `churns`, `sealed` — and **deliberately no `hashed`**. All three
+withhold, so this is not a new principle but the existing one reaching the operator instead of
+only reaching collectors: a config may narrow and never widen. The type is what enforces it, as
+`ClaimedReading` already does for a claim — `Config` has nowhere to put a fourth reading, and
+`deny_unknown_fields` turns an attempt at one into an error rather than a line that silently
+does nothing.
+
+**The operator's rule beats a collector's claim, which is the opposite resolution from a claim
+meeting a claim.** Two collectors naming one tree is a bug in a collector pair with no way to
+pick a winner, so it fails. An operator and a collector naming one tree is an operator
+correcting rastro: a claim is rastro's reckoning about a tree from the outside, and the operator
+knows their box. Proven on the reference box, where a config rule over
+`/var/lib/postgresql/17/main` replaced the `postgresql` collector's claim and the effective
+table changed its `claimed_by` to `config` — the same pair would previously have been a hard
+conflict.
+
+Two config rules for one tree is still refused, for the reason a shipped table naming one tree
+twice is: the operator meant one of them.
+
+**Declared, never silent.** Each rule renders in the `invocation` facet with `claimed_by:
+"config"`, so a reader of a tree with no entries can tell rastro's reckoning from a colleague's
+config file. `config` is not a facet and no collector may be called that; it is spelled as a
+claimant anyway because the question the table answers is who decided.
+
+**A bad path fails the facet, not the run.** An operator's typo should not cost them every other
+facet on a box they were trying to inspect, which is the same rule a claim conflict follows.
+
+Measured on the reference box: sealing `/usr/share/doc` and the cluster took the document from
+45,993 entries to 42,965 and 4.63 MB to 4.41 MB, at 0.43 s.
 
 ## nextest runs the suite, and each test gets its own process
 

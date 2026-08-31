@@ -151,6 +151,36 @@ impl WalkPolicy {
         Self::new(rules)
     }
 
+    /// The same table, with the operator's own rules folded in over everything else.
+    ///
+    /// **An operator's rule beats a collector's claim, and a shipped one.** A claim is rastro's
+    /// reckoning about a tree from the outside — resolved from the host, but still a guess about
+    /// what matters in it. The operator knows their box. So where a claim and a config name one
+    /// tree this replaces rather than refuses, and the effective table records `config` as the
+    /// claimant so the change is declared rather than silent.
+    ///
+    /// That is the opposite resolution from [`Self::claimed`], and deliberately: two collectors
+    /// naming one tree is a bug in a collector pair, with no way to pick a winner. An operator
+    /// and a collector naming one tree is an operator correcting rastro, which has an obvious
+    /// winner.
+    ///
+    /// **A config still cannot widen the walk.** Only the three narrowings can be spelled here,
+    /// because that is all the config type can hold — there is no `hashed` key. The type is what
+    /// enforces it, exactly as `ClaimedReading` enforces it for a claim.
+    ///
+    /// Two config rules for one tree is still refused: the operator meant one of them and rastro
+    /// cannot know which.
+    pub fn configured(self, rules: Vec<PolicyRule>) -> Result<Self, CollectionError> {
+        let mut overridden: Vec<PolicyRule> = self
+            .rules
+            .into_iter()
+            .filter(|existing| !rules.iter().any(|rule| rule.tree == existing.tree))
+            .collect();
+        overridden.extend(rules);
+
+        Self::new(overridden)
+    }
+
     /// What to do with a path, according to the most specific tree that contains it.
     ///
     /// Total, because [`Self::new`] guarantees a rule for the root. Ties cannot happen:

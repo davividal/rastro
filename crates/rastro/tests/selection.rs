@@ -20,6 +20,7 @@ fn run(effective_config: Observation) -> collectors::Run {
         hostname: Ok("reference-box".to_owned()),
         output: None,
         progress: None,
+        narrowed: collectors::Narrowed::default(),
     }
 }
 
