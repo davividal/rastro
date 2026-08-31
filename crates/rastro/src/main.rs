@@ -151,9 +151,7 @@ fn warn_if_the_document_may_crowd_the_disk(resolved: &Resolved) {
         return;
     };
 
-    if let Some(estimate) = preflight::estimate()
-        && let Some(concern) = preflight::concern(estimate, preflight::free_bytes_at(path))
-    {
+    if let Some(concern) = preflight::concern_at(path) {
         say(resolved, &concern);
     }
 }

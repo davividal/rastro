@@ -58,6 +58,15 @@ pub fn concern(estimate: Estimate, free_bytes: Option<u64>) -> Option<String> {
     ))
 }
 
+/// The warning an operator should see before this run writes to this path, or nothing.
+///
+/// The whole step in one call, so the composition root forwards a message rather than deciding
+/// whether there is one. Both readings are `df`'s, and [`concern`] takes them as values, so every
+/// combination of estimate and free space is stated by a test without a disk to arrange.
+pub fn concern_at(path: &std::path::Path) -> Option<String> {
+    concern(estimate()?, free_bytes_at(path))
+}
+
 /// Bytes free where a document is about to be written.
 ///
 /// `None` when `df` cannot say, which is the same answer an absent `df` gives: no number, so

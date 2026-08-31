@@ -78,3 +78,17 @@ fn free_space_is_absent_when_df_named_no_filesystem() {
         None
     );
 }
+
+#[test]
+fn a_document_that_would_crowd_a_tiny_disk_warns_whatever_the_host_actually_has() {
+    // Arrange: the two readings a run takes, as values. This is the whole decision — the estimate
+    // in inodes and the free space at the destination — and it is the reason neither number is
+    // read inside `concern`: a test can state a nearly-full disk that no CI runner has.
+    let crowded = estimate(2_000_000);
+    let barely_enough = 200 * 1_048_576;
+
+    // Act & Assert: it fires below the four-times margin and stays quiet above it, so the
+    // threshold itself is pinned rather than inferred from one run.
+    assert!(concern(crowded, Some(barely_enough)).is_some());
+    assert!(concern(crowded, Some(barely_enough * 8)).is_none());
+}
