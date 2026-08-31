@@ -200,10 +200,6 @@ impl<'a> Visible<'a> {
             }),
         }
     }
-
-    pub fn sensitivity(&self) -> Sensitivity {
-        self.observation.sensitivity
-    }
 }
 
 impl<'a> VisibleObject<'a> {
