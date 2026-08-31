@@ -1938,7 +1938,24 @@ So the tests that never read the `filesystem` facet now pass a config that exclu
 ones that are actually about the walk still pay for it, and so do the three that assert a clean
 run says nothing on stderr, since an exclusion prints a WARN there.
 
-**It also removed a source of flakiness, which is the more interesting half.** An instrumented
+**Then measured again, because excluding the facet was the blunt version.** CI's step timings
+showed four tests over 120 seconds *each* on the runner, and the fix was the config feature this
+same change added: `sealed` over the root and the shipped churn trees leaves one entry per mount
+root — a `filesystem` facet that is genuinely `ok`, rendered through the real walk, in about ten
+milliseconds. Sealing the root alone is not enough, because a shipped rule for a tree inside it
+is more specific and still descends.
+
+That is better than excluding the facet, not merely faster: the test still exercises the walk,
+the rendering and the digest. It also prints nothing on stderr, because a narrowing is not an
+exclusion, which is what lets the "a clean run says nothing" tests use it.
+
+Four tests still pay for a real walk, and each has a reason: one asserts what a run with *no*
+config looks like, two prove the output file is left out of a tree that has to contain it, and
+one proves a config narrowing by checking that a sibling of the sealed tree is still walked.
+Sealing anything there would remove the thing being asserted. Local suite: 64 s before any of
+this, 48 s after excluding the facet, **26 s after sealing**.
+
+**Excluding the facet also removed a source of flakiness, which is the more interesting half.** An instrumented
 run writes a `.profraw` into the target directory, and the runner writes its own worker log
 while the suite runs — both inside the tree a walk covers. Two runs of "an unchanged host" were
 therefore never comparing an unchanged host, and the determinism harness failed on files the

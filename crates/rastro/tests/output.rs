@@ -400,7 +400,13 @@ fn the_invocation_facet_admits_the_output_file_it_left_out() {
     // Act
     run_in(
         &directory,
-        &["-o", "fingerprint.json", "--include-volatile"],
+        &[
+            "-o",
+            "fingerprint.json",
+            "--include-volatile",
+            "--config",
+            without_walking(),
+        ],
     );
     let document: Value = serde_json::from_slice(
         &std::fs::read(directory.join("fingerprint.json")).expect("a readable document"),
@@ -546,6 +552,10 @@ fn a_config_can_seal_a_tree_so_the_walk_stops_there() {
     std::fs::write(directory.join("kept.conf"), "a setting\n").expect("a write");
 
     let config = directory.join("rastro.toml");
+    // No sealing of the shipped trees here, unlike the tests that only need a facet to exist:
+    // this one asserts that a sibling of the sealed tree *is* still walked, and the scratch
+    // directory it lives in sits under `/tmp` on some hosts. Sealing that would seal away the
+    // very thing being checked, so this test pays for a real walk and is worth it.
     std::fs::write(
         &config,
         format!(

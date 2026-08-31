@@ -789,3 +789,43 @@ fn walk_refuses_a_root_that_is_not_there() {
     // inventory would read as a host with no files on it.
     assert!(refused.is_err());
 }
+
+#[test]
+fn an_entry_renders_a_block_device_as_its_two_numbers() {
+    // Arrange: the one `FileKind` variant no other test produced, so the arm that classifies it
+    // was never executed. A block device is a real thing to find on a walked host — every disk
+    // is one — and `st_rdev` is the only content it has.
+    //
+    // Found rather than created: `mknod` needs root, and the coverage that matters is measured
+    // on an unprivileged runner. An `lstat` of one needs no privilege at all.
+    let Some(device) = std::fs::read_dir("/dev")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .metadata()
+                .is_ok_and(|at| std::os::unix::fs::FileTypeExt::is_block_device(&at.file_type()))
+        })
+    else {
+        eprintln!("skipped: this host exposes no block device under /dev");
+        return;
+    };
+
+    // Act
+    let inventory = FileTree::at(&device.path())
+        .walk(&hashing_everything())
+        .expect("a block device can be stat'd without privilege");
+    let entry = &inventory.entries()[0];
+
+    // Assert: classified as what it is, and carrying the numbers rather than a digest — there
+    // is no content to read, and reading one would mean reading the disk.
+    assert_eq!(entry.kind, FileKind::BlockDevice);
+    assert!(entry.digest.is_none(), "a device node has no content");
+    assert!(entry.size.is_none());
+
+    let rendered = entry.observation(Detail::Full);
+    let numbers = field(&rendered, "device");
+    assert_eq!(keys_of(&numbers), vec!["major", "minor"]);
+}

@@ -9,7 +9,7 @@ use std::process::{Command, Output};
 use serde_json::{Value, json};
 mod support;
 
-use support::narrowing::without_walking;
+use support::narrowing::{sealing_the_shipped_trees, without_walking};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
 
@@ -418,7 +418,7 @@ fn clipped(value: &str) -> String {
 #[test]
 fn stderr_stays_empty_on_a_successful_run() {
     // Act
-    let output = run(&[]);
+    let output = run(&["--config", sealing_the_shipped_trees()]);
 
     // Assert
     assert!(
@@ -429,6 +429,20 @@ fn stderr_stays_empty_on_a_successful_run() {
 }
 
 /// A config file in the temp dir, named per test so parallel runs cannot clash.
+/// The same, plus the sealing body, for a config test that does not care what the walk found.
+///
+/// A config test is about which collectors ran and what the envelope says, not about the
+/// filesystem — and a walk of a whole CI runner under coverage costs it two minutes.
+fn config_file_over_a_sealed_walk(name: &str, contents: &str) -> std::path::PathBuf {
+    config_file(
+        name,
+        &format!(
+            "{contents}{}",
+            support::narrowing::SEALING_THE_SHIPPED_TREES
+        ),
+    )
+}
+
 fn config_file(name: &str, contents: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rastro-{name}.toml"));
     std::fs::write(&path, contents).expect("the temp directory should be writable");
@@ -455,7 +469,8 @@ fn a_run_with_no_config_collects_everything() {
 #[test]
 fn an_excluded_collector_is_omitted_rather_than_recorded_absent() {
     // Arrange
-    let path = config_file("exclude-mounts", "[collectors]\nexclude = [\"mounts\"]\n");
+    let path =
+        config_file_over_a_sealed_walk("exclude-mounts", "[collectors]\nexclude = [\"mounts\"]\n");
 
     // Act
     let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
@@ -477,7 +492,8 @@ fn an_excluded_collector_is_omitted_rather_than_recorded_absent() {
 #[test]
 fn an_exclusion_is_announced_on_stderr() {
     // Arrange
-    let path = config_file("warn-mounts", "[collectors]\nexclude = [\"mounts\"]\n");
+    let path =
+        config_file_over_a_sealed_walk("warn-mounts", "[collectors]\nexclude = [\"mounts\"]\n");
 
     // Act
     let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
@@ -491,7 +507,8 @@ fn an_exclusion_is_announced_on_stderr() {
 #[test]
 fn the_effective_config_reaches_the_document() {
     // Arrange
-    let path = config_file("effective", "[collectors]\nexclude = [\"mounts\"]\n");
+    let path =
+        config_file_over_a_sealed_walk("effective", "[collectors]\nexclude = [\"mounts\"]\n");
 
     // Act
     let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
@@ -551,7 +568,7 @@ fn a_config_path_that_cannot_be_read_fails_the_run() {
 #[test]
 fn excluding_a_collector_that_does_not_exist_fails_the_run() {
     // Arrange
-    let path = config_file("typo", "[collectors]\nexclude = [\"mount\"]\n");
+    let path = config_file_over_a_sealed_walk("typo", "[collectors]\nexclude = [\"mount\"]\n");
 
     // Act
     let output = run(&["--config", path.to_str().expect("a UTF-8 temp path")]);
@@ -566,7 +583,7 @@ fn excluding_a_collector_that_does_not_exist_fails_the_run() {
 #[test]
 fn excluding_a_metadata_collector_fails_the_run() {
     // Arrange
-    let path = config_file(
+    let path = config_file_over_a_sealed_walk(
         "no-invocation",
         "[collectors]\nexclude = [\"invocation\"]\n",
     );
@@ -582,7 +599,7 @@ fn excluding_a_metadata_collector_fails_the_run() {
 #[test]
 fn a_bare_run_records_each_walked_path_as_one_digest() {
     // Act
-    let document = document(&[]);
+    let document = document(&["--config", sealing_the_shipped_trees()]);
 
     // Assert: the default view answers "did anything about this path change", and a digest is
     // the whole of that answer. Listing eleven attributes per path cost 444 bytes an entry
@@ -606,7 +623,7 @@ fn a_bare_run_records_each_walked_path_as_one_digest() {
 #[test]
 fn detail_records_every_attribute_the_walk_read() {
     // Act
-    let document = document(&["--detail"]);
+    let document = document(&["--detail", "--config", sealing_the_shipped_trees()]);
 
     // Assert: the digest says a path moved and not which attribute did, so this is how to ask.
     // It has to be asked at the time: a summary taken yesterday cannot be expanded today.
@@ -616,9 +633,13 @@ fn detail_records_every_attribute_the_walk_read() {
         .find(|(_, value)| value.get("kind").is_some())
         .expect("at least one path is described in full");
 
+    // Asserted on the attributes every entry keeps. A directory's inode and stamps are derived
+    // from its children and therefore volatile, so they are absent from the default view —
+    // which is the point of that rule, not a gap in this one.
     assert!(attributes["mode"].is_string(), "{path}: {attributes}");
     assert!(attributes["owner"].is_i64(), "{path}: {attributes}");
-    assert!(attributes["inode"].is_i64(), "{path}: {attributes}");
+    assert!(attributes["group"].is_i64(), "{path}: {attributes}");
+    assert!(attributes["kind"].is_string(), "{path}: {attributes}");
 }
 
 #[test]
@@ -643,7 +664,7 @@ fn the_effective_config_records_which_detail_the_run_was_taken_at() {
 #[test]
 fn debug_reports_a_line_per_collector_on_stderr() {
     // Act
-    let output = run(&["--debug"]);
+    let output = run(&["--debug", "--config", sealing_the_shipped_trees()]);
 
     // Assert: on stderr, because stdout carries only the fingerprint, and named per collector
     // because "it took 40 seconds" is not actionable while "the filesystem walk took 39 of
@@ -658,7 +679,7 @@ fn debug_reports_a_line_per_collector_on_stderr() {
 #[test]
 fn debug_reports_what_the_walk_cost_and_where_the_document_went() {
     // Act
-    let output = run(&["--debug"]);
+    let output = run(&["--debug", "--config", sealing_the_shipped_trees()]);
 
     // Assert: the two questions an operator actually has after a slow run, and the reason
     // this exists at all: `time ./rastro > file` answers neither.
@@ -708,20 +729,6 @@ fn debug_writes_no_timing_into_the_document() {
 }
 
 #[test]
-fn a_clean_run_without_debug_still_says_nothing_on_stderr() {
-    // Act
-    let output = run(&[]);
-
-    // Assert: the contract `--debug` must not quietly break. Diagnostics belong on stderr, and
-    // a clean run has none.
-    assert!(
-        output.stderr.is_empty(),
-        "got {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[test]
 fn progress_forced_on_reaches_stderr_even_when_it_is_not_a_terminal() {
     // Act: forced, because a test's stderr is a pipe and the counter is off there by default.
     // This is the only way to exercise the renderer without a pty.
@@ -742,7 +749,7 @@ fn progress_forced_on_reaches_stderr_even_when_it_is_not_a_terminal() {
 #[test]
 fn no_progress_keeps_stderr_empty_even_on_a_terminal() {
     // Act
-    let output = run(&["--no-progress"]);
+    let output = run(&["--no-progress", "--config", sealing_the_shipped_trees()]);
 
     // Assert
     assert!(
