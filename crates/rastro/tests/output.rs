@@ -783,3 +783,66 @@ fn debug_names_the_file_the_document_went_to_and_how_big_it_was() {
     assert!(reported.contains("fingerprint.json"), "got {reported}");
     assert!(reported.contains("bytes"), "got {reported}");
 }
+
+#[test]
+fn an_output_file_behind_a_symlinked_parent_is_still_left_out_of_the_walk() {
+    // Arrange: `-o link/before.json`, where `link` is a symlink to a sibling directory. This is
+    // the shape a reviewer flagged: `std::path::absolute` is purely lexical, so it would keep
+    // `.../link/before.json` — while the walk never follows the symlink and meets the file under
+    // `.../real/before.json` instead. The two paths would not match, the omission would miss, and
+    // run one's document would land inside run two's.
+    let directory = scratch("symlinked-output-parent");
+    let real = directory.join("real");
+    std::fs::create_dir(&real).expect("a writable scratch directory");
+    std::os::unix::fs::symlink(&real, directory.join("link")).expect("a symlink");
+
+    let config = directory.join("rastro.toml");
+    let sealed = trees_sealing_everything_except(&directory);
+    std::fs::write(&config, sealing(&sealed)).expect("a write");
+
+    // Act: twice, and the second run is the whole point. On the first there is no output file
+    // for the walk to find — it is created after the walk, from the document the walk produced —
+    // so a single run cannot tell a working omission from a broken one.
+    let arguments = [
+        "-o",
+        "link/before.json",
+        "--config",
+        config.to_str().expect("a UTF-8 scratch path"),
+    ];
+    let first = run_in(&directory, &arguments);
+    assert!(
+        first.status.success(),
+        "the first run should have succeeded: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let mut again = arguments.to_vec();
+    again.push("--force");
+    let output = run_in(&directory, &again);
+    assert!(
+        output.status.success(),
+        "the second run should have succeeded: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let document: Value = serde_json::from_slice(
+        &std::fs::read(real.join("before.json")).expect("a document behind the symlink"),
+    )
+    .expect("a JSON document");
+
+    // Assert: the walk left it out under the path the walk actually meets it by — the physical
+    // one. Asserting on the lexical path would pass even with the bug, since the walk never
+    // produces that key either way.
+    let walked = facet(&document, "facets", "filesystem")["data"]
+        .as_object()
+        .expect("the filesystem facet is keyed by path");
+    let physical = std::fs::canonicalize(&real)
+        .expect("a real directory")
+        .join("before.json");
+
+    assert!(
+        !walked.contains_key(physical.to_str().expect("a UTF-8 path")),
+        "the document carries its own output file at {}",
+        physical.display()
+    );
+}
