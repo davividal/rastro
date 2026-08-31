@@ -2,17 +2,20 @@
 //!
 //! The rule lives here rather than in `filesystem_walk.rs` because the case that matters
 //! most cannot be arranged in a real tree: a path vanishing between its parent being listed
-//! and it being stat'd is a race, and a test that tried to win it would be flaky. The rule is
-//! a pure function over an `ErrorKind` for exactly that reason, so it is tested directly and
-//! the walk is tested for the failures that *can* be arranged.
+//! and it being stat'd is a race, and a test that tried to win it would be flaky. Both the
+//! classification and the recording it decides are pure functions for exactly that reason, so
+//! each arm is stated directly here and the walk is tested for the failures that *can* be
+//! arranged.
 
+use std::io;
 use std::io::ErrorKind;
+use std::path::Path;
 
 mod support;
 
 use rastro::collectors::filesystem::{
     ContentPolicy, Detail, FileEntry, FileKind, FileMode, FilesystemInventory,
-    NanosecondsSinceEpoch, UnreadablePath, is_absence,
+    NanosecondsSinceEpoch, Refusal, UnreadablePath, is_absence,
 };
 use rastro_collector::{AbsolutePath, NonEmptyText};
 use support::observation::{field, keys_of, text};
@@ -167,5 +170,49 @@ fn a_refused_path_renders_only_the_reason_it_could_not_be_read() {
     assert!(
         text(&field(&entry, "error")).contains("Permission denied"),
         "got {entry:?}"
+    );
+}
+
+#[test]
+fn a_refusal_at_a_path_that_is_gone_records_nothing() {
+    // Arrange: ENOENT, which is what the walk gets for a file that was listed in its parent
+    // and deleted before the walk reached it.
+    let vanished = path("/etc/rotated.log");
+    let refusal = Refusal::at(
+        Path::new("/etc/rotated.log"),
+        "could not be read",
+        &io::Error::from(ErrorKind::NotFound),
+    );
+
+    // Act
+    let recorded = UnreadablePath::recorded(&vanished, refusal);
+
+    // Assert: nothing to record. Recording it would put an entry in one document and not the
+    // next for a reason that is not a change to the box, which is what byte-identity forbids.
+    assert_eq!(recorded, None);
+}
+
+#[test]
+fn a_refusal_at_a_path_that_is_there_records_the_path_and_the_reason() {
+    // Arrange: EACCES, which reproduces at the same path on every run.
+    let closed = path("/root/.ssh");
+    let refusal = Refusal::at(
+        Path::new("/root/.ssh"),
+        "could not be listed",
+        &io::Error::from(ErrorKind::PermissionDenied),
+    );
+
+    // Act
+    let recorded = UnreadablePath::recorded(&closed, refusal).expect("a lasting blind spot");
+
+    // Assert
+    assert_eq!(recorded.path, closed);
+    assert!(
+        recorded
+            .reason
+            .as_str()
+            .starts_with("/root/.ssh could not be listed: "),
+        "the reason names the path and what was attempted, got {:?}",
+        recorded.reason.as_str()
     );
 }

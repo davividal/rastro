@@ -2,6 +2,8 @@
 
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
+use super::Refusal;
+
 /// A path that is there, and the reason it is not in the document as itself.
 ///
 /// **An entry is its attributes or the reason it has none, never a partial set pretending to
@@ -19,6 +21,25 @@ use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 pub struct UnreadablePath {
     pub path: AbsolutePath,
     pub reason: NonEmptyText,
+}
+
+impl UnreadablePath {
+    /// What the document records about a refused path, or nothing when the path simply went
+    /// away.
+    ///
+    /// Returns rather than appending to a list the caller owns, so that both answers are one
+    /// value a test can state, and the walk keeps its accumulator to itself.
+    pub fn recorded(path: &AbsolutePath, refusal: Refusal) -> Option<Self> {
+        let Refusal::Unreadable(reason) = refusal else {
+            return None;
+        };
+
+        Some(Self {
+            path: path.clone(),
+            reason: NonEmptyText::new(reason, "a refusal")
+                .expect("a refusal carries at least a path and a reason"),
+        })
+    }
 }
 
 impl From<&UnreadablePath> for Observation {

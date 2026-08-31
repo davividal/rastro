@@ -26,7 +26,7 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    FileEntry, FilesystemInventory, PolicyRule, UnreadablePath, WalkPolicy, is_absence,
+    FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, WalkPolicy, is_absence,
 };
 pub use source::{FileTree, MountedFilesystems, WalkBoundaries};
 pub use value_objects::{

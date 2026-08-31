@@ -1,6 +1,8 @@
 //! Whether a path that would not be read is gone, or merely closed.
 
+use std::io;
 use std::io::ErrorKind;
+use std::path::Path;
 
 /// Whether this is a path that is no longer there, as opposed to one that will not be read.
 ///
@@ -24,4 +26,30 @@ pub fn is_absence(kind: ErrorKind) -> bool {
         kind,
         ErrorKind::NotFound | ErrorKind::StaleNetworkFileHandle
     )
+}
+
+/// Why one path is not in the document as itself.
+///
+/// A type rather than one error with a message, because the two answers have opposite
+/// consequences for the byte-identical guarantee: see [`is_absence`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// It went away between the walk listing its parent and reaching it.
+    Gone,
+    /// It is there and would not describe itself.
+    Unreadable(String),
+}
+
+impl Refusal {
+    /// One io failure at one path, classified into the two answers the walk has for it.
+    ///
+    /// Beside [`is_absence`] rather than in the walk, because which of the two a failure is
+    /// belongs to what rastro means by a walk, not to how a host is read.
+    pub fn at(path: &Path, what_happened: &str, error: &io::Error) -> Self {
+        if is_absence(error.kind()) {
+            return Self::Gone;
+        }
+
+        Self::Unreadable(format!("{} {what_happened}: {error}", path.display()))
+    }
 }

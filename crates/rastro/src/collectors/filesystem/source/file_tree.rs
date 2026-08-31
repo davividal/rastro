@@ -43,11 +43,11 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
+use rastro_collector::{AbsolutePath, ByteSize, CollectionError};
 use sha2::{Digest as _, Sha256};
 
 use crate::collectors::filesystem::model::{
-    FileEntry, FilesystemInventory, UnreadablePath, UnspellablePath, WalkPolicy, is_absence,
+    FileEntry, FilesystemInventory, Refusal, UnreadablePath, UnspellablePath, WalkPolicy,
 };
 use crate::collectors::filesystem::value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
@@ -155,11 +155,10 @@ impl FileTree {
             let metadata = match fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
                 Err(error) => {
-                    note(
-                        &mut unreadable,
+                    unreadable.extend(UnreadablePath::recorded(
                         &recorded,
-                        failure(&path, "could not be read", &error),
-                    );
+                        Refusal::at(&path, "could not be read", &error),
+                    ));
                     continue;
                 }
             };
@@ -167,7 +166,7 @@ impl FileTree {
             let entry = match self.entry_of(&path, &recorded, &metadata, policy) {
                 Ok(entry) => entry,
                 Err(refusal) => {
-                    note(&mut unreadable, &recorded, refusal);
+                    unreadable.extend(UnreadablePath::recorded(&recorded, refusal));
                     continue;
                 }
             };
@@ -184,7 +183,7 @@ impl FileTree {
                         // change rests on: a path is its attributes or the reason it has
                         // none. Recording mode and owner beside a failed listing would read
                         // as a complete description of a directory nobody could enumerate.
-                        note(&mut unreadable, &recorded, refusal);
+                        unreadable.extend(UnreadablePath::recorded(&recorded, refusal));
                         continue;
                     }
                 }
@@ -206,13 +205,13 @@ impl FileTree {
     /// keeps one open directory handle per level instead of one per entry.
     fn children_of(&self, directory: &Path) -> Result<Vec<PathBuf>, Refusal> {
         let reader = fs::read_dir(directory)
-            .map_err(|error| failure(directory, "could not be listed", &error))?;
+            .map_err(|error| Refusal::at(directory, "could not be listed", &error))?;
 
         reader
             .map(|entry| {
                 entry
                     .map(|entry| entry.path())
-                    .map_err(|error| failure(directory, "could not be listed fully", &error))
+                    .map_err(|error| Refusal::at(directory, "could not be listed fully", &error))
             })
             .collect()
     }
@@ -277,31 +276,6 @@ impl FileTree {
     }
 }
 
-/// Why one path is not in the document as itself.
-///
-/// The two answers have opposite consequences for the byte-identical guarantee, which is why
-/// this is a type rather than one error with a message: see
-/// [`is_absence`](crate::collectors::filesystem::is_absence).
-enum Refusal {
-    /// It went away between the walk listing its parent and reaching it.
-    Gone,
-    /// It is there and would not describe itself.
-    Unreadable(String),
-}
-
-/// Records a refusal, or nothing at all when the path simply went away.
-fn note(unreadable: &mut Vec<UnreadablePath>, path: &AbsolutePath, refusal: Refusal) {
-    let Refusal::Unreadable(reason) = refusal else {
-        return;
-    };
-
-    unreadable.push(UnreadablePath {
-        path: path.clone(),
-        reason: NonEmptyText::new(reason, "a refusal")
-            .expect("a refusal carries at least a path and a reason"),
-    });
-}
-
 /// Hashes a file without holding it in memory.
 ///
 /// `io::copy` streams it through the hasher, so a multi-gigabyte file costs a buffer
@@ -312,7 +286,7 @@ fn sha256_of(path: &Path) -> Result<Digest, Refusal> {
     let mut hasher = Sha256::new();
 
     io::copy(&mut file, &mut hasher)
-        .map_err(|error| failure(path, "could not be read to the end", &error))?;
+        .map_err(|error| Refusal::at(path, "could not be read to the end", &error))?;
 
     Ok(Digest::of(DigestAlgorithm::Sha256, &hasher.finalize()))
 }
@@ -332,11 +306,11 @@ fn open_without_following(path: &Path) -> Result<fs::File, Refusal> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .map_err(|error| failure(path, "could not be opened", &error))?;
+        .map_err(|error| Refusal::at(path, "could not be opened", &error))?;
 
     let opened = file
         .metadata()
-        .map_err(|error| failure(path, "could not be described once open", &error))?;
+        .map_err(|error| Refusal::at(path, "could not be described once open", &error))?;
 
     if !opened.file_type().is_file() {
         return Err(Refusal::Unreadable(format!(
@@ -388,7 +362,7 @@ fn link_target_of(kind: FileKind, path: &Path) -> Result<Option<String>, Refusal
     }
 
     let target =
-        fs::read_link(path).map_err(|error| failure(path, "could not be resolved", &error))?;
+        fs::read_link(path).map_err(|error| Refusal::at(path, "could not be resolved", &error))?;
 
     // A target that will not spell is a refusal rather than the end of the walk, unlike a
     // *path* that will not: the key is the path, so this one has somewhere to be recorded.
@@ -454,13 +428,4 @@ fn count(value: u64, kind: &str, path: &Path) -> Result<i64, Refusal> {
             path.display()
         ))
     })
-}
-
-/// One io failure at one path, classified into the two answers the walk has for it.
-fn failure(path: &Path, what_happened: &str, error: &io::Error) -> Refusal {
-    if is_absence(error.kind()) {
-        return Refusal::Gone;
-    }
-
-    Refusal::Unreadable(format!("{} {what_happened}: {error}", path.display()))
 }
