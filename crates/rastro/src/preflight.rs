@@ -70,8 +70,16 @@ pub fn free_bytes_at(path: &std::path::Path) -> Option<u64> {
     let target = directory.unwrap_or(std::path::Path::new("."));
 
     let df = CanonicalTool::located("df")?;
-    let reported = df.run(&["-P", "-k", target.to_str()?]).ok()?;
 
+    parse_free_bytes(&df.run(&["-P", "-k", target.to_str()?]).ok()?)
+}
+
+/// The available-kilobytes column of one `df -P -k` row, as bytes.
+///
+/// Separate from the run for the reason every other source in this tree separates them: the
+/// whole translation is then exercised from a fixture, with no `df` to run and no disk whose
+/// free space the test would have to arrange.
+pub fn parse_free_bytes(reported: &str) -> Option<u64> {
     reported
         .lines()
         .nth(1)?
@@ -90,8 +98,21 @@ pub fn free_bytes_at(path: &std::path::Path) -> Option<u64> {
 /// it, which the syscall's cost does not buy anything over.
 fn inodes_in_use() -> Option<u64> {
     let df = CanonicalTool::located("df")?;
-    let reported = df.run(&["-i", "-P", "--local"]).ok()?;
 
+    parse_inodes_in_use(&df.run(&["-i", "-P", "--local"]).ok()?)
+}
+
+/// The used-inode columns of `df -i -P --local`, summed.
+///
+/// **Nothing rather than zero, and that case is real rather than defensive.** A filesystem with
+/// no fixed inode table reports `0` or `-` where the count would be: vfat does — `/boot/efi` on
+/// the reference box prints `0 0 0 -` — and so do btrfs and zfs. A host whose filesystems all
+/// answer that way sums to nothing, and an estimate of nothing is not an estimate of a small
+/// number. It has to be absent, or the warning would compare a document against a floor of zero
+/// and fire on every run.
+///
+/// Separate from the run so a fixture can state each of those shapes.
+pub fn parse_inodes_in_use(reported: &str) -> Option<u64> {
     let counted: u64 = reported
         .lines()
         .skip(1)
