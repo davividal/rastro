@@ -75,6 +75,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
 | [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
 | [Tests skip the walk they ignore](#a-test-that-is-not-about-the-walk-does-not-pay-for-one) | forty-five whole-host walks made the suite eight minutes, and the harness's own files broke determinism |
+| [A tool's null is not a broken document](#a-tools-null-is-not-a-broken-document) | one timer with a null field cost the whole facet on every run of a host |
 | [A config narrows the walk](#a-config-can-narrow-the-walk-and-the-operator-outranks-a-collector) | three narrowings, no `hashed`; an operator corrects rastro rather than conflicting with it |
 | [nextest runs the suite](#nextest-runs-the-suite-and-each-test-gets-its-own-process) | 43 s against 64 s, and process isolation found a fixture race libtest had hidden |
 | [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
@@ -1964,6 +1965,37 @@ Asserting whole-host byte-identity on a busy runner would be asserting that noth
 moved during the test, which is neither rastro's promise nor true. The promise is verified where
 it can be: five consecutive runs to one path on the reference box, walk included,
 byte-identical.
+
+## A tool's `null` is not a broken document
+
+`systemctl list-timers --output=json` reports `"activates": null` for a timer that starts
+nothing systemd can name. A Debian 12 box writes `""` for the same case, which is what the field
+was measured against and why it was typed as a `String` with `serde(default)` — and `default`
+covers an *absent* field, not a null one. So on a GitHub Actions runner one such timer failed the
+entire `timers` facet, on every run of that host.
+
+Absent, `null` and `""` now converge on one value before anything decides what it means.
+
+**Found by improving a failure message rather than by guessing.** The determinism harness
+reported `facets/timers differs` with both sides printing `data: null`, because the reporter only
+ever printed `data` — and an `error` facet has none. Two runs failing identically are still
+identical, so it read as a flake. Printing `status` and `error` turned it into two messages that
+differed only in a byte offset, which is the giveaway: the failure was constant and its *text*
+varied, because the offset lands after timer clock values whose width changes.
+
+Worth recording that the first hypothesis was wrong. The timing suggested the concurrency change,
+so the guess was contention between two collectors both shelling out to `systemctl`. Measurement
+killed it: 120 runs on a systemd host with no failure, 40 of them at four times the subprocess
+pressure, and `units` makes two `systemctl` calls rather than the one per unit that had been
+assumed. A cheaper diagnostic would have been quicker than the reasoning.
+
+**Still owed, and the same class three times over:** one unreadable mount point, one
+undecodable filename and now one null field have each cost a whole facet. The blast radius is
+the problem rather than the strictness — a row that will not parse should cost that row, as a
+path that will not read costs that path. There are 27 non-optional scalar fields across seven
+JSON deserialisers with the same exposure, and making them all optional would trade one
+fragility for a weaker type. Per-row tolerance is the consistent fix and it is not in this
+change.
 
 ## A config can narrow the walk, and the operator outranks a collector
 

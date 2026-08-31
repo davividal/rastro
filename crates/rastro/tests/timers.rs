@@ -203,3 +203,36 @@ fn collect_fails_rather_than_reporting_an_empty_table_without_systemd() {
     // Act & Assert
     assert!(TimersCollector::reading(None).collect().is_err());
 }
+
+#[test]
+fn parse_reads_a_timer_that_activates_null() {
+    // Arrange: measured on a GitHub Actions runner, where `systemctl list-timers --output=json`
+    // reports `"activates": null` for a timer that starts nothing systemd can name. The
+    // development box wrote `""` for the same case, so the field was typed as a `String` with
+    // `serde(default)` — which covers an *absent* field and not a null one. One such timer
+    // failed the entire `timers` facet, and it failed it on every run of that host.
+    let null_activates = r#"[
+      {"unit":"orphan.timer","activates":null,"next":null,"last":null,"left":null,"passed":null}
+    ]"#;
+
+    // Act
+    let table = SystemctlTimers::parse(null_activates)
+        .expect("a null `activates` is a timer that starts nothing, not a broken document");
+
+    // Assert: absent, null and empty all mean the same thing, and now the type admits it.
+    assert_eq!(timer(&table, "orphan.timer").activates, None);
+}
+
+#[test]
+fn parse_reads_a_timer_with_no_activates_field_at_all() {
+    // Arrange: the third spelling of the same absence, which `serde(default)` always handled
+    // and which must keep working.
+    let absent = r#"[{"unit":"orphan.timer","next":null,"last":null,"left":null,"passed":null}]"#;
+
+    // Act
+    let table = SystemctlTimers::parse(absent)
+        .expect("an absent `activates` is a timer that starts nothing");
+
+    // Assert
+    assert_eq!(timer(&table, "orphan.timer").activates, None);
+}
