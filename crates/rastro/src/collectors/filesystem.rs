@@ -26,9 +26,10 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, WalkPolicy, is_absence,
+    FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, UnspellablePath,
+    WalkPolicy, is_absence,
 };
-pub use source::{FileTree, MountedFilesystems, WalkBoundaries};
+pub use source::{FileTree, MountedFilesystems, WalkBoundaries, open_without_following};
 pub use value_objects::{
     CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
     FileMode, MetadataDigest, NanosecondsSinceEpoch,

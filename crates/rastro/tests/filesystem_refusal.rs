@@ -7,17 +7,21 @@
 //! each arm is stated directly here and the walk is tested for the failures that *can* be
 //! arranged.
 
+use std::ffi::OsStr;
 use std::io;
 use std::io::ErrorKind;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::symlink;
 use std::path::Path;
 
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, Detail, FileEntry, FileKind, FileMode, FilesystemInventory,
-    NanosecondsSinceEpoch, Refusal, UnreadablePath, is_absence,
+    ContentPolicy, Detail, FileEntry, FileKind, FileMode, FileTree, FilesystemInventory,
+    NanosecondsSinceEpoch, Refusal, UnreadablePath, WalkPolicy, is_absence, open_without_following,
 };
 use rastro_collector::{AbsolutePath, NonEmptyText};
+use support::fs_tree::scratch_tree;
 use support::observation::{field, keys_of, text};
 
 fn path(value: &str) -> AbsolutePath {
@@ -214,5 +218,100 @@ fn a_refusal_at_a_path_that_is_there_records_the_path_and_the_reason() {
             .starts_with("/root/.ssh could not be listed: "),
         "the reason names the path and what was attempted, got {:?}",
         recorded.reason.as_str()
+    );
+}
+
+#[test]
+fn a_descriptor_that_is_not_a_regular_file_is_refused_rather_than_hashed() {
+    // Arrange: a directory stands in for the race this guard exists for. Inside a walk the path
+    // was a regular file when it was stat'd and something else by the time it was opened, which
+    // a test cannot arrange; what the guard actually asserts is that the *descriptor* decides,
+    // and a directory is a descriptor that is not a regular file.
+    let directory = std::env::temp_dir();
+
+    // Act
+    let refused = open_without_following(&directory);
+
+    // Assert: no digest of it is offered. The alternative — trusting the earlier `symlink_metadata`
+    // — is how a hash of something other than the named file gets into a fingerprint.
+    let Err(Refusal::Unreadable(reason)) = refused else {
+        panic!("a directory is not a regular file, so opening it for content must be refused");
+    };
+    assert!(
+        reason.contains("stopped being a regular file"),
+        "got {reason}"
+    );
+}
+
+#[test]
+fn a_symlink_whose_target_will_not_spell_is_refused_rather_than_ending_the_walk() {
+    // Arrange: Linux stores a symlink's target as bytes and never validates them, so a link can
+    // point at a name that is not UTF-8. rastro's document is text, and substituting U+FFFD would
+    // put a path into the fingerprint that is not on the box and that nobody could act on.
+    //
+    // Unlike a *path* that will not spell, this one has somewhere to be recorded: the key is the
+    // link's own path, which is fine.
+    let root = scratch_tree("walk-unspellable-target", &[]);
+    let link = root.join("points-nowhere-sayable");
+    if symlink(OsStr::from_bytes(b"/etc/\xff\xfe"), &link).is_err() {
+        eprintln!("skipped: this filesystem refuses a symlink target that is not UTF-8");
+        return;
+    }
+
+    // Act
+    let rendered = FileTree::at(&root)
+        .walk(&WalkPolicy::built_in())
+        .expect("one unspellable target does not fail the walk")
+        .observation(Detail::Summary);
+
+    // Assert
+    let refused = field(&rendered, link.to_str().expect("a UTF-8 path"));
+    assert!(
+        text(&field(&refused, "error")).contains("not valid UTF-8"),
+        "got {refused:?}"
+    );
+}
+
+#[test]
+fn a_path_read_twice_and_differently_fails_the_walk() {
+    // Arrange: the same path described two ways. A walk that produced this did not see one
+    // moment of the host — it caught the path mid-change and recorded both halves — and a
+    // fingerprint of two moments is not a fingerprint of anything.
+    let early = described("/etc/nginx");
+    let later = FileEntry {
+        inode: 13,
+        ..described("/etc/nginx")
+    };
+
+    // Act
+    let refused = FilesystemInventory::new(vec![early, later], Vec::new(), Vec::new());
+
+    // Assert: loud rather than resolved. Keeping either one would be rastro choosing which
+    // moment of the box to report, and deduping them silently would hide that it happened.
+    let message = refused
+        .expect_err("one path described two ways")
+        .to_string();
+    assert!(message.contains("/etc/nginx"), "got {message}");
+    assert!(
+        message.contains("read twice and differently"),
+        "got {message}"
+    );
+}
+
+#[test]
+fn the_same_path_read_twice_and_identically_is_one_entry() {
+    // Arrange: the walk can reach a path twice — a mount point is the root of its own walk and a
+    // child of another — and two identical readings are one fact, not a conflict.
+    let inventory = FilesystemInventory::new(
+        vec![described("/boot"), described("/boot")],
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("two identical readings of one path");
+
+    // Assert
+    assert_eq!(
+        keys_of(&inventory.observation(Detail::Summary)),
+        vec!["/boot"]
     );
 }

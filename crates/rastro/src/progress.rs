@@ -264,7 +264,11 @@ fn peak_resident_kilobytes() -> Option<u64> {
 }
 
 /// Bytes at a scale a human reads, to one decimal.
-fn human_bytes(bytes: u64) -> String {
+///
+/// Public so the scales are stated by a test rather than inferred from one `--debug` run: the
+/// only caller passes `VmHWM`, which is kilobytes and so never small enough to reach the plain
+/// byte case.
+pub fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut scaled = bytes as f64;
     let mut unit = 0;

@@ -753,3 +753,33 @@ fn the_counting_writer_reports_what_went_through_it_and_flushes_the_writer() {
     assert_eq!(counted.bytes(), 10);
     assert_eq!(sink, b"a document");
 }
+
+#[test]
+fn debug_names_the_file_the_document_went_to_and_how_big_it_was() {
+    // Arrange: every other `--debug` test runs with `-o -`, so the arm that reports a *file* was
+    // the one nobody exercised — and a file is the default. "Where did it go" is half of why
+    // `--debug` exists.
+    let directory = scratch("debug-names-the-file");
+
+    // Act
+    let output = run_in(
+        &directory,
+        &[
+            "-o",
+            "fingerprint.json",
+            "--debug",
+            "--config",
+            without_walking(),
+        ],
+    );
+
+    // Assert
+    assert!(
+        output.status.success(),
+        "rastro should have succeeded: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reported = String::from_utf8_lossy(&output.stderr);
+    assert!(reported.contains("fingerprint.json"), "got {reported}");
+    assert!(reported.contains("bytes"), "got {reported}");
+}

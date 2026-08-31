@@ -301,7 +301,12 @@ fn sha256_of(path: &Path) -> Result<Digest, Refusal> {
 /// `O_NOFOLLOW` refuses the symlink, `O_NONBLOCK` refuses to wait on anything that would
 /// have made the open itself hang, and the type is checked again on the descriptor rather
 /// than on the path, because only the descriptor is the thing being read.
-fn open_without_following(path: &Path) -> Result<fs::File, Refusal> {
+///
+/// **Public so that second check is reachable from a test.** Inside a walk it can only fire in
+/// the window between the `symlink_metadata` that said "regular file" and this open, which a test
+/// would have to win a race to arrange. Called directly on a directory it is one line, and what
+/// it pins is that the descriptor is what gets believed.
+pub fn open_without_following(path: &Path) -> Result<fs::File, Refusal> {
     let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)

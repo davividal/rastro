@@ -20,10 +20,11 @@ use std::time::{Duration, SystemTime};
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, Detail, DigestAlgorithm, FileKind, FileTree, PolicyRule, WalkPolicy,
+    ContentPolicy, Detail, DigestAlgorithm, FileKind, FileTree, PolicyRule, UnspellablePath,
+    WalkPolicy,
 };
 use rastro_collector::WalkedTree;
-use rastro_fingerprint::View;
+use rastro_fingerprint::{Observation, View};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, integer, is_null, keys_of, text};
 
@@ -883,4 +884,24 @@ fn an_entry_renders_a_block_device_as_its_two_numbers() {
     let rendered = entry.observation(Detail::Full);
     let numbers = field(&rendered, "device");
     assert_eq!(keys_of(&numbers), vec!["major", "minor"]);
+}
+
+#[test]
+fn an_unspellable_name_directly_under_an_unspellable_directory_has_no_directory_to_name() {
+    // Arrange: the walk records an undecodable name against the directory it was found in, so a
+    // reader has somewhere to go and look. When that directory will not decode either there is
+    // no name to give, and `null` says so rather than a lossy rendering of bytes that are not on
+    // the box.
+    let orphan = UnspellablePath::of(b"\xff\xfe", None);
+
+    // Act
+    let rendered = Observation::from(&orphan);
+
+    // Assert
+    assert!(is_null(&field(&rendered, "directory")), "got {rendered:?}");
+    assert_eq!(
+        text(&field(&rendered, "name_bytes")),
+        "fffe",
+        "the bytes themselves are the only honest name it has"
+    );
 }

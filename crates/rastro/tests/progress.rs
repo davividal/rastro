@@ -4,7 +4,9 @@
 //! here, because it is operator-facing text: a report whose columns drift is a report nobody
 //! can compare between two runs, which is the only reason it exists.
 
-use rastro::progress::{Reporting, WalkProgress};
+use std::io::{self, Write};
+
+use rastro::progress::{self, Reporting, WalkProgress};
 use rastro_collector::fingerprint_host::RunProgress;
 use rastro_fingerprint::{FacetName, FacetOutcome, Observation};
 
@@ -97,4 +99,83 @@ fn a_sink_that_is_not_drawing_writes_nothing_when_cleared() {
 
     // Act & Assert: nothing to observe but the absence of a panic, which is the whole claim.
     sink.clear();
+}
+
+/// A writer that fails on one nominated write and works for every other.
+///
+/// The `--debug` report is several lines, and each one carries its own `?`. A writer that always
+/// failed would only ever prove the first of them propagates, so this walks the fail point across
+/// the report instead.
+struct FailingOn {
+    write_that_fails: usize,
+    writes_so_far: usize,
+}
+
+impl Write for FailingOn {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.writes_so_far += 1;
+        if self.writes_so_far == self.write_that_fails {
+            return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+        }
+
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_report_that_cannot_be_written_fails_rather_than_going_quiet() {
+    // Arrange: stderr can be a closed pipe — `rastro --debug | head` is enough — and a report
+    // that swallowed the error would tell the operator the run was fine when they never saw it.
+    let sink = Reporting::new(false);
+    sink.collector_started(&facet("filesystem"));
+    sink.collector_finished(&facet("filesystem"), &FacetOutcome::Absent);
+
+    // Arrange: how many writes a report that works actually makes, so the loop below covers the
+    // whole report and keeps covering it when a line is added.
+    let mut counting = FailingOn {
+        write_that_fails: 0,
+        writes_so_far: 0,
+    };
+    sink.report(&mut counting, "a document")
+        .expect("a report into a writer that works");
+
+    // Act & Assert: every one of them, one at a time. Not a sample — a line written with `let _ =`
+    // instead of `?` would swallow exactly one of these and nothing else would notice.
+    for write_that_fails in 1..=counting.writes_so_far {
+        let mut failing = FailingOn {
+            write_that_fails,
+            writes_so_far: 0,
+        };
+
+        assert!(
+            sink.report(&mut failing, "a document").is_err(),
+            "write {write_that_fails} of {} did not propagate its failure",
+            counting.writes_so_far
+        );
+    }
+}
+
+#[test]
+fn a_walk_progress_that_wants_nothing_reported_costs_nothing() {
+    // Arrange: the port's default body. An outside implementor of `WalkProgress` that only wants
+    // the collector timings inherits this, and it is called once per walked path — so it has to
+    // exist and it has to do nothing.
+    struct Indifferent;
+    impl WalkProgress for Indifferent {}
+
+    // Act & Assert: no panic, no state, no cost.
+    Indifferent.entry_walked();
+}
+
+#[test]
+fn peak_memory_is_reported_at_the_scale_a_human_reads() {
+    // Act & Assert: bytes stay whole, because "512.0 B" reads as a measurement precise to a
+    // tenth of a byte. Everything above gets one decimal.
+    assert_eq!(progress::human_bytes(512), "512 B");
+    assert_eq!(progress::human_bytes(1024), "1.0 KiB");
+    assert_eq!(progress::human_bytes(19_000_000), "18.1 MiB");
 }

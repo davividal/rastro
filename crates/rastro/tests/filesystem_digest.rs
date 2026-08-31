@@ -8,8 +8,8 @@
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, Detail, DigestAlgorithm, FileEntry, FileKind, FileMode, MetadataDigest,
-    NanosecondsSinceEpoch,
+    CanonicalBytes, ContentPolicy, Detail, DigestAlgorithm, FileEntry, FileKind, FileMode,
+    MetadataDigest, NanosecondsSinceEpoch,
 };
 use rastro_collector::{AbsolutePath, ByteSize};
 use rastro_fingerprint::View;
@@ -201,4 +201,39 @@ fn the_content_digest_algorithm_is_still_named_for_the_collector_that_will_use_i
     // opt-in collector that will, and its algorithm is named in the document rather than
     // assumed because a sha256 fingerprint cannot be diffed against any other kind.
     assert_eq!(DigestAlgorithm::Sha256.as_str(), "sha256");
+}
+
+#[test]
+fn a_withheld_text_is_not_the_same_as_an_absent_one() {
+    // Arrange: `maybe_text` has to keep the two apart for the same reason `maybe_integer` does.
+    // A value the view withholds and a value the host does not have are different facts, and a
+    // digest that collapsed them would make a churning symlink and a plain file collide.
+    let withheld = CanonicalBytes::new()
+        .maybe_text(true, Some("/var/log/nginx"))
+        .digest();
+    let absent = CanonicalBytes::new().maybe_text(false, None).digest();
+    let present = CanonicalBytes::new()
+        .maybe_text(false, Some("/var/log/nginx"))
+        .digest();
+
+    // Assert
+    assert_ne!(withheld.as_str(), absent.as_str());
+    assert_ne!(withheld.as_str(), present.as_str());
+    assert_ne!(absent.as_str(), present.as_str());
+}
+
+#[test]
+fn a_withheld_text_says_nothing_about_the_value_it_withheld() {
+    // Act & Assert: two different withheld values digest the same, which is what makes the
+    // digest stable across runs for a tree whose contents churn.
+    assert_eq!(
+        CanonicalBytes::new()
+            .maybe_text(true, Some("one"))
+            .digest()
+            .as_str(),
+        CanonicalBytes::new()
+            .maybe_text(true, Some("another"))
+            .digest()
+            .as_str()
+    );
 }
