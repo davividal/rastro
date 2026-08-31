@@ -12,7 +12,7 @@ use rastro::output::{Destination, default_file_name, utc_stamp};
 use serde_json::Value;
 mod support;
 
-use support::narrowing::without_walking;
+use support::narrowing::{sealing, trees_sealing_everything_except, without_walking};
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
 
@@ -463,18 +463,14 @@ fn a_config_can_seal_a_tree_so_the_walk_stops_there() {
     std::fs::write(directory.join("kept.conf"), "a setting\n").expect("a write");
 
     let config = directory.join("rastro.toml");
-    // No sealing of the shipped trees here, unlike the tests that only need a facet to exist:
-    // this one asserts that a sibling of the sealed tree *is* still walked, and the scratch
-    // directory it lives in sits under `/tmp` on some hosts. Sealing that would seal away the
-    // very thing being checked, so this test pays for a real walk and is worth it.
-    std::fs::write(
-        &config,
-        format!(
-            "[filesystem]\nsealed = [{:?}]\n",
-            noisy.to_str().expect("a UTF-8 scratch path")
-        ),
-    )
-    .expect("a write");
+    // Sealed by siblings rather than by ancestors, because this test needs its own scratch tree
+    // genuinely walked: `SEALING_THE_SHIPPED_TREES` seals the root, so the walk would never
+    // descend to find it, and it seals `/tmp`, where `CARGO_TARGET_TMPDIR` lives under the
+    // container recipe. Walking the whole box instead cost three minutes for an assertion about
+    // one directory.
+    let mut sealed = trees_sealing_everything_except(&directory);
+    sealed.push(noisy.to_str().expect("a UTF-8 scratch path").to_owned());
+    std::fs::write(&config, sealing(&sealed)).expect("a write");
 
     // Act
     let output = run_in(
