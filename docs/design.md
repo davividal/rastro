@@ -123,8 +123,14 @@ and the two are separate so they can disagree.
 ## Configuration
 
 Optional, and it can only narrow a run. Exclusions only, so a config can never
-hide a state surface the operator did not know to ask for. Reference:
-[config.md](config.md).
+hide a state surface the operator did not know to ask for.
+
+Two things narrow: which collectors run, and how much of a tree the filesystem
+walk reads — `metadata_only`, `churns`, `sealed`, and no `hashed`, because that
+would widen it. An operator's rule over a tree beats a collector's claim to the
+same tree, since a claim is rastro's reckoning from the outside and the operator
+knows their box. Every rule is declared in the `invocation` facet with who asked
+for it. Reference: [config.md](config.md).
 
 ## Output format, the real contract
 
