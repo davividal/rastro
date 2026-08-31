@@ -79,6 +79,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [A config narrows the walk](#a-config-can-narrow-the-walk-and-the-operator-outranks-a-collector) | three narrowings, no `hashed`; an operator corrects rastro rather than conflicting with it |
 | [nextest runs the suite](#nextest-runs-the-suite-and-each-test-gets-its-own-process) | 43 s against 64 s, and process isolation found a fixture race libtest had hidden |
 | [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
+| [`ip` is asked for details](#ip-is-asked-for-details-because-it-hides-a-routes-defaults) | iproute2 prints no `protocol` for a proto-boot route, which cost the whole facet on an ordinary Debian box |
 
 ## Native collectors, no external tool as a dependency
 
@@ -2145,3 +2146,68 @@ flight rather than naming one, since naming one of four would be a lie.
 
 Also removed here: `WalkProgress::file_opened` and `bytes_hashed`, declared but never called
 and structurally zero since nothing opens a file any more.
+
+# The network facet, against a box nobody set up for rastro
+
+Dated 2026-08-31. Driven by the first run against a production PostgreSQL host,
+where 21 collectors reported `ok` and `network` reported `error`.
+
+## `ip` is asked for details, because it hides a route's defaults
+
+`ip -4 -j route show` reported a default route with no `protocol` key, so the
+`RouteObject` deserialiser failed on a required field and the whole facet was lost
+— interfaces, both routing tables, everything, on a host whose networking was
+entirely ordinary.
+
+It is not a quirk of that box. `print_route` in iproute2 prints `protocol` only
+when the kernel's `rtm_protocol` is not `RTPROT_BOOT`, and `scope` only when
+`rtm_scope` is not `RT_SCOPE_UNIVERSE`, unless details are switched on:
+
+```c
+if ((r->rtm_protocol != RTPROT_BOOT || show_details > 0) && filter.protocolmask != -1)
+        print_string(PRINT_ANY, "protocol", "proto %s ", ...);
+```
+
+`RTPROT_BOOT` is what an `ip route add` that named no protocol leaves behind, which
+is every static route ifupdown installs. So the *default* case is the one with no
+protocol to read, and the collector could only ever have worked on a box whose
+routes came from DHCP, NetworkManager or systemd-networkd. The development box was
+one, which is why the fixtures were.
+
+**The invocation now asks for `-d`**, rather than inferring `boot` from the absence.
+The inference would be sound for the way rastro invokes `ip`: the other two
+suppressors are a `proto` filter rastro never passes and `RTM_F_CLONED`, which only
+appears in the route cache rastro never reads. It is still reasoning about another
+program's print policy to supply a value rastro did not observe, and this is the
+decision already recorded for [`-j` over parsing tables](#collectors-ask-their-tool-for-json-which-promotes-serde_json-to-a-real-dependency):
+prefer the source whose shape rastro chooses over the one it has to infer. Asking
+also fixes `scope`, which was not failing but was recording `None` for every global
+route, quietly spelling "global" as "`ip` said nothing".
+
+`protocol` stays a required field. Required is what makes a future `ip` that stops
+answering the question a loud failure rather than a route carrying a protocol nobody
+observed.
+
+**The collector's version went to `2`.** On identical host state the facet now
+reports a route it previously failed on, and a `scope` where it reported none, so a
+consumer diffing across the change has to be able to see that the collector moved
+rather than the host.
+
+**Cost:** `-d` also emits `"type":"unicast"` on every route, which rastro ignores.
+That is real state — `blackhole`, `unreachable` and `local` are meaningfully
+different from `unicast` — and recording it is a format addition rather than part of
+this fix.
+
+**The same class, now four times over.** [A tool's `null`](#a-tools-null-is-not-a-broken-document)
+counted three: one unreadable mount point, one undecodable filename, one null field,
+each costing a whole facet. This is the fourth, and it is one of the 27 non-optional
+scalar fields that entry named as carrying the same exposure. Per-row tolerance was
+the fix it deferred, and a second production facet lost to a single row is the
+argument for stopping deferring it. Not in this change either.
+
+**What the test does, since the fixtures were the hole.** A fake `ip` emulates
+iproute2's suppression policy rather than replaying one host's output, so the test
+asserts the question rastro asks. A fixture of the real `-d` output proves `boot` and
+`global` are read, and one of the real output *without* `-d` proves the failure stays
+loud if the flag is ever dropped. The container that gates CI would not have caught
+this: netavark installs its default route with `proto static`.
