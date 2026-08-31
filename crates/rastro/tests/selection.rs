@@ -5,6 +5,10 @@ use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro_fingerprint::{Observation, View};
 
+mod support;
+
+use support::observation::{field, is_null};
+
 fn effective(config: &Config) -> Observation {
     collectors::effective_config(config, View::Diffable, false, Detail::Summary)
 }
@@ -114,4 +118,80 @@ fn the_host_collector_cannot_be_excluded_either() {
 
     // Act & Assert
     assert!(collectors::selected(collectors::built_in(run(effective(&config))), &config).is_err());
+}
+
+/// The collector of this name, from a run built as the composition root builds it.
+fn collector_of(
+    name: &str,
+    narrowed: collectors::Narrowed,
+) -> Box<dyn rastro_collector::Collector> {
+    let config = Config::parse("").expect("this config is well formed");
+    let mut resolved = run(effective(&config));
+    resolved.narrowed = narrowed;
+
+    collectors::built_in(resolved)
+        .into_iter()
+        .find(|collector| collector.name().as_str() == name)
+        .expect("a built-in collector of this name")
+}
+
+#[test]
+fn a_config_naming_something_that_is_not_a_tree_fails_only_the_walk() {
+    // Arrange: an operator typo. A relative path cannot name a tree, because a walk rule has to
+    // answer for a path and `narrow/this` does not say where.
+    let narrowed = collectors::Narrowed {
+        sealed: vec!["narrow/this".to_owned()],
+        ..collectors::Narrowed::default()
+    };
+
+    // Act
+    let refused = collector_of("filesystem", narrowed)
+        .collect()
+        .expect_err("a config that names no tree");
+
+    // Assert: the message quotes what they wrote, because a config can hold several paths and
+    // "not a tree" without one is a hunt.
+    let message = refused.to_string();
+    assert!(message.contains("narrow/this"), "got {message}");
+    assert!(message.contains("is not one"), "got {message}");
+}
+
+#[test]
+fn a_walk_table_that_could_not_be_resolved_is_null_rather_than_half_a_table() {
+    // Arrange: the same typo. The `invocation` facet declares the effective walk table, and a
+    // table that failed to resolve has no effective form — rendering the part that did resolve
+    // would describe a walk that never happened.
+    let narrowed = collectors::Narrowed {
+        churns: vec!["../up-a-level".to_owned()],
+        ..collectors::Narrowed::default()
+    };
+
+    // Act
+    let declared = collector_of("invocation", narrowed)
+        .collect()
+        .expect("the invocation facet still describes the run");
+
+    // Assert: absent, and loudly so. The `filesystem` facet carries the reason; this one must not
+    // imply a table was in force.
+    let table = field(&declared, "walk_policy");
+    assert!(is_null(&table), "got {table:?}");
+}
+
+#[test]
+fn a_selection_names_its_collectors_when_a_test_prints_it() {
+    // Arrange: `Debug` is written by hand here rather than derived, and rather than putting the
+    // bound on the `Collector` trait — a collector author should not have to derive anything to
+    // satisfy an assertion in this crate. It only ever runs inside a failure message, which is
+    // exactly why nothing else would notice it going wrong.
+    let config = Config::parse("[collectors]\nexclude = [\"timers\"]\n").expect("well formed");
+    let selection = collectors::selected(collectors::built_in(run(effective(&config))), &config)
+        .expect("this config is acceptable");
+
+    // Act
+    let printed = format!("{selection:?}");
+
+    // Assert: names, because names are what a failure needs.
+    assert!(printed.contains("Selection"), "got {printed}");
+    assert!(printed.contains("filesystem"), "got {printed}");
+    assert!(printed.contains("timers"), "got {printed}");
 }
