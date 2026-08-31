@@ -24,6 +24,21 @@ const JSON: &str = "-j";
 const IPV4: &str = "-4";
 const IPV6: &str = "-6";
 
+/// Ask for details, because `ip` hides a route's protocol and scope when they are the default.
+///
+/// `print_route` in iproute2 prints `protocol` only when the kernel's `rtm_protocol` is not
+/// `RTPROT_BOOT`, and `scope` only when `rtm_scope` is not `RT_SCOPE_UNIVERSE`, unless details
+/// are on. `RTPROT_BOOT` is what an `ip route add` that named no protocol leaves behind, which
+/// is every static route ifupdown installs, so on an ordinary Debian box the default route has
+/// no protocol to read and the whole facet failed on it.
+///
+/// Asked for rather than inferred. Absence does mean `boot` for the way rastro invokes `ip`,
+/// but that reasoning holds only while iproute2's print policy and rastro's own arguments both
+/// stay as they are, and neither is rastro's to promise. This is the decision already recorded
+/// for `-j` over parsing tables: prefer the source whose shape rastro chooses over the one it
+/// has to infer.
+const DETAILS: &str = "-d";
+
 /// The host's networking, as a source rastro can read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ip {
@@ -51,8 +66,8 @@ impl Ip {
     /// including every field `ip link` would add, so there is no fourth.
     pub fn read(&self) -> Result<NetworkState, CollectionError> {
         let interfaces = self.tool.run(&[JSON, "addr", "show"])?;
-        let ipv4 = self.tool.run(&[IPV4, JSON, "route", "show"])?;
-        let ipv6 = self.tool.run(&[IPV6, JSON, "route", "show"])?;
+        let ipv4 = self.tool.run(&[IPV4, JSON, DETAILS, "route", "show"])?;
+        let ipv6 = self.tool.run(&[IPV6, JSON, DETAILS, "route", "show"])?;
 
         Self::parse(&interfaces, &ipv4, &ipv6)
     }

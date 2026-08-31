@@ -11,10 +11,18 @@ use crate::collectors::network::value_objects::{
 
 /// `ip`'s spelling of a route, kept apart from rastro's meaning.
 ///
-/// Every field but the destination and the protocol is optional, which is the kernel's
-/// shape: the two families report overlapping but different sets. An IPv4 route carries a
-/// `scope` and a `prefsrc`; an IPv6 route from a router advertisement carries a `pref` and
-/// an `expires` and neither of the other two.
+/// Most fields are optional because the two families report overlapping but different sets.
+/// An IPv4 route carries a `prefsrc`; an IPv6 route from a router advertisement carries a
+/// `pref` and an `expires` and neither of the other two.
+///
+/// The destination and the protocol are required, and the protocol only because [`Ip`] asks
+/// for details. Without that, iproute2 prints no `protocol` for a `RTPROT_BOOT` route and no
+/// `scope` for a `RT_SCOPE_UNIVERSE` one: what looks like the kernel's shape here is `ip`'s
+/// print policy, and it once cost the whole facet on a plain Debian host. Required is
+/// deliberate rather than left over. If a future `ip` stops answering the question rastro
+/// asks, that is a loud failure and not a route with a protocol nobody observed.
+///
+/// [`Ip`]: super::Ip
 #[derive(Debug, Clone, Deserialize)]
 pub struct RouteObject {
     dst: String,

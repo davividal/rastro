@@ -2,13 +2,20 @@
 //!
 //! The fixtures are real objects from `ip -j` on the development box, trimmed. Two of them
 //! carry the cases that drove the design: a DHCP address whose lifetime counts down, and an
-//! IPv6 route from a router advertisement that has an expiry and no scope.
+//! IPv6 route from a router advertisement that has an expiry and no scope. A third came from
+//! a production host and cost a whole facet: a default route that iproute2 prints no
+//! `protocol` for.
 
 mod support;
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+
+use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::network::{AddressLifetime, Ip, NetworkCollector, NetworkState, Route};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::fs_tree::scratch_tree;
 use support::observation::{field, items_of, keys_of};
 /// Real interfaces: the loopback, a NIC with a static address, and a NIC on DHCP.
 const INTERFACES: &str = r#"[
@@ -46,6 +53,29 @@ const IPV6_ROUTES: &str = r#"[
   {"dst":"fe80::/64","dev":"enp0s8","protocol":"kernel","metric":256,"pref":"medium","flags":[]},
   {"dst":"default","gateway":"fe80::2","dev":"enp0s8","protocol":"ra","metric":100,
    "pref":"medium","expires":1708,"flags":[]}
+]"#;
+
+/// `ip -d -j -4 route show` on a Debian host whose gateway comes from ifupdown, verbatim.
+///
+/// The default route here is the one that cost the facet. Nothing installed it that declared
+/// a protocol, so the kernel holds `RTPROT_BOOT` and `RT_SCOPE_UNIVERSE`, the two values
+/// iproute2 treats as not worth printing. The `type` key arrives with `-d` and rastro ignores
+/// it; it is kept in the fixture because trimming it would hide that it is there.
+const IPV4_ROUTES_WITH_A_BOOT_DEFAULT: &str = r#"[
+  {"type":"unicast","dst":"default","gateway":"172.21.9.1","dev":"ens18","protocol":"boot",
+   "scope":"global","flags":["onlink"]},
+  {"type":"unicast","dst":"172.21.9.0/25","dev":"ens18","protocol":"kernel","scope":"link",
+   "prefsrc":"172.21.9.54","flags":[]}
+]"#;
+
+/// The same two routes as the same `ip` prints them without `-d`.
+///
+/// Not a hypothetical: this is what the collector was reading in production, and the first
+/// object is where it stopped.
+const IPV4_ROUTES_WITHOUT_DETAILS: &str = r#"[
+  {"dst":"default","gateway":"172.21.9.1","dev":"ens18","flags":["onlink"]},
+  {"dst":"172.21.9.0/25","dev":"ens18","protocol":"kernel","scope":"link",
+   "prefsrc":"172.21.9.54","flags":[]}
 ]"#;
 
 fn state() -> NetworkState {
@@ -358,6 +388,100 @@ fn parse_refuses_output_that_is_not_json() {
 }
 
 #[test]
+fn parse_reads_the_protocol_of_a_route_nobody_declared_one_for() {
+    // Act: `boot` is the kernel's word for "userspace installed this and named no protocol",
+    // which on Debian means every static route ifupdown brings up.
+    let state = Ip::parse(INTERFACES, IPV4_ROUTES_WITH_A_BOOT_DEFAULT, "[]")
+        .expect("a proto-boot route is ordinary state");
+
+    // Assert
+    let default = route_to(&state, "default", "boot");
+    assert_eq!(
+        default.gateway.as_ref().map(|gateway| gateway.as_str()),
+        Some("172.21.9.1")
+    );
+    assert_eq!(
+        default.scope.as_ref().map(|scope| scope.as_str()),
+        Some("global")
+    );
+}
+
+#[test]
+fn parse_refuses_a_route_whose_protocol_ip_declined_to_print() {
+    // Arrange: the shape rastro read in production, before it asked for details.
+
+    // Act
+    let failure = Ip::parse(INTERFACES, IPV4_ROUTES_WITHOUT_DETAILS, "[]")
+        .expect_err("a route with no protocol is output rastro cannot read");
+
+    // Assert: loud, and naming the subcommand, because the alternative is inventing a
+    // protocol for a route and calling it observed.
+    assert!(
+        failure.to_string().contains("-4 route show"),
+        "the message must name the subcommand, got: {failure}"
+    );
+    assert!(
+        failure.to_string().contains("protocol"),
+        "the message must name the field, got: {failure}"
+    );
+}
+
+/// An `ip` that suppresses exactly what iproute2 suppresses.
+///
+/// `print_route` omits `protocol` when the kernel's value is `RTPROT_BOOT`, and `scope` when it
+/// is `RT_SCOPE_UNIVERSE`, unless details are switched on. Emulating that policy rather than
+/// replaying one host's output is the point: this asserts the question rastro asks, and it is
+/// the question rather than the parsing that was wrong.
+fn fake_ip(tree: &str) -> CanonicalTool {
+    let body = format!(
+        r#"details=no
+family=-4
+object=route
+for argument in "$@"; do
+  case "$argument" in
+  -d) details=yes ;;
+  -6) family=-6 ;;
+  addr) object=addr ;;
+  esac
+done
+if [ "$object" = addr ]; then printf '%s' '{interfaces}'; exit 0; fi
+if [ "$family" = -6 ]; then printf '%s' '[]'; exit 0; fi
+if [ "$details" = yes ]; then printf '%s' '{with_details}'; exit 0; fi
+printf '%s' '{without_details}'
+"#,
+        interfaces = INTERFACES,
+        with_details = IPV4_ROUTES_WITH_A_BOOT_DEFAULT,
+        without_details = IPV4_ROUTES_WITHOUT_DETAILS,
+    );
+
+    let root = scratch_tree(&format!("network-{tree}"), &[]);
+    let path = root.join("ip");
+    fs::write(&path, format!("#!/bin/sh\n{body}")).expect("a writable script");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).expect("an executable script");
+
+    CanonicalTool::located_in("ip", &[root.to_str().expect("utf-8 scratch path")])
+        .expect("the script should be locatable")
+}
+
+#[test]
+fn read_asks_ip_for_details_so_a_proto_boot_route_survives() {
+    // Arrange
+    let ip = Ip::using(fake_ip("details"));
+
+    // Act
+    let state = ip
+        .read()
+        .expect("an ordinary Debian routing table must not fail the facet");
+
+    // Assert: the protocol arrived, which it only can if the invocation asked for details.
+    let default = route_to(&state, "default", "boot");
+    assert_eq!(
+        default.scope.as_ref().map(|scope| scope.as_str()),
+        Some("global")
+    );
+}
+
+#[test]
 fn the_facet_holds_interfaces_and_routes_side_by_side() {
     // Act: a route is meaningless without the interface it leaves by.
     let observation = Observation::from(&state());
@@ -381,10 +505,7 @@ fn presence_is_undetermined_without_ip_rather_than_absent() {
 #[test]
 fn presence_is_present_when_ip_is_on_the_host() {
     // Arrange
-    let ip = Ip::using(
-        rastro::collectors::canonical_tool::CanonicalTool::located_in("sh", &["/bin"])
-            .expect("every unix has /bin/sh"),
-    );
+    let ip = Ip::using(CanonicalTool::located_in("sh", &["/bin"]).expect("every unix has /bin/sh"));
 
     // Act & Assert
     assert_eq!(
