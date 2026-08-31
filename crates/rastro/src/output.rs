@@ -331,6 +331,9 @@ impl<W: Write> Write for Counting<'_, W> {
         Ok(written)
     }
 
+    /// Required by the trait and never called: the `BufWriter` wrapping this is what gets
+    /// flushed, so the flush never reaches down here. Delegating anyway, because a writer that
+    /// silently dropped a flush would be a trap for the next caller.
     fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
     }

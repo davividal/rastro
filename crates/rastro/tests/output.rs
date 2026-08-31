@@ -617,3 +617,50 @@ fn a_config_can_seal_a_tree_so_the_walk_stops_there() {
     assert_eq!(table[named(&noisy)]["reading"], "sealed");
     assert_eq!(table[named(&noisy)]["claimed_by"], "config");
 }
+
+#[test]
+fn a_destination_with_no_filename_is_refused_rather_than_panicking() {
+    // Arrange: `-o /` is a plausible slip, and it has no file name to stage beside. It must
+    // fail like any other unusable path rather than panic on an `expect`.
+    let directory = scratch("destination-is-the-root");
+
+    // Act
+    let output = run_in(&directory, &["-o", "/", "--config", without_walking()]);
+
+    // Assert
+    assert!(!output.status.success(), "rastro should have refused");
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("panicked"),
+        "got {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_destination_that_is_a_directory_is_refused_and_left_alone() {
+    // Arrange: `-o somedir` is the other plausible slip. A directory is not a regular file, so
+    // it takes the write-through path — which must fail on the open rather than replace the
+    // directory, given rastro runs as root.
+    let directory = scratch("destination-is-a-directory");
+    let target = directory.join("already-a-directory");
+    std::fs::create_dir(&target).expect("a writable scratch directory");
+    std::fs::write(target.join("inside"), "a file nobody asked rastro to touch").expect("a write");
+
+    // Act
+    let output = run_in(
+        &directory,
+        &["-o", "already-a-directory", "--config", without_walking()],
+    );
+
+    // Assert
+    assert!(!output.status.success(), "rastro should have refused");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already-a-directory"),
+        "the failure should name the destination"
+    );
+    assert!(target.is_dir(), "the directory was replaced");
+    assert_eq!(
+        std::fs::read_to_string(target.join("inside")).expect("the contents are intact"),
+        "a file nobody asked rastro to touch"
+    );
+}
