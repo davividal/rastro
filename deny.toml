@@ -27,6 +27,10 @@ yanked = "deny"
 allow = [
   "AGPL-3.0-only",
   "Apache-2.0",
+  # `xxhash-rust`, which computes the digest of every walked entry. Permissive,
+  # OSI-approved and FSF Free/Libre, with no copyleft and no notice to reproduce in
+  # a binary, so it is compatible with shipping this one under AGPL-3.0-only.
+  "BSL-1.0",
   "MIT",
   "Unicode-3.0",
   "Unlicense",

@@ -1624,6 +1624,15 @@ nothing at all. The only failure is an entry that changed and hashed the same an
 birthday bound is ~6e-11. Width is also what drives document size more than anything else
 here, at four bytes of document per byte of digest.
 
+**It cost a licence decision, which was not free.** `xxhash-rust` is BSL-1.0, and `deny.toml`
+allows exactly the licences the tree already contained on the stated principle that "a new
+licence is a decision, so it should fail until somebody makes it". CI duly refused it. BSL-1.0
+is permissive, OSI-approved and FSF Free/Libre, with no copyleft and no notice to reproduce in
+a binary, so it was allowed deliberately rather than worked around. The alternative was
+truncated SHA-256 from the `sha2` already in the tree, at 2.3 ms against 0.6 ms — 0.4% of a
+run, and no new dependency at all. Worth knowing as the cheap reversal if that trade ever
+stops looking right.
+
 **Not cryptographic, and it does not need to be.** Forging one means choosing a file's mode,
 owner, size and stamps, which an attacker who can write the file already controls. What it
 *does* need is to be identical forever, or a stored fingerprint stops being comparable —
