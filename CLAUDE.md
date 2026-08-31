@@ -18,7 +18,7 @@ the opt-in collector that hashes file content over trees the operator names.
 The toolchain is pinned in `mise.toml`, and CI reads the same file.
 
 ```sh
-cargo test                                    # the whole workspace
+cargo nextest run                             # the whole workspace (cargo test also works)
 cargo clippy --all-targets -- -D warnings     # CI treats warnings as errors
 cargo fmt --all                               # CI runs --check
 cargo build --release --target x86_64-unknown-linux-musl

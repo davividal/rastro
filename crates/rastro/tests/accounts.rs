@@ -52,10 +52,15 @@ fn files_in(root: &Path) -> AccountFiles {
 /// A scratch `/etc` holding the three files, with the shadow file left out entirely
 /// when the caller passes none.
 fn tree_for(passwd: &str, group: &str, shadow: Option<&str>) -> PathBuf {
+    // Unique per *test*, which under `cargo nextest` means unique per process too. The
+    // counter alone was not: nextest gives each test its own process, so every one of them
+    // started at zero, chose the same directory and deleted it out from under the others.
+    // libtest hid that by running the whole binary in one process.
     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let ordinal = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let process = std::process::id();
 
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("accounts-{ordinal}"));
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("accounts-{process}-{ordinal}"));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("a writable scratch directory");
 

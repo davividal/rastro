@@ -1,0 +1,27 @@
+# How the test suite runs. `cargo nextest`, and `cargo llvm-cov nextest` in CI, which writes
+# the same lcov report to the same path, so the SonarQube import is unchanged.
+#
+# nextest runs each test in its own process rather than as a thread of one binary. That matters
+# more here than it would in most suites: a test that invokes the real binary observes the
+# machine the suite is running on, so tests interfere through the filesystem rather than through
+# memory, and one panicking test cannot take its neighbours' processes down with it.
+#
+# Measured on the reference container, whole suite: `cargo test` 64 s, `cargo nextest run` 43 s.
+
+[profile.default]
+# A test that runs the real binary over a whole host takes about ten seconds by nature, so the
+# default 60-second warning would fire on a healthy run and teach everyone to ignore it. The
+# terminate-after is a hang guard, not a budget.
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+# Off Linux there is no `/proc`, so the three `tests/cli.rs` cases that read the real host fail
+# on a macOS working machine. Collecting failures at the end is what stops those scrolling the
+# genuine output away.
+failure-output = "final"
+
+# Considered and measured: serialising the thirteen tests that walk the whole host, on the
+# reasoning that they contend for one disk and write into the tree the others are walking.
+# It cost 77 seconds — 120 s against 43 s — and bought nothing, because nothing asserts
+# byte-identity across the whole host any more: a machine in use is not an unchanged host, so
+# that half of the contract is checked over a tree the test owns instead. See
+# `tests/determinism.rs`. Do not add it back without measuring it again.

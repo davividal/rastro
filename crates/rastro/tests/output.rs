@@ -13,6 +13,28 @@ use serde_json::Value;
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rastro");
 
+/// A config that excludes the filesystem walk, for the tests that never read that facet.
+///
+/// These tests are about where a document goes and what the file looks like, not about what is
+/// in it. A walk of the whole runner under a coverage-instrumented binary costs seconds, and
+/// there are a dozen invocations here.
+fn without_walking() -> &'static str {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    PATH.get_or_init(|| {
+        // Per process, because `cargo nextest` gives each test one: several processes
+        // writing one path would let a reader catch a partial write.
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "output-no-filesystem-walk-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, "[collectors]\nexclude = [\"filesystem\"]\n")
+            .expect("a writable scratch directory");
+
+        path.to_str().expect("a UTF-8 scratch path").to_owned()
+    })
+}
+
 /// The facet a section holds under this name.
 fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {
     document[section]
@@ -160,7 +182,7 @@ fn a_bare_run_writes_the_document_to_a_file_and_nothing_to_stdout() {
     let directory = scratch("bare-run-writes-a-file");
 
     // Act
-    let output = run_in(&directory, &[]);
+    let output = run_in(&directory, &["--config", without_walking()]);
 
     // Assert: a fingerprint of a real host is megabytes, so the default is a file. stdout
     // carrying nothing at all still satisfies "stdout carries only the fingerprint".
@@ -189,7 +211,7 @@ fn the_output_file_is_created_private_to_its_owner() {
     let directory = scratch("output-is-private");
 
     // Act
-    run_in(&directory, &[]);
+    run_in(&directory, &["--config", without_walking()]);
 
     // Assert: a fingerprint names every path on the box, so it is nobody else's business. Set
     // at creation rather than after, because a chmod afterwards leaves a readable window.
@@ -214,7 +236,10 @@ fn an_existing_output_file_is_refused_rather_than_overwritten() {
     std::fs::write(&target, "the state this run would be compared against").expect("a write");
 
     // Act
-    let output = run_in(&directory, &["-o", "before.json"]);
+    let output = run_in(
+        &directory,
+        &["-o", "before.json", "--config", without_walking()],
+    );
 
     // Assert
     assert!(!output.status.success(), "rastro should have refused");
@@ -238,7 +263,16 @@ fn force_replaces_the_file_and_the_result_is_still_private() {
     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).expect("a chmod");
 
     // Act
-    let output = run_in(&directory, &["-o", "before.json", "--force"]);
+    let output = run_in(
+        &directory,
+        &[
+            "-o",
+            "before.json",
+            "--force",
+            "--config",
+            without_walking(),
+        ],
+    );
 
     // Assert
     assert!(output.status.success(), "rastro should have succeeded");
@@ -266,7 +300,10 @@ fn a_write_that_cannot_happen_leaves_no_partial_document() {
     }
 
     // Act
-    let output = run_in(&directory, &["-o", "closed/before.json"]);
+    let output = run_in(
+        &directory,
+        &["-o", "closed/before.json", "--config", without_walking()],
+    );
 
     // Assert: it fails, it says where, and it leaves nothing half-written behind.
     assert!(!output.status.success(), "rastro should have failed");
@@ -289,7 +326,10 @@ fn the_default_file_name_agrees_with_the_started_at_in_the_document() {
     let directory = scratch("name-agrees-with-document");
 
     // Act
-    run_in(&directory, &["--include-volatile"]);
+    run_in(
+        &directory,
+        &["--include-volatile", "--config", without_walking()],
+    );
 
     // Assert: one clock reading serves both, so the name and the document cannot disagree.
     // Two reads could straddle a second and produce a file whose name contradicts itself.
@@ -393,7 +433,10 @@ fn a_device_destination_is_written_through_and_not_replaced() {
     let directory = scratch("device-destination");
 
     // Act
-    let output = run_in(&directory, &["-o", "/dev/null"]);
+    let output = run_in(
+        &directory,
+        &["-o", "/dev/null", "--config", without_walking()],
+    );
 
     // Assert: it worked, and /dev/null is still a character device.
     assert!(
@@ -425,7 +468,10 @@ fn a_refused_publication_leaves_the_original_and_no_staging_file() {
     std::fs::write(&target, "the state this run would be compared against").expect("a write");
 
     // Act
-    let output = run_in(&directory, &["-o", "before.json"]);
+    let output = run_in(
+        &directory,
+        &["-o", "before.json", "--config", without_walking()],
+    );
 
     // Assert: the promise is that the `before` survives, and that nothing half-written is
     // left lying next to it. Published by `link` rather than `rename` so the refusal is

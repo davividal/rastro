@@ -75,6 +75,7 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
 | [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
 | [Tests skip the walk they ignore](#a-test-that-is-not-about-the-walk-does-not-pay-for-one) | forty-five whole-host walks made the suite eight minutes, and the harness's own files broke determinism |
+| [nextest runs the suite](#nextest-runs-the-suite-and-each-test-gets-its-own-process) | 43 s against 64 s, and process isolation found a fixture race libtest had hidden |
 | [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
 
 ## Native collectors, no external tool as a dependency
@@ -1962,6 +1963,29 @@ Asserting whole-host byte-identity on a busy runner would be asserting that noth
 moved during the test, which is neither rastro's promise nor true. The promise is verified where
 it can be: five consecutive runs to one path on the reference box, walk included,
 byte-identical.
+
+## nextest runs the suite, and each test gets its own process
+
+`cargo nextest` rather than libtest, measured on the reference container: **43 s against 64 s**
+for the whole suite, and the same under instrumentation. CI runs `cargo llvm-cov nextest`,
+which writes the same lcov report to the same path, so the SonarQube import is untouched.
+
+**Process isolation is worth more here than the time.** A test that invokes the real binary is
+observing the machine the suite runs on, so tests interfere through the filesystem rather than
+through memory — and one panicking test cannot take its neighbours down with it.
+
+**It found a latent race immediately.** The accounts fixture named its scratch directory from a
+`static AtomicUsize` counter, which is unique per *process*. Under libtest the whole binary is
+one process, so that held. Under nextest every test is its own process, so all of them started
+at zero, chose `accounts-0`, and `remove_dir_all`'d it out from under each other. The two config
+files the tests write had the same shape of problem, benign only because the contents matched.
+Both are keyed by process id now.
+
+**Considered and measured: serialising the tests that walk the whole host**, on the reasoning
+that they contend for one disk and write into the tree the others are walking. It cost 77
+seconds — 120 s against 43 s — and bought nothing, because nothing asserts byte-identity across
+the whole host any more. Recorded in `.config/nextest.toml` so nobody adds it back on the same
+reasoning without measuring it.
 
 ## Collectors run concurrently, and the walk runs alone
 

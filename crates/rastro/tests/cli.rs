@@ -69,7 +69,10 @@ fn without_walking() -> &'static str {
     static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
     PATH.get_or_init(|| {
-        let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-filesystem-walk.toml");
+        // Per process, because `cargo nextest` gives each test one: several processes
+        // writing one path would let a reader catch a partial write.
+        let path = Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("no-filesystem-walk-{}.toml", std::process::id()));
         std::fs::write(&path, "[collectors]\nexclude = [\"filesystem\"]\n")
             .expect("a writable scratch directory");
 
