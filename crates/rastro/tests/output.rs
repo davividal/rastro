@@ -645,15 +645,21 @@ fn a_destination_that_appeared_while_the_document_was_rendering_is_refused() {
     // Act
     let refused = publish(&staging, &target, false).expect_err("a destination that is taken");
 
-    // Assert: the kernel decided it, which is the whole point — `rename` would have taken the
-    // file silently, and no earlier check can close a window it sits before.
+    // Assert: the `before` survived, checked first and deliberately. This is the harm the
+    // decision exists to prevent, so it is what a regression should report — swapping `link` for
+    // `rename` makes this line fail with "the original was replaced" instead of leaving a reader
+    // to work backwards from a confusing message about an unlinkable staging file.
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("the original is still there"),
+        "the state this run would be compared against",
+        "the destination was replaced instead of refused"
+    );
+
+    // Assert: and the kernel is what decided it. No check taken earlier can close a window it
+    // sits before, which is why the refusal lives at the moment of publication.
     assert!(
         refused.to_string().contains("already exists"),
         "got {refused}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&target).expect("the original is intact"),
-        "the state this run would be compared against"
     );
 }
 
