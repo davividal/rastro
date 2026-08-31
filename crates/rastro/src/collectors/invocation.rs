@@ -9,6 +9,7 @@ use rastro_collector::{
     CollectorVersion, FacetName, Observation, Presence, View,
 };
 
+use crate::collectors::filesystem::Detail;
 use crate::config::Config;
 
 const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -32,8 +33,14 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// path, and an omission the document does not admit to is the one thing this
 /// format does not do. Recorded even when false, so the key is part of the shape
 /// rather than a hint that appears only on remote runs.
-pub fn effective_config(config: &Config, view: View, staged_binary: bool) -> Observation {
+pub fn effective_config(
+    config: &Config,
+    view: View,
+    staged_binary: bool,
+    detail: Detail,
+) -> Observation {
     Observation::object([
+        ("detail", Observation::text(detail.as_str())),
         (
             "excluded_collectors",
             Observation::list(
@@ -67,6 +74,8 @@ pub struct InvocationCollector {
     effective_config: Observation,
     walk_policy: Observation,
     observer: Option<String>,
+    output: Option<String>,
+    started_at: Result<i64, CollectionError>,
 }
 
 impl InvocationCollector {
@@ -86,11 +95,15 @@ impl InvocationCollector {
         effective_config: Observation,
         walk_policy: Observation,
         observer: Option<String>,
+        started_at: Result<i64, CollectionError>,
+        output: Option<String>,
     ) -> Self {
         Self {
             effective_config,
             walk_policy,
             observer,
+            output,
+            started_at,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
@@ -119,7 +132,7 @@ impl Collector for InvocationCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let started_at = seconds_since_epoch(SystemTime::now())?;
+        let started_at = self.started_at.as_ref().map_err(|error| error.clone())?;
 
         Ok(Observation::object([
             ("rastro_version", Observation::text(RASTRO_VERSION)),
@@ -131,7 +144,14 @@ impl Collector for InvocationCollector {
                     None => Observation::null(),
                 },
             ),
-            ("started_at", Observation::integer(started_at).volatile()),
+            (
+                "output",
+                match &self.output {
+                    Some(path) => Observation::text(path.as_str()).volatile(),
+                    None => Observation::null(),
+                },
+            ),
+            ("started_at", Observation::integer(*started_at).volatile()),
             ("walk_policy", self.walk_policy.clone()),
         ]))
     }

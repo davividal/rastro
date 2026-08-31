@@ -61,6 +61,24 @@ Entries are grouped by the work that produced them, and each group is dated wher
 | [A rolling build, not a release](#the-newest-master-build-is-a-moving-pre-release-not-a-release) | one anonymous URL for the newest master build; the tag moves, and the release job is still owed |
 | [The Sonar check waits for its verdict](#the-required-sonarqube-check-waits-for-the-quality-gate) | a required check that could not fail on a quality regression now can |
 | [Renovate, not Dependabot](#renovate-not-dependabot-because-the-toolchain-is-a-dependency-too) | mise has no Dependabot ecosystem, and the toolchain pin is the one that decides what the compiler does |
+| [Metadata everywhere, content nowhere](#metadata-everywhere-content-nowhere-by-default) | hashing every file read 84 GB and never finished; stat detects a change anywhere, and ctime has no userspace setter |
+| [An entry is a digest](#an-entry-is-a-digest-of-its-metadata) | one XXH3-64 per path, 81 bytes against 444; completeness is not for sale |
+| [The digest follows the view](#the-digest-covers-exactly-what-the-view-would-have-shown) | a digest over volatile attributes would end byte-identity at the facet that dominates the document |
+| [A gone path is omitted, a closed one recorded](#a-path-that-is-gone-is-omitted-a-path-that-will-not-be-read-is-recorded) | one rotating log used to cost the whole facet; the entry fails, not the facet |
+| [An undecodable name is reported](#a-name-that-will-not-decode-is-reported-not-fatal) | no key to be filed under is not a reason to lose every path on the box |
+| [A file by default](#the-fingerprint-goes-to-a-file-by-default-and-stdout-only-when-asked) | megabytes do not belong on a terminal; `-o -` restores the pipe |
+| [The output is left out of the walk](#the-output-file-is-left-out-of-the-walk-and-the-invocation-facet-says-so) | run two would otherwise report run one's document and break byte-identity |
+| [A counter, not a bar](#progress-is-a-counter-not-a-bar-and-only-on-a-terminal) | the walk finds its own work, so a percentage would be invented |
+| [Timings never enter the document](#timings-are-told-to-the-operator-never-written-into-the-document) | the library is handed no clock, so it could not write one in |
+| [Estimated and warned, never limited](#the-run-is-estimated-before-it-starts-and-warned-about-never-limited) | a budget presupposes the operator investigated the box, which is rastro's job |
+| [The renderer streams](#the-renderer-streams-and-the-document-is-never-copied-to-filter-it) | four copies at peak became one, proved byte-neutral by golden tests |
+| [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
+| [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
+| [Tests skip the walk they ignore](#a-test-that-is-not-about-the-walk-does-not-pay-for-one) | forty-five whole-host walks made the suite eight minutes, and the harness's own files broke determinism |
+| [A tool's null is not a broken document](#a-tools-null-is-not-a-broken-document) | one timer with a null field cost the whole facet on every run of a host |
+| [A config narrows the walk](#a-config-can-narrow-the-walk-and-the-operator-outranks-a-collector) | three narrowings, no `hashed`; an operator corrects rastro rather than conflicting with it |
+| [nextest runs the suite](#nextest-runs-the-suite-and-each-test-gets-its-own-process) | 43 s against 64 s, and process isolation found a fixture race libtest had hidden |
+| [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
 
 ## Native collectors, no external tool as a dependency
 
@@ -1519,3 +1537,611 @@ toolchain pin is a standing risk and the app's blast radius is a pull request th
 has to pass the same gates as any other. Self-hosting Renovate as a workflow removes the
 third party and costs a job and a token to maintain; it is the reversal to reach for if
 that trade stops looking right.
+
+# What a fingerprint costs the box it runs on
+
+2026-08-31. Driven by a run on a production PostgreSQL development host that was killed
+after **50m58s having produced nothing**. New Relic during it: 44–71% CPU, user-time
+dominated, and I/O read bytes climbing 14 → 32 → 67 → 84 GB, at roughly 10.4M read
+syscalls. At the observed rate, 51 minutes is around 355 GB, which is more than most root
+filesystems hold.
+
+## Metadata everywhere, content nowhere by default
+
+`WalkPolicy::built_in()` shipped one rule, `/` → `Hashed(Sha256)`, so **every regular file
+on every non-pseudo mount was opened and hashed on every run**. The arithmetic confirms the
+mechanism rather than merely suggesting it: `io::copy` into a hasher cannot take a
+kernel-offload path, because the sink is not a file descriptor, so it falls back to std's
+8 KiB `DEFAULT_BUF_SIZE`. 84 GB ÷ 8 KiB is 10.25M reads against the 10.4M observed, which
+is agreement to 1.5% and leaves no second cause to look for.
+
+The shipped table is now `/` → `MetadataOnly`, and nothing is content-hashed at all.
+
+**What narrowed is the reading, not the scope, and the distinction is the whole argument.**
+The walk is still total over every mount that holds files, and every path it reaches is
+still in the document. No state surface left it. So this is not the inclusion list the old
+default was written to avoid: a tree the table says nothing about loses one attribute, not
+its existence.
+
+**Detection survives, and by more than it looks.** An ordinary write moves mtime, ctime and
+usually size. **ctime has no userspace setter at all** — no syscall sets it arbitrarily —
+so hiding a content change from stat needs `touch -r` or `cp -p` *and* a moved clock. That
+is deliberate evasion, and rastro is not an intrusion detector: `README.md` disclaims
+prevention and monitoring, and `docs/research.md` rejects AIDE as a dependency. Paying
+355 GB of reads and a production incident for the one property the tool says it does not
+have is the wrong trade.
+
+**Two things follow that are worth more than the time saved.** rastro now opens no file at
+all, so it moves no atime and pulls no file data into the page cache — it cannot evict the
+working set of the database it is fingerprinting, which is a harm that lands *after* the
+tool exits with nothing connecting the two. And peak resident memory fell from 267 MB to
+23 MB, measured, because an entry stopped being a twelve-key map.
+
+**Cost, accepted knowingly:** a same-size, stamp-preserving rewrite anywhere on the box is
+now invisible. The box that needs that caught is the box that should be running an IDS.
+
+**This does not supersede [Config, revised](#superseded-config-is-optional-opt-in-and-exclusion-only).**
+The walk stays total and exclusion-only. A future reader must not read this as licence to
+make the *walk* opt-in.
+
+**It refines [An inode's timestamps](#an-inodes-timestamps-are-nanoseconds-since-the-epoch-and-atime-is-not-recorded).**
+That entry's "there is no atime, because reading a file to hash it moves it" now describes a
+read that no longer happens.
+
+**And it leaves [Churn stops reporting what moves](#a-tree-that-churns-without-meaning-stops-reporting-the-attributes-that-move)
+standing on its noise argument alone.** That entry called the six churning trees "a seventh
+of the bytes on that box, while `/usr` is two thirds": a performance claim that no longer
+applies. The list survives because it makes the stamps, the size and the inode volatile,
+which is the difference between a quiet diff and one carrying two journals every run. Do
+not retire it on the grounds that nothing is hashed any more.
+
+**Content hashing returns as its own opt-in collector**, over trees the operator names,
+where the cost can be consented to rather than discovered. The hashing seam — `sha256_of`,
+`open_without_following` and its `O_NOFOLLOW`/`O_NONBLOCK` TOCTOU defence, and
+`ContentPolicy::Hashed` — is deliberately kept and still covered by tests, because that
+collector needs exactly it and the reasoning in those doc comments is the expensive part to
+reconstruct.
+
+## An entry is a digest of its metadata
+
+Listing eleven attributes per path cost 444 bytes an entry, and 13 MB on a container of
+30,891 of them, in a document that is 80% filesystem facet. An entry is now one digest of
+those attributes: 81 bytes, 2.40 MB for the same host, and the signal check holds — a
+`chmod` on one file moved exactly one digest, and the whole-document diff was four lines.
+
+Since the document names every path on the box, its floor is the path strings themselves,
+so a digest per path lands within a fifth of the smallest complete document there could be.
+Everything below that floor costs completeness, and completeness is not for sale: Ansible
+can touch anything anywhere, and the cascades — a package post-install script writing
+somewhere nobody thought about — are the reason the tool exists.
+
+**XXH3-64, and the reasoning is not "it is fast".** The inputs are ~80 bytes each and tens
+of thousands of them, which inverts the usual intuition: blake3's throughput is a
+large-input number and its initialisation dominates below about a kilobyte, so it measures
+*slower* here than SHA-256 with SHA-NI, while XXH3 is built for exactly this shape. Roughly
+0.6 ms against 2.3 ms for truncated SHA-256 and 7 ms for blake3, over 46,000 entries.
+
+**Sixty-four bits, and that is not a compromise.** A digest is only ever compared with the
+digest of the same path in another run, so a collision between two different paths means
+nothing at all. The only failure is an entry that changed and hashed the same anyway, at
+2⁻⁶⁴ per changed entry; even treating the digests as a set across 46,000 entries the
+birthday bound is ~6e-11. Width is also what drives document size more than anything else
+here, at four bytes of document per byte of digest.
+
+**It cost a licence decision, which was not free.** `xxhash-rust` is BSL-1.0, and `deny.toml`
+allows exactly the licences the tree already contained on the stated principle that "a new
+licence is a decision, so it should fail until somebody makes it". CI duly refused it. BSL-1.0
+is permissive, OSI-approved and FSF Free/Libre, with no copyleft and no notice to reproduce in
+a binary, so it was allowed deliberately rather than worked around. The alternative was
+truncated SHA-256 from the `sha2` already in the tree, at 2.3 ms against 0.6 ms — 0.4% of a
+run, and no new dependency at all. Worth knowing as the cheap reversal if that trade ever
+stops looking right.
+
+**Not cryptographic, and it does not need to be.** Forging one means choosing a file's mode,
+owner, size and stamps, which an attacker who can write the file already controls. What it
+*does* need is to be identical forever, or a stored fingerprint stops being comparable —
+which is why the crate is pinned and why `DefaultHasher` is disqualified whatever its speed:
+std explicitly declines to keep its output stable across releases.
+
+**Cost:** a moved digest says a path changed and not which attribute did. `--detail` records
+all eleven instead, and has to be asked for at the time, because a summary taken yesterday
+cannot be expanded today.
+
+## The digest covers exactly what the view would have shown
+
+A digest over a directory's derived stamps would move whenever a child appeared, and one
+over a churning tree's size and inode would move on every run. Either would end the
+byte-identical guarantee at the one facet that dominates the document, so the digest is
+taken over precisely the attributes that survive the view's volatility filter.
+
+Volatility is therefore load-bearing for the digest, not decoration on it, and the work in
+[Churn stops reporting what moves](#a-tree-that-churns-without-meaning-stops-reporting-the-attributes-that-move)
+and the derived-stamp rule are what make this possible at all.
+
+**A withheld attribute and an absent one are different bytes**, because otherwise a
+churning file with its size withheld and a directory that has no size would agree.
+
+**The policy the entry was read under is deliberately not in the digest.** It is rastro's
+configuration rather than the box's state, so folding it in would report a changed config as
+a change to every file on the host. The effective table in the `invocation` facet is where a
+reader learns which rule applied.
+
+**Tension, stated rather than resolved away:** this makes the *collector* compute something
+that depends on how the document will be rendered, which sits awkwardly beside
+[collectors annotate, renderers act](#collectors-annotate-values-renderers-act-on-them).
+It is accepted because the alternative — a renderer that knows what a file entry is — is
+worse, and because the digest is an observation about a path rather than a presentation of
+one.
+
+## A path that is gone is omitted, a path that will not be read is recorded
+
+The walk propagated `?` on every stat, readdir and digest read, so **one unreadable or
+vanished path failed the entire facet**. On a busy host a log rotating mid-walk is not an
+edge case, it is a certainty, and so is `EACCES` on a fuse mount.
+
+- **Absent (`NotFound`, `StaleNetworkFileHandle`) → the entry is omitted.** This is what
+  keeps the byte-identical guarantee true: a file that rotated away between two runs must
+  not appear in one document and not the next for a reason that is not a change to the box.
+  It is not a silence violation either — absence is state, and a path that was not there
+  when the walk arrived is honestly reported by the same absence as one that never existed.
+- **Everything else → the path is recorded with the reason.** `EACCES` and `EIO` reproduce
+  at the same path on every run, so they diff cleanly and belong in the *default* view as
+  the lasting blind spots they are.
+
+`ErrorKind` is `non_exhaustive` and std still maps `EIO` to a kind no stable code can name,
+so the default is "not an absence": the direction that records too much rather than omitting
+a path that is really there.
+
+**An entry is its attributes or the reason it has none, never a partial set.** That is the
+facet's own `data`-or-`error` contract one level down. A directory whose listing fails
+therefore loses its own recorded mode and owner, which is the field an operator would change
+to fix it — accepted, because the alternative is an `unlisted_because` key that is null on
+45,951 entries out of 45,952.
+
+**One failure stays fatal:** the root's own stat, because a walk that cannot start is not a
+host with no files on it.
+
+This refines [A contested tree fails the facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet)
+one level down: that entry established "the facet, not the run"; this one establishes "the
+entry, not the facet".
+
+## A name that will not decode is reported, not fatal
+
+Linux paths are bytes and the document holds text, so a name like `b"\xff"` is legal on disk
+and unsayable in a fingerprint. Substituting `U+FFFD` remains refused, for the reason
+`canonical_tool` refuses it for a tool's output: it would put a path into the document that
+is not on the box, and one nobody could act on.
+
+The old answer was to fail, on the argument that a path with no name has no key to be filed
+under. **The argument was right about keys and wrong about reporting.** It cost the entire
+`filesystem` facet — every path on the box — for one extracted archive with a mojibake name,
+and the document did not say which file it was.
+
+So such an entry is now reported in a list of its own rather than keyed: the name's bytes as
+lowercase hex, which claims nothing and is exact, and the directory holding it as the text it
+is. The two together reconstruct the path exactly. The walk does not descend into it, because
+every name beneath an unnameable directory is unnameable too and the directory is the fact.
+
+**Found the hard way**, which is why it earned an entry rather than a backlog line: the test
+that documented the old behaviour left its one-byte fixture inside `CARGO_TARGET_TMPDIR`,
+which a walk of the real host covers, and it silently refused the `filesystem` facet of every
+later run in the suite. The determinism harness went on passing, because two runs failing
+identically are still identical.
+
+## The fingerprint goes to a file by default, and stdout only when asked
+
+A fingerprint of a real host is megabytes, and a default that puts megabytes on a terminal
+punishes the first run. Worse, the 51-minute run above produced *nothing at all*: the
+document was built in memory and printed at the end, so an interrupt threw away the work.
+
+The default is now `./rastro-<host>-<UTC>.json`, and `-o -` restores the pipe.
+
+**This does not weaken "stdout carries only the fingerprint"** (`CLAUDE.md`): with the
+document in a file, stdout carries nothing at all. It fills in
+[v1 scope](#v1-scope-generate-only-current-box), which already said "to stdout or a file",
+and reverses only the wording of `docs/design.md`'s Streams section.
+
+- **No colon in the instant.** A name carrying one needs shell quoting, breaks on VFAT and
+  exFAT, and reads as a host separator to `scp` and `rsync`.
+- **One clock reading serves the filename and `started_at`**, so a file cannot disagree with
+  the document inside it. The hostname likewise. Both are read in the composition root and
+  handed to the collectors, which finally makes `seconds_since_epoch`'s doc comment true.
+- **The hostname is untrusted input.** It comes from `/proc/sys/kernel/hostname`, which is
+  settable, and rastro runs as root — so `../../etc/cron.d/evil` would steer the default path
+  out of the working directory. Anything but `[A-Za-z0-9._-]` is dropped, the result is
+  capped, and a hostname that survives as nothing is omitted exactly as an unreadable one is.
+- **Created `0600` at creation, not chmod'd afterwards**, so there is no window in which a
+  document naming every path on the box is world-readable. This keeps a promise
+  `docs/design.md` had listed as unbuilt.
+- **Temp sibling, then rename.** `README.md` already promises that a run which died halfway
+  cannot leave half a document to be diffed. `--force` overwriting in place would also
+  silently keep an existing file's 0644, because a mode applies at creation.
+- **An existing file is refused unless `--force`.** The workflow is a `before` and an
+  `after`, so replacing the `before` destroys the only record of the state being compared
+  against. That is the one irreversible thing this tool can do to an operator.
+- **`rastro-ssh` passes `-o -`.** Without it every remote run would leave a document in the
+  remote working directory — root's home on most boxes, and walked — and return nothing.
+- **A destination that is not a regular file is written *through*, never published over.**
+  Found in review, and it mattered: the first version staged and renamed unconditionally, so
+  `rastro -o /dev/null` as root replaced the null device with a regular file, and `-o
+  /dev/stdout` would have replaced its symlink. A stream has nothing to make atomic anyway.
+- **Without `--force` the refusal is the kernel's.** The overwrite check and the publication
+  are separated by however long the document takes to render, so a check-then-rename could
+  replace a file that appeared in between — the one thing this is here to prevent. Published
+  with `link`, which fails `EEXIST`, rather than `rename`, which would take it. Also found in
+  review.
+
+## The output file is left out of the walk, and the invocation facet says so
+
+Run one writes a document; run two's walk finds it sitting there. So the most natural use of
+`-o` — the same path twice, which is exactly the before-and-after workflow — broke the
+byte-identical guarantee by a megabyte.
+
+The resolved output path is therefore omitted from the walk, through the same seam that omits
+a staged binary, and declared in the `invocation` facet beside `observer`. Volatile for the
+same reason that one is: the path carries a timestamp. This refines
+[Only a staged run omits it](#only-a-staged-run-omits-the-binary-and-the-caller-says-so):
+same principle, same seam, a second path.
+
+**Reproduced by accident before it was designed**, which is the only reason it was caught:
+a measurement script wrote three fingerprints into `/` and the last two differed. Written to
+tmpfs, which the walk skips, all three were byte-identical.
+
+**The path has to be resolved, not merely made absolute.** `std::path::absolute` is lexical, so
+`-o linked/fp.json` through a symlinked directory keeps the symlink — while the walk never
+follows one and meets the file under its real directory. The two spellings would not match and
+the document would land back in the next run, silently, for the workflow this entry exists to
+protect. Resolved once in the composition root and handed to both the walk and the facet, so
+there is one answer rather than two. Found in review.
+
+## Progress is a counter, not a bar, and only on a terminal
+
+The 51-minute run gave no sign of life. There was no way to tell whether it was working,
+where it had got to, or how much longer — so the only available action was to kill it.
+
+**No percentage and no ETA, and that is a decision rather than a shortfall.** The walk
+discovers its own work as it goes. The one cheap denominator is the used-inode count per
+mount, which needs `statfs` — a syscall std does not wrap, so reaching it would cost
+`#![deny(unsafe_code)]` — and even bought, it would bound entries rather than time. A number
+that slides smoothly and means nothing is worse than an honest count.
+
+So: a live single-line counter of the current collector, entries walked and elapsed, gated on
+`stderr` being a terminal. The gate is what keeps "a clean run says nothing on stderr" true
+by construction rather than by anybody remembering it, and `--progress` / `--no-progress`
+force it either way. The line is cleared before any diagnostic, so a warning is never
+half-overwritten by a counter.
+
+## Timings are told to the operator, never written into the document
+
+`--debug` reports per-collector wall clock, what the walk read, where the document went and
+peak resident memory, on stderr. It exists because `time ./rastro > file` answers neither
+"which collector was slow" nor "where did the document go", which are the two questions a
+slow run actually raises. It earned itself immediately: on a first measured run the
+filesystem walk was 7.747 s of 7.761 s, which is 99.8% and settles where any further
+optimisation has to go.
+
+A duration must not reach the document.
+[A configured endpoint is a different fact](#a-configured-endpoint-is-a-different-fact-from-a-bound-socket)
+already establishes that a fingerprint records what a box *is*, not what it is doing, and a
+timing would have to be volatile anyway, so the default view would drop it.
+
+**The seam is what makes that structural.** `rastro-collector` gains a `RunProgress` trait
+whose methods say only *what* happened; the tool holds the clock. The library is handed no
+clock at all, so it could not write one into a facet if it wanted to — which is a stronger
+guarantee than the purity test that forbids `SystemTime::now` there. Registration order, not
+slowest-first, so two `--debug` runs are comparable line by line.
+
+## The run is estimated before it starts, and warned about, never limited
+
+A budget the operator has to tune presupposes they have already investigated the box, which
+is the work rastro exists to do. So the pre-flight estimates and warns: inodes in use across
+the local filesystems against free space where the document is going, and a line on stderr
+only when the document would be a real fraction of what is free.
+
+Through the hardened `canonical_tool` seam to `df` rather than `statfs`, for the same
+`unsafe` reason as above and because a bounded subprocess buys the number at no cost to a
+stated property.
+
+**Honest limits, all of them:** `df -i` counts every inode on a filesystem including those
+under a tree a collector sealed, so a two-million-file PostgreSQL cluster inflates it and the
+walk will never touch them. Over-estimating is the right direction for a warning — it can cry
+wolf, where an under-estimate would stay quiet about the run that fills the disk. A filesystem
+with no fixed inode table reports `-` where the count would be — vfat does, so `/boot/efi`
+prints `0 0 0 -` — and that row is skipped rather than read as zero. A box without `df` gets no
+guess rather than a made up one. And it bounds entries, not wall time.
+
+**There is deliberately no special case for a host that counts nothing at all.** `--local`
+always lists `/`, and on a real box udev and several tmpfs besides, every one of which reports
+a count, so the sum is never zero on a host that could have run rastro. Guarding a state the
+box cannot be in is complexity presenting itself as safety, and it costs a branch no fixture
+can honestly justify.
+
+## The renderer streams, and the document is never copied to filter it
+
+Rendering built four full copies at peak: the collectors' tree, a recursive deep clone from
+`in_view` — paid even for `View::Complete`, where nothing is filtered — a second complete
+copy as a `serde_json::Value`, and the rendered `String`. Measured at 267 MB resident for a
+13 MB document, which is 8.6 KB of memory per 444 bytes of output.
+
+The attribution is worth recording, because the ratio is the tell rather than the total:
+`Content::Object` is a `BTreeMap`, whose nodes allocate a fixed eleven key and eleven value
+slots whether used or not, so a twelve-key entry needs two leaves and an internal node —
+about 2.5 KB of container to hold 444 bytes of data, four times over.
+
+Now: `to_canonical_json_writer` writes straight into a `BufWriter`, and the observation tree
+is serialised where it lives through a borrowed filtered view. **The view rule stays in the
+domain**, expressed as `visible_in` returning a borrow rather than a copy, so the renderer
+still never asks whether anything is volatile — it just no longer owns what it is given.
+
+Sortedness now comes from the domain's own `BTreeMap` rather than from `serde_json::Map`,
+which retires the `preserve_order` hazard entirely: no map of serde_json's is involved.
+
+**Proved byte-neutral rather than argued to be.** Two golden tests pin the exact bytes of a
+document covering every `Content` and `Scalar` variant, a nested object, a list, a dropped
+volatile leaf and a dropped volatile subtree, in both views — written before the change, so
+that neither the `Value` hop nor the clone could go without proving it cost nothing.
+
+## Considered and rejected: posix_fadvise, to give the page cache back
+
+Reading 355 GB through the page cache evicts the working set of the database being
+fingerprinted, and the resulting latency lands *after* rastro has exited with nothing
+connecting the two. `posix_fadvise(DONTNEED)` after each file would limit that.
+
+**Rejected, because the problem was removed at the source instead.** With nothing
+content-hashed rastro opens no file at all, so the harm falls by four orders of magnitude and
+there is nothing left to advise about. It was never a complete fix either: `DONTNEED` cannot
+distinguish a page rastro brought in from one the database already had hot, so it evicts the
+database's pages either way, and it does not write back dirty pages at all.
+
+It also has a price beyond its own code. std does not wrap the call, so reaching it means
+either an `unsafe` block — against `#![deny(unsafe_code)]` in all three crates, and against
+`docs/design.md` advertising the unsafe-free build as one of only two security properties
+that are true today — or a fourth runtime dependency for one syscall. Neither is worth
+paying for a mitigation of a problem that no longer exists.
+
+**Revisit if** a future opt-in content collector reads enough to matter, or if a host shows
+cache pressure after a run.
+
+## Considered and rejected: the filesystem's own record of what changed
+
+Every mechanism cheaper than walking requires something arranged *before* the change, which
+is precisely what rastro exists not to require.
+
+**inotify** reports only while it is watching, has no recursive mode — so adding a watch per
+directory means walking the tree anyway, bounded by `max_user_watches` — and cannot see the
+past. **fanotify** with `FAN_MARK_FILESYSTEM` fixes the scalability half with one mark per
+filesystem, and neither fixes the other half: both need a daemon running across the interval,
+which is the thing `README.md` refuses to be.
+
+**A journal is the wrong structure, despite the name.** ext4's jbd2 and XFS's log are
+write-ahead logs for crash recovery: circular and continuously overwritten, so on a busy host
+they wrap in minutes; recording *block* modifications rather than path operations; with no
+userspace API, so reading one means the raw device or `debugfs`, which is unsafe on a mounted
+read-write filesystem; and discarded at checkpoint. ZFS's ZIL is the same in every relevant
+respect.
+
+**Copy-on-write is the right structure, and is a different feature.** btrfs generation numbers
+and ZFS block birth times are *persistent* metadata, which is why `btrfs subvolume find-new`
+and `zfs diff` work — and the latter reports renames, which a metadata digest cannot detect at
+all. Filesystem-specific, though: ext4 and xfs, which is what a Debian host is, have nothing.
+
+Two closer fits exist and neither is retroactive: the kernel's **IMA** subsystem maintains a
+measurement list but needs boot-time policy, and **auditd** with `-w /etc -p wa` is a genuine
+change log that many compliance-managed boxes already run. Worth checking for on a host, not
+something rastro can arrange after the fact.
+
+**Worth revisiting as a Layer-3-style specialisation**: if a run finds btrfs or ZFS with a
+usable prior snapshot, it could narrow the walk. It would be optimising a step that now costs
+about a second.
+
+## A test that is not about the walk does not pay for one
+
+The suite went from about a minute to eight. Not one slow test: the binary is invoked around
+forty-five times across `cli.rs` and `output.rs`, and every invocation walked the whole runner
+— a cargo registry and a coverage-instrumented target directory, hundreds of thousands of
+inodes — through an instrumented binary.
+
+So the tests that never read the `filesystem` facet now pass a config that excludes it. The
+ones that are actually about the walk still pay for it, and so do the three that assert a clean
+run says nothing on stderr, since an exclusion prints a WARN there.
+
+**Then measured again, because excluding the facet was the blunt version.** CI's step timings
+showed four tests over 120 seconds *each* on the runner, and the fix was the config feature this
+same change added: `sealed` over the root and the shipped churn trees leaves one entry per mount
+root — a `filesystem` facet that is genuinely `ok`, rendered through the real walk, in about ten
+milliseconds. Sealing the root alone is not enough, because a shipped rule for a tree inside it
+is more specific and still descends.
+
+That is better than excluding the facet, not merely faster: the test still exercises the walk,
+the rendering and the digest. It also prints nothing on stderr, because a narrowing is not an
+exclusion, which is what lets the "a clean run says nothing" tests use it.
+
+**Then the last two were decomposed rather than accepted.** Proving the walk leaves out the
+document it is writing needed the document to be *in* a walked tree, which through the binary
+meant walking a whole host — over two minutes each on the runner. Asserted instead over a
+scratch root through `FilesystemCollector::walking`, where the walk is scoped and the omission is
+the only difference, it is instant *and* a sharper claim. What only an end-to-end run can show is
+that one resolved path reaches both the walk and the envelope, and that needs no walk at all.
+
+Two tests still pay for a real walk, and each has a reason that sealing would destroy: one
+asserts what a run with *no* config looks like, and one proves a config narrowing by checking
+that a sibling of the sealed tree is *still* walked. Both are worth their seconds.
+
+Local suite: 64 s before any of this, 48 s after excluding the facet, 26 s after sealing,
+**13 s after moving the omission proofs to a scoped walk**. On CI the step went 311 s to 207 s
+at the sealing stage, measured; the decomposition lands after.
+
+**Excluding the facet also removed a source of flakiness, which is the more interesting half.** An instrumented
+run writes a `.profraw` into the target directory, and the runner writes its own worker log
+while the suite runs — both inside the tree a walk covers. Two runs of "an unchanged host" were
+therefore never comparing an unchanged host, and the determinism harness failed on files the
+test harness itself had created.
+
+**Which exposed something worse: that harness had been passing vacuously on CI.** CI runs
+unprivileged, `/boot/efi` is unreadable there, and until the error-tolerance work a single
+unreadable path failed the whole `filesystem` facet — so both runs errored identically, the
+bytes matched, and the facet that dominates the document was never compared at all. It has been
+that way since the collector was registered. Two runs failing the same way are still identical,
+which is the blind spot in comparing bytes and nothing else.
+
+The property itself holds and is verified where it can be: five consecutive runs to one path on
+the reference box, byte-identical, with the walk included.
+
+**So the harness was split rather than weakened.** The end-to-end test compares the envelope
+and the other twenty facets through the real binary, which is what it can honestly assert on a
+machine that is being used. The `filesystem` facet's byte-identity moved to a test over a tree
+it owns, where it can assert something the whole-host version never could: that a churning
+tree's size and stamps genuinely moving between two readings leaves the diffable view
+identical, with a counterweight proving a real change still shows.
+
+Asserting whole-host byte-identity on a busy runner would be asserting that nothing on the box
+moved during the test, which is neither rastro's promise nor true. The promise is verified where
+it can be: five consecutive runs to one path on the reference box, walk included,
+byte-identical.
+
+## A tool's `null` is not a broken document
+
+`systemctl list-timers --output=json` reports `"activates": null` for a timer that starts
+nothing systemd can name. A Debian 12 box writes `""` for the same case, which is what the field
+was measured against and why it was typed as a `String` with `serde(default)` — and `default`
+covers an *absent* field, not a null one. So on a GitHub Actions runner one such timer failed the
+entire `timers` facet, on every run of that host.
+
+Absent, `null` and `""` now converge on one value before anything decides what it means.
+
+**Found by improving a failure message rather than by guessing.** The determinism harness
+reported `facets/timers differs` with both sides printing `data: null`, because the reporter only
+ever printed `data` — and an `error` facet has none. Two runs failing identically are still
+identical, so it read as a flake. Printing `status` and `error` turned it into two messages that
+differed only in a byte offset, which is the giveaway: the failure was constant and its *text*
+varied, because the offset lands after timer clock values whose width changes.
+
+Worth recording that the first hypothesis was wrong. The timing suggested the concurrency change,
+so the guess was contention between two collectors both shelling out to `systemctl`. Measurement
+killed it: 120 runs on a systemd host with no failure, 40 of them at four times the subprocess
+pressure, and `units` makes two `systemctl` calls rather than the one per unit that had been
+assumed. A cheaper diagnostic would have been quicker than the reasoning.
+
+**Still owed, and the same class three times over:** one unreadable mount point, one
+undecodable filename and now one null field have each cost a whole facet. The blast radius is
+the problem rather than the strictness — a row that will not parse should cost that row, as a
+path that will not read costs that path. There are 27 non-optional scalar fields across seven
+JSON deserialisers with the same exposure, and making them all optional would trade one
+fragility for a weaker type. Per-row tolerance is the consistent fix and it is not in this
+change.
+
+## A config can narrow the walk, and the operator outranks a collector
+
+The only lever over which trees the walk read was a collector's claim, resolved from the host.
+So the 51-minute run was unfixable without a new binary, and CI had no way to say that its own
+build directory is noise. `docs/config.md` recorded that as a known gap; this closes it.
+
+Three keys — `metadata_only`, `churns`, `sealed` — and **deliberately no `hashed`**. All three
+withhold, so this is not a new principle but the existing one reaching the operator instead of
+only reaching collectors: a config may narrow and never widen. The type is what enforces it, as
+`ClaimedReading` already does for a claim — `Config` has nowhere to put a fourth reading, and
+`deny_unknown_fields` turns an attempt at one into an error rather than a line that silently
+does nothing.
+
+**The operator's rule beats a collector's claim, which is the opposite resolution from a claim
+meeting a claim.** Two collectors naming one tree is a bug in a collector pair with no way to
+pick a winner, so it fails. An operator and a collector naming one tree is an operator
+correcting rastro: a claim is rastro's reckoning about a tree from the outside, and the operator
+knows their box. Proven on the reference box, where a config rule over
+`/var/lib/postgresql/17/main` replaced the `postgresql` collector's claim and the effective
+table changed its `claimed_by` to `config` — the same pair would previously have been a hard
+conflict.
+
+Two config rules for one tree is still refused, for the reason a shipped table naming one tree
+twice is: the operator meant one of them.
+
+**Declared, never silent.** Each rule renders in the `invocation` facet with `claimed_by:
+"config"`, so a reader of a tree with no entries can tell rastro's reckoning from a colleague's
+config file. `config` is not a facet and no collector may be called that; it is spelled as a
+claimant anyway because the question the table answers is who decided.
+
+**A bad path fails the facet, not the run.** An operator's typo should not cost them every other
+facet on a box they were trying to inspect, which is the same rule a claim conflict follows.
+
+Measured on the reference box: sealing `/usr/share/doc` and the cluster took the document from
+45,993 entries to 42,965 and 4.63 MB to 4.41 MB, at 0.43 s.
+
+## nextest runs the suite, and each test gets its own process
+
+`cargo nextest` rather than libtest, measured on the reference container: **43 s against 64 s**
+for the whole suite, and the same under instrumentation. CI runs `cargo llvm-cov nextest`,
+which writes the same lcov report to the same path, so the SonarQube import is untouched.
+
+**Process isolation is worth more here than the time.** A test that invokes the real binary is
+observing the machine the suite runs on, so tests interfere through the filesystem rather than
+through memory — and one panicking test cannot take its neighbours down with it.
+
+**A fixture asserts the modes it created.** A file written without saying so takes whatever the
+umask allows: 0644 under the usual 022, 0664 under the 002 a fresh Debian user gets. Three tests
+asserted a literal mode they had never set, so they passed for the GitHub runner and failed for
+anyone whose umask differed. The fixture sets file and directory modes explicitly now.
+
+**It found a latent race immediately.** The accounts fixture named its scratch directory from a
+`static AtomicUsize` counter, which is unique per *process*. Under libtest the whole binary is
+one process, so that held. Under nextest every test is its own process, so all of them started
+at zero, chose `accounts-0`, and `remove_dir_all`'d it out from under each other. The two config
+files the tests write had the same shape of problem, benign only because the contents matched.
+Both are keyed by process id now.
+
+**A failure names the destination, never the staging file.** Also found by running the suite as
+somebody else: an operator who typed `-o closed/before.json` was told about
+`closed/.before.json.1234.partial`, a file they never chose and cannot act on. And the test that
+would have caught it skipped as root, so it had only ever really run on CI.
+
+**Considered and measured: serialising the tests that walk the whole host**, on the reasoning
+that they contend for one disk and write into the tree the others are walking. It cost 77
+seconds — 120 s against 43 s — and bought nothing, because nothing asserts byte-identity across
+the whole host any more. Recorded in `.config/nextest.toml` so nobody adds it back on the same
+reasoning without measuring it.
+
+## Collectors run concurrently, and the walk runs alone
+
+`--debug` measured where a run actually goes on the reference box: the filesystem walk 0.145 s
+of 0.839 s, and the rest waiting for subprocesses to answer — `exporters` 0.33 s, `postgresql`
+0.31 s, `units` 0.29 s. So 83% of the run was latency, one tool at a time.
+
+Collectors now run on a pool of four. Measured: **0.839 s → 0.455 s**, with those same three
+collectors summing to 0.94 s of work inside a 0.45 s run.
+
+**Four, not one per core.** Almost every collector spawns a subprocess, and a fingerprint that
+starts twenty tools at once on a production box is an intrusion of its own — the thing this
+tool exists not to be. The wait is latency rather than CPU, so a small pool recovers nearly all
+of it.
+
+**`Collector: Send + Sync`, which is a breaking change to the published port and cost nothing.**
+All 22 built-in collectors satisfied it already: each holds validated owned values, detection
+happens eagerly at construction rather than being memoised, and there is no interior
+mutability anywhere outside the progress sink. An out-of-tree collector that holds an `Rc` or a
+`RefCell` will have to change, which is the price.
+
+**The filesystem walk declares itself `Exclusive`, and this is the substance of the entry.**
+It is the one collector that can notice the others: it observes every mount, so a temporary
+file another collector's subprocess created and deleted *while it walked* would be recorded in
+one run and not the next. That is the byte-identical contract gone, for a second saved.
+Running collectors one at a time made it impossible by accident; running them together makes
+it possible, so the walk now says it needs the box to itself and runs last, alone.
+
+The cost of that isolation is nothing measurable, because the walk was 17% of the run and the
+other 83% is what overlaps. Verified: five consecutive runs to one path on the reference box,
+byte-identical.
+
+**Two hazards checked rather than assumed.** The `processes` collector annotates every process
+volatile, so catching a sibling's subprocess in `/proc` cannot reach the default view. And
+`subprocess` creates its pipes with `pipe2(O_CLOEXEC)` and puts each child in its own process
+group, so concurrent spawns neither leak descriptors into each other's children nor kill each
+other's tools on a timeout.
+
+**What a caller is told changed shape.** Progress callbacks fire in completion order, from
+whichever worker got there, because the point of hearing that a collector started is to say so
+while it is still running. The `--debug` table is therefore sorted **by name** rather than by
+registration or by cost: name order is deterministic and matches the document's own, which is
+what makes two runs comparable line by line. The live counter shows how many collectors are in
+flight rather than naming one, since naming one of four would be a lie.
+
+Also removed here: `WalkProgress::file_opened` and `bytes_hashed`, declared but never called
+and structurally zero since nothing opens a file any more.

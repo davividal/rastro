@@ -21,11 +21,16 @@
 //! directory it is, and whether its contents are walked is decided by whoever chose the
 //! roots.
 //!
+//! **One path's failure is that path's failure.** A path that vanished mid-walk is omitted
+//! and one that will not be read is recorded with the reason, so a log rotating under the
+//! walk or an unreadable fuse mount costs one entry rather than the whole facet. Two failures
+//! stay fatal: the root's own stat, because a walk that cannot start is not an empty host, and
+//! a path whose *bytes* cannot be read at all. A name that is merely not UTF-8 is reported in
+//! a list of its own, because it has no key to be filed under but is still a fact about the
+//! box — and one such name used to cost the entire facet.
+//!
 //! **Still owed, and deliberately not here yet:**
 //!
-//! - An unreadable directory currently fails the walk rather than being recorded as one
-//!   failed entry with the rest of the tree intact. There is no test for it because a test
-//!   cannot arrange it reliably as root, which is what CI and a real run both are.
 //! - POSIX ACLs, SELinux labels and the rest of the extended attributes. `docs/design.md`
 //!   promises them and a capability-only change is invisible without them, but every one of
 //!   them needs an `*xattr(2)` call this walk has no seam for yet, and the answer to "which
@@ -33,16 +38,21 @@
 
 use std::fs::{self, Metadata};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rastro_collector::{AbsolutePath, ByteSize, CollectionError};
 use sha2::{Digest as _, Sha256};
 
-use crate::collectors::filesystem::model::{FileEntry, FilesystemInventory, WalkPolicy};
+use crate::collectors::filesystem::model::{
+    FileEntry, FilesystemInventory, Refusal, UnreadablePath, UnspellablePath, WalkPolicy,
+};
 use crate::collectors::filesystem::value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
 };
+use crate::progress::WalkProgress;
 
 /// A tree to walk, rooted where the caller says.
 ///
@@ -51,7 +61,8 @@ use crate::collectors::filesystem::value_objects::{
 pub struct FileTree {
     root: PathBuf,
     boundaries: Vec<PathBuf>,
-    observer: Option<PathBuf>,
+    omitted: Vec<PathBuf>,
+    progress: Option<Arc<dyn WalkProgress>>,
 }
 
 impl FileTree {
@@ -59,22 +70,36 @@ impl FileTree {
         Self {
             root: root.to_path_buf(),
             boundaries: Vec::new(),
-            observer: None,
+            omitted: Vec::new(),
+            progress: None,
         }
     }
 
-    /// The same walk, reporting everything but this one file.
+    /// The same walk, reporting everything but these files.
     ///
-    /// For exactly one caller and exactly one path: the executable rastro is running from.
-    /// `rastro-ssh` stages the binary as `mktemp /var/tmp/rastro.XXXXXXXX` and `/var/tmp` is
-    /// walked on purpose, so without this every remote run reports one added and one removed
-    /// file under a fresh name, and the tool's own footprint is the largest single entry in
-    /// its noise floor.
+    /// Two paths reach here, and both are rastro's own footprint rather than the host's. The
+    /// executable, when a caller staged a temporary copy: `rastro-ssh` puts it in `/var/tmp`,
+    /// which is walked on purpose, so without this every remote run reports one added and one
+    /// removed file under a fresh name. And the document this run is about to write, because
+    /// the second run of `-o before.json` would otherwise find the first one sitting there and
+    /// two runs of an unchanged host would stop being byte-identical.
     ///
-    /// One path, compared whole. Not a name pattern, because a file an operator called
+    /// Whole paths, compared whole. Not a name pattern, because a file an operator called
     /// `rastro` is theirs and belongs in the document.
-    pub fn omitting(mut self, observer: &Path) -> Self {
-        self.observer = Some(observer.to_path_buf());
+    pub fn omitting(mut self, paths: &[PathBuf]) -> Self {
+        self.omitted = paths.to_vec();
+
+        self
+    }
+
+    /// The same walk, counting what it does for whoever is watching.
+    ///
+    /// `Arc` rather than a borrow, because collectors live in a `Vec<Box<dyn Collector>>` and
+    /// a lifetime here would infect that whole registry — and shared rather than owned,
+    /// because the sink watching this walk is watching every other collector too, from
+    /// whichever thread each is running on.
+    pub fn reporting_to(mut self, progress: Arc<dyn WalkProgress>) -> Self {
+        self.progress = Some(progress);
 
         self
     }
@@ -99,47 +124,94 @@ impl FileTree {
     /// would read as a host with no files on it.
     pub fn walk(&self, policy: &WalkPolicy) -> Result<FilesystemInventory, CollectionError> {
         let mut entries = Vec::new();
+        let mut unreadable = Vec::new();
+        let mut unspellable = Vec::new();
         let mut pending = vec![self.root.clone()];
         let device = fs::symlink_metadata(&self.root)
-            .map_err(|error| failure(&self.root, "could not be read", &error))?
+            .map_err(|error| {
+                CollectionError::new(format!(
+                    "{} could not be read, so the walk cannot start: {error}",
+                    self.root.display()
+                ))
+            })?
             .dev();
 
         while let Some(path) = pending.pop() {
-            if self.observer.as_deref() == Some(path.as_path()) {
+            if self.omitted.contains(&path) {
                 continue;
             }
 
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|error| failure(&path, "could not be read", &error))?;
-            let entry = self.entry_of(&path, &metadata, policy)?;
+            // A path that will not decode has no key to be filed under, so it is reported in
+            // a list of its own rather than costing the facet. Recorded and not descended
+            // into: every name beneath it is unspellable too, and the directory is the fact.
+            let Some(recorded) = absolute(&path) else {
+                unspellable.push(UnspellablePath::of(
+                    path.file_name().unwrap_or(path.as_os_str()).as_bytes(),
+                    path.parent().and_then(Path::to_str).map(str::to_owned),
+                ));
+                continue;
+            };
+
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    unreadable.extend(UnreadablePath::recorded(
+                        &recorded,
+                        Refusal::at(&path, "could not be read", &error),
+                    ));
+                    continue;
+                }
+            };
+
+            let entry = match self.entry_of(&path, &recorded, &metadata, policy) {
+                Ok(entry) => entry,
+                Err(refusal) => {
+                    unreadable.extend(UnreadablePath::recorded(&recorded, refusal));
+                    continue;
+                }
+            };
 
             if entry.kind == FileKind::Directory
                 && entry.reading.is_descended()
                 && metadata.dev() == device
                 && !self.boundaries.contains(&path)
             {
-                pending.extend(self.children_of(&path)?);
+                match self.children_of(&path) {
+                    Ok(children) => pending.extend(children),
+                    Err(refusal) => {
+                        // The directory loses its own entry too, on the same rule the whole
+                        // change rests on: a path is its attributes or the reason it has
+                        // none. Recording mode and owner beside a failed listing would read
+                        // as a complete description of a directory nobody could enumerate.
+                        unreadable.extend(UnreadablePath::recorded(&recorded, refusal));
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(progress) = &self.progress {
+                progress.entry_walked();
             }
 
             entries.push(entry);
         }
 
-        FilesystemInventory::new(entries)
+        FilesystemInventory::new(entries, unreadable, unspellable)
     }
 
     /// The paths directly inside a directory.
     ///
     /// Collected rather than streamed so the read is over before the walk descends, which
     /// keeps one open directory handle per level instead of one per entry.
-    fn children_of(&self, directory: &Path) -> Result<Vec<PathBuf>, CollectionError> {
+    fn children_of(&self, directory: &Path) -> Result<Vec<PathBuf>, Refusal> {
         let reader = fs::read_dir(directory)
-            .map_err(|error| failure(directory, "could not be listed", &error))?;
+            .map_err(|error| Refusal::at(directory, "could not be listed", &error))?;
 
         reader
             .map(|entry| {
                 entry
                     .map(|entry| entry.path())
-                    .map_err(|error| failure(directory, "could not be listed fully", &error))
+                    .map_err(|error| Refusal::at(directory, "could not be listed fully", &error))
             })
             .collect()
     }
@@ -147,13 +219,13 @@ impl FileTree {
     fn entry_of(
         &self,
         path: &Path,
+        recorded: &AbsolutePath,
         metadata: &Metadata,
         policy: &WalkPolicy,
-    ) -> Result<FileEntry, CollectionError> {
-        let recorded = absolute(path)?;
+    ) -> Result<FileEntry, Refusal> {
         let kind = kind_of(metadata);
 
-        let reading = policy.policy_for(&recorded).clone();
+        let reading = policy.policy_for(recorded).clone();
 
         Ok(FileEntry {
             kind,
@@ -173,13 +245,13 @@ impl FileTree {
                 "a status change time",
                 path,
             )?,
-            inode: count(metadata.ino(), "an inode number", path)?,
-            link_count: count(metadata.nlink(), "a link count", path)?,
+            inode: as_document_integer(metadata.ino(), "an inode number", path)?,
+            link_count: as_document_integer(metadata.nlink(), "a link count", path)?,
             link_target: link_target_of(kind, path)?,
             device: device_of(kind, metadata),
             digest: self.digest_of(kind, path, &reading)?,
             reading,
-            path: recorded,
+            path: recorded.clone(),
         })
     }
 
@@ -189,7 +261,7 @@ impl FileTree {
         kind: FileKind,
         path: &Path,
         policy: &ContentPolicy,
-    ) -> Result<Option<Digest>, CollectionError> {
+    ) -> Result<Option<Digest>, Refusal> {
         let ContentPolicy::Hashed(algorithm) = policy else {
             return Ok(None);
         };
@@ -209,12 +281,12 @@ impl FileTree {
 /// `io::copy` streams it through the hasher, so a multi-gigabyte file costs a buffer
 /// rather than its own size. rastro runs as root on production and must not be the reason
 /// a box runs out of memory.
-fn sha256_of(path: &Path) -> Result<Digest, CollectionError> {
+fn sha256_of(path: &Path) -> Result<Digest, Refusal> {
     let mut file = open_without_following(path)?;
     let mut hasher = Sha256::new();
 
     io::copy(&mut file, &mut hasher)
-        .map_err(|error| failure(path, "could not be read to the end", &error))?;
+        .map_err(|error| Refusal::at(path, "could not be read to the end", &error))?;
 
     Ok(Digest::of(DigestAlgorithm::Sha256, &hasher.finalize()))
 }
@@ -229,19 +301,24 @@ fn sha256_of(path: &Path) -> Result<Digest, CollectionError> {
 /// `O_NOFOLLOW` refuses the symlink, `O_NONBLOCK` refuses to wait on anything that would
 /// have made the open itself hang, and the type is checked again on the descriptor rather
 /// than on the path, because only the descriptor is the thing being read.
-fn open_without_following(path: &Path) -> Result<fs::File, CollectionError> {
+///
+/// **Public so that second check is reachable from a test.** Inside a walk it can only fire in
+/// the window between the `symlink_metadata` that said "regular file" and this open, which a test
+/// would have to win a race to arrange. Called directly on a directory it is one line, and what
+/// it pins is that the descriptor is what gets believed.
+pub fn open_without_following(path: &Path) -> Result<fs::File, Refusal> {
     let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .map_err(|error| failure(path, "could not be opened", &error))?;
+        .map_err(|error| Refusal::at(path, "could not be opened", &error))?;
 
     let opened = file
         .metadata()
-        .map_err(|error| failure(path, "could not be described once open", &error))?;
+        .map_err(|error| Refusal::at(path, "could not be described once open", &error))?;
 
     if !opened.file_type().is_file() {
-        return Err(CollectionError::new(format!(
+        return Err(Refusal::Unreadable(format!(
             "{} stopped being a regular file while it was being read, so no digest of it is honest",
             path.display()
         )));
@@ -274,23 +351,29 @@ fn kind_of(metadata: &Metadata) -> FileKind {
     }
 }
 
-fn size_of(kind: FileKind, metadata: &Metadata) -> Result<Option<ByteSize>, CollectionError> {
+fn size_of(kind: FileKind, metadata: &Metadata) -> Result<Option<ByteSize>, Refusal> {
     if !kind.has_content() {
         return Ok(None);
     }
 
-    Ok(Some(ByteSize::new(metadata.len(), "file size")?))
+    ByteSize::new(metadata.len(), "file size")
+        .map(Some)
+        .map_err(|error| Refusal::Unreadable(error.to_string()))
 }
 
-fn link_target_of(kind: FileKind, path: &Path) -> Result<Option<String>, CollectionError> {
+fn link_target_of(kind: FileKind, path: &Path) -> Result<Option<String>, Refusal> {
     if kind != FileKind::Symlink {
         return Ok(None);
     }
 
     let target =
-        fs::read_link(path).map_err(|error| failure(path, "could not be resolved", &error))?;
+        fs::read_link(path).map_err(|error| Refusal::at(path, "could not be resolved", &error))?;
 
-    Ok(Some(text_of(&target)?))
+    // A target that will not spell is a refusal rather than the end of the walk, unlike a
+    // *path* that will not: the key is the path, so this one has somewhere to be recorded.
+    text_of(&target)
+        .map(Some)
+        .map_err(|error| Refusal::Unreadable(error.to_string()))
 }
 
 /// A path as text, or a refusal.
@@ -325,28 +408,39 @@ fn stamp(
     nanoseconds: i64,
     kind: &str,
     path: &Path,
-) -> Result<NanosecondsSinceEpoch, CollectionError> {
+) -> Result<NanosecondsSinceEpoch, Refusal> {
     NanosecondsSinceEpoch::of(seconds, nanoseconds).ok_or_else(|| {
-        CollectionError::new(format!(
+        Refusal::Unreadable(format!(
             "{kind} of {seconds}s and {nanoseconds}ns on {} is too far from the epoch to record",
             path.display()
         ))
     })
 }
 
-fn absolute(path: &Path) -> Result<AbsolutePath, CollectionError> {
-    AbsolutePath::new(text_of(path)?, "walked path")
+/// The path as the document keys it, or nothing when it will not decode.
+///
+/// An `Option` rather than a failure, because the caller reports the undecodable name in a
+/// list of its own and carries on. `AbsolutePath::new` cannot fail for a walked path: the
+/// walk starts at an absolute root and only ever appends to it.
+fn absolute(path: &Path) -> Option<AbsolutePath> {
+    AbsolutePath::new(path.to_str()?, "walked path").ok()
 }
 
-fn count(value: u64, kind: &str, path: &Path) -> Result<i64, CollectionError> {
+/// A number the kernel reports as `u64`, as the `i64` the document holds.
+///
+/// **A width boundary rather than a guess about the host.** The document's integers are `i64`
+/// because JSON has no unsigned type and rastro records no floats, so the top half of a `u64` has
+/// no representation and something has to happen at the edge. Refusing the entry is the only
+/// answer that does not lie: truncating would put a different inode number in the fingerprint
+/// than the one on the box.
+///
+/// Public and named for what it produces, because no filesystem allocates an inode near 2^63 —
+/// so the refusal is reachable from a test and from nowhere else.
+pub fn as_document_integer(value: u64, kind: &str, path: &Path) -> Result<i64, Refusal> {
     i64::try_from(value).map_err(|_| {
-        CollectionError::new(format!(
+        Refusal::Unreadable(format!(
             "{kind} of {value} on {} is too large to record as an integer",
             path.display()
         ))
     })
-}
-
-fn failure(path: &Path, what_happened: &str, error: &io::Error) -> CollectionError {
-    CollectionError::new(format!("{} {what_happened}: {error}", path.display()))
 }

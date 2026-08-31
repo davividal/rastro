@@ -23,9 +23,14 @@ use crate::collectors::timers::value_objects::MicrosecondsSinceEpoch;
 #[derive(Debug, Clone, Deserialize)]
 pub struct TimerRow {
     unit: String,
-    /// Empty when the timer starts nothing systemd can name.
+    /// Absent, `null`, or empty when the timer starts nothing systemd can name.
+    ///
+    /// **All three spellings, because systemd uses more than one.** A Debian 12 box writes
+    /// `""`; a GitHub Actions runner writes `null`. Typed as a `String` with `serde(default)`
+    /// this handled the absent case and the empty one and refused the null — and refusing it
+    /// cost the whole facet, on every run of that host, for one timer that starts nothing.
     #[serde(default)]
-    activates: String,
+    activates: Option<String>,
     /// `null`, or absent, for a timer that will not fire again.
     #[serde(default)]
     next: Option<i64>,
@@ -45,7 +50,7 @@ impl TimerRow {
     /// Translates systemd's row into rastro's model.
     pub fn to_timer(&self) -> Result<(UnitName, Timer), CollectionError> {
         let timer = Timer {
-            activates: optional_unit(&self.activates)?,
+            activates: optional_unit(self.activates.as_deref().unwrap_or_default())?,
             next_elapse: self.next.map(MicrosecondsSinceEpoch::new),
             last_trigger: self.last.map(MicrosecondsSinceEpoch::new),
         };
@@ -55,6 +60,9 @@ impl TimerRow {
 }
 
 /// The unit a timer starts, or nothing when systemd named none.
+///
+/// Takes the already-flattened text, so absent, `null` and `""` have converged on one value
+/// before this decides what it means.
 fn optional_unit(activates: &str) -> Result<Option<UnitName>, CollectionError> {
     if activates.is_empty() {
         return Ok(None);

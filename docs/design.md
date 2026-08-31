@@ -66,16 +66,27 @@ invalid output is recorded as `error` and the run continues.
 
 ## Built-in collectors, v1
 
-**Layer 1, filesystem walker.** The largest build item. A native walk over an
-exclusion-based path set: `/etc`, `/usr/local`, `/opt`, `/root`,
-`/var/spool/cron` and the systemd unit directories with full attributes and
-hashing; `/srv` attributes only.
+**Layer 1, filesystem walker.** The largest build item. A native walk over
+**every mount that holds files**, kernel interfaces aside: agnostic and complete,
+because an operator cannot enumerate what nobody documented. Each mount is walked
+separately and every walk stops at every mount point, so nothing is walked twice.
+A collector may narrow the trees it owns; nothing may widen them.
 
-Per entry: permissions, uid, gid, size, mtime, ctime, inode, link count, link
-target, file type, device major and minor, ACLs, xattrs, sha256 (skippable per
-tree). Timestamps are nanoseconds since the epoch, and there is no atime, since
-reading a file to hash it moves that file's own. Symlinks are first-class, since
-an enablement symlink under `*.wants/` is exactly what this tool exists to catch.
+Per entry, read: file type, permissions, uid, gid, size, mtime, ctime, inode,
+link count, link target, device major and minor. Timestamps are nanoseconds since
+the epoch, and there is no atime. Symlinks are first-class, since an enablement
+symlink under `*.wants/` is exactly what this tool exists to catch.
+
+Per entry, **recorded**: one digest of those attributes, which is what the default
+view carries and answers the question a fingerprint is taken to answer — did
+anything about this path change. `--detail` records all of them instead, and has to
+be asked for at the time. ACLs and xattrs are still owed.
+
+**Nothing is content-hashed.** Hashing every regular file read 84 GB on a
+production host without finishing, and stat detects a change at any path anyway
+because ctime has no userspace setter. Content hashing returns as an opt-in
+collector over trees the operator names. See
+[docs/decisions.md](decisions.md#metadata-everywhere-content-nowhere-by-default).
 
 **Layer 2, the fixed runtime list.** Processes, listening sockets, established
 connections, systemd units and timers, kernel modules, runtime sysctl, the
@@ -112,8 +123,14 @@ and the two are separate so they can disagree.
 ## Configuration
 
 Optional, and it can only narrow a run. Exclusions only, so a config can never
-hide a state surface the operator did not know to ask for. Reference:
-[config.md](config.md).
+hide a state surface the operator did not know to ask for.
+
+Two things narrow: which collectors run, and how much of a tree the filesystem
+walk reads — `metadata_only`, `churns`, `sealed`, and no `hashed`, because that
+would widen it. An operator's rule over a tree beats a collector's claim to the
+same tree, since a claim is rastro's reckoning from the outside and the operator
+knows their box. Every rule is declared in the `invocation` facet with who asked
+for it. Reference: [config.md](config.md).
 
 ## Output format, the real contract
 
@@ -165,24 +182,44 @@ That is the whole reason `diff(1)`, `dyff` and `jd` are sufficient.
 
 ### Streams
 
-stdout carries the fingerprint and nothing else. Errors and warnings go to
-stderr.
+The document goes to a file by default, `./rastro-<host>-<UTC>.json`, created
+`0600`. `-o <path>` names another, `-o -` sends it to stdout. A megabyte-scale
+document on a terminal punishes the first run, and a run killed before it printed
+produced nothing at all.
+
+stdout carries the fingerprint and nothing else — with the document in a file,
+nothing at all. Errors, warnings, the live counter and `--debug` timings go to
+stderr, and the counter only when stderr is a terminal, so a redirected clean run
+still says nothing.
+
+**Keep fingerprints off the walked tree.** A document written anywhere on real disk
+is an entry of the next run's walk. rastro leaves out the file it is itself
+writing, and declares that in the `invocation` facet, but a *timestamped* default
+name means each run leaves a new file for the next one to find. Write to a fixed
+path with `-o`, to a tmpfs, or off the box.
 
 ## Security posture
 
-Of the following, only the `unsafe`-free build and the absence of network I/O
-are true today. Redaction and the output-file mode arrive with the collectors
-that need them; the root requirement arrives with Layer 1.
+Of the following, the `unsafe`-free build, the absence of network I/O and the
+output file's mode are true today. Redaction arrives with the collectors that need
+it; the root requirement arrives with Layer 1.
 
 - **Requires root.** It reads `/etc`, user crontabs and firewall state.
   Degrading gracefully without root is roadmap.
-- **Output file created `0600`.**
+- **Output file created `0600`**, at creation rather than by a later `chmod`, so
+  there is no window in which a document naming every path on the box is
+  world-readable. Written to a temporary sibling and renamed, so a run that died
+  half way leaves no half document to be diffed.
 - **Redaction on by default**, `--raw` opts out with a warning. It is an option,
   not a guarantee: marking fields `sensitive` is the collector author's job.
 - **No network I/O in v1.** A simplification, not policy — a firewall collector
   verifying rules from outside the ruleset dump would be legitimate.
 
 ## Verification
+
+Collectors run on a pool of four, since most of a run is spent waiting for a tool
+to answer. The filesystem walk runs alone afterwards, because it is the only
+collector that could observe another one's side effects and report them once.
 
 **The determinism harness is the flagship test:** a full run twice in an idle
 container, diffable sections byte-identical. It catches map-order leaks and

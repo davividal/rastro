@@ -400,3 +400,77 @@ fn the_collector_stops_at_a_boundary_that_shares_its_device() {
         "the rest of the tree is: {paths:?}"
     );
 }
+
+/// The shipped table, over a scratch root the test owns.
+fn metadata_only() -> WalkPolicy {
+    WalkPolicy::new(vec![PolicyRule::shipped(
+        WalkedTree::new("/").expect("a legal tree"),
+        ContentPolicy::MetadataOnly,
+    )])
+    .expect("a legal table")
+}
+
+fn absolute(path: &std::path::Path) -> AbsolutePath {
+    AbsolutePath::new(path.to_str().expect("a UTF-8 scratch path"), "walked root")
+        .expect("a legal path")
+}
+
+#[test]
+fn a_walk_leaves_out_the_document_it_is_writing() {
+    // Arrange: run one's output sitting in the tree run two walks. Asserted over a scratch root
+    // rather than through the binary over the whole host, which cost over two minutes on a
+    // coverage-instrumented runner for the same claim — and this states it more precisely,
+    // because the root is the only thing walked and the omission is the only difference.
+    let root = scratch_tree("scope-omits-the-output", &[]);
+    write(&root, "fingerprint.json", "{}\n");
+    write(&root, "kept.conf", "a setting\n");
+    let output = root.join("fingerprint.json");
+
+    // Act
+    let observed = FilesystemCollector::walking(vec![absolute(&root)], metadata_only())
+        .writing_to(Some(output.clone()))
+        .collect()
+        .expect("a readable scratch tree");
+
+    // Assert: the document is gone from the walk and its neighbour is not.
+    let walked = keys_of(&observed);
+    assert!(
+        !walked.contains(&output.to_string_lossy().into_owned()),
+        "the walk reported the document being written: {walked:?}"
+    );
+    assert!(
+        walked.contains(&root.join("kept.conf").to_string_lossy().into_owned()),
+        "the omission took a neighbour with it: {walked:?}"
+    );
+}
+
+#[test]
+fn a_walk_leaves_out_an_output_path_reached_through_a_symlinked_directory() {
+    // Arrange: `std::path::absolute` is lexical, so a path through a symlinked directory keeps
+    // the symlink — while the walk never follows one and meets the file under the real
+    // directory. The two spellings have to be reconciled before the comparison, or the previous
+    // document lands back in the next run.
+    let root = scratch_tree("scope-omits-through-a-symlink", &["real"]);
+    write(&root, "real/fingerprint.json", "{}\n");
+    std::os::unix::fs::symlink(root.join("real"), root.join("linked")).expect("a symlink");
+
+    // Act: told the path as an operator would have typed it, through the symlink.
+    let observed = FilesystemCollector::walking(vec![absolute(&root)], metadata_only())
+        .writing_to(Some(rastro::output::as_walked(
+            &root.join("linked/fingerprint.json"),
+        )))
+        .collect()
+        .expect("a readable scratch tree");
+
+    // Assert: omitted under the path the walk actually met it by.
+    let met_as = root
+        .join("real")
+        .canonicalize()
+        .expect("a real directory")
+        .join("fingerprint.json");
+    assert!(
+        !keys_of(&observed).contains(&met_as.to_string_lossy().into_owned()),
+        "got {:?}",
+        keys_of(&observed)
+    );
+}

@@ -29,12 +29,16 @@ shift 2
 # from an installed one, since the bytes are identical and the kernel vouches for
 # both. Without the flag every run would report one added and one removed file
 # that is nothing but the tool's own footprint.
+#
+# -o - because rastro writes to a file by default now. Without it the document
+# would land in the remote working directory, which is root's home on most boxes
+# and is walked, and this side would receive nothing at all.
 remote_program='set -eu
 staged=$(mktemp /var/tmp/rastro.XXXXXXXX)
 trap "rm -f $staged" EXIT HUP INT TERM
 cat >"$staged"
 chmod 700 "$staged"
-'"${RASTRO_SSH_SUDO:+sudo -n }"'"$staged" --staged'
+'"${RASTRO_SSH_SUDO:+sudo -n }"'"$staged" --staged -o -'
 
 # -T because a pty would translate LF to CRLF and corrupt every byte of a format
 # whose whole contract is byte-identical output. It comes *after* the caller's

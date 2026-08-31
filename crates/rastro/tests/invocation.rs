@@ -56,8 +56,13 @@ fn the_invocation_facet_carries_the_effective_walk_table() {
             )],
         )
         .expect("a tree no shipped rule names");
-    let collector =
-        InvocationCollector::new(Observation::null(), Observation::from(&claimed), None);
+    let collector = InvocationCollector::new(
+        Observation::null(),
+        Observation::from(&claimed),
+        None,
+        Ok(0),
+        None,
+    );
 
     // Act
     let reported = collector
@@ -79,6 +84,8 @@ fn the_invocation_facet_names_the_binary_the_walk_left_out() {
         Observation::null(),
         Observation::null(),
         Some("/var/tmp/rastro.zDeJEVKF".to_owned()),
+        Ok(0),
+        None,
     );
 
     // Act
@@ -98,7 +105,8 @@ fn the_invocation_facet_names_the_binary_the_walk_left_out() {
 #[test]
 fn the_invocation_facet_reports_no_observer_when_the_kernel_would_not_say() {
     // Arrange
-    let collector = InvocationCollector::new(Observation::null(), Observation::null(), None);
+    let collector =
+        InvocationCollector::new(Observation::null(), Observation::null(), None, Ok(0), None);
 
     // Act
     let reported = collector
@@ -108,4 +116,46 @@ fn the_invocation_facet_reports_no_observer_when_the_kernel_would_not_say() {
     // Assert: null rather than absent, because the key is part of the facet's shape, and a
     // run that could not tell which file it is omits nothing from the walk either.
     assert!(is_null(&field(&reported, "observer")));
+}
+
+#[test]
+fn the_invocation_facet_reports_the_clock_reading_it_was_given() {
+    // Arrange: the clock is read once, in the composition root, because the output filename
+    // carries the same instant. Two readings could straddle a second and put a document in a
+    // file whose name disagrees with its own `started_at`.
+    let collector = InvocationCollector::new(
+        Observation::null(),
+        Observation::null(),
+        None,
+        Ok(1_786_632_455),
+        None,
+    );
+
+    // Act
+    let observed = collector.collect().expect("the run describes itself");
+
+    // Assert
+    assert_eq!(
+        support::observation::integer(&field(&observed, "started_at")),
+        1_786_632_455
+    );
+}
+
+#[test]
+fn a_clock_set_before_1970_fails_the_invocation_facet_rather_than_the_run() {
+    // Arrange: carried as a `Result` rather than as a `SystemTime`, so the failure a host can
+    // really produce still belongs to this facet instead of ending the run.
+    let collector = InvocationCollector::new(
+        Observation::null(),
+        Observation::null(),
+        None,
+        seconds_since_epoch(UNIX_EPOCH - Duration::from_secs(1)),
+        None,
+    );
+
+    // Act
+    let refused = collector.collect();
+
+    // Assert
+    assert!(refused.is_err());
 }

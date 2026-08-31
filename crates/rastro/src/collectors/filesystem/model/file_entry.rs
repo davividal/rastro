@@ -3,7 +3,8 @@
 use rastro_collector::{AbsolutePath, ByteSize, Observation};
 
 use crate::collectors::filesystem::value_objects::{
-    ContentPolicy, DeviceNumber, Digest, FileKind, FileMode, NanosecondsSinceEpoch,
+    CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, FileKind, FileMode,
+    MetadataDigest, NanosecondsSinceEpoch,
 };
 
 /// What the walk recorded about one path.
@@ -59,28 +60,79 @@ pub struct FileEntry {
     pub reading: ContentPolicy,
 }
 
-impl From<&FileEntry> for Observation {
-    fn from(entry: &FileEntry) -> Self {
+impl FileEntry {
+    /// This entry as the document records it.
+    pub fn observation(&self, detail: Detail) -> Observation {
+        match detail {
+            Detail::Summary => Observation::from(&self.metadata_digest()),
+            Detail::Full => self.every_attribute(),
+        }
+    }
+
+    /// A digest over exactly the attributes the diffable view would have kept.
+    ///
+    /// **Volatility decides what goes in, and it has to.** A digest over a directory's derived
+    /// stamps would move whenever a child appeared, and one over a churning tree's size and
+    /// inode would move on every run — which would end the byte-identical guarantee that the
+    /// whole format rests on, at the one facet that dominates the document.
+    ///
+    /// The policy the entry was read under is deliberately *not* in here. It is rastro's
+    /// configuration rather than the box's state, so folding it in would report a changed
+    /// config as a change to every file on the host. The effective table in the `invocation`
+    /// facet is where a reader learns which rule applied.
+    pub fn metadata_digest(&self) -> MetadataDigest {
+        let derived = self.stamps_are_derived();
+        let churns = self.churns();
+
+        CanonicalBytes::new()
+            .text(self.kind.as_str())
+            .text(&self.mode.as_str())
+            .integer(self.owner)
+            .integer(self.group)
+            .maybe_integer(churns, self.size.as_ref().map(ByteSize::bytes))
+            .maybe_integer(derived || churns, Some(self.modified.as_i64()))
+            .maybe_integer(derived || churns, Some(self.changed.as_i64()))
+            .maybe_integer(churns, Some(self.inode))
+            .maybe_integer(derived, Some(self.link_count))
+            .maybe_text(false, self.link_target.as_deref())
+            .maybe_integer(false, self.device.as_ref().map(DeviceNumber::major))
+            .maybe_integer(false, self.device.as_ref().map(DeviceNumber::minor))
+            .maybe_text(false, self.digest.as_ref().map(Digest::as_str))
+            .digest()
+    }
+
+    /// Whether this entry's stamps and link count summarise what is inside it rather than
+    /// describing it, in which case the walk reports the change as the child's own entry.
+    fn stamps_are_derived(&self) -> bool {
+        self.kind.summarises_what_is_inside_it()
+    }
+
+    /// Whether the tree this entry was read under was declared to move on its own.
+    fn churns(&self) -> bool {
+        self.reading.churns()
+    }
+
+    fn every_attribute(&self) -> Observation {
         // Two reasons a value here is volatile, and they are different facts: a directory
         // summarises children the walk reports one by one, and a claimed tree was declared
         // to move on its own. A stamp on a directory in a churning tree is both.
-        let derived = entry.kind.summarises_what_is_inside_it();
-        let churns = entry.reading.churns();
+        let derived = self.stamps_are_derived();
+        let churns = self.churns();
         let volatile_if = |condition: bool, value: Observation| match condition {
             true => value.volatile(),
             false => value,
         };
 
         Observation::object([
-            ("kind", Observation::text(entry.kind.as_str())),
-            ("mode", Observation::text(entry.mode.as_str())),
-            ("owner", Observation::integer(entry.owner)),
-            ("group", Observation::integer(entry.group)),
+            ("kind", Observation::text(self.kind.as_str())),
+            ("mode", Observation::text(self.mode.as_str())),
+            ("owner", Observation::integer(self.owner)),
+            ("group", Observation::integer(self.group)),
             (
                 "size",
                 volatile_if(
                     churns,
-                    match entry.size {
+                    match self.size {
                         Some(size) => Observation::integer(size.bytes()),
                         None => Observation::null(),
                     },
@@ -88,37 +140,37 @@ impl From<&FileEntry> for Observation {
             ),
             (
                 "modified_nanoseconds_since_epoch",
-                volatile_if(derived || churns, Observation::from(&entry.modified)),
+                volatile_if(derived || churns, Observation::from(&self.modified)),
             ),
             (
                 "changed_nanoseconds_since_epoch",
-                volatile_if(derived || churns, Observation::from(&entry.changed)),
+                volatile_if(derived || churns, Observation::from(&self.changed)),
             ),
             (
                 "inode",
-                volatile_if(churns, Observation::integer(entry.inode)),
+                volatile_if(churns, Observation::integer(self.inode)),
             ),
             (
                 "link_count",
-                volatile_if(derived, Observation::integer(entry.link_count)),
+                volatile_if(derived, Observation::integer(self.link_count)),
             ),
             (
                 "link_target",
-                match &entry.link_target {
+                match &self.link_target {
                     Some(target) => Observation::text(target.as_str()),
                     None => Observation::null(),
                 },
             ),
             (
                 "device",
-                match &entry.device {
+                match &self.device {
                     Some(device) => Observation::from(device),
                     None => Observation::null(),
                 },
             ),
             (
                 "digest",
-                match &entry.digest {
+                match &self.digest {
                     Some(digest) => Observation::object([
                         ("algorithm", Observation::text(digest.algorithm().as_str())),
                         ("value", Observation::text(digest.as_str())),

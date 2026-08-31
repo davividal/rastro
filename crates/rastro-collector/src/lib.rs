@@ -72,12 +72,37 @@ pub struct CollectionError {
     message: String,
 }
 
+/// Whether a collector may run while others are running.
+///
+/// **The default is `Shared`, and the exception earns itself.** Almost every collector reads
+/// one thing — a file under `/proc`, the output of one tool — and cannot notice that anything
+/// else is happening. The filesystem walk can: it observes every mount, so a temporary file
+/// another collector's subprocess created and deleted while the walk was in flight would be
+/// recorded in one run and not the next. That is the byte-identical contract, gone, for a
+/// second saved.
+///
+/// Running collectors one at a time made that impossible by accident. Running them together
+/// makes it possible, so a collector that cannot tolerate company now says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Concurrency {
+    /// Runs alongside other collectors.
+    Shared,
+    /// Runs alone, with nothing else in flight.
+    Exclusive,
+}
+
 /// One source of state, built in or external.
 ///
 /// A collector answers two questions and never mentions facets: assembling a
 /// facet from its answers is the use case's job. That keeps every adapter free
 /// of the document model it feeds.
-pub trait Collector {
+///
+/// **`Send + Sync`, because collectors run concurrently.** Most of a run is spent waiting for
+/// subprocesses to answer — measured at 83% of the wall clock on a reference box — and waiting
+/// in parallel is the whole of the remaining win. In practice the bound costs an author
+/// nothing: every built-in collector satisfied it already, since each holds validated owned
+/// values and no interior mutability.
+pub trait Collector: Send + Sync {
     /// The state surface this collector reports on.
     fn name(&self) -> &FacetName;
 
@@ -112,6 +137,14 @@ pub trait Collector {
     /// must not assume its subject is there.
     fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
         Vec::new()
+    }
+
+    /// Whether this collector tolerates others running at the same time.
+    ///
+    /// `Shared` for almost everything, which is why it defaults. See [`Concurrency`] for the
+    /// one reason to say otherwise.
+    fn concurrency(&self) -> Concurrency {
+        Concurrency::Shared
     }
 }
 

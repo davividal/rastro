@@ -11,10 +11,11 @@ use crate::collectors::filesystem::value_objects::ContentPolicy;
 /// be covered. That belongs to [`WalkPolicy`](super::WalkPolicy), which is the only type
 /// able to see the other rules.
 ///
-/// `claimant` is the facet that asked, and it is never absent: rastro's own shipped rules
-/// name the `filesystem` facet. Without it a reader of a tree with no digests cannot tell a
-/// shipped decision from a collector's claim, and the one thing a sealed tree owes them is
-/// who removed it.
+/// `claimant` is who asked, and it is never absent: rastro's own shipped rules name the
+/// `filesystem` facet, a collector's claim names that collector, and an operator's config names
+/// `config`. Without it a reader of a tree with no entries cannot tell a shipped decision from
+/// a collector's claim from their own colleague's config file, and the one thing a sealed tree
+/// owes them is who removed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyRule {
     pub tree: WalkedTree,
@@ -33,6 +34,19 @@ impl PolicyRule {
             tree,
             content,
             claimant: FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
+        }
+    }
+
+    /// A rule the operator wrote, attributed to their config file.
+    ///
+    /// `config` is not a facet, and no collector may be called that. It is spelled as a
+    /// claimant anyway because the question the table answers is "who decided this", and for
+    /// these rules the honest answer is the operator rather than anything rastro observed.
+    pub fn configured(tree: WalkedTree, content: ContentPolicy) -> Self {
+        Self {
+            tree,
+            content,
+            claimant: FacetName::new("config").expect("`config` is a legal facet name"),
         }
     }
 }

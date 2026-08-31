@@ -26,6 +26,13 @@ serde_json = "1"
 sha2 = "0.10"
 subprocess = "1"
 thiserror = "2"
+# The entry digest, and pinned because it *is* part of the output format: changing the
+# hash invalidates every archived fingerprint. XXH3 rather than sha2 or blake3 because the
+# inputs are ~80 bytes each and tens of thousands of them, where blake3's initialisation
+# costs more than its throughput saves and XXH3 is the one built for the case. Not
+# cryptographic, and it does not need to be: the digest covers attributes an attacker
+# already controls, and each one is only ever compared with the same path's on another run.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [profile.release]
 strip = true

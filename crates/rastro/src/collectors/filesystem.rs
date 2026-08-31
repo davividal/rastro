@@ -25,19 +25,28 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{FileEntry, FilesystemInventory, PolicyRule, WalkPolicy};
-pub use source::{FileTree, MountedFilesystems, WalkBoundaries};
+pub use model::{
+    FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, UnspellablePath,
+    WalkPolicy, is_absence,
+};
+pub use source::{
+    FileTree, MountedFilesystems, WalkBoundaries, as_document_integer, open_without_following,
+};
 pub use value_objects::{
-    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
+    CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
+    FileMode, MetadataDigest, NanosecondsSinceEpoch,
 };
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
     AbsolutePath, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, Concurrency, FacetName, Observation, Presence,
 };
+
+use crate::progress::WalkProgress;
 
 /// Reports every entry on every filesystem that holds files.
 pub struct FilesystemCollector {
@@ -46,6 +55,9 @@ pub struct FilesystemCollector {
     walked: Option<WalkBoundaries>,
     policy: Result<WalkPolicy, CollectionError>,
     observer: Option<PathBuf>,
+    output: Option<PathBuf>,
+    detail: Detail,
+    progress: Option<Arc<dyn WalkProgress>>,
 }
 
 impl FilesystemCollector {
@@ -142,7 +154,51 @@ impl FilesystemCollector {
             walked,
             policy,
             observer,
+            output: None,
+            detail: Detail::Summary,
+            progress: None,
         }
+    }
+
+    /// The same collector, recording every attribute rather than one digest of them.
+    ///
+    /// A builder rather than a sixth constructor parameter: the detail is a rendering
+    /// decision the five ways of constructing this collector all share, and threading it
+    /// through each of them would say nothing about any of them.
+    pub fn in_detail(mut self, detail: Detail) -> Self {
+        self.detail = detail;
+
+        self
+    }
+
+    /// The same collector, leaving out the document this run is about to write.
+    ///
+    /// Passed in rather than resolved here, because the `invocation` facet declares the same
+    /// path and the two must not disagree. `None` when the document is going to stdout, where
+    /// there is no file to leave out.
+    pub fn writing_to(mut self, output: Option<PathBuf>) -> Self {
+        self.output = output;
+
+        self
+    }
+
+    /// The same collector, counting what the walk does for whoever is watching.
+    pub fn reporting_to(mut self, progress: Arc<dyn WalkProgress>) -> Self {
+        self.progress = Some(progress);
+
+        self
+    }
+
+    /// rastro's own footprint: the staged binary and the document being written.
+    ///
+    /// Both arrive already resolved to the path the walk will meet them under, because the
+    /// caller declares the same paths in the `invocation` facet and the two must not disagree.
+    /// Resolving here as well would be a second answer to one question.
+    fn omitted(&self) -> Vec<PathBuf> {
+        [self.observer.clone(), self.output.clone()]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// The mount points to walk, asked of the kernel unless the caller named them.
@@ -161,6 +217,22 @@ impl Default for FilesystemCollector {
 }
 
 impl Collector for FilesystemCollector {
+    /// Alone, with nothing else in flight.
+    ///
+    /// **The one collector that can notice the others.** It observes every mount, so a
+    /// temporary file another collector's subprocess created and deleted while this walked
+    /// would be recorded in one run and not the next — and two runs of an unchanged host
+    /// being byte-identical is the contract the whole format rests on. Running collectors one
+    /// at a time made that impossible by accident; running them together makes it possible,
+    /// so this says so.
+    ///
+    /// It costs almost nothing. The walk measured 0.145 s of a 0.839 s run on the reference
+    /// box, against 0.69 s of collectors waiting on subprocesses, so overlapping *those* is
+    /// where the time was and this gives none of it back.
+    fn concurrency(&self) -> Concurrency {
+        Concurrency::Exclusive
+    }
+
     fn name(&self) -> &FacetName {
         &self.name
     }
@@ -197,16 +269,16 @@ impl Collector for FilesystemCollector {
             .map(|root| {
                 let tree = FileTree::at(Path::new(root.as_str())).stopping_at(&boundaries);
 
-                match &self.observer {
-                    Some(binary) => tree.omitting(binary),
+                let tree = tree.omitting(&self.omitted());
+
+                match &self.progress {
+                    Some(progress) => tree.reporting_to(Arc::clone(progress)),
                     None => tree,
                 }
                 .walk(policy)
             })
             .collect::<Result<Vec<FilesystemInventory>, CollectionError>>()?;
 
-        Ok(Observation::from(&FilesystemInventory::merged(
-            inventories,
-        )?))
+        Ok(FilesystemInventory::merged(inventories)?.observation(self.detail))
     }
 }

@@ -5,17 +5,23 @@
 //! reading it works) are exactly the ones a mock would have to invent.
 //! `CARGO_TARGET_TMPDIR` is cargo's own per-target scratch directory, so this needs no
 //! dependency.
+//!
+//! The rendering assertions here ask for `Detail::Full`, because what they are about is the
+//! attributes themselves. What the default view records per path is one digest of them, and
+//! that is `filesystem_digest.rs`.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 mod support;
 
 use rastro::collectors::filesystem::{
-    ContentPolicy, DigestAlgorithm, FileKind, FileTree, PolicyRule, WalkPolicy,
+    ContentPolicy, Detail, DigestAlgorithm, FileKind, FileTree, PolicyRule, UnspellablePath,
+    WalkPolicy,
 };
 use rastro_collector::WalkedTree;
 use rastro_fingerprint::{Observation, View};
@@ -71,7 +77,7 @@ fn walked_omitting(
     observer: &Path,
 ) -> Vec<(String, rastro::collectors::filesystem::FileEntry)> {
     FileTree::at(root)
-        .omitting(observer)
+        .omitting(&[observer.to_path_buf()])
         .walk(policy)
         .expect("a readable tree")
         .entries()
@@ -277,7 +283,8 @@ fn an_entry_in_a_churning_tree_omits_the_attributes_that_move() {
 
     // Act
     let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Churns));
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+    let rendered = entry_at(&entries, "etc/greeting")
+        .observation(Detail::Full)
         .in_view(View::Diffable)
         .expect("an entry is not volatile as a whole");
 
@@ -285,7 +292,7 @@ fn an_entry_in_a_churning_tree_omits_the_attributes_that_move() {
     // operator can act on in a tree that writes to itself. Everything that moves on its own
     // leaves the diffable view rather than the document.
     assert_eq!(text(&field(&rendered, "kind")), "regular");
-    assert_eq!(text(&field(&rendered, "mode")), "0644");
+    assert_eq!(text(&field(&rendered, "mode")), "0640");
     assert!(keys_of(&rendered).contains(&"owner".to_owned()));
     assert!(keys_of(&rendered).contains(&"group".to_owned()));
     for moving in [
@@ -308,7 +315,8 @@ fn an_entry_in_a_churning_tree_keeps_everything_in_the_complete_view() {
 
     // Act
     let entries = walked(&root, &reading_under(&root, "etc", ContentPolicy::Churns));
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+    let rendered = entry_at(&entries, "etc/greeting")
+        .observation(Detail::Full)
         .in_view(View::Complete)
         .expect("an entry is not volatile as a whole");
 
@@ -503,25 +511,50 @@ fn walk_records_a_socket_and_a_fifo_as_having_no_content() {
 /// outright, so the case can only be arranged where it can actually happen.
 #[cfg(target_os = "linux")]
 #[test]
-fn walk_refuses_a_path_that_is_not_utf8_rather_than_substituting() {
+fn walk_records_a_path_that_will_not_decode_and_keeps_going() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
-    // Arrange
-    let root = scratch_tree("walk_refuses_a_non_utf8_path", &[]);
+    // Arrange: one byte, and until this test was written it cost the whole facet. That is not
+    // hypothetical — the fixture this test used to leave behind sat in the target directory,
+    // which a walk of the real host covers, and it refused the `filesystem` facet of every
+    // later run in the suite. An archive extracted with a mojibake name does the same to a
+    // real server, and nothing in the document said why.
+    let root = scratch_tree("walk_records_a_non_utf8_path", &[]);
+    write(&root, "readable.conf", HELLO);
     fs::write(root.join(OsStr::from_bytes(b"\xff")), HELLO).expect("a writable tree");
 
     // Act
-    let refused = FileTree::at(&root).walk(&hashing_everything());
+    let inventory = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("one unspellable name does not cost the facet");
+    let rendered = inventory.observation(Detail::Summary);
+    let _ = fs::remove_dir_all(&root);
 
-    // Assert: substituting `U+FFFD` would put a path in the document that is not on the
-    // box and that nobody can act on, which is the refusal `canonical_tool` already makes.
-    let message = refused
-        .expect_err("a path that will not decode")
-        .to_string();
+    // Assert: reported, and reported exactly. Substituting `U+FFFD` would put a path in the
+    // document that is not on the box, so the bytes are given as bytes and the directory that
+    // holds them as the text it is — enough to go and look, without claiming a name.
+    let refused = inventory.unspellable();
+    assert_eq!(refused.len(), 1, "got {refused:?}");
+    assert_eq!(refused[0].name_bytes, "ff");
+    assert_eq!(
+        refused[0].directory.as_deref(),
+        root.to_str(),
+        "the directory holding it is what makes the report actionable"
+    );
+
+    // And the same fact as the document carries it.
+    let unspellable = field(&rendered, "unspellable");
+    let first = &support::observation::items_of(&unspellable)[0];
+    assert_eq!(text(&field(first, "name_bytes")), "ff");
+
+    // Assert: and the neighbour it used to take down with it is still there.
     assert!(
-        message.contains("not valid UTF-8"),
-        "the refusal should say why, got {message:?}"
+        keys_of(&rendered)
+            .iter()
+            .any(|key| key.ends_with("readable.conf")),
+        "got {:?}",
+        keys_of(&rendered)
     );
 }
 
@@ -532,7 +565,7 @@ fn an_entry_renders_every_field_it_owns() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"));
+    let rendered = entry_at(&entries, "etc/greeting").observation(Detail::Full);
 
     // Assert: an observation object keeps its keys sorted, so this is both the field list
     // and the order two runs are byte-identical in. Adding a field changes this line,
@@ -555,7 +588,7 @@ fn an_entry_renders_every_field_it_owns() {
         ]
     );
     assert_eq!(text(&field(&rendered, "kind")), "regular");
-    assert_eq!(text(&field(&rendered, "mode")), "0644");
+    assert_eq!(text(&field(&rendered, "mode")), "0640");
     assert_eq!(integer(&field(&rendered, "size")), HELLO.len() as i64);
     assert_eq!(
         text(&field(&field(&rendered, "digest"), "value")),
@@ -570,7 +603,7 @@ fn an_entry_renders_what_it_does_not_have_as_null() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc"));
+    let rendered = entry_at(&entries, "etc").observation(Detail::Full);
 
     // Assert: the key stays and the value is null, so a diff of two hosts lines the
     // entries up on the same keys whatever kind each path turned out to be.
@@ -589,7 +622,8 @@ fn an_entry_marks_a_directorys_stamps_and_link_count_volatile() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc"))
+    let rendered = entry_at(&entries, "etc")
+        .observation(Detail::Full)
         .in_view(View::Diffable)
         .expect("an entry is not volatile as a whole");
 
@@ -605,7 +639,7 @@ fn an_entry_marks_a_directorys_stamps_and_link_count_volatile() {
             "a directory's {derived} is derived from its children"
         );
     }
-    assert_eq!(text(&field(&rendered, "mode")), "0755");
+    assert_eq!(text(&field(&rendered, "mode")), "0750");
 }
 
 #[test]
@@ -615,7 +649,8 @@ fn an_entry_keeps_a_directorys_stamps_in_the_complete_view() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc"))
+    let rendered = entry_at(&entries, "etc")
+        .observation(Detail::Full)
         .in_view(View::Complete)
         .expect("an entry is not volatile as a whole");
 
@@ -633,7 +668,8 @@ fn an_entry_keeps_a_regular_files_stamps_and_link_count_in_the_diffable_view() {
     let entries = walked(&root, &hashing_everything());
 
     // Act
-    let rendered = Observation::from(entry_at(&entries, "etc/greeting"))
+    let rendered = entry_at(&entries, "etc/greeting")
+        .observation(Detail::Full)
         .in_view(View::Diffable)
         .expect("an entry is not volatile as a whole");
 
@@ -652,7 +688,7 @@ fn an_entry_renders_a_device_as_its_two_numbers() {
         .expect("a readable device node");
 
     // Act
-    let rendered = Observation::from(&inventory.entries()[0]);
+    let rendered = inventory.entries()[0].observation(Detail::Full);
 
     // Assert: one leaf per number, under the key the kind gives meaning to.
     let device = field(&rendered, "device");
@@ -667,11 +703,10 @@ fn an_inventory_is_keyed_by_path_in_path_order() {
     write(&root, "alpha", HELLO);
 
     // Act
-    let rendered = Observation::from(
-        &FileTree::at(&root)
-            .walk(&hashing_everything())
-            .expect("a readable tree"),
-    );
+    let rendered = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("a readable tree")
+        .observation(Detail::Summary);
 
     // Assert: a path is unique, so keying by it loses nothing and removes the ordering
     // churn a list would carry every time an entry appears or goes.
@@ -688,6 +723,169 @@ fn an_inventory_is_keyed_by_path_in_path_order() {
 }
 
 #[test]
+fn walk_records_an_entry_it_cannot_describe_and_keeps_going() {
+    // Arrange: ext4 stores mtime in 34 bits of seconds, so a stamp past 2262 is storable on
+    // disk yet overflows the i64 nanoseconds the document holds. Today that one file fails
+    // the whole facet, which is the same class of failure a log rotating mid-walk or an
+    // unreadable fuse mount causes on a live host — and the only one of that class a test
+    // can arrange deterministically as root, which is what CI and a real run both are.
+    let root = scratch_tree("walk-undescribable", &[]);
+    write(&root, "readable.conf", HELLO);
+    write(&root, "far-future.stamp", HELLO);
+
+    let stamped = root.join("far-future.stamp");
+    let far_future = SystemTime::UNIX_EPOCH + Duration::from_secs(10_400_000_000);
+    let handle = fs::File::options()
+        .write(true)
+        .open(&stamped)
+        .expect("a writable scratch file");
+    if handle
+        .set_times(fs::FileTimes::new().set_modified(far_future))
+        .is_err()
+        || fs::symlink_metadata(&stamped)
+            .expect("a stat of a file just written")
+            .mtime()
+            < 9_300_000_000
+    {
+        eprintln!("skipped: this filesystem clamped the stamp, so there is nothing to record");
+        return;
+    }
+
+    // Act
+    let inventory = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("one undescribable entry does not fail the walk");
+    let rendered = inventory.observation(Detail::Full);
+
+    // Assert: the entry is its attributes or the reason it has none, never a partial set
+    // pretending to be complete — the facet's own `data`-or-`error` contract, one level down.
+    let refused = field(&rendered, stamped.to_str().expect("a UTF-8 path"));
+    assert!(
+        text(&field(&refused, "error")).contains("too far from the epoch"),
+        "got {refused:?}"
+    );
+    assert!(
+        !keys_of(&refused).contains(&"kind".to_owned()),
+        "got {refused:?}"
+    );
+
+    // Assert: and the rest of the tree is intact, which is the point.
+    let intact = field(
+        &rendered,
+        root.join("readable.conf").to_str().expect("a UTF-8 path"),
+    );
+    assert_eq!(text(&field(&intact, "kind")), "regular");
+    assert_eq!(
+        text(&field(&field(&intact, "digest"), "value")),
+        HELLO_DIGEST
+    );
+}
+
+#[test]
+fn walk_records_a_directory_it_cannot_list_and_keeps_going() {
+    // Arrange: the mirror of the test below. Execute without read is the other half of the pair:
+    // the kernel resolves paths *through* the directory, so its own stat succeeds, and refuses to
+    // enumerate it, so `read_dir` fails with EACCES. That is what an unreadable fuse mount or a
+    // `chmod 711` home directory looks like from a walk.
+    let root = scratch_tree("walk-unlistable", &["closed"]);
+    let closed = root.join("closed");
+    write(&closed, "secret.conf", HELLO);
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o100))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::read_dir(&closed).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and lists it regardless of the mode bits.
+        fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user lists a directory without the read bit");
+        return;
+    }
+
+    // Act
+    let rendered = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("an unlistable directory does not fail the walk")
+        .observation(Detail::Summary);
+
+    fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+
+    // Assert: the directory loses its own entry too, and that is deliberate — a path is its
+    // attributes or the reason it has none. Recording mode and owner beside a failed listing
+    // would read as a complete description of a directory nobody could enumerate.
+    let refused = field(&rendered, closed.to_str().expect("a UTF-8 path"));
+    assert!(
+        text(&field(&refused, "error")).contains("could not be listed"),
+        "got {refused:?}"
+    );
+
+    // Assert: and the walk went on. The sibling is the point.
+    let intact = field(
+        &rendered,
+        root.join("closed")
+            .parent()
+            .expect("the root")
+            .to_str()
+            .expect("a UTF-8 path"),
+    );
+    assert_eq!(text(&intact).len(), 16, "the root itself is described");
+}
+
+#[test]
+fn walk_records_a_child_it_cannot_stat_and_keeps_going() {
+    // Arrange: a directory carrying read but not execute permission. The kernel wants the read
+    // bit to *enumerate* a directory and the execute bit to resolve a path *through* it, so
+    // `read_dir` returns the names inside and `stat` of each one then fails with EACCES. That
+    // is the second way one path can fail to describe itself, and unlike the overflowing stamp
+    // below it is the way that happens on a real host every day.
+    //
+    // It is a recorded refusal rather than an omission because it reproduces at the same path
+    // on every run: a directory rastro cannot see into is a lasting blind spot, and hiding it
+    // from the diffable view would be hiding the gap rather than reporting it.
+    let root = scratch_tree("walk-unstattable", &["closed"]);
+    let closed = root.join("closed");
+    write(&closed, "secret.conf", HELLO);
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o400))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::symlink_metadata(closed.join("secret.conf")).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE`, which ignores the mode bits, so there is nothing
+        // here to refuse. The unprivileged CI runner is where this arm gets exercised.
+        fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user traverses a directory without the execute bit");
+        return;
+    }
+
+    // Act
+    let rendered = FileTree::at(&root)
+        .walk(&hashing_everything())
+        .expect("an unstattable child does not fail the walk")
+        .observation(Detail::Summary);
+
+    // Reopened before the assertions, so a failing one still leaves a removable scratch tree.
+    fs::set_permissions(&closed, reopened).expect("a scratch directory this user owns");
+
+    // Assert: the child is the reason it has no attributes.
+    let refused = field(
+        &rendered,
+        closed.join("secret.conf").to_str().expect("a UTF-8 path"),
+    );
+    assert!(
+        text(&field(&refused, "error")).contains("could not be read"),
+        "got {refused:?}"
+    );
+
+    // Assert: and the directory itself is described, because its own stat went through the
+    // parent, which is traversable. A description beats a refusal, one path at a time.
+    let listed = field(&rendered, closed.to_str().expect("a UTF-8 path"));
+    assert_eq!(
+        text(&listed).len(),
+        16,
+        "the directory is its own metadata digest rather than a refusal, got {listed:?}"
+    );
+}
+
+#[test]
 fn walk_refuses_a_root_that_is_not_there() {
     // Act
     let refused = FileTree::at(Path::new("/rastro-no-such-root")).walk(&hashing_everything());
@@ -695,4 +893,64 @@ fn walk_refuses_a_root_that_is_not_there() {
     // Assert: a walk that cannot start is a failure, not an empty tree. An empty
     // inventory would read as a host with no files on it.
     assert!(refused.is_err());
+}
+
+#[test]
+fn an_entry_renders_a_block_device_as_its_two_numbers() {
+    // Arrange: the one `FileKind` variant no other test produced, so the arm that classifies it
+    // was never executed. A block device is a real thing to find on a walked host — every disk
+    // is one — and `st_rdev` is the only content it has.
+    //
+    // Found rather than created: `mknod` needs root, and the coverage that matters is measured
+    // on an unprivileged runner. An `lstat` of one needs no privilege at all.
+    let Some(device) = std::fs::read_dir("/dev")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .metadata()
+                .is_ok_and(|at| std::os::unix::fs::FileTypeExt::is_block_device(&at.file_type()))
+        })
+    else {
+        eprintln!("skipped: this host exposes no block device under /dev");
+        return;
+    };
+
+    // Act
+    let inventory = FileTree::at(&device.path())
+        .walk(&hashing_everything())
+        .expect("a block device can be stat'd without privilege");
+    let entry = &inventory.entries()[0];
+
+    // Assert: classified as what it is, and carrying the numbers rather than a digest — there
+    // is no content to read, and reading one would mean reading the disk.
+    assert_eq!(entry.kind, FileKind::BlockDevice);
+    assert!(entry.digest.is_none(), "a device node has no content");
+    assert!(entry.size.is_none());
+
+    let rendered = entry.observation(Detail::Full);
+    let numbers = field(&rendered, "device");
+    assert_eq!(keys_of(&numbers), vec!["major", "minor"]);
+}
+
+#[test]
+fn an_unspellable_name_directly_under_an_unspellable_directory_has_no_directory_to_name() {
+    // Arrange: the walk records an undecodable name against the directory it was found in, so a
+    // reader has somewhere to go and look. When that directory will not decode either there is
+    // no name to give, and `null` says so rather than a lossy rendering of bytes that are not on
+    // the box.
+    let orphan = UnspellablePath::of(b"\xff\xfe", None);
+
+    // Act
+    let rendered = Observation::from(&orphan);
+
+    // Assert
+    assert!(is_null(&field(&rendered, "directory")), "got {rendered:?}");
+    assert_eq!(
+        text(&field(&rendered, "name_bytes")),
+        "fffe",
+        "the bytes themselves are the only honest name it has"
+    );
 }

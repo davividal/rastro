@@ -4,13 +4,14 @@
 OS runtime, and the internal state of the services it finds running.
 
 One static binary, dropped on a Linux box you know nothing about, run as root.
-It prints JSON and exits.
+It writes a JSON document and exits. It opens no file on the box it is describing,
+so it moves no access time and evicts nothing from the page cache.
 
 ```sh
-rastro > before.json
+rastro -o before.json
 mount -t tmpfs -o ro,size=16m tmpfs /mnt/demo
 # or ansible-playbook apply.yml / puppet apply / ./deploy.sh
-rastro > after.json
+rastro -o after.json
 diff -u before.json after.json
 ```
 

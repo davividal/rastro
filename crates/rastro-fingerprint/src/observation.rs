@@ -83,13 +83,30 @@ impl Observation {
         self
     }
 
-    /// This observation as it appears in `view`, or nothing if the view drops
-    /// it.
+    /// This observation as `view` shows it, borrowed.
     ///
     /// Which values belong in which view is a rule about observations, so it
-    /// lives here rather than in whatever happens to be rendering them. The
-    /// result is a filtered tree that a renderer can encode without knowing
-    /// that volatility exists.
+    /// lives here rather than in whatever happens to be rendering them. What a
+    /// renderer gets is still an already-filtered tree it can encode without
+    /// knowing that volatility exists — it just does not own it, which for a
+    /// document of half a million walked paths is the difference between one
+    /// copy and two.
+    pub fn visible_in(&self, view: View) -> Option<Visible<'_>> {
+        match view == View::Diffable && self.volatility == Volatility::Volatile {
+            true => None,
+            false => Some(Visible {
+                observation: self,
+                view,
+            }),
+        }
+    }
+
+    /// This observation as it appears in `view`, or nothing if the view drops
+    /// it, as an owned tree.
+    ///
+    /// One rule, expressed once: this is [`Self::visible_in`] materialised. Kept
+    /// for callers that want a document they own, chiefly tests asserting on the
+    /// filtered shape; the renderer borrows instead.
     pub fn in_view(&self, view: View) -> Option<Self> {
         if view == View::Diffable && self.volatility == Volatility::Volatile {
             return None;
@@ -135,5 +152,78 @@ impl Observation {
             sensitivity: Sensitivity::default(),
             content,
         }
+    }
+}
+
+/// One observation as a view shows it, without copying the tree.
+///
+/// The filtering rule stays in this module; what travels to a renderer is this, which
+/// applies the rule as it is walked. So a renderer still never asks whether anything is
+/// volatile, and the document is not duplicated to answer the question for it.
+#[derive(Debug, Clone, Copy)]
+pub struct Visible<'a> {
+    observation: &'a Observation,
+    view: View,
+}
+
+/// What is inside a [`Visible`], with the values this view drops already gone.
+#[derive(Debug, Clone, Copy)]
+pub enum VisibleContent<'a> {
+    Scalar(&'a Scalar),
+    Object(VisibleObject<'a>),
+    List(VisibleList<'a>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VisibleObject<'a> {
+    entries: &'a BTreeMap<String, Observation>,
+    view: View,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VisibleList<'a> {
+    items: &'a [Observation],
+    view: View,
+}
+
+impl<'a> Visible<'a> {
+    pub fn content(&self) -> VisibleContent<'a> {
+        match &self.observation.content {
+            Content::Scalar(scalar) => VisibleContent::Scalar(scalar),
+            Content::Object(entries) => VisibleContent::Object(VisibleObject {
+                entries,
+                view: self.view,
+            }),
+            Content::List(items) => VisibleContent::List(VisibleList {
+                items,
+                view: self.view,
+            }),
+        }
+    }
+}
+
+impl<'a> VisibleObject<'a> {
+    /// The entries this view keeps, in the map's own sorted order.
+    ///
+    /// Sorted because the underlying map is, which is what makes an open shape's key order
+    /// fixed without anybody choosing it.
+    pub fn iter(&self) -> impl Iterator<Item = (&'a str, Visible<'a>)> + '_ {
+        let view = self.view;
+
+        self.entries.iter().filter_map(move |(key, child)| {
+            child
+                .visible_in(view)
+                .map(|visible| (key.as_str(), visible))
+        })
+    }
+}
+
+impl<'a> VisibleList<'a> {
+    pub fn iter(&self) -> impl Iterator<Item = Visible<'a>> + '_ {
+        let view = self.view;
+
+        self.items
+            .iter()
+            .filter_map(move |item| item.visible_in(view))
     }
 }

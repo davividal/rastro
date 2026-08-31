@@ -25,6 +25,9 @@ pub struct Config {
     #[serde(default)]
     collectors: Collectors,
 
+    #[serde(default)]
+    filesystem: Filesystem,
+
     /// The file this was read from, if any. Recorded in the document as
     /// provenance: which file configured a run is a real difference between two
     /// runs, and a path is not a secret. `None` is the default config.
@@ -40,6 +43,31 @@ pub struct Config {
 struct Collectors {
     #[serde(default)]
     exclude: Vec<String>,
+}
+
+/// How much of a tree the operator wants the walk to read.
+///
+/// **Three keys, all of them narrowings, and deliberately no fourth.** There is no `hashed`,
+/// because a config that could widen the walk would be the inclusion list this tool exists to
+/// refuse — an operator cannot enumerate what nobody documented. `deny_unknown_fields` is what
+/// turns an attempt at one into an error rather than a line that quietly does nothing.
+///
+/// Plain strings, because this type knows nothing about what it configures. Turning a path into
+/// a walked tree, and a key into a reading, belongs to whoever holds the walk's vocabulary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Filesystem {
+    /// Stat these trees, open nothing in them.
+    #[serde(default)]
+    metadata_only: Vec<String>,
+
+    /// And treat what moves in them as moving on its own.
+    #[serde(default)]
+    churns: Vec<String>,
+
+    /// Record the tree's own directory and do not descend.
+    #[serde(default)]
+    sealed: Vec<String>,
 }
 
 /// The config file could not be read as one.
@@ -84,6 +112,18 @@ impl Config {
         config.collectors.exclude.sort_unstable();
         config.collectors.exclude.dedup();
 
+        // Sorted and deduplicated for the same reason the exclusions are: two configs meaning
+        // the same thing have to produce the same document, and the effective table travels in
+        // the envelope precisely so runs can be compared.
+        for trees in [
+            &mut config.filesystem.metadata_only,
+            &mut config.filesystem.churns,
+            &mut config.filesystem.sealed,
+        ] {
+            trees.sort_unstable();
+            trees.dedup();
+        }
+
         Ok(config)
     }
 
@@ -92,6 +132,19 @@ impl Config {
     /// A path that was given explicitly and cannot be read is an error, never a
     /// silent fall back to the defaults: the run would then be wider than the
     /// operator asked for, and the diff would not say so.
+    /// The config a run is working from: the named file, or the default when none was named.
+    ///
+    /// Here rather than in `main`, because "no `--config` means exclude nothing" is a decision
+    /// and the composition root is supposed to hold none. It also means both answers are stated
+    /// by a test, where the `None` arm previously needed a bare end-to-end run — which walks
+    /// every mount on the machine to establish that a file was not read.
+    pub fn named_or_default(path: Option<&Path>) -> Result<Self, ConfigError> {
+        match path {
+            Some(path) => Self::load(path),
+            None => Ok(Self::default()),
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let source = path
             .to_str()
@@ -118,6 +171,21 @@ impl Config {
     /// duplicates.
     pub fn excluded(&self) -> &[String] {
         &self.collectors.exclude
+    }
+
+    /// The trees the operator wants stat'd and not opened.
+    pub fn walk_metadata_only(&self) -> &[String] {
+        &self.filesystem.metadata_only
+    }
+
+    /// The trees the operator says move on their own.
+    pub fn walk_churns(&self) -> &[String] {
+        &self.filesystem.churns
+    }
+
+    /// The trees the operator does not want descended into.
+    pub fn walk_sealed(&self) -> &[String] {
+        &self.filesystem.sealed
     }
 
     /// The file this was read from, or `None` for the defaults.

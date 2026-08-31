@@ -164,21 +164,31 @@ fn new_refuses_the_root_named_twice_under_two_spellings() {
 }
 
 #[test]
-fn built_in_hashes_what_it_was_not_told_to_leave_alone() {
-    // Act
+fn built_in_opens_no_file_anywhere() {
+    // Arrange: hashing every regular file on every mount was measured on a production
+    // PostgreSQL host at 84 GB read and climbing, 10.4M read syscalls, and a run killed
+    // at 51 minutes having produced nothing. The walk stays total; what narrowed is the
+    // reading, which is a cost question rather than a scope one.
     let policy = WalkPolicy::built_in();
 
-    // Assert: hashing is the default because config can only narrow. A table that
-    // had to name the trees worth hashing would be an inclusion list.
-    assert_eq!(
-        policy.policy_for(&walked("/etc/ssh/sshd_config")),
-        &hashed()
-    );
-    assert_eq!(policy.policy_for(&walked("/usr/bin/ls")), &hashed());
-    assert_eq!(
-        policy.policy_for(&walked("/usr/local/bin/node_exporter")),
-        &hashed()
-    );
+    // Act & Assert: no tree is read, including the ones a config file would never have
+    // thought to name. Detection survives on stat alone, because a write moves mtime and
+    // ctime and ctime has no userspace setter at all.
+    for stated in [
+        "/etc/ssh/sshd_config",
+        "/usr/bin/ls",
+        "/usr/local/bin/node_exporter",
+        "/root/.ssh/authorized_keys",
+        "/srv/app/config.yml",
+        "/home/dvidal/.bashrc",
+        "/var/lib/postgresql/17/main/base/1/2337",
+    ] {
+        assert_eq!(
+            policy.policy_for(&walked(stated)),
+            &ContentPolicy::MetadataOnly,
+            "{stated} is known by its metadata, not by its content"
+        );
+    }
 }
 
 #[test]
@@ -254,9 +264,12 @@ fn claimed_carries_the_shipped_rules_through_untouched() {
         .claimed(&facet("packages"), &claims)
         .expect("a tree no shipped rule names");
 
-    // Assert: a claim narrows one tree and says nothing about any other, so `/usr` is still
-    // hashed and the shipped churn list still churns.
-    assert_eq!(policy.policy_for(&walked("/usr/bin/ls")), &hashed());
+    // Assert: a claim narrows one tree and says nothing about any other, so `/usr` still
+    // reports its metadata and the shipped churn list still churns.
+    assert_eq!(
+        policy.policy_for(&walked("/usr/bin/ls")),
+        &ContentPolicy::MetadataOnly
+    );
     assert_eq!(
         policy.policy_for(&walked("/var/log/syslog")),
         &ContentPolicy::Churns
@@ -325,7 +338,7 @@ fn the_effective_table_renders_every_rule_with_its_claimant() {
     assert_eq!(text(&field(&cluster, "claimed_by")), "postgresql");
 
     let root = field(&rendered, "/");
-    assert_eq!(text(&field(&root, "reading")), "hashed");
+    assert_eq!(text(&field(&root, "reading")), "metadata_only");
     assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
 }
 
@@ -334,4 +347,102 @@ fn sha256_is_spelled_the_way_the_document_will_record_it() {
     // Act & Assert: the algorithm is named in the document rather than assumed,
     // because a sha256 fingerprint cannot be diffed against any other kind.
     assert_eq!(DigestAlgorithm::Sha256.as_str(), "sha256");
+}
+
+#[test]
+fn an_operators_rule_beats_a_collectors_claim() {
+    // Arrange: the postgresql collector seals its cluster, and the operator says they want its
+    // metadata after all. A claim is rastro's guess about a tree from the outside; the operator
+    // knows their box. So the operator wins, and the table says who decided.
+    let cluster = tree("/var/lib/postgresql/17/main");
+    let claimed = WalkPolicy::built_in()
+        .claimed(&facet("postgresql"), &[FilesystemClaim::sealed(cluster)])
+        .expect("a tree no shipped rule names");
+
+    // Act
+    let configured = claimed
+        .configured(vec![PolicyRule::configured(
+            tree("/var/lib/postgresql/17/main"),
+            ContentPolicy::MetadataOnly,
+        )])
+        .expect("an operator's rule replaces a claim rather than contradicting it");
+
+    // Assert
+    let rule = rule_for(&configured, "/var/lib/postgresql/17/main");
+    assert_eq!(rule.content, ContentPolicy::MetadataOnly);
+    assert_eq!(rule.claimant.as_str(), "config");
+}
+
+#[test]
+fn an_operators_rule_beats_a_shipped_one_too() {
+    // Arrange: `/var/log` churns by rastro's own reckoning. An operator who seals it wants the
+    // entries gone, not merely quiet.
+    let policy = WalkPolicy::built_in()
+        .configured(vec![PolicyRule::configured(
+            tree("/var/log"),
+            ContentPolicy::Sealed,
+        )])
+        .expect("an operator may override a shipped rule");
+
+    // Act & Assert
+    assert_eq!(
+        policy.policy_for(&walked("/var/log/syslog")),
+        &ContentPolicy::Sealed
+    );
+}
+
+#[test]
+fn an_operators_rules_leave_every_other_tree_alone() {
+    // Arrange
+    let policy = WalkPolicy::built_in()
+        .configured(vec![PolicyRule::configured(
+            tree("/srv/media"),
+            ContentPolicy::Sealed,
+        )])
+        .expect("a tree no shipped rule names");
+
+    // Act & Assert: a narrowing narrows one tree and says nothing about any other.
+    assert_eq!(
+        policy.policy_for(&walked("/usr/bin/ls")),
+        &ContentPolicy::MetadataOnly
+    );
+    assert_eq!(
+        policy.policy_for(&walked("/var/log/syslog")),
+        &ContentPolicy::Churns
+    );
+}
+
+#[test]
+fn two_operator_rules_for_one_tree_are_refused() {
+    // Act
+    let refused = WalkPolicy::built_in().configured(vec![
+        PolicyRule::configured(tree("/srv"), ContentPolicy::Sealed),
+        PolicyRule::configured(tree("/srv"), ContentPolicy::Churns),
+    ]);
+
+    // Assert: naming one tree twice in one config has no most-specific answer, exactly as a
+    // shipped table naming it twice does. The operator meant one of them and rastro cannot
+    // know which.
+    assert!(refused.is_err());
+}
+
+#[test]
+fn the_effective_table_says_when_the_operator_decided() {
+    // Arrange
+    let policy = WalkPolicy::built_in()
+        .configured(vec![PolicyRule::configured(
+            tree("/home/runner/work"),
+            ContentPolicy::Sealed,
+        )])
+        .expect("a tree no shipped rule names");
+
+    // Act
+    let rendered = Observation::from(&policy);
+
+    // Assert: an operator's narrowing is a decision the document has to admit to, exactly as a
+    // collector's claim is. Otherwise a reader of a tree with no entries cannot tell rastro's
+    // reckoning from their own colleague's config.
+    let sealed = field(&rendered, "/home/runner/work");
+    assert_eq!(text(&field(&sealed, "reading")), "sealed");
+    assert_eq!(text(&field(&sealed, "claimed_by")), "config");
 }

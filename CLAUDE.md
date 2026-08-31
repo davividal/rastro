@@ -12,21 +12,30 @@ server, via before/after fingerprints and a plain diff.
 **It runs.** Both views work, config narrows a run. `built_in()` in
 `crates/rastro/src/collectors.rs` says which collectors ship.
 
-**Not built:** the Layer 1 walker, the rest of Layer 2, Layer 3, the exec
-contract, redaction.
+**Not built:** the rest of Layer 2, Layer 3, the exec contract, redaction, and
+the opt-in collector that hashes file content over trees the operator names.
 
 The toolchain is pinned in `mise.toml`, and CI reads the same file.
 
 ```sh
-cargo test                                    # the whole workspace
+cargo nextest run                             # the whole workspace (cargo test also works)
 cargo clippy --all-targets -- -D warnings     # CI treats warnings as errors
 cargo fmt --all                               # CI runs --check
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-Off Linux there is no `/proc`, so the three `tests/cli.rs` tests that read the real
-host fail while every fixture test passes. Gate those in a container, Alpine as well
-as Debian since the package sources differ:
+Off Linux seven tests fail and every fixture test passes. Six of them want `/proc`:
+five in `tests/cli.rs` and `a_config_can_seal_a_tree_so_the_walk_stops_there`, which
+reads `/proc/mounts` through a real walk. The seventh, `walk_records_a_socket_and_a_fifo`,
+wants a unix socket path shorter than `SUN_LEN`. Gate all of it in a container, Alpine
+as well as Debian since the package sources differ.
+
+**Run it unprivileged too, at least once per change to the walk or to the output.** CI is not
+root, and three separate defects hid behind that: a test that skipped as root, a mode assertion
+that depended on the caller's umask, and an unreadable mount point that failed a whole facet.
+`useradd -m runnerish` in the container, give them a target directory they own, and run as them.
+
+The container recipe:
 
 ```sh
 podman run --rm -v "$PWD":/w -w /w -e CARGO_TARGET_DIR=/tmp/target \
@@ -77,7 +86,12 @@ Violating one is a plan change, not a detail.
   version and the effective config.
 - **Secrets** are hashed by default, `--raw` opts out. Redaction is a collector
   responsibility, an option not a guarantee.
-- **stdout carries only the fingerprint.**
+- **Layer 1 reads metadata and opens no file.** An entry is one XXH3-64 digest of
+  its attributes, taken over exactly those the view keeps, so a volatile stamp
+  cannot break byte-identity. `--detail` records the attributes themselves.
+- **The document goes to a file by default**, `0600`, `-o -` for stdout. stdout
+  carries only the fingerprint, which with the document in a file means nothing at
+  all. Progress and `--debug` timings go to stderr, and never into the document.
 - v1 boundaries: single box, generate-only, no network I/O, JSON only.
 
 ## Comment scope
@@ -108,6 +122,10 @@ Clean Code wins where they conflict. Three Clean Code positions are wrong here:
 
 - Debian/systemd first; choices must not need breaking changes to generalise.
 - **Planned, not built:** a tag-triggered release job with checksums.
+- **Collectors run concurrently**, on a pool of four, because most of a run is
+  waiting for subprocesses. The filesystem walk declares itself `Exclusive` and
+  runs alone: it is the one collector that would notice another's temp file and
+  report it in one run but not the next.
 - **Separation is enforced by cargo.** `rastro-fingerprint` (the document)
   depends on nothing of ours; `rastro-collector` (the port, and what an outside
   contributor depends on) depends on it; `rastro` (the tool) on both. Neither
@@ -115,8 +133,11 @@ Clean Code wins where they conflict. Three Clean Code positions are wrong here:
   `main.rs` is the composition root and holds no decision worth testing.
 - Adding a collector: one file under `crates/rastro/src/collectors/`, a `mod`
   and `pub use` line, and an entry in `built_in()`.
-- The flagship test is the **determinism harness**: two runs, byte-identical.
-  Any new collector or format change must keep it green.
+- The flagship test is the **determinism harness**: two runs, byte-identical. It
+  is in two halves, because a whole-host walk on a machine in use is not a walk of
+  an unchanged host: `tests/cli.rs` compares the envelope and every other facet
+  through the real binary, and `tests/determinism.rs` compares the filesystem facet
+  over a tree it owns. Any new collector or format change must keep both green.
 - **TDD.** A new feature starts with a test that fails.
 - **Commit at every green.** A red-green cycle is one commit.
 - **A commit message is a subject line.** Imperative, under 50 characters, no

@@ -22,12 +22,15 @@ serde = { workspace = true }
 # chooses rather than a table it has to guess the columns of. Promoted from a
 # dev-dependency for that: see `docs/decisions.md`.
 serde_json = { workspace = true }
-# The Layer 1 walker's digest. Every hashed tree goes through it.
+# Content hashing, which nothing does by default. Kept for the opt-in collector that
+# will name the trees worth reading: see `docs/decisions.md`.
 sha2 = { workspace = true }
 # Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
 # output of a run and can signal the child's whole process group.
 subprocess = { workspace = true }
 thiserror = { workspace = true }
+# The digest of one entry's metadata, which is what the default view records per path.
+xxhash-rust = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]

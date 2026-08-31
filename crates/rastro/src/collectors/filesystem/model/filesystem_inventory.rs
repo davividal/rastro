@@ -2,7 +2,8 @@
 
 use rastro_collector::{CollectionError, Observation};
 
-use crate::collectors::filesystem::model::FileEntry;
+use crate::collectors::filesystem::model::{FileEntry, UnreadablePath, UnspellablePath};
+use crate::collectors::filesystem::value_objects::Detail;
 
 /// The entries of one or more walks, ordered by path.
 ///
@@ -16,14 +17,26 @@ use crate::collectors::filesystem::model::FileEntry;
 /// the root of its own walk. Both readings are of the same directory and agree, so the
 /// duplicate is collapsed. Two readings that *disagree* are refused, because that means the
 /// path changed between them and neither describes one moment.
+///
+/// **Described beats refused.** Two walks reach one mount point by design, and only one of
+/// them tries to list it, so the pair is routine rather than a contradiction: whichever walk
+/// obtained the attributes is the one worth keeping.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilesystemInventory {
     entries: Vec<FileEntry>,
+    unreadable: Vec<UnreadablePath>,
+    unspellable: Vec<UnspellablePath>,
 }
 
 impl FilesystemInventory {
-    pub fn new(mut entries: Vec<FileEntry>) -> Result<Self, CollectionError> {
+    pub fn new(
+        mut entries: Vec<FileEntry>,
+        mut unreadable: Vec<UnreadablePath>,
+        mut unspellable: Vec<UnspellablePath>,
+    ) -> Result<Self, CollectionError> {
         entries.sort_by(|left, right| left.path.cmp(&right.path));
+        unreadable.sort_by(|left, right| left.path.cmp(&right.path));
+        unspellable.sort();
 
         if let Some(conflicting) = entries
             .windows(2)
@@ -37,34 +50,82 @@ impl FilesystemInventory {
         }
 
         entries.dedup();
+        unreadable.dedup();
+        unspellable.dedup();
 
-        Ok(Self { entries })
+        // A description beats a refusal of the same path, and that is not a tie-break: it is
+        // the normal case for a mount point. `/boot/efi` is an entry of the walk of `/`, which
+        // stops there and only stats it, and the root of its own walk, which tries to list it.
+        // Unprivileged, the listing fails while the stat had already succeeded. The
+        // description is strictly more than the refusal — the attributes were obtained — and
+        // holding no entries beneath a boundary is exactly what a boundary looks like anyway.
+        unreadable.retain(|refused| {
+            entries
+                .binary_search_by(|entry| entry.path.cmp(&refused.path))
+                .is_err()
+        });
+
+        Ok(Self {
+            entries,
+            unreadable,
+            unspellable,
+        })
     }
 
     pub fn entries(&self) -> &[FileEntry] {
         &self.entries
     }
 
+    pub fn unreadable(&self) -> &[UnreadablePath] {
+        &self.unreadable
+    }
+
+    pub fn unspellable(&self) -> &[UnspellablePath] {
+        &self.unspellable
+    }
+
     /// Everything found by several walks, as one inventory.
     pub fn merged(
         inventories: impl IntoIterator<Item = FilesystemInventory>,
     ) -> Result<Self, CollectionError> {
-        Self::new(
-            inventories
-                .into_iter()
-                .flat_map(|inventory| inventory.entries)
-                .collect(),
-        )
-    }
-}
+        let mut entries = Vec::new();
+        let mut unreadable = Vec::new();
+        let mut unspellable = Vec::new();
 
-impl From<&FilesystemInventory> for Observation {
-    fn from(inventory: &FilesystemInventory) -> Self {
-        Observation::object(
-            inventory
-                .entries()
-                .iter()
-                .map(|entry| (entry.path.as_str(), Observation::from(entry))),
-        )
+        for inventory in inventories {
+            entries.extend(inventory.entries);
+            unreadable.extend(inventory.unreadable);
+            unspellable.extend(inventory.unspellable);
+        }
+
+        Self::new(entries, unreadable, unspellable)
+    }
+
+    /// Every path this walk reached, keyed by path.
+    ///
+    /// Both lists under one key each, because a reader looks a path up rather than asking
+    /// which of two collections it landed in. A described path carries what `detail` asks for;
+    /// a refused one carries the reason either way, since there is no less of it to record.
+    pub fn observation(&self, detail: Detail) -> Observation {
+        let described = self
+            .entries()
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.observation(detail)));
+        let refused = self
+            .unreadable()
+            .iter()
+            .map(|refused| (refused.path.as_str(), Observation::from(refused)));
+
+        let named = described.chain(refused);
+
+        // Only when there is one, and the key is not a path, which is the whole point: these
+        // entries have no name to be keyed by. A `/`-leading key can never collide with it.
+        match self.unspellable.is_empty() {
+            true => Observation::object(named),
+            false => Observation::object(named.chain([(
+                "unspellable",
+                Observation::list(self.unspellable.iter().map(Observation::from)),
+            )])),
+        }
     }
 }

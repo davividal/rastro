@@ -33,7 +33,7 @@ pub use cron::CronCollector;
 pub use exporters::ExportersCollector;
 pub use filesystem::FilesystemCollector;
 pub use firewall::FirewallCollector;
-pub use host::HostCollector;
+pub use host::{HostCollector, read_hostname};
 pub use invocation::{InvocationCollector, effective_config, seconds_since_epoch};
 pub use locale::LocaleCollector;
 pub use modules::ModulesCollector;
@@ -50,11 +50,15 @@ pub use time::TimeCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
-use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use rastro_collector::{CollectionError, Collector, CollectorCategory, Observation, WalkedTree};
 
 use thiserror::Error;
 
-use crate::collectors::filesystem::WalkPolicy;
+use crate::collectors::filesystem::{ContentPolicy, Detail, PolicyRule, WalkPolicy};
+use crate::progress::WalkProgress;
 
 use crate::config::Config;
 
@@ -89,36 +93,111 @@ pub enum SelectionError {
 ///
 /// `staged_binary` says the executable is a temporary copy the caller will delete, and only
 /// then is it left out of the walk. A rastro installed on a box is part of that box.
-pub fn built_in(effective_config: Observation, staged_binary: bool) -> Vec<Box<dyn Collector>> {
-    let mut collectors = state_collectors();
-    let policy = claimed_policy(&collectors);
+/// What the composition root resolved before any collector ran.
+///
+/// A named type rather than a parameter list, because every one of these is a decision the
+/// run made rather than something a collector may read for itself: the clock and the hostname
+/// because the output filename carries both and a second read could disagree with the
+/// document, the rest because they came from the command line.
+pub struct Run {
+    pub effective_config: Observation,
+    pub staged_binary: bool,
+    pub detail: Detail,
+    pub started_at: Result<i64, CollectionError>,
+    pub hostname: Result<String, String>,
+    /// The document this run is about to write, when it is going to a file.
+    ///
+    /// The walk leaves it out and the `invocation` facet declares it, from this one value, so
+    /// the omission and the admission cannot disagree.
+    pub output: Option<PathBuf>,
+    /// Where the walk reports its counters, when anybody asked for them.
+    pub progress: Option<Arc<dyn WalkProgress>>,
+    /// The trees the operator narrowed, in the order metadata-only, churns, sealed.
+    ///
+    /// Carried as paths rather than as rules because `Config` is a plain settings type that
+    /// knows nothing of the walk's vocabulary. Turning a path into a tree, and a key into a
+    /// reading, happens here — which is also where an illegal path becomes a failure of the
+    /// `filesystem` facet rather than of the run.
+    pub narrowed: Narrowed,
+}
+
+/// What the operator's config asked the walk to step back from.
+#[derive(Debug, Clone, Default)]
+pub struct Narrowed {
+    pub metadata_only: Vec<String>,
+    pub churns: Vec<String>,
+    pub sealed: Vec<String>,
+}
+
+impl Narrowed {
+    /// The operator's paths as walk rules, or the first one that is not a legal tree.
+    ///
+    /// A bad path in a config fails the `filesystem` facet rather than the run, for the same
+    /// reason a claim conflict does: an operator's typo should not cost them every other facet
+    /// on a box they were trying to inspect.
+    fn rules(&self) -> Result<Vec<PolicyRule>, CollectionError> {
+        let named = [
+            (&self.metadata_only, ContentPolicy::MetadataOnly),
+            (&self.churns, ContentPolicy::Churns),
+            (&self.sealed, ContentPolicy::Sealed),
+        ];
+
+        let mut rules = Vec::new();
+        for (trees, content) in named {
+            for tree in trees {
+                let tree = WalkedTree::new(tree).map_err(|error| {
+                    CollectionError::new(format!(
+                        "the config named {tree:?} as a tree to narrow, and it is not one: {error}"
+                    ))
+                })?;
+                rules.push(PolicyRule::configured(tree, content.clone()));
+            }
+        }
+
+        Ok(rules)
+    }
+}
+
+pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
+    let mut collectors = state_collectors(run.hostname);
+    let policy = claimed_policy(&collectors, &run.narrowed);
     let table = match &policy {
         Ok(resolved) => Observation::from(resolved),
         Err(_) => Observation::null(),
     };
-    let staged = match staged_binary {
+    let staged = match run.staged_binary {
         true => FilesystemCollector::running_binary(),
         false => None,
     };
 
-    collectors.push(Box::new(FilesystemCollector::under(policy, staged.clone())));
+    collectors.push(Box::new(match run.progress {
+        Some(progress) => FilesystemCollector::under(policy, staged.clone())
+            .in_detail(run.detail)
+            .writing_to(run.output.clone())
+            .reporting_to(progress),
+        None => FilesystemCollector::under(policy, staged.clone())
+            .in_detail(run.detail)
+            .writing_to(run.output.clone()),
+    }));
     collectors.push(Box::new(InvocationCollector::new(
-        effective_config,
+        run.effective_config,
         table,
         staged.map(|binary| binary.to_string_lossy().into_owned()),
+        run.started_at,
+        run.output.map(|path| path.to_string_lossy().into_owned()),
     )));
     collectors
 }
 
 /// The collectors that observe the host, filesystem aside.
-fn state_collectors() -> Vec<Box<dyn Collector>> {
+fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(AccountsCollector::new()),
         Box::new(BlockDevicesCollector::new()),
         Box::new(CronCollector::new()),
         Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
-        Box::new(HostCollector::new()),
+        Box::new(HostCollector::reading(hostname)),
         Box::new(LocaleCollector::new()),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
@@ -144,13 +223,20 @@ fn state_collectors() -> Vec<Box<dyn Collector>> {
 /// claim because its facet was excluded would make an exclusion *widen* the walk, and
 /// `--exclude postgresql` would silently put a cluster's data directory back under the
 /// hashing default.
-fn claimed_policy(collectors: &[Box<dyn Collector>]) -> Result<WalkPolicy, CollectionError> {
-    collectors
+fn claimed_policy(
+    collectors: &[Box<dyn Collector>],
+    narrowed: &Narrowed,
+) -> Result<WalkPolicy, CollectionError> {
+    let claimed = collectors
         .iter()
         .map(AsRef::as_ref)
         .try_fold(WalkPolicy::built_in(), |policy, collector| {
             policy.claimed(collector.name(), &collector.filesystem_claims())
-        })
+        })?;
+
+    // The operator last, because their rule beats a claim: a claim is rastro's reckoning about
+    // a tree from the outside, and the operator knows their box.
+    claimed.configured(narrowed.rules()?)
 }
 
 /// The collectors a config leaves running, and the ones it took away.

@@ -40,6 +40,56 @@ pub struct Cli {
     /// only party that knows is the one that made the copy.
     #[arg(long)]
     staged: bool,
+
+    /// Where to write the fingerprint. `-` means stdout.
+    ///
+    /// Without this the document goes to `./rastro-<host>-<UTC>.json`, because a
+    /// fingerprint of a real host is megabytes and a default that puts megabytes
+    /// on a terminal punishes the first run. The file is created `0600`: it names
+    /// every path on the box.
+    #[arg(short = 'o', long, value_name = "PATH")]
+    output: Option<PathBuf>,
+
+    /// Overwrite the output file if it is already there.
+    ///
+    /// Off by default because the workflow is a `before` and an `after`, and
+    /// replacing the `before` destroys the only record of the state being
+    /// compared against. That is the one irreversible thing rastro can do.
+    #[arg(long)]
+    force: bool,
+
+    /// Show a live counter on stderr while the run is happening.
+    ///
+    /// On by default when stderr is a terminal and off when it is redirected,
+    /// because a spinner in a log file is noise nobody asked for. These force it
+    /// either way.
+    ///
+    /// A counter and not a bar: the walk discovers its own work as it goes, so a
+    /// percentage would need a denominator nobody has.
+    #[arg(long, conflicts_with = "no_progress")]
+    progress: bool,
+
+    /// Never show the live counter, whatever stderr is attached to.
+    #[arg(long)]
+    no_progress: bool,
+
+    /// Report what the run cost, on stderr: per collector, plus what the walk read.
+    ///
+    /// `time ./rastro > file` answers neither "which collector was slow" nor
+    /// "where did the document go", and those are the two questions a slow run
+    /// actually raises. Never written into the document: a fingerprint records
+    /// what a box is, not what it is doing.
+    #[arg(long)]
+    debug: bool,
+
+    /// Record every attribute of every walked path, rather than one digest of them.
+    ///
+    /// The default records a digest per path, which answers what a fingerprint is
+    /// taken to answer — did anything about this path change — and costs a fifth
+    /// of the document. This asks *which* attribute moved, and it has to be asked
+    /// at the time: a summary taken yesterday cannot be expanded today.
+    #[arg(long)]
+    detail: bool,
 }
 
 impl Cli {
@@ -65,6 +115,43 @@ impl Cli {
     /// Whether the caller said this binary is a temporary copy of itself.
     pub fn staged_binary(&self) -> bool {
         self.staged
+    }
+
+    /// Where the operator asked for the document, if anywhere in particular.
+    pub fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
+    }
+
+    /// Whether the operator said an existing output file may be replaced.
+    pub fn force(&self) -> bool {
+        self.force
+    }
+
+    /// Whether to draw the live counter.
+    ///
+    /// Auto by default, so the contract that a clean redirected run says nothing on stderr
+    /// holds by construction rather than by anybody remembering it.
+    pub fn show_progress(&self, stderr_is_a_terminal: bool) -> bool {
+        match (self.progress, self.no_progress) {
+            (true, _) => true,
+            (_, true) => false,
+            _ => stderr_is_a_terminal,
+        }
+    }
+
+    /// Whether the operator asked for a report of what the run cost.
+    pub fn debug(&self) -> bool {
+        self.debug
+    }
+
+    /// Whether the operator asked for every attribute rather than a digest of them.
+    ///
+    /// A `bool` rather than the `Detail` it selects, because this module knows nothing
+    /// about collectors and `Detail` is one collector's vocabulary. The composition
+    /// root maps it, which is the same shape as `--include-volatile` becoming a `View`
+    /// except that `View` belongs to the document model and may be named here.
+    pub fn full_detail(&self) -> bool {
+        self.detail
     }
 }
 

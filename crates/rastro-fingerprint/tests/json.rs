@@ -1,6 +1,6 @@
 use rastro_fingerprint::Observation;
 use rastro_fingerprint::View;
-use rastro_fingerprint::json::to_canonical_json;
+use rastro_fingerprint::json::{to_canonical_json, to_canonical_json_writer};
 use rastro_fingerprint::{CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion};
 use rastro_fingerprint::{Facet, FacetName, FacetOutcome, Fingerprint};
 use serde_json::{Value, json};
@@ -46,6 +46,39 @@ fn assert_keys_in_order(rendered: &str, keys: &[&str]) {
         positions, ascending,
         "expected {keys:?} in that order, got offsets {positions:?} in:\n{rendered}"
     );
+}
+
+/// Every shape a collector can hand the renderer, in one facet.
+///
+/// Deliberately exhaustive over `Content` and `Scalar` plus both ways a view drops a value,
+/// because this is the fixture behind the golden-bytes test below.
+fn every_shape() -> Observation {
+    Observation::object([
+        ("absent", Observation::null()),
+        ("enabled", Observation::boolean(true)),
+        ("count", Observation::integer(-7)),
+        ("name", Observation::text("keep \"me\"\n")),
+        (
+            "nested",
+            Observation::object([
+                ("inner", Observation::text("deep")),
+                ("dropped_leaf", Observation::integer(1).volatile()),
+            ]),
+        ),
+        (
+            "items",
+            Observation::list([
+                Observation::integer(1),
+                Observation::text("two"),
+                Observation::null(),
+            ]),
+        ),
+        (
+            "dropped_subtree",
+            Observation::object([("gone", Observation::text("with it"))]).volatile(),
+        ),
+        ("secret", Observation::text("kept, marked").sensitive()),
+    ])
 }
 
 fn processes_facet(pid: i64) -> Facet {
@@ -239,4 +272,166 @@ fn to_canonical_json_ends_with_a_newline() {
 
     // Assert
     assert!(rendered.ends_with("}\n"));
+}
+
+#[test]
+fn to_canonical_json_renders_this_exact_document() {
+    // Arrange: every `Content` and `Scalar` variant, a nested object, a list, a volatile leaf
+    // and a wholly volatile subtree. Pinned to the byte because the format *is* the contract
+    // and the determinism harness compares raw bytes — so any later change to how the tree is
+    // serialised has to prove itself here rather than be argued about.
+    let document = fingerprint_of([facet(
+        "shapes",
+        CollectorCategory::State,
+        FacetOutcome::Ok {
+            observation: every_shape(),
+        },
+    )]);
+
+    // Act
+    let rendered = to_canonical_json(&document, View::Diffable);
+
+    // Assert
+    assert_eq!(
+        rendered,
+        r#"{
+  "schema_version": 1,
+  "metadata": [],
+  "facets": [
+    {
+      "name": "shapes",
+      "collector": {
+        "id": "shapes",
+        "version": "1"
+      },
+      "status": "ok",
+      "data": {
+        "absent": null,
+        "count": -7,
+        "enabled": true,
+        "items": [
+          1,
+          "two",
+          null
+        ],
+        "name": "keep \"me\"\n",
+        "nested": {
+          "inner": "deep"
+        },
+        "secret": "kept, marked"
+      }
+    }
+  ]
+}
+"#
+    );
+}
+
+#[test]
+fn to_canonical_json_renders_this_exact_document_in_the_complete_view() {
+    // Arrange: the same fixture, so the two goldens together pin what a view changes and
+    // nothing else. `View::Complete` pays a full clone today for zero benefit, and this is
+    // what will prove that removing the clone changed no byte.
+    let document = fingerprint_of([facet(
+        "shapes",
+        CollectorCategory::State,
+        FacetOutcome::Ok {
+            observation: every_shape(),
+        },
+    )]);
+
+    // Act
+    let rendered = to_canonical_json(&document, View::Complete);
+
+    // Assert
+    assert_eq!(
+        rendered,
+        r#"{
+  "schema_version": 1,
+  "metadata": [],
+  "facets": [
+    {
+      "name": "shapes",
+      "collector": {
+        "id": "shapes",
+        "version": "1"
+      },
+      "status": "ok",
+      "data": {
+        "absent": null,
+        "count": -7,
+        "dropped_subtree": {
+          "gone": "with it"
+        },
+        "enabled": true,
+        "items": [
+          1,
+          "two",
+          null
+        ],
+        "name": "keep \"me\"\n",
+        "nested": {
+          "dropped_leaf": 1,
+          "inner": "deep"
+        },
+        "secret": "kept, marked"
+      }
+    }
+  ]
+}
+"#
+    );
+}
+
+#[test]
+fn to_canonical_json_writer_and_to_canonical_json_agree_byte_for_byte() {
+    // Arrange: the same fixture the golden tests pin, so this compares the two paths against
+    // each other and the goldens pin what they both produce.
+    let document = fingerprint_of([facet(
+        "shapes",
+        CollectorCategory::State,
+        FacetOutcome::Ok {
+            observation: every_shape(),
+        },
+    )]);
+
+    for view in [View::Diffable, View::Complete] {
+        // Act
+        let mut streamed = Vec::new();
+        to_canonical_json_writer(&document, view, &mut streamed).expect("a Vec accepts every byte");
+
+        // Assert: a document of tens of thousands of entries should not exist twice in memory
+        // just to be written, and the way to be sure that change cost nothing is to compare
+        // the bytes rather than to reason about them.
+        assert_eq!(
+            String::from_utf8(streamed).expect("the document is UTF-8"),
+            to_canonical_json(&document, view),
+            "{view:?}"
+        );
+    }
+}
+
+#[test]
+fn to_canonical_json_writer_reports_a_write_that_failed() {
+    // Arrange: a writer that refuses, standing in for the disk filling up half way through a
+    // fingerprint. The caller names the path, because this module has no business knowing it.
+    struct Refuses;
+    impl std::io::Write for Refuses {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("no space left on device"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // Act
+    let refused = to_canonical_json_writer(
+        &fingerprint_of([processes_facet(991)]),
+        View::Diffable,
+        &mut Refuses,
+    );
+
+    // Assert
+    assert!(refused.is_err());
 }
