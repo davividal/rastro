@@ -317,6 +317,23 @@ fn divergence(first: &[u8], second: &[u8]) -> String {
             }
 
             report.push_str(&format!("\n  {section}/{name} differs:\n"));
+
+            // Status first, and printed even when it did not change. A facet whose *status*
+            // flipped — a tool that answered once and failed once — used to report
+            // `null -> null`, because an `absent` or `error` facet carries no `data` and the
+            // detail below had nothing to compare. That told a reader the facet differed and
+            // nothing whatever about how.
+            for key in ["status", "error"] {
+                let (was, now) = (&before[key], &after[key]);
+                if was != now || key == "status" {
+                    report.push_str(&format!(
+                        "    {key}: {} -> {}\n",
+                        rendered(Some(was)),
+                        rendered(Some(now))
+                    ));
+                }
+            }
+
             report.push_str(&detail(&before["data"], &after["data"]));
         }
     }
