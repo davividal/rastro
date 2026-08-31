@@ -1949,11 +1949,20 @@ That is better than excluding the facet, not merely faster: the test still exerc
 the rendering and the digest. It also prints nothing on stderr, because a narrowing is not an
 exclusion, which is what lets the "a clean run says nothing" tests use it.
 
-Four tests still pay for a real walk, and each has a reason: one asserts what a run with *no*
-config looks like, two prove the output file is left out of a tree that has to contain it, and
-one proves a config narrowing by checking that a sibling of the sealed tree is still walked.
-Sealing anything there would remove the thing being asserted. Local suite: 64 s before any of
-this, 48 s after excluding the facet, **26 s after sealing**.
+**Then the last two were decomposed rather than accepted.** Proving the walk leaves out the
+document it is writing needed the document to be *in* a walked tree, which through the binary
+meant walking a whole host — over two minutes each on the runner. Asserted instead over a
+scratch root through `FilesystemCollector::walking`, where the walk is scoped and the omission is
+the only difference, it is instant *and* a sharper claim. What only an end-to-end run can show is
+that one resolved path reaches both the walk and the envelope, and that needs no walk at all.
+
+Two tests still pay for a real walk, and each has a reason that sealing would destroy: one
+asserts what a run with *no* config looks like, and one proves a config narrowing by checking
+that a sibling of the sealed tree is *still* walked. Both are worth their seconds.
+
+Local suite: 64 s before any of this, 48 s after excluding the facet, 26 s after sealing,
+**13 s after moving the omission proofs to a scoped walk**. On CI the step went 311 s to 207 s
+at the sealing stage, measured; the decomposition lands after.
 
 **Excluding the facet also removed a source of flakiness, which is the more interesting half.** An instrumented
 run writes a `.profraw` into the target directory, and the runner writes its own worker log

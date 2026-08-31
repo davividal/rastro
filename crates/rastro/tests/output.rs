@@ -348,51 +348,6 @@ fn the_default_file_name_agrees_with_the_started_at_in_the_document() {
 }
 
 #[test]
-fn a_run_leaves_its_own_output_file_out_of_the_document() {
-    // Arrange: run one writes the file; run two's walk finds it sitting there. Without the
-    // omission the most natural use of `-o` breaks the byte-identical guarantee by a megabyte,
-    // at the one facet that dominates the document.
-    let directory = scratch("output-left-out-of-the-walk");
-    let target = directory.join("fingerprint.json");
-    assert!(
-        run_in(&directory, &["-o", "fingerprint.json"])
-            .status
-            .success(),
-        "the first run should have succeeded"
-    );
-    assert!(target.exists(), "the first run should have written it");
-
-    // Act
-    assert!(
-        run_in(&directory, &["-o", "fingerprint.json", "--force"])
-            .status
-            .success(),
-        "the second run should have succeeded"
-    );
-    let document: Value =
-        serde_json::from_slice(&std::fs::read(&target).expect("a readable document"))
-            .expect("a JSON document");
-
-    // Assert: asserted on the one path rather than on the whole document, because sibling
-    // tests in this binary write files of their own while this runs. Whole-document identity
-    // is the determinism harness's job, and it has no such neighbours.
-    let walked = facet(&document, "facets", "filesystem")["data"]
-        .as_object()
-        .expect("the filesystem facet is keyed by path");
-    let named = target.to_str().expect("a UTF-8 scratch path");
-    assert!(
-        !walked.contains_key(named),
-        "the run reported the document it was writing"
-    );
-    assert!(
-        walked
-            .keys()
-            .any(|key| key.starts_with(directory.to_str().expect("a UTF-8 scratch path"))),
-        "the scratch directory itself should still be walked"
-    );
-}
-
-#[test]
 fn the_invocation_facet_admits_the_output_file_it_left_out() {
     // Arrange
     let directory = scratch("output-is-declared");
@@ -494,50 +449,6 @@ fn a_refused_publication_leaves_the_original_and_no_staging_file() {
         })
         .collect();
     assert_eq!(left, vec!["before.json".to_owned()], "got {left:?}");
-}
-
-#[test]
-fn an_output_path_through_a_symlinked_directory_is_still_left_out_of_the_walk() {
-    // Arrange: `std::path::absolute` is lexical, so it keeps the symlink in the path. The walk
-    // never follows a symlink, so it meets the file under the real directory instead — and the
-    // two spellings would not match, putting the previous document back in the next run.
-    let directory = scratch("symlinked-output-parent");
-    let real = directory.join("real");
-    let linked = directory.join("linked");
-    std::fs::create_dir(&real).expect("a writable scratch directory");
-    std::os::unix::fs::symlink(&real, &linked).expect("a symlink");
-
-    assert!(
-        run_in(&directory, &["-o", "linked/fingerprint.json"])
-            .status
-            .success(),
-        "the first run should have succeeded"
-    );
-
-    // Act
-    assert!(
-        run_in(&directory, &["-o", "linked/fingerprint.json", "--force"])
-            .status
-            .success(),
-        "the second run should have succeeded"
-    );
-    let document: Value = serde_json::from_slice(
-        &std::fs::read(real.join("fingerprint.json")).expect("a readable document"),
-    )
-    .expect("a JSON document");
-
-    // Assert: keyed by the path the walk met it under, which is the real one.
-    let walked = facet(&document, "facets", "filesystem")["data"]
-        .as_object()
-        .expect("the filesystem facet is keyed by path");
-    let met_as = real
-        .canonicalize()
-        .expect("a real directory")
-        .join("fingerprint.json");
-    assert!(
-        !walked.contains_key(met_as.to_str().expect("a UTF-8 path")),
-        "the run reported the document it was writing"
-    );
 }
 
 #[test]
@@ -655,5 +566,57 @@ fn a_destination_that_is_a_directory_is_refused_and_left_alone() {
     assert_eq!(
         std::fs::read_to_string(target.join("inside")).expect("the contents are intact"),
         "a file nobody asked rastro to touch"
+    );
+}
+
+#[test]
+fn the_resolved_output_path_reaches_both_the_walk_and_the_envelope() {
+    // Arrange: what is left for the binary to prove. That the walk *omits* the path is asserted
+    // over a scratch root in `filesystem_scope.rs`, where the walk can be scoped and the claim
+    // is exact; through the binary the same assertion cost over two minutes on a
+    // coverage-instrumented runner, because it had to walk a whole host for the file to be in.
+    //
+    // What only an end-to-end run can show is that one resolved path reaches both places, so
+    // the omission and the declaration cannot be two different spellings of one file. Through a
+    // symlinked directory, because that is where the two spellings diverge.
+    let directory = scratch("resolved-output-reaches-both");
+    let real = directory.join("real");
+    std::fs::create_dir(&real).expect("a writable scratch directory");
+    std::os::unix::fs::symlink(&real, directory.join("linked")).expect("a symlink");
+
+    // Act
+    let output = run_in(
+        &directory,
+        &[
+            "-o",
+            "linked/fingerprint.json",
+            "--include-volatile",
+            "--config",
+            without_walking(),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "rastro should have succeeded: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(
+        &std::fs::read(real.join("fingerprint.json")).expect("a readable document"),
+    )
+    .expect("a JSON document");
+
+    // Assert: declared as the walk would have met it, with the symlink resolved away.
+    let declared = facet(&document, "metadata", "invocation")["data"]["output"]
+        .as_str()
+        .expect("the invocation facet declares the output")
+        .to_owned();
+    let met_as = real
+        .canonicalize()
+        .expect("a real directory")
+        .join("fingerprint.json");
+    assert_eq!(
+        declared,
+        met_as.to_str().expect("a UTF-8 path"),
+        "the declared path is not the one the walk would meet"
     );
 }
