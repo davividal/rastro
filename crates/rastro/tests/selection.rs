@@ -7,7 +7,7 @@ use rastro_fingerprint::{Observation, View};
 
 mod support;
 
-use support::observation::{field, is_null};
+use support::observation::{field, is_null, items_of, keys_of, text};
 
 fn effective(config: &Config) -> Observation {
     collectors::effective_config(config, View::Diffable, false, Detail::Summary)
@@ -194,4 +194,62 @@ fn a_selection_names_its_collectors_when_a_test_prints_it() {
     assert!(printed.contains("Selection"), "got {printed}");
     assert!(printed.contains("filesystem"), "got {printed}");
     assert!(printed.contains("timers"), "got {printed}");
+}
+
+#[test]
+fn a_default_config_excludes_nothing_and_records_that_it_came_from_nowhere() {
+    // Arrange: what a run with no `--config` resolves to. The premise is a box nobody
+    // documented, so the default cannot ask the operator which collectors they want.
+    //
+    // Stated here rather than through the binary, and that is the point: a bare end-to-end run
+    // walks every mount on the machine, so asserting these four facts that way cost three
+    // minutes of CI and got slower on a bigger runner. None of them is about a walked path.
+    let default = effective(&Config::default());
+
+    // Assert
+    assert!(
+        items_of(&field(&default, "excluded_collectors")).is_empty(),
+        "got {default:?}"
+    );
+    assert_eq!(text(&field(&default, "view")), "diffable");
+    assert!(
+        is_null(&field(&default, "source")),
+        "no file was read, and a path here would name one that does not exist"
+    );
+}
+
+#[test]
+fn a_default_config_leaves_the_walk_total() {
+    // Arrange: the run a bare invocation resolves to. What "no config collects everything" means
+    // for the *walk* is that nothing narrowed it — the root is still read for metadata and no
+    // rule in the effective table came from an operator.
+    //
+    // Asserted on the table rather than by watching a traversal, because the table is the
+    // decision and the traversal is its consequence. Watching the consequence means walking every
+    // mount on the machine, which is what made this cost three minutes of CI, and it would still
+    // not have proved the root was unsealed — only that something was walked. There is no mock
+    // for the walker from outside the process either: `FileTree::at` is the seam, and it is what
+    // `filesystem_walk.rs` drives directly.
+    let declared = collector_of("invocation", collectors::Narrowed::default())
+        .collect()
+        .expect("the invocation facet describes the run");
+
+    // Act
+    let table = field(&declared, "walk_policy");
+
+    // Assert: the root is walked, and rastro is the one that decided so.
+    let root = field(&table, "/");
+    assert_eq!(text(&field(&root, "reading")), "metadata_only");
+    assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
+
+    // Assert: and no tree in the table was narrowed by a config. This is what a seal in a test
+    // config would have destroyed rather than demonstrated.
+    for tree in keys_of(&table) {
+        let rule = field(&table, &tree);
+        assert_ne!(
+            text(&field(&rule, "claimed_by")),
+            "config",
+            "{tree:?} was narrowed with no config to narrow it"
+        );
+    }
 }

@@ -450,20 +450,38 @@ fn config_file(name: &str, contents: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn a_run_with_no_config_collects_everything() {
-    // Act: no config, which is the subject. It pays for a whole walk to say so.
-    let document = document(&[]);
+fn a_run_that_excludes_nothing_collects_every_collector() {
+    // Arrange: a config that narrows the walk and excludes nothing, because a narrowing is not
+    // an exclusion — which is exactly what this test is about.
+    //
+    // **It used to run bare, and that was a test-design flaw rather than a cost.** A bare run
+    // walks every mount on the machine, so this took 195 seconds under a coverage-instrumented
+    // binary and would take longer on a runner with a bigger disk. Not one of its assertions
+    // looks at a walked path. The one fact that genuinely needs no config file — that the
+    // effective config records no source — is asserted over `Config::default()` in
+    // `selection.rs`, instantly, because that is where the decision lives.
+    //
+    // There is no mock for the walk from out here, by design: the collector reads the host, and
+    // the seam that bounds it is `FileTree::at`, which the walk tests use directly. From the
+    // command line the only lever is the config, and this is what it is for.
+    let document = document(&["--config", sealing_the_shipped_trees()]);
 
-    // Assert: the premise is a box nobody documented, so the default cannot ask
-    // the operator which collectors they want.
+    // Assert: every collector ran, and the effective config says so.
     let invocation = facet(&document, "metadata", "invocation").clone();
     assert_eq!(
         invocation["data"]["config"]["excluded_collectors"],
         json!([])
     );
     assert_eq!(invocation["data"]["config"]["view"], json!("diffable"));
-    assert_eq!(invocation["data"]["config"]["source"], Value::Null);
-    assert!(!document["facets"].as_array().expect("facets").is_empty());
+
+    let names: Vec<&str> = document["facets"]
+        .as_array()
+        .expect("facets")
+        .iter()
+        .filter_map(|facet| facet["name"].as_str())
+        .collect();
+    assert!(names.contains(&"filesystem"), "got {names:?}");
+    assert!(names.len() > 15, "got {names:?}");
 }
 
 #[test]
