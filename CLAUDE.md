@@ -24,9 +24,11 @@ cargo fmt --all                               # CI runs --check
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-Off Linux there is no `/proc`, so the three `tests/cli.rs` tests that read the real
-host fail while every fixture test passes. Gate those in a container, Alpine as well
-as Debian since the package sources differ.
+Off Linux seven tests fail and every fixture test passes. Six of them want `/proc`:
+five in `tests/cli.rs` and `a_config_can_seal_a_tree_so_the_walk_stops_there`, which
+reads `/proc/mounts` through a real walk. The seventh, `walk_records_a_socket_and_a_fifo`,
+wants a unix socket path shorter than `SUN_LEN`. Gate all of it in a container, Alpine
+as well as Debian since the package sources differ.
 
 **Run it unprivileged too, at least once per change to the walk or to the output.** CI is not
 root, and three separate defects hid behind that: a test that skipped as root, a mode assertion
