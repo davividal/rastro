@@ -46,7 +46,7 @@ fn fake_sshd(name: &str) -> Sshd {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        permissions.set_mode(0o755);
+        permissions.set_mode(0o700);
     }
     fs::set_permissions(&script, permissions).expect("an executable script");
     Sshd::using(

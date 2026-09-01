@@ -66,7 +66,7 @@ fn fake_systemctl(name: &str, listed: &str, shown: &str) -> CanonicalTool {
     )
     .expect("a writable script");
     let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-    permissions.set_mode(0o755);
+    permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).expect("an executable script");
     CanonicalTool::located_in("systemctl", &[root.to_str().expect("utf-8 scratch path")])
         .expect("the fake tool should be locatable")
