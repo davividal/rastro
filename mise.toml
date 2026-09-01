@@ -1,5 +1,7 @@
-# Components and the musl target are declared here rather than installed by a CI step,
-# so a working machine and CI get the same toolchain from one place.
+# Components and the musl targets are declared here rather than installed by a CI step,
+# so a working machine and CI get the same toolchain from one place. Both shipped
+# architectures are listed for every machine, even though each release build uses one of
+# them: a single list is what stops a runner from silently lacking the target it needs.
 #
 # They are not optional extras. With neither `components` nor `profile` set, mise runs a
 # bare `rustup toolchain install` and rustup falls back to its own configured default
@@ -12,4 +14,4 @@
 [tools.rust]
 version = "1.97.1"
 components = ["clippy", "rustfmt", "llvm-tools"]
-targets = ["x86_64-unknown-linux-musl"]
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]

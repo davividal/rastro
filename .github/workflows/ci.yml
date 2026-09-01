@@ -97,30 +97,49 @@ jobs:
           arguments: --all-features --locked
 
   static-binary:
-    name: musl static build
-    runs-on: ubuntu-latest
+    name: ${{ matrix.target }} static build
+    strategy:
+      # One architecture failing to build says nothing about the other, and finding out
+      # about both in one run beats two round trips.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          # A native runner rather than a cross build, because the smoke run below is the
+          # point: a cross-built binary cannot be executed by the machine that built it.
+          # There is no `-latest` alias for the arm64 runners, hence the pinned image.
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # Named explicitly so the two legs cannot land on one entry: the default key
+          # covers the job but not which target within it produced the artifacts.
+          key: ${{ matrix.target }}
       - name: Install the musl linker
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: cargo build --locked --release --target x86_64-unknown-linux-musl -p rastro
+      - run: cargo build --locked --release --target ${{ matrix.target }} -p rastro
       # The single static binary is the product's core promise, so CI asserts it
       # rather than trusting the target triple.
       - name: Assert the binary is statically linked
         run: |
-          file target/x86_64-unknown-linux-musl/release/rastro
-          file target/x86_64-unknown-linux-musl/release/rastro | grep -q 'static'
-      - run: ./target/x86_64-unknown-linux-musl/release/rastro --version
+          file target/${{ matrix.target }}/release/rastro
+          file target/${{ matrix.target }}/release/rastro | grep -q 'static'
+      - run: ./target/${{ matrix.target }}/release/rastro --version
       # Keeps the binary downloadable from the run that built it, which is what a
       # pull request gets: `rolling-build` publishes master only.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: rastro-x86_64-unknown-linux-musl
-          path: target/x86_64-unknown-linux-musl/release/rastro
+          # The artifact name is the published asset name, so `rolling-build` needs no
+          # target list of its own and cannot drift from this matrix.
+          name: rastro-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/rastro
           if-no-files-found: error
 
   # Republishes the `rolling` pre-release on every master push that passes the rest of
@@ -144,7 +163,6 @@ jobs:
       id-token: write
       attestations: write
     env:
-      ASSET: rastro-x86_64-unknown-linux-musl
       # `gh` takes the repository from a git remote and from no environment variable of
       # its own, and this job has no checkout to give it one.
       GH_REPO: ${{ github.repository }}
@@ -152,17 +170,26 @@ jobs:
     steps:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          name: rastro-x86_64-unknown-linux-musl
-      - name: Name and hash the asset
+          pattern: rastro-*-unknown-linux-musl
+          path: builds
+          # One directory per artifact, not `merge-multiple`: every architecture's artifact
+          # holds a file called `rastro`, so a merge would leave one overwriting the other.
+          merge-multiple: false
+      - name: Name and hash the assets
         run: |
-          mv rastro "$ASSET"
-          sha256sum "$ASSET" > "$ASSET.sha256"
+          for directory in builds/*/; do
+            asset=$(basename "$directory")
+            mv "$directory/rastro" "$asset"
+            sha256sum "$asset" > "$asset.sha256"
+          done
       # The checksum only says the download did not corrupt, which is worth little when
       # the thing being downloaded is trusted with root. This binds the bytes to the
       # workflow and commit that produced them: `gh attestation verify` checks it.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ env.ASSET }}
+          # The pattern has to match a whole path, so it ends at the triple and the
+          # checksum files sitting beside these are not attested as binaries.
+          subject-path: rastro-*-unknown-linux-musl
       - name: Publish the build as the `rolling` pre-release
         run: |
           notes="Built from ${GITHUB_SHA}. Replaced on every push to master, and unrelated to any released version. Verify with \`gh attestation verify --repo $GH_REPO\`, then \`chmod +x\`."
@@ -174,7 +201,7 @@ jobs:
           # its own help: a transfer that fails takes the published file with it. So the
           # new bytes land under a temporary name, and only a completed upload displaces
           # what is already serving.
-          for name in "$ASSET" "$ASSET.sha256"; do
+          for name in rastro-*-unknown-linux-musl*; do
             cp "$name" "$name.incoming"
             gh release upload rolling "$name.incoming" --clobber
             gh release delete-asset rolling "$name" --yes || true

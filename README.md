@@ -159,12 +159,18 @@ on every push and is unrelated to any version.
 
 ```sh
 base=https://github.com/davividal/rastro/releases/download/rolling
-curl -fLO $base/rastro-x86_64-unknown-linux-musl
-curl -fLO $base/rastro-x86_64-unknown-linux-musl.sha256
-sha256sum -c rastro-x86_64-unknown-linux-musl.sha256
-gh attestation verify rastro-x86_64-unknown-linux-musl --repo davividal/rastro
-chmod +x rastro-x86_64-unknown-linux-musl
+asset=rastro-x86_64-unknown-linux-musl   # or rastro-aarch64-unknown-linux-musl
+curl -fLO $base/$asset
+curl -fLO $base/$asset.sha256
+sha256sum -c $asset.sha256
+gh attestation verify $asset --repo davividal/rastro
+chmod +x $asset
 ```
+
+Both architectures are published, built and smoke-tested on a runner of their own
+rather than cross-compiled. The one to fetch is the *target host's*, which is not
+necessarily the one you are downloading on: `uname -m` there says `x86_64` or
+`aarch64`, matching the triple in the asset name.
 
 The checksum catches a corrupted download. The attestation is the one that matters:
 it is signed by GitHub at build time and ties these bytes to the commit and the
@@ -186,8 +192,10 @@ cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 The musl target is what ships: one static binary for a host with nothing
-installed on it. CI asserts it really is static. Swap in
-`aarch64-unknown-linux-musl` for an arm64 host.
+installed on it. CI asserts it really is static, for both published
+architectures. Swap in `aarch64-unknown-linux-musl` for an arm64 host, which
+needs a linker for that target, so cross-compiling is easier in a container of
+the target architecture than on the workstation.
 
 ## Documentation
 
