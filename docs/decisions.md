@@ -2211,3 +2211,53 @@ asserts the question rastro asks. A fixture of the real `-d` output proves `boot
 `global` are read, and one of the real output *without* `-d` proves the failure stays
 loud if the flag is ever dropped. The container that gates CI would not have caught
 this: netavark installs its default route with `proto static`.
+
+# A second architecture, because the target host was one
+
+2026-09-01. `docs/decisions.md` had promised aarch64 since the form was chosen, and
+`rastro-ssh` documented `./rastro-aarch64` in its usage line, but CI built one triple and
+`rolling` published one asset. The gap surfaced the first time a target host was an arm64
+Debian 12 guest.
+
+## aarch64 is built on an arm64 runner, not cross-compiled
+
+Three routes reach an aarch64 asset: `cross`, `cargo-zigbuild`, or a native arm64 runner.
+The first two build on the x86 runner already in the workflow and add a container or a
+second compiler driver; the native runner adds a runner class instead.
+
+**The smoke run decided it.** `static-binary` runs the binary it just built and asserts
+the `file` output says `static`, and neither assertion is available to a machine that
+cannot execute what it produced. A cross-compiled aarch64 asset would be published on the
+strength of a target triple and a linker exit status, which is exactly the trust the
+existing job was written not to extend. On a native runner both legs are the same six
+steps with the triple substituted, so there is one job and no second toolchain to keep
+current. Verified on an aarch64 musl build: `file` reports `statically linked`, so the
+assertion that already gates x86 needs no arm-specific spelling.
+
+**The matrix is the only target list.** The artifact name is the published asset name, so
+`rolling-build` derives what it publishes from the directories it downloaded and holds no
+triple of its own. Adding a third architecture is one matrix entry.
+
+**A matrix renames the check, so an aggregate job keeps the old context.** The branch
+ruleset requires `musl static build`. A matrix reports one check per leg under a name of
+its own, so matrixing the job retired that context silently, and a required check that is
+never reported blocks every pull request rather than failing one. A one-step job carrying
+the old name and `needs: static-binary` restores it, with `if: always()` load-bearing:
+without it the job is skipped along with a failed or skipped dependency, and a skipped
+required check does not block a merge the way a failed one does. The context now says
+more than it used to, since it passes only when every architecture built. Editing the
+ruleset to require the two new contexts instead was rejected for the reason
+[the Quality Gate entry](#the-required-sonarqube-check-waits-for-the-quality-gate) already
+gives: a required context that keeps its name outlives the job layout behind it.
+
+**Cost, and it is why this is an entry rather than a detail:** GitHub's arm64 runners are
+free for public repositories and billed for private ones, so the build now depends on this
+repository staying public in a way it did not before. `ubuntu-24.04-arm` is also a pinned
+image where the x86 leg tracks `ubuntu-latest`, because there is no `-latest` alias for
+arm; that pin needs moving by hand when it ages out. The reversal, if either cost stops
+looking right, is `cargo-zigbuild` on the x86 runner, giving up the smoke run.
+
+**What is not covered.** `check` still runs the test suite on x86 only, so the determinism
+harness has never gated on arm. A first manual run on aarch64 Debian 12 produced a
+complete document, five facets erroring loudly on an unprivileged user's permission
+denials and the rest `ok`.
