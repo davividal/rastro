@@ -2238,6 +2238,18 @@ assertion that already gates x86 needs no arm-specific spelling.
 `rolling-build` derives what it publishes from the directories it downloaded and holds no
 triple of its own. Adding a third architecture is one matrix entry.
 
+**A matrix renames the check, so an aggregate job keeps the old context.** The branch
+ruleset requires `musl static build`. A matrix reports one check per leg under a name of
+its own, so matrixing the job retired that context silently, and a required check that is
+never reported blocks every pull request rather than failing one. A one-step job carrying
+the old name and `needs: static-binary` restores it, with `if: always()` load-bearing:
+without it the job is skipped along with a failed or skipped dependency, and a skipped
+required check does not block a merge the way a failed one does. The context now says
+more than it used to, since it passes only when every architecture built. Editing the
+ruleset to require the two new contexts instead was rejected for the reason
+[the Quality Gate entry](#the-required-sonarqube-check-waits-for-the-quality-gate) already
+gives: a required context that keeps its name outlives the job layout behind it.
+
 **Cost, and it is why this is an entry rather than a detail:** GitHub's arm64 runners are
 free for public repositories and billed for private ones, so the build now depends on this
 repository staying public in a way it did not before. `ubuntu-24.04-arm` is also a pinned

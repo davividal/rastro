@@ -142,6 +142,26 @@ jobs:
           path: target/${{ matrix.target }}/release/rastro
           if-no-files-found: error
 
+  # The branch ruleset requires a context called `musl static build`, and a matrix reports
+  # one check per leg under a name of its own, so matrixing the job retired that context
+  # without saying so. A required check that is never reported blocks every pull request
+  # rather than failing one. This job carries the old name so the ruleset needs no edit,
+  # here or when a third architecture is added.
+  static-binary-gate:
+    name: musl static build
+    needs: static-binary
+    # Load-bearing: without it this job is skipped along with a dependency that failed or
+    # was skipped, and a skipped required check does not block a merge the way a failed
+    # one does. The step below is what turns the result into the verdict.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert every architecture built
+        run: |
+          result='${{ needs.static-binary.result }}'
+          echo "static-binary: $result"
+          test "$result" = success
+
   # Republishes the `rolling` pre-release on every master push that passes the rest of
   # this workflow, so the newest build has one anonymous URL instead of living behind a
   # signed-in run page. Not a release: no version, no notes, no promise that yesterday's
