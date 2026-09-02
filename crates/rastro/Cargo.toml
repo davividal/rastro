@@ -10,6 +10,9 @@ keywords = ["fingerprint", "drift", "state", "sysadmin", "devops"]
 categories = ["command-line-utilities"]
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 rastro-collector = { workspace = true }
 rastro-fingerprint = { workspace = true }

@@ -15,11 +15,6 @@
 //! - [`error`]: why a value was refused entry to the model.
 //! - [`json`]: the wire shape, and the only place that knows it.
 
-#![deny(unsafe_code)]
-// Doc links are checked by `cargo doc` in CI, so a rename cannot leave a stale
-// path behind.
-#![deny(rustdoc::broken_intra_doc_links)]
-
 pub mod collector;
 pub mod error;
 pub mod facet;

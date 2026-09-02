@@ -1,9 +1,6 @@
 //! The tool: built-in collectors, the command line, and the wiring between
 //! them. Every decision worth testing lives in a crate, not here.
 
-#![deny(unsafe_code)]
-#![deny(rustdoc::broken_intra_doc_links)]
-
 use std::error::Error;
 use std::io;
 use std::process::ExitCode;

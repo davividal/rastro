@@ -11,9 +11,6 @@
 //! keeps the crate graph acyclic: identity is depended *upon*, this port
 //! depends *on* things.
 
-#![deny(unsafe_code)]
-#![deny(rustdoc::broken_intra_doc_links)]
-
 pub mod claims;
 pub mod fingerprint_host;
 pub mod value_objects;
