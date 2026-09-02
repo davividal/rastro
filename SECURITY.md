@@ -76,6 +76,14 @@ invocation, one document.
   when there is one. No type in the collector has a field a hash could be stored in,
   which is a guarantee an unbuilt redaction layer cannot weaken.
 
+- **No password verifiers, and no digest of an unsalted one.** A PostgreSQL role's
+  `rolpassword` is hashed by the server and never read into the process; what the document
+  carries is a digest of that hash, which cannot authenticate and, for a SCRAM verifier,
+  cannot be matched against a guessed password because the random salt is not kept. Only
+  SCRAM is digested. An md5 verifier is `md5(password || rolname)` with no random salt, so a
+  digest of it plus the role name beside it in the same document would be an offline password
+  oracle; those roles carry no digest at all.
+
 - **Memory safety.** `unsafe` is forbidden by lint across the workspace.
 
 - **The integrity of the published binary.** GitHub Actions are pinned by commit

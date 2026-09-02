@@ -1,13 +1,17 @@
 //! Reading `pg_roles` out of a psql result set.
 //!
-//! What is peculiar to *this query* lives here: the nine columns it asks for, the `-1` that
+//! What is peculiar to *this query* lives here: the eleven columns it asks for, the `-1` that
 //! means no connection limit, and the empty timestamp that means no expiry.
 //!
-//! **The hash is never selected, only a `CASE` over it.** The attributes come from
-//! `pg_roles`, which masks the password; the tenth column is a derived name for how the
-//! password is stored, and the join to `pg_authid` exists for that one expression. So the
-//! secret stays on the server while the fact that there is one, and how it is kept, reaches
-//! the document.
+//! **The verifier is never selected, only `CASE`s over it.** The attributes come from
+//! `pg_roles`, which masks the password; the last two columns are a derived name for how the
+//! password is stored and the server's sha256 of the stored verifier, and the join to
+//! `pg_authid` exists for those two expressions. So the secret stays on the server while the
+//! fact that there is one, how it is kept, and whether it changed all reach the document.
+//!
+//! The digest column is empty for anything but a SCRAM verifier, so an absent digest means
+//! either no password or a scheme that must not be digested. `password_method` beside it says
+//! which, and is the field that carries that distinction.
 //!
 //! **The `pg_` roles are left out by the query.** `pg_monitor`, `pg_read_all_stats` and the
 //! rest arrive with the server version, which the document already records, so they are the
@@ -15,14 +19,18 @@
 //! reserved, so nothing an administrator creates can hide behind the filter. Membership *in*
 //! one of them is a different matter and is a per-cluster fact worth having.
 
-use rastro_collector::CollectionError;
+use rastro_collector::{CollectionError, Xxh3Digest};
 
 use super::psql_result_set::PsqlResultSet;
 use crate::collectors::postgresql::model::{ClusterRoles, Role};
 use crate::collectors::postgresql::value_objects::{PasswordMethod, RoleName};
 
 /// The columns the collector's query asks for, in order.
-const COLUMNS: usize = 10;
+const COLUMNS: usize = 11;
+
+/// The characters `encode(sha256(...), 'hex')` prints, which is the only digest column
+/// this reads.
+const SERVER_DIGEST_LENGTH: usize = 64;
 
 /// What the server prints for a role that may hold as many connections as it likes.
 const NO_CONNECTION_LIMIT: &str = "-1";
@@ -32,7 +40,8 @@ pub struct PsqlRoles;
 
 impl PsqlRoles {
     /// Reads `rolname,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls,
-    /// rolcanlogin,rolconnlimit,rolvaliduntil` rows into a cluster's roles.
+    /// rolcanlogin,rolconnlimit,rolvaliduntil` rows, with the two derived password columns,
+    /// into a cluster's roles.
     pub fn parse(output: &str) -> Result<ClusterRoles, CollectionError> {
         let mut roles = Vec::new();
 
@@ -50,6 +59,7 @@ impl PsqlRoles {
                 connection_limit: connection_limit_of(&record[7])?,
                 valid_until: expiry_of(&record[8]),
                 password_method: password_method_of(&record[9])?,
+                password_digest: password_digest_of(&record[10])?,
             });
         }
 
@@ -68,6 +78,34 @@ fn connection_limit_of(column: &str) -> Result<Option<i64>, CollectionError> {
             "psql printed {column:?} where a connection limit is a whole number"
         ))
     })
+}
+
+/// An empty digest column is a role with no digest to record: no password at all, or a
+/// verifier the query refuses to hash because its scheme carries no random salt.
+/// `password_method` is what tells those apart, which is why nothing is invented here.
+///
+/// The shape is checked because a digest over a truncated or corrupt column would be a value
+/// no later run reproduces, and a fingerprint that cannot be compared is worse than a read
+/// that failed loudly. Lowercase is part of the shape rather than pedantry: `encode` prints
+/// lowercase, and quietly accepting the other case would digest one unchanged verifier two
+/// ways and report a password change that never happened.
+fn password_digest_of(column: &str) -> Result<Option<Xxh3Digest>, CollectionError> {
+    if column.is_empty() {
+        return Ok(None);
+    }
+
+    if column.len() != SERVER_DIGEST_LENGTH
+        || !column
+            .bytes()
+            .all(|character| character.is_ascii_digit() || (b'a'..=b'f').contains(&character))
+    {
+        return Err(CollectionError::new(format!(
+            "psql printed {column:?} where this collector's query prints the \
+             {SERVER_DIGEST_LENGTH} lowercase hex characters of a sha256"
+        )));
+    }
+
+    Ok(Some(Xxh3Digest::of(column.as_bytes())))
 }
 
 /// An empty method is no password.

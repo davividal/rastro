@@ -242,7 +242,6 @@ dependencies = [
  "subprocess",
  "thiserror",
  "toml",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -251,6 +250,7 @@ version = "0.0.0"
 dependencies = [
  "rastro-fingerprint",
  "thiserror",
+ "xxhash-rust",
 ]
 
 [[package]]

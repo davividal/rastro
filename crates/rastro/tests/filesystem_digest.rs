@@ -9,9 +9,9 @@ mod support;
 
 use rastro::collectors::filesystem::{
     CanonicalBytes, ContentPolicy, Detail, DigestAlgorithm, FileEntry, FileKind, FileMode,
-    MetadataDigest, NanosecondsSinceEpoch,
+    NanosecondsSinceEpoch,
 };
-use rastro_collector::{AbsolutePath, ByteSize};
+use rastro_collector::{AbsolutePath, ByteSize, Xxh3Digest};
 use rastro_fingerprint::View;
 use support::observation::text;
 
@@ -187,7 +187,7 @@ fn a_digest_is_the_same_on_every_run_of_the_same_binary() {
 #[test]
 fn a_digest_is_written_as_sixteen_lowercase_hex_characters() {
     // Act
-    let digest = MetadataDigest::of(&[0]);
+    let digest = Xxh3Digest::of(&[0]);
 
     // Act & Assert: zero-padded, because a digest that varied in width would sort and diff
     // inconsistently between entries.

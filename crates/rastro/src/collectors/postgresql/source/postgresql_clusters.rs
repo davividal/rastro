@@ -60,13 +60,28 @@ const LENS_QUERY: &str = "SELECT current_user, current_database(), \
      current_setting('is_superuser')::boolean, \
      pg_has_role(current_user, 'pg_read_all_settings', 'usage')";
 
-/// The ten columns [`PsqlRoles`] reads, in the order it expects them.
+/// The eleven columns [`PsqlRoles`] reads, in the order it expects them.
 ///
-/// The attributes come from `pg_roles`, which masks the password. The tenth column is a
-/// `CASE` over `pg_authid.rolpassword`, so how a password is stored reaches the document
-/// while the hash itself never leaves the server. Reading `pg_authid` at all needs superuser,
-/// which the cluster owner is under peer authentication; a cluster whose owner is not will
-/// fail this read loudly rather than report roles without saying whether they have passwords.
+/// The attributes come from `pg_roles`, which masks the password. The last two columns are
+/// `CASE`s over `pg_authid.rolpassword`, so how a password is stored and whether it changed
+/// both reach the document while the verifier itself never leaves the server. Reading
+/// `pg_authid` at all needs superuser, which the cluster owner is under peer authentication;
+/// a cluster whose owner is not will fail this read loudly rather than report roles without
+/// saying whether they have passwords.
+///
+/// The digest is taken *on the server*, so the verifier is never read into this process and
+/// no mistake here can put credential material in a document. `convert_to` rather than a
+/// `::bytea` cast, because casting text to bytea runs the value through bytea's input parser
+/// and would interpret a backslash in it. `sha256` arrived in PostgreSQL 11, which is this
+/// query's floor; the hba read below already needs 10.
+///
+/// **Only a SCRAM verifier is digested, and the condition is the security property.** SCRAM
+/// carries a random per-`ALTER ROLE` salt, so a digest of it cannot be matched against a
+/// guessed password. An md5 verifier is `md5(password || rolname)` with no random salt at
+/// all: its only variable input is the role name, which is this facet's own key, so a digest
+/// of it would be a fast offline oracle over the document rather than a token. Testing for
+/// SCRAM rather than excluding md5 fails closed, so a scheme a later PostgreSQL adds gets no
+/// digest until somebody has checked how it is salted.
 ///
 /// The `pg_` roles are filtered out because they arrive with the server version, which the
 /// document already records, and the prefix is reserved so nothing an administrator creates
@@ -77,7 +92,10 @@ const ROLES_QUERY: &str = "SELECT r.rolname, r.rolsuper, r.rolcreatedb, r.rolcre
      CASE WHEN a.rolpassword IS NULL THEN '' \
           WHEN a.rolpassword LIKE 'SCRAM-SHA-256$%' THEN 'scram-sha-256' \
           WHEN a.rolpassword LIKE 'md5%' THEN 'md5' \
-          ELSE 'unrecognised' END \
+          ELSE 'unrecognised' END, \
+     CASE WHEN a.rolpassword LIKE 'SCRAM-SHA-256$%' \
+          THEN encode(sha256(convert_to(a.rolpassword, 'UTF8')), 'hex') \
+          ELSE '' END \
      FROM pg_roles r JOIN pg_authid a ON a.oid = r.oid \
      WHERE r.rolname NOT LIKE 'pg\\_%'";
 

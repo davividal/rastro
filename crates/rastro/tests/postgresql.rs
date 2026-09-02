@@ -56,13 +56,14 @@ metrics,pg_monitor,f
 developer,migrator,f
 ";
 
-/// The nine columns the roles query asks for. `ops_admin` is a second superuser besides the
-/// cluster owner, which is the change this read exists to surface.
+/// The eleven columns the roles query asks for. `ops_admin` is a second superuser besides the
+/// cluster owner, which is the change this read exists to surface. The last column is the
+/// server's sha256 of the stored verifier, which is how a rotation reaches the document.
 const ROLES: &str = "\
-ops_admin,t,t,t,t,f,t,-1,,scram-sha-256
-postgres,t,t,t,t,t,t,-1,,scram-sha-256
-app,f,f,f,f,f,t,-1,,scram-sha-256
-migrator,f,f,f,f,f,t,-1,,md5
+ops_admin,t,t,t,t,f,t,-1,,scram-sha-256,b6f5ee30bf59607fcb1a5029c343bb875f4f197e9752d636d3b2a933dde9b192
+postgres,t,t,t,t,t,t,-1,,scram-sha-256,122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db
+app,f,f,f,f,f,t,-1,,scram-sha-256,84757bf01cf42c7fdb177d4f37e255bb0dfa6ce3c92ecf71345002fdcaf8813a
+migrator,f,f,f,f,f,t,-1,,md5,
 ";
 
 /// The three columns the role-settings query asks for: an `ALTER ROLE`, an `ALTER DATABASE`

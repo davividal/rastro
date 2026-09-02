@@ -7,7 +7,7 @@
 use rastro_collector::{
     ClaimedReading, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, Content, FacetName, FilesystemClaim, FingerprintError, Observation, Presence,
-    Scalar, Sensitivity, View, Volatility, WalkedTree,
+    Scalar, Sensitivity, View, Volatility, WalkedTree, Xxh3Digest,
 };
 
 struct OutOfTreeCollector {
@@ -49,6 +49,9 @@ impl Collector for OutOfTreeCollector {
             ("stable", Observation::text("value")),
             ("changes", Observation::integer(1).volatile()),
             ("secret", Observation::text("hunter2").sensitive()),
+            // An author who hashes something reaches the one digest spelling through this
+            // crate, or invents a second one for the same document.
+            ("digest", (&Xxh3Digest::of(b"observed")).into()),
         ]))
     }
 

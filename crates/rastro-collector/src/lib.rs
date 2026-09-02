@@ -22,7 +22,7 @@ use thiserror::Error;
 /// owns.
 pub use claims::{ClaimedReading, FilesystemClaim};
 pub use value_objects::{
-    AbsolutePath, ByteSize, NonEmptyText, ProcessName, SettingValue, WalkedTree,
+    AbsolutePath, ByteSize, NonEmptyText, ProcessName, SettingValue, WalkedTree, Xxh3Digest,
 };
 
 /// Everything a collector author needs from the document model, under exactly
