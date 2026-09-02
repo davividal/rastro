@@ -24,11 +24,15 @@ cargo fmt --all                               # CI runs --check
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-Off Linux seven tests fail and every fixture test passes. Six of them want `/proc`:
-five in `tests/cli.rs` and `a_config_can_seal_a_tree_so_the_walk_stops_there`, which
-reads `/proc/mounts` through a real walk. The seventh, `walk_records_a_socket_and_a_fifo`,
-wants a unix socket path shorter than `SUN_LEN`. Gate all of it in a container, Alpine
-as well as Debian since the package sources differ.
+**The tests run on Linux.** rastro reads `/proc`, and the tests that matter most drive the
+real binary against a real host, so a run anywhere else is not a weaker signal but no
+signal: it says the parsers parse. Use the container below, Alpine as well as Debian since
+the package sources differ. Clippy and `fmt` are the two that are honest anywhere.
+
+There is deliberately no list here of which tests fail on a macOS workstation. One used to
+be, and it rotted into naming a test that passes and omitting one that fails, which is the
+lesser harm. The greater one is that a list of failures to expect reads as permission to
+run the suite there and interpret the result.
 
 **Run it unprivileged too, at least once per change to the walk or to the output.** CI is not
 root, and three separate defects hid behind that: a test that skipped as root, a mode assertion

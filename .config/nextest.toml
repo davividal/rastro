@@ -14,9 +14,8 @@
 # terminate-after is a hang guard, not a budget.
 slow-timeout = { period = "60s", terminate-after = 6 }
 
-# Off Linux there is no `/proc`, so the three `tests/cli.rs` cases that read the real host fail
-# on a macOS working machine. Collecting failures at the end is what stops those scrolling the
-# genuine output away.
+# The suite is over 900 tests, so a failure reported where it happens scrolls away behind
+# everything that passed after it. Collecting them at the end is what makes a red run readable.
 failure-output = "final"
 
 # Considered and measured: serialising the thirteen tests that walk the whole host, on the
