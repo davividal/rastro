@@ -176,6 +176,9 @@ is not published this way; it stays an artifact on its own CI run.
 
 ## Building
 
+The tests need Linux: rastro reads `/proc`, and the ones that matter drive the binary
+against a real host. Build and lint anywhere; run the suite in a container or a VM.
+
 ```sh
 cargo test
 cargo clippy --all-targets -- -D warnings
