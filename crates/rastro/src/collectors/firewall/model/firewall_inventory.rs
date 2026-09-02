@@ -4,58 +4,69 @@ use std::collections::BTreeMap;
 
 use rastro_collector::{CollectionError, Observation};
 
-use super::ruleset::Ruleset;
+use super::backend_report::BackendReport;
 use crate::collectors::firewall::value_objects::FirewallBackend;
 
 /// Every interface rastro knows how to read, and what each reported.
 ///
 /// The same shape as the packages and repositories inventories, and for the same reason: an
-/// interface rastro did not find is present as a key with no ruleset rather than missing
-/// from the map, so a document that says nothing about `ip6tables` cannot be confused with
-/// one written before rastro could read it.
+/// interface rastro did not read is present as a key with a report saying so rather than
+/// missing from the map, so a document that says nothing about `ip6tables_nft` cannot be
+/// confused with one written before rastro could read it.
 ///
-/// **A `null` and an empty object are different answers here, and the difference matters
-/// more than usual.** `null` means the tool is not on the box. An empty object means the
-/// tool ran and the box filters nothing. Reading the first as the second would report an
-/// unprotected box as an unknown one, or worse, the other way round.
+/// **Every key carries a status, and that is what makes the two kinds of "no rules"
+/// separable.** See [`BackendReport`]: a tool that ran and found nothing is not the same
+/// observation as a kernel subsystem that cannot hold rules, and neither is the same as an
+/// interface rastro failed to read. The first two both mean the box filters nothing on that
+/// interface; the third means it might not.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct FirewallInventory(BTreeMap<FirewallBackend, Option<Ruleset>>);
+pub struct FirewallInventory(BTreeMap<FirewallBackend, BackendReport>);
 
 impl FirewallInventory {
     pub fn new(
-        found: impl IntoIterator<Item = (FirewallBackend, Ruleset)>,
+        found: impl IntoIterator<Item = (FirewallBackend, BackendReport)>,
     ) -> Result<Self, CollectionError> {
-        let mut inventory: BTreeMap<FirewallBackend, Option<Ruleset>> = FirewallBackend::ALL
+        let mut inventory: BTreeMap<FirewallBackend, BackendReport> = FirewallBackend::ALL
             .into_iter()
-            .map(|backend| (backend, None))
+            .map(|backend| (backend, Self::unprobed(backend)))
             .collect();
+        let mut reported = Vec::new();
 
-        for (backend, ruleset) in found {
-            if inventory.insert(backend, Some(ruleset)).flatten().is_some() {
+        for (backend, report) in found {
+            if reported.contains(&backend) {
                 return Err(CollectionError::new(format!(
                     "the {} ruleset was reported twice",
                     backend.as_str()
                 )));
             }
+            reported.push(backend);
+            inventory.insert(backend, report);
         }
 
         Ok(Self(inventory))
     }
 
-    pub fn rulesets(&self) -> &BTreeMap<FirewallBackend, Option<Ruleset>> {
+    pub fn reports(&self) -> &BTreeMap<FirewallBackend, BackendReport> {
         &self.0
+    }
+
+    /// The placeholder for an interface nothing reported on.
+    ///
+    /// `detect_all` yields one source per backend, so this is reachable only when a caller
+    /// hands the collector a narrower list. It is deliberately an error rather than an
+    /// empty ruleset: not looking is not the same as looking and finding nothing.
+    fn unprobed(backend: FirewallBackend) -> BackendReport {
+        BackendReport::Unreadable(format!("rastro did not probe {}", backend.as_str()))
     }
 }
 
 impl From<&FirewallInventory> for Observation {
     fn from(inventory: &FirewallInventory) -> Self {
-        Observation::object(inventory.rulesets().iter().map(|(backend, ruleset)| {
-            let reported = match ruleset {
-                Some(ruleset) => Observation::from(ruleset),
-                None => Observation::null(),
-            };
-
-            (backend.as_str(), reported)
-        }))
+        Observation::object(
+            inventory
+                .reports()
+                .iter()
+                .map(|(backend, report)| (backend.as_str(), Observation::from(report))),
+        )
     }
 }
