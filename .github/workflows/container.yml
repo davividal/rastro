@@ -1,0 +1,72 @@
+name: container
+
+# The suite on a real Linux, on Debian and on Alpine, as root and unprivileged.
+#
+# Not in `ci.yml`, and the reason is the same one that keeps a Windows job out of
+# other people's: this pulls two images and compiles the workspace four times, so
+# putting it in front of every pull request would multiply the wait for a gate that
+# almost never catches anything a Linux runner would not. It runs where the cost is
+# affordable instead: every push to master, nightly, on demand, and on any pull
+# request carrying the `container` label.
+#
+# **Add the `container` label** to a pull request that touches the filesystem walk,
+# the `packages` collector, anything reading /proc, the output file's mode, or the
+# execution seam. Those are the changes `ci.yml` cannot see: it runs one distribution,
+# as one unprivileged user, and cannot tell dpkg from apk.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    # Nightly, so a distribution moving underneath rastro is found by a scheduled run
+    # naming the day it broke rather than by the next unrelated pull request.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  suite:
+    name: ${{ matrix.image }}
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'container')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Debian and Alpine because the package sources differ: dpkg and apk are two
+        # separate branches of the `packages` collector, and glibc and musl are two
+        # different answers about what a filename is.
+        #
+        # Floating tags, deliberately, unlike the actions this repository pins by
+        # commit. The question is whether rastro still works on today's Debian and
+        # today's Alpine; a digest answers it about the day somebody wrote the digest.
+        # A break here is news, which is what the nightly schedule is for.
+        image: [rust:latest, rust:alpine]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The same script a working machine runs through `scripts/test-in-container.sh`,
+      # so the two cannot drift. It runs the suite as root, then again as a user it
+      # creates with no privilege at all: a container job is root by default, and
+      # three defects have already hidden in that difference.
+      #
+      # No build cache. Everything is compiled inside the image, where
+      # `Swatinem/rust-cache` has nothing to act on, and this job is rare enough that
+      # mounting one would be more machinery than it saves.
+      - name: Run the suite, privileged and unprivileged
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/w \
+            -w /w \
+            -e CARGO_TARGET_DIR=/tmp/target \
+            ${{ matrix.image }} sh /w/scripts/container-suite.sh

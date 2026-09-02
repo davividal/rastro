@@ -58,6 +58,58 @@ jobs:
       # `deny(rustdoc::broken_intra_doc_links)` in lib.rs bite.
       - run: cargo doc --locked --no-deps
 
+  # This job runs one distribution, as one unprivileged user. It therefore cannot
+  # tell dpkg from apk, cannot see what the walk does as root, and cannot see a musl
+  # host at all. `.github/workflows/container.yml` covers that: Debian and Alpine,
+  # root and unprivileged, on every push to master, nightly, on demand, and on any
+  # pull request carrying the `container` label. It compiles the workspace four times
+  # over two pulled images, which is why it is not in front of every pull request.
+  # **Add the `container` label** to one touching the walk, the `packages` collector,
+  # anything reading /proc, the output file's mode, or the execution seam.
+
+  # `cargo install` deliberately resolves without the workspace lockfile, and every
+  # other job here passes `--locked`. So an upstream releasing a semver-compatible
+  # version that does not build would break the path the README tells people to use,
+  # and nothing else in this workflow would notice. Debug profile: this asks whether
+  # a fresh graph resolves and compiles, not how fast the result runs.
+  source-install:
+    name: cargo install (fresh resolution)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo install --path crates/rastro --debug --root target/source-install
+      - run: target/source-install/bin/rastro --version
+
+  # Differential: the action scans the commit range this push or pull request adds.
+  # The whole reachable history is a separate question, asked weekly and on demand by
+  # `.github/workflows/secret-scan.yml`, because scanning it on every pull request
+  # would pay for 223 commits to learn about one.
+  #
+  # A fingerprint is sensitive operational data, and the fixtures in this repository
+  # are host output. Something real arriving in one is a plausible accident rather
+  # than a hypothetical, which is what this is here for. Policy lives in
+  # `.gitleaks.toml`, at the root, so the same rules apply to a local gitleaks.
+  secret-scan:
+    name: secret scan (this push)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0  # The action diffs a range, which a shallow clone does not have.
+      # Free for a public repository under a personal account. Moving this repository
+      # into an organisation would require a GITLEAKS_LICENSE, which is worth knowing
+      # before the move rather than from the red run after it.
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   sonarqube:
     name: SonarQube
     needs: check
@@ -171,8 +223,10 @@ jobs:
     # Every gating job, not just the one that produced the artifact: a binary people are
     # invited to curl and run as root should not come from a commit that failed a gate.
     # SonarQube counts, now that `sonar.qualitygate.wait` makes the job carry the verdict
-    # rather than merely posting the analysis.
-    needs: [check, sonarqube, supply-chain, static-binary]
+    # rather than merely posting the analysis. So does the secret scan: a commit that
+    # leaked a credential should not have its bytes handed out under an anonymous URL
+    # while somebody works out what to rotate.
+    needs: [check, sonarqube, supply-chain, static-binary, source-install, secret-scan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     # Deliberately not granted to the job that compiles, where a build script of any

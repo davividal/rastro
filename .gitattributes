@@ -1,0 +1,15 @@
+# Line endings are part of the contract for the two shell scripts this repository
+# ships, so they are pinned rather than left to a checkout's platform defaults.
+#
+# `rastro-ssh` is run by a POSIX shell on a remote host. Checked out with CRLF it
+# fails as `#!/bin/sh^M: no such file or directory`, which names neither the file nor
+# the cause. The wrapper already passes `ssh -T` for the same family of reason: CRLF
+# translation would corrupt every line of a fingerprint on the way back.
+#
+# `scripts/*.sh` run inside a Linux container from a bind-mounted checkout, so the
+# host's line endings travel into the container unchanged.
+
+* text=auto eol=lf
+
+rastro-ssh text eol=lf
+*.sh text eol=lf
