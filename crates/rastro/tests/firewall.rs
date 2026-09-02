@@ -23,7 +23,7 @@ CONFIG_IP6_NF_IPTABLES=m
 ";
 
 fn residency() -> KernelResidency {
-    KernelResidency::parse(LOADED, Some(KERNEL_CONFIG))
+    KernelResidency::parse(Some(LOADED), Some(KERNEL_CONFIG))
 }
 /// A dump in the shape `iptables-save` writes: a timestamped header, two tables, a
 /// user-defined chain with no policy, and rules in the order the kernel tests them.
@@ -364,7 +364,7 @@ fn an_unreadable_kernel_configuration_is_an_error_not_an_empty_ruleset() {
     // Arrange: no `/boot/config-<release>`, so an unloaded subsystem might still be
     // compiled in and holding rules. Reporting `absent` here would describe a filtered box
     // as an unfiltered one.
-    let blind = KernelResidency::parse("", None);
+    let blind = KernelResidency::parse(Some(""), None);
     let sources = FirewallSource::detect_all(&blind);
     let nft = sources
         .iter()

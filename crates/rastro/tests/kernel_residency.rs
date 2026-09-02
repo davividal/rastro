@@ -31,7 +31,7 @@ const EXT4: KernelSubsystem = KernelSubsystem::new("ext4", "CONFIG_EXT4_FS");
 const UNHEARD_OF: KernelSubsystem = KernelSubsystem::new("wireguard", "CONFIG_WIREGUARD");
 
 fn residency() -> KernelResidency {
-    KernelResidency::parse(LOADED, Some(KERNEL_CONFIG))
+    KernelResidency::parse(Some(LOADED), Some(KERNEL_CONFIG))
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn residency_is_undetermined_when_the_kernel_config_cannot_be_read() {
     // Arrange: a container, or a box whose /boot is not mounted. A subsystem that is not
     // loaded might still be built in, and answering `Absent` there would report a box as
     // unfiltered when rastro simply cannot tell.
-    let blind = KernelResidency::parse(LOADED, None);
+    let blind = KernelResidency::parse(Some(LOADED), None);
 
     // Act & Assert
     assert_eq!(blind.of(&NF_TABLES), Residency::Undetermined);
@@ -79,7 +79,7 @@ fn residency_is_undetermined_when_the_kernel_config_cannot_be_read() {
 fn a_loaded_module_is_resident_even_without_the_kernel_config() {
     // Arrange: the loaded list alone is enough for a positive answer, so a missing config
     // never downgrades what /proc/modules already proved.
-    let blind = KernelResidency::parse(LOADED, None);
+    let blind = KernelResidency::parse(Some(LOADED), None);
 
     // Act & Assert
     assert_eq!(blind.of(&IP_TABLES), Residency::Loaded);
@@ -95,4 +95,38 @@ fn a_resident_subsystem_is_safe_to_ask_and_an_absent_one_is_not() {
     assert!(residency.is_resident(&IP_TABLES));
     assert!(residency.is_resident(&EXT4));
     assert!(!residency.is_resident(&NF_TABLES));
+}
+
+#[test]
+fn residency_is_undetermined_when_the_loaded_module_list_cannot_be_read() {
+    // Arrange: the mirror of the missing-config case, and the more dangerous one. An
+    // unreadable `/proc/modules` says nothing about what is loaded, so treating it as an
+    // empty list would classify every buildable subsystem `Absent` and report a box with a
+    // live firewall as one with no rules at all.
+    let blind = KernelResidency::parse(None, Some(KERNEL_CONFIG));
+
+    // Act & Assert
+    assert_eq!(blind.of(&NF_TABLES), Residency::Undetermined);
+    assert_eq!(blind.of(&IP_TABLES), Residency::Undetermined);
+}
+
+#[test]
+fn a_built_in_subsystem_is_still_known_without_the_loaded_module_list() {
+    // Arrange: `CONFIG_EXT4_FS=y` is enough on its own. A built-in subsystem never appears
+    // in `/proc/modules`, so not being able to read that file costs nothing here.
+    let blind = KernelResidency::parse(None, Some(KERNEL_CONFIG));
+
+    // Act & Assert
+    assert_eq!(blind.of(&EXT4), Residency::BuiltIn);
+}
+
+#[test]
+fn absent_needs_both_sources_read() {
+    // Act & Assert: `Absent` is the only answer that asserts something cannot exist, so it
+    // is the one that needs every source. Either half missing downgrades it.
+    assert_eq!(
+        KernelResidency::parse(None, None).of(&NF_TABLES),
+        Residency::Undetermined
+    );
+    assert_eq!(residency().of(&NF_TABLES), Residency::Absent);
 }

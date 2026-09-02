@@ -2299,11 +2299,13 @@ observation rather than a silence, and the facet is now *more* informative than 
 was. Residency is read from `/proc/modules`, and from `CONFIG_*=y` in
 `/boot/config-<release>` for a kernel built with the subsystem compiled in.
 
-**The dangerous case is a kernel configuration rastro cannot read**, in a container
-or with `/boot` unmounted. An unloaded subsystem might then still be compiled in and
-holding rules, so residency has a fourth answer, `undetermined`, and the backend
-reports `error` rather than `absent`. Reporting a filtered box as an unfiltered one
-is the one failure this facet must not have.
+**The dangerous case is a source rastro cannot read.** With no
+`/boot/config-<release>`, in a container or with `/boot` unmounted, an unloaded
+subsystem might still be compiled in and holding rules. With no readable
+`/proc/modules`, rastro knows nothing about what is loaded at all. Either way
+residency answers `undetermined` and the backend reports `error` rather than `absent`,
+so `absent` is given only when both sources were read. Reporting a filtered box as an
+unfiltered one is the one failure this facet must not have.
 
 So each backend now carries a status instead of a ruleset or `null`:
 

@@ -48,7 +48,9 @@ const BUILT_IN: &str = "=y";
 /// The kernel's own answer to "is this already here", as a source rastro can read.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KernelResidency {
-    loaded: BTreeSet<String>,
+    /// `None` when the loaded-module list could not be read, which is a different state
+    /// from a kernel with nothing loaded.
+    loaded: Option<BTreeSet<String>>,
     /// `None` when no kernel configuration could be read, which is a different state from
     /// a configuration that mentions nothing.
     built_in: Option<BTreeSet<String>>,
@@ -57,10 +59,10 @@ pub struct KernelResidency {
 impl KernelResidency {
     /// Reads the host's module list and kernel configuration.
     ///
-    /// Neither read failing is fatal. An unreadable `/proc/modules` leaves nothing known to
-    /// be loaded and an unreadable configuration leaves every unloaded subsystem
-    /// [`Residency::Undetermined`], which is what a caller should act on rather than an
-    /// error it has no way to handle.
+    /// Neither read failing is fatal, and neither is treated as an answer. A source that
+    /// could not be read leaves a subsystem [`Residency::Undetermined`] rather than
+    /// `Absent`, which is what a caller should act on rather than an error it has no way to
+    /// handle.
     pub fn detect() -> Self {
         Self::at(PROC_MODULES, PROC_OSRELEASE, BOOT_CONFIG)
     }
@@ -71,25 +73,27 @@ impl KernelResidency {
         osrelease: impl AsRef<Path>,
         config_prefix: impl AsRef<Path>,
     ) -> Self {
-        let loaded = fs::read_to_string(modules).unwrap_or_default();
+        let loaded = fs::read_to_string(modules).ok();
         let config = fs::read_to_string(osrelease)
             .ok()
             .and_then(|release| Self::kernel_config(config_prefix.as_ref(), release.trim()));
 
-        Self::parse(&loaded, config.as_deref())
+        Self::parse(loaded.as_deref(), config.as_deref())
     }
 
     /// Translates both interfaces into the model.
     ///
     /// Separate from [`Self::at`] so the whole grammar is exercised from a fixture, with no
     /// `/proc` to read from.
-    pub fn parse(modules: &str, kernel_config: Option<&str>) -> Self {
+    pub fn parse(modules: Option<&str>, kernel_config: Option<&str>) -> Self {
         Self {
-            loaded: modules
-                .lines()
-                .filter_map(|line| line.split_whitespace().next())
-                .map(str::to_owned)
-                .collect(),
+            loaded: modules.map(|modules| {
+                modules
+                    .lines()
+                    .filter_map(|line| line.split_whitespace().next())
+                    .map(str::to_owned)
+                    .collect()
+            }),
             built_in: kernel_config.map(|config| {
                 config
                     .lines()
@@ -101,15 +105,33 @@ impl KernelResidency {
     }
 
     /// What is known about one subsystem.
+    ///
+    /// **`Absent` needs both sources.** It is the only answer that asserts a subsystem
+    /// cannot be holding state, so it may only be given when rastro has read both what is
+    /// loaded and what the kernel was built with. Either source unread leaves the answer
+    /// [`Residency::Undetermined`]: a `/proc/modules` that could not be opened says nothing
+    /// about what is in it, and reading that silence as an empty list would report a box
+    /// with a live firewall as one with no rules.
     pub fn of(&self, subsystem: &KernelSubsystem) -> Residency {
-        if self.loaded.contains(subsystem.module()) {
+        if self
+            .loaded
+            .as_ref()
+            .is_some_and(|loaded| loaded.contains(subsystem.module()))
+        {
             return Residency::Loaded;
         }
 
-        match &self.built_in {
-            None => Residency::Undetermined,
-            Some(built_in) if built_in.contains(subsystem.config_symbol()) => Residency::BuiltIn,
-            Some(_) => Residency::Absent,
+        if self
+            .built_in
+            .as_ref()
+            .is_some_and(|built_in| built_in.contains(subsystem.config_symbol()))
+        {
+            return Residency::BuiltIn;
+        }
+
+        match (&self.loaded, &self.built_in) {
+            (Some(_), Some(_)) => Residency::Absent,
+            _ => Residency::Undetermined,
         }
     }
 
