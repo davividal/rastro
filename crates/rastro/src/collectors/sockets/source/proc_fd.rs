@@ -13,9 +13,6 @@ use rastro_collector::ProcessName;
 
 use crate::collectors::sockets::model::SocketProcess;
 
-/// Where the kernel publishes its processes.
-const PROC: &str = "/proc";
-
 /// What a file descriptor pointing at a socket reads as.
 const SOCKET_PREFIX: &str = "socket:[";
 
@@ -34,11 +31,6 @@ const COMM: &str = "comm";
 pub struct SocketHolders(BTreeMap<u64, BTreeSet<SocketProcess>>);
 
 impl SocketHolders {
-    /// Walks the host's processes.
-    pub fn detect() -> Self {
-        Self::at(PROC)
-    }
-
     /// The same over a tree the caller chose.
     ///
     /// **Every failure here is expected and skipped.** A process may exit between being

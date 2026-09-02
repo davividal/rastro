@@ -61,7 +61,7 @@ impl ProcNet {
         source.net.join(UNIX).is_file().then_some(source)
     }
 
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             net: PathBuf::from(PROC_NET),
             proc: PathBuf::from(PROC),
@@ -111,12 +111,6 @@ impl ProcNet {
                 processes: holders.of(row.inode),
             })
             .collect()
-    }
-}
-
-impl Default for ProcNet {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
