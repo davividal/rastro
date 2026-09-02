@@ -13,15 +13,16 @@
 //! Both socket families are read. Unix sockets matter for a reason that is easy to miss:
 //! an *abstract* one has a name in no filesystem at all, so a filesystem walk cannot see
 //! it and this is the only facet that records it.
+//!
+//! **Read from `/proc`, not from `ss`, because asking `ss` changes the box.** See
+//! [`ProcNet`] for what that costs and what it does not.
 pub mod model;
 pub mod source;
 pub mod value_objects;
 
 pub use model::{ListeningSocket, SocketAddress, SocketProcess, SocketTable};
-pub use source::{Ss, ss_address, ss_users};
-pub use value_objects::{
-    InetHost, InterfaceScope, PortNumber, ProcessName, SocketKind, SocketPath, SocketState,
-};
+pub use source::{InetTable, ProcNet, SocketHolders, SocketRow, proc_net_inet, proc_net_unix};
+pub use value_objects::{InetHost, PortNumber, ProcessName, SocketKind, SocketPath, SocketState};
 
 // One import, because `rastro-collector` re-exports what an author needs. A
 // collector written outside this repo looks exactly like this.
@@ -33,23 +34,23 @@ use rastro_collector::{
 pub struct SocketsCollector {
     name: FacetName,
     identity: CollectorIdentity,
-    ss: Option<Ss>,
+    source: Option<ProcNet>,
 }
 
 impl SocketsCollector {
     pub fn new() -> Self {
-        Self::reading(Ss::detect())
+        Self::reading(ProcNet::detect())
     }
 
     /// The same collector over a source the caller chose.
-    pub fn reading(ss: Option<Ss>) -> Self {
+    pub fn reading(source: Option<ProcNet>) -> Self {
         Self {
             name: FacetName::new("sockets").expect("`sockets` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("sockets").expect("`sockets` is a legal collector id"),
-                CollectorVersion::new("1").expect("`1` is a legal collector version"),
+                CollectorVersion::new("2").expect("`2` is a legal collector version"),
             ),
-            ss,
+            source,
         }
     }
 }
@@ -73,33 +74,35 @@ impl Collector for SocketsCollector {
         CollectorCategory::State
     }
 
-    /// `undetermined` without `ss`, which is neither of the answers the other collectors
-    /// give, and the difference is worth stating.
+    /// `undetermined` without a procfs, which is neither of the answers the other
+    /// collectors give, and the difference is worth stating.
     ///
-    /// A box with no `ss` has not stopped listening on anything: the sockets are there and
-    /// rastro cannot see them, which is exactly what `undetermined` means and exactly what
-    /// `absent` would deny. That is the opposite of the units collector, where a missing
-    /// `systemctl` really does mean there are no systemd units, and of the packages
-    /// collector, where rastro reports what it can read and says nothing about the rest.
+    /// A box rastro cannot read `/proc/net` on has not stopped listening on anything: the
+    /// sockets are there and rastro cannot see them, which is exactly what `undetermined`
+    /// means and exactly what `absent` would deny. That is the opposite of the units
+    /// collector, where a missing `systemctl` really does mean there are no systemd units,
+    /// and of the packages collector, where rastro reports what it can read and says
+    /// nothing about the rest.
     ///
     /// It reaches the document as `error` with this reason, which is right: a fingerprint
     /// silently missing the box's exposed ports would be worse than a loud one.
     fn presence(&self) -> Presence {
-        match self.ss {
+        match self.source {
             Some(_) => Presence::Present,
             None => Presence::Undetermined {
-                reason: "`ss` was not found, so what this host is listening on cannot be told"
+                reason: "/proc/net/unix was not found, so what this host is listening on \
+                         cannot be told"
                     .to_owned(),
             },
         }
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let ss = self
-            .ss
+        let source = self
+            .source
             .as_ref()
-            .ok_or_else(|| CollectionError::new("`ss` was not found"))?;
+            .ok_or_else(|| CollectionError::new("/proc/net/unix was not found"))?;
 
-        Ok(Observation::from(&ss.read()?))
+        Ok(Observation::from(&source.read()?))
     }
 }

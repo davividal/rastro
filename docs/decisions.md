@@ -2179,3 +2179,154 @@ statement into two key names an operator can act on.
 
 **Cost:** three documents now describe redaction, and they will disagree the moment one
 is updated alone. The entry that lands with the redaction layer has to touch all of them.
+# Reading a host without changing it
+
+Dated 2026-09-02. Driven by a measurement on the development box: a first `rastro`
+run on a freshly restored snapshot took the kernel from 68 loaded modules to 73, and
+a second run added none. The five were `libcrc32c`, `nf_tables`, `nfnetlink`,
+`udp_diag` and `unix_diag`.
+
+## rastro does not change the host it describes
+
+**The invariant: reading the host must leave it as it was found.** It was not new. It
+was already stated outright, in
+[the `timedatectl` reversal](#the-time-collector-reads-files-because-timedatectl-starts-a-unit):
+"A fingerprint must not change the box: rastro runs as root on production to observe, and
+starting a unit is a mutation however small."
+
+**What that entry got wrong is the sentence after it**, which listed the tools believed to
+be safe: "Nothing else it runs does this — `systemctl`, `ss`, `ip`, `lsblk`,
+`iptables-save`, `dpkg-query` and `sshd -T` all leave the box as they found it." Two of
+those seven do not. `ss` and `iptables-save` are exactly the offenders here, and they were
+cleared by inspection rather than by measurement at a moment when the entry's own subject
+was a tool that had been cleared the same way and was not safe.
+
+So the invariant is now in `design.md` where a collector author meets it, rather than in a
+decision entry about the time collector, and the tool list that stood beside it is
+withdrawn: the five other tools were re-measured for this change and load nothing, but
+"measured on this box, this kernel" is the only claim any of them supports.
+
+Attribution was measured per command on a restored snapshot, not inferred from the
+module names:
+
+| command | modules it loaded |
+| --- | --- |
+| `ss -H -l -n -p -t -u` | `udp_diag` |
+| `ss -H -l -n -p -x` | `unix_diag` |
+| `iptables-save` | `libcrc32c`, `nf_tables`, `nfnetlink` |
+| `ip6tables-save` | none, `nf_tables` being up by then |
+| `ip`, `lsblk`, `systemctl`, `dpkg-query`, `sshd -T`, `pg_lsclusters` | none |
+
+So the whole footprint was two collectors, and no other collector contributed
+anything.
+
+**Why this is worse than it looks.** It is not only that run 1 and run 2 of an
+unchanged box differ, which is the symptom that surfaced it. Shared collectors run
+on a pool of four over a shared cursor, and in the registry `firewall` sits at index
+4 while `modules` sits at 7, so the two are dispatched in the same batch: whether
+`nf_tables` appeared in run 1's *own* `modules` facet was decided by thread
+scheduling. Two first runs on identically provisioned boxes could disagree. That is
+gone by construction now, because nothing rastro runs loads anything.
+
+**Recording the footprint was considered and rejected.** rastro could have kept the
+richer sources and declared what it loaded, which is the same move `--staged` makes
+for the binary. It fails on the thing that matters: a fingerprinter you have to
+believe about its own noise is one you must audit before every diff, and the whole
+value of the document is that it can be read at face value. Not causing the change
+is worth more than describing it.
+
+**Cost:** one field, and 15 ms became 105 ms on a 94-process box. Both are in the
+two entries below.
+
+**Guarded twice.** `purity.rs` fails the build if a collector source mentions `ss`,
+`iptables-save` or `ip6tables-save`, which holds on any host because it reads the
+source. `cli.rs` runs the real binary and asserts the module list is unchanged, which
+is decisive only on a cold box and says so.
+
+## The sockets facet is read from `/proc`, and loses the interface scope
+
+`ss` is the canonical tool for this facet, and `ss.rs` had already argued against
+`/proc/net/tcp` on two counts: it writes addresses as hexadecimal, and it "names the
+holder of a socket not at all", so finding the holder means walking every
+`/proc/<pid>/fd` for the inode, which is "`ss`'s job reimplemented".
+
+The first count is true and cheap to undo. **The second was overstated**, and the
+measurement is what settles it: the inode plus a readlink pass resolved 121 of 121
+listening sockets on the development box, and both sources report the same 37
+sockets with the same holders, states and kinds. It costs 105 ms against 7 ms, which
+is nothing beside a filesystem walk, and it degrades identically to `ss -p` when
+unprivileged — 2 of 90 descriptor directories readable either way.
+
+**What is genuinely lost is `SO_BINDTODEVICE`**, which `ss` prints as
+`127.0.0.53%lo` and the kernel returns over diag netlink and nowhere else. No column
+of `/proc/net/tcp` carries it. **It is not recoverable by inference**, which was
+checked rather than assumed: `127.0.0.53` carries the scope and `127.0.0.54` does
+not, and neither appears in `ip addr`, so deriving the scope from the address would
+invent one for the second. The field is therefore removed rather than kept always
+null, because a key that is always null asserts rastro looked.
+
+The residue is a wildcard bind that is really reachable on one interface only, which
+now reads as globally exposed. Three of 37 sockets on the development box carried a
+scope and none of them was that shape.
+
+**`*` is gone from the address vocabulary too**, and this one costs nothing. `ss`
+prints `*` for a dual-stack socket and `[::]` for an IPv6-only one, a distinction it
+draws from a socket option `/proc` does not publish. The arrangement is still
+readable from the facet — a dual-stack socket appears once as an IPv6 wildcard, a
+family-separated pair appears as two rows — so only the spelling of one row changed.
+
+**The collector's version went to `2`.** On identical host state the facet now omits
+a key and spells one wildcard differently, so a consumer diffing across the change
+has to be able to see that the collector moved rather than the host.
+
+## A firewall backend is read only where its subsystem is already resident
+
+`iptables-save` is an alternatives symlink, and on Debian 12 it points at
+`iptables-nft`. Running it opens an nfnetlink socket and the kernel loads
+`nf_tables`, which pulls `nfnetlink` and `libcrc32c` behind it. Debian also ships the
+implementations under their own names, and those are what rastro runs now:
+`iptables-legacy-save`, `iptables-nft-save` and the two IPv6 twins. Four backends
+rather than two, because legacy and nftables are separate rulesets that can hold
+tables at the same time and each tool reports only its own.
+
+**Each backend declares the kernel subsystem it would provoke, and is read only when
+that subsystem is already there.** Asking a resident subsystem loads nothing, which
+was measured both ways: with `ip_tables` up, `iptables-legacy-save` loaded nothing;
+with `nf_tables` up, `iptables-nft-save` loaded nothing.
+
+**A subsystem the kernel has not loaded holds no ruleset**, so its absence is an
+observation rather than a silence, and the facet is now *more* informative than it
+was. Residency is read from `/proc/modules`, and from `CONFIG_*=y` in
+`/boot/config-<release>` for a kernel built with the subsystem compiled in.
+
+**The dangerous case is a source rastro cannot read.** With no
+`/boot/config-<release>`, in a container or with `/boot` unmounted, an unloaded
+subsystem might still be compiled in and holding rules. With no readable
+`/proc/modules`, rastro knows nothing about what is loaded at all. Either way
+residency answers `undetermined` and the backend reports `error` rather than `absent`,
+so `absent` is given only when both sources were read. Reporting a filtered box as an
+unfiltered one is the one failure this facet must not have.
+
+So each backend now carries a status instead of a ruleset or `null`:
+
+- `ok` — the tool ran; `tables` may still be empty, meaning the box filters nothing.
+- `absent` — the subsystem is not loaded, so no ruleset exists. `tables` is `{}`.
+- `error` — the subsystem is resident and the tool is missing, or residency could not
+  be told. `tables` is `null` and `reason` says which.
+
+That distinction is the reason the shape changed rather than a bonus: before this,
+an empty dump and a subsystem nobody had loaded produced the same empty object, and
+the gate would have made "no rules" ambiguous without it.
+
+**Still not covered:** a ruleset written natively with `nft`. These four dump what was
+written *through the iptables interface*. What is new is that an unloaded `nf_tables`
+is now a positive statement about the native ruleset too, since nothing can be
+holding rules in a subsystem the kernel has not loaded.
+
+**Unverified, and worth naming:** that nftables rules cannot exist while `nf_tables`
+is unloaded. The refcount evidence is consistent — `nf_tables refcount=0` with no
+rules, `nfnetlink refcount=1 used_by=nf_tables` — but that is not the converse, and
+proving it means adding a rule to a box, which is a change rather than a reading.
+
+**The collector's version went to `2`**, and the key set changed from two names to
+four, so a diff across the change is unmistakable.

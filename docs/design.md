@@ -50,6 +50,15 @@ concepts a new source rather than a change to the model. Enforced by
 so an outside collector spells a path or a byte size the way the built-ins do.
 See [decisions.md](decisions.md#a-collector-is-layered-source-model-value-objects).
 
+**A collector observes and does not cause.** Reading the host must leave it as it
+was found. This is not a matter of taste: a fingerprint of a box rastro has just
+changed is not a fingerprint of that box, and the before-and-after pair an operator
+takes around a change would report rastro's own footprint as the change's. Where the
+richer interface costs a change and the poorer one does not, the poorer one wins and
+the gap is documented. Where only a subsystem-specific tool will do, it is run only
+when that subsystem is already resident — see
+[decisions.md](decisions.md#rastro-does-not-change-the-host-it-describes).
+
 **Absence is state.** No tenant means status `absent`, never a silent omission.
 A collector that could not tell is `error` with its reason, never `absent`.
 

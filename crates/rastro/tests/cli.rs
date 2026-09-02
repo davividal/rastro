@@ -787,3 +787,45 @@ fn progress_and_no_progress_together_are_refused() {
     assert!(!output.status.success(), "rastro should have refused");
     assert!(output.stdout.is_empty());
 }
+
+/// The kernel's loaded-module list, as a set of names.
+#[cfg(target_os = "linux")]
+fn loaded_modules() -> std::collections::BTreeSet<String> {
+    std::fs::read_to_string("/proc/modules")
+        .expect("a Linux host publishes its modules")
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// rastro must leave the kernel exactly as it found it.
+///
+/// **This is only decisive on a box where the modules in question are not already loaded**,
+/// and saying so matters more than the assertion. The defect it guards against is a *first*
+/// run on a fresh box: `ss -t -u` used to load `udp_diag`, `ss -x` loaded `unix_diag`, and
+/// `iptables-save` loaded `nf_tables`, `nfnetlink` and `libcrc32c`. On a machine where an
+/// earlier `ss` already loaded the diag modules the delta is empty whatever rastro does, so
+/// a green result here is evidence only when the box is cold. A fresh container is.
+///
+/// The companion to this is `no_collector_runs_a_program_that_makes_the_kernel_load_a
+/// _module` in `purity.rs`, which holds on any host because it reads the source rather than
+/// the kernel.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_run_leaves_the_kernel_module_list_untouched() {
+    // Arrange
+    let before = loaded_modules();
+
+    // Act
+    let output = run(&[]);
+    assert!(output.status.success(), "rastro should have succeeded");
+
+    // Assert
+    let after = loaded_modules();
+    let loaded: Vec<&String> = after.difference(&before).collect();
+    assert!(
+        loaded.is_empty(),
+        "rastro loaded {loaded:?}, so the fingerprint describes a host it had just changed"
+    );
+}

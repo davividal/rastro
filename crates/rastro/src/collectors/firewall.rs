@@ -27,12 +27,14 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{FirewallChain, FirewallInventory, Ruleset};
+pub use model::{BackendReport, FirewallChain, FirewallInventory, Ruleset};
 pub use source::{FirewallSource, iptables_save};
 pub use value_objects::{ChainName, ChainPolicy, FirewallBackend, RuleSpecification, TableName};
 
 // One import, because `rastro-collector` re-exports what an author needs. A
 // collector written outside this repo looks exactly like this.
+use crate::collectors::kernel_residency::KernelResidency;
+
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, FacetName, Observation, Presence,
@@ -46,7 +48,7 @@ pub struct FirewallCollector {
 
 impl FirewallCollector {
     pub fn new() -> Self {
-        Self::reading(FirewallSource::detect_all())
+        Self::reading(FirewallSource::detect_all(&KernelResidency::detect()))
     }
 
     /// The same collector over sources the caller chose.
@@ -55,7 +57,7 @@ impl FirewallCollector {
             name: FacetName::new("firewall").expect("`firewall` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("firewall").expect("`firewall` is a legal collector id"),
-                CollectorVersion::new("1").expect("`1` is a legal collector version"),
+                CollectorVersion::new("2").expect("`2` is a legal collector version"),
             ),
             sources,
         }
@@ -92,11 +94,11 @@ impl Collector for FirewallCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let found = self
+        let found: Vec<_> = self
             .sources
             .iter()
-            .map(|source| Ok((source.backend(), source.read()?)))
-            .collect::<Result<Vec<_>, CollectionError>>()?;
+            .map(|source| (source.backend(), source.read()))
+            .collect();
 
         Ok(Observation::from(&FirewallInventory::new(found)?))
     }

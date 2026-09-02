@@ -2,13 +2,30 @@
 
 mod support;
 
+use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::firewall::{
-    ChainName, FirewallBackend, FirewallCollector, FirewallInventory, Ruleset, TableName,
-    iptables_save,
+    BackendReport, ChainName, FirewallBackend, FirewallCollector, FirewallInventory,
+    FirewallSource, Ruleset, TableName, iptables_save,
 };
+use rastro::collectors::kernel_residency::{KernelResidency, Residency};
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
 use support::observation::{field, keys_of, object_of};
+
+/// A kernel with the legacy tables loaded and nftables merely available, which is the
+/// state of the development box before anything provokes it.
+const LOADED: &str = "ip_tables 32768 0 - Live 0x0000000000000000\n";
+
+/// Every symbol the firewall backends ask about, all buildable, none compiled in.
+const KERNEL_CONFIG: &str = "\
+CONFIG_NF_TABLES=m
+CONFIG_IP_NF_IPTABLES=m
+CONFIG_IP6_NF_IPTABLES=m
+";
+
+fn residency() -> KernelResidency {
+    KernelResidency::parse(Some(LOADED), Some(KERNEL_CONFIG))
+}
 /// A dump in the shape `iptables-save` writes: a timestamped header, two tables, a
 /// user-defined chain with no policy, and rules in the order the kernel tests them.
 const DUMP: &str = "\
@@ -207,30 +224,49 @@ fn parse_refuses_a_table_dumped_twice() {
 }
 
 #[test]
-fn the_inventory_tells_an_absent_tool_apart_from_an_empty_ruleset() {
-    // Arrange: only the IPv4 interface was found, and it reported nothing.
-    let found = vec![(FirewallBackend::Iptables, Ruleset::default())];
+fn the_inventory_tells_an_empty_ruleset_apart_from_a_subsystem_that_cannot_hold_one() {
+    // Arrange: the legacy interface was read and filters nothing; the nftables one was
+    // never loaded, so it cannot be holding rules at all.
+    let found = vec![
+        (
+            FirewallBackend::IptablesLegacy,
+            BackendReport::Read(Ruleset::default()),
+        ),
+        (FirewallBackend::IptablesNft, BackendReport::SubsystemAbsent),
+    ];
 
     // Act
-    let observation = Observation::from(&FirewallInventory::new(found).expect("one backend"));
+    let observation = Observation::from(&FirewallInventory::new(found).expect("two backends"));
+    let legacy = field(&observation, "iptables_legacy");
+    let nft = field(&observation, "iptables_nft");
 
-    // Assert: `null` means the tool is not on the box; an empty object means the tool ran
-    // and the box filters nothing. Reading one as the other would report an unprotected
-    // box as an unknown one.
-    assert_eq!(keys_of(&observation), ["ip6tables", "iptables"]);
+    // Assert: both report no rules, and the status says how each is known. `ok` is a tool
+    // that ran; `absent` is a kernel that cannot hold the state. Collapsing them would
+    // make an unread firewall indistinguishable from an unconfigured one.
     assert_eq!(
-        field(&observation, "ip6tables").content(),
-        &Content::Scalar(Scalar::Null)
+        field(&legacy, "status").content(),
+        &Content::Scalar(Scalar::Text("ok".to_owned()))
     );
-    assert_eq!(object_of(&field(&observation, "iptables")), Vec::new());
+    assert_eq!(object_of(&field(&legacy, "tables")), Vec::new());
+    assert_eq!(
+        field(&nft, "status").content(),
+        &Content::Scalar(Scalar::Text("absent".to_owned()))
+    );
+    assert_eq!(object_of(&field(&nft, "tables")), Vec::new());
 }
 
 #[test]
 fn the_inventory_refuses_a_backend_reported_twice() {
     // Arrange
     let found = vec![
-        (FirewallBackend::Iptables, Ruleset::default()),
-        (FirewallBackend::Iptables, Ruleset::default()),
+        (
+            FirewallBackend::IptablesLegacy,
+            BackendReport::Read(Ruleset::default()),
+        ),
+        (
+            FirewallBackend::IptablesLegacy,
+            BackendReport::Read(Ruleset::default()),
+        ),
     ];
 
     // Act & Assert
@@ -268,5 +304,188 @@ fn collect_reports_a_key_per_interface_even_with_nothing_found() {
         .expect("reporting nothing found is not a failure");
 
     // Assert
-    assert_eq!(keys_of(&collected), ["ip6tables", "iptables"]);
+    assert_eq!(
+        keys_of(&collected),
+        [
+            "ip6tables_legacy",
+            "ip6tables_nft",
+            "iptables_legacy",
+            "iptables_nft"
+        ]
+    );
+}
+
+#[test]
+fn a_backend_reads_through_the_program_that_names_its_own_subsystem() {
+    // Arrange: `iptables-save` is a symlink managed by alternatives, and on Debian 12 it
+    // points at `iptables-nft`. Running it makes the kernel load `nf_tables`, so rastro
+    // asks the backends by name and never through the symlink.
+
+    // Act
+    let programs: Vec<&str> = FirewallBackend::ALL
+        .into_iter()
+        .map(|backend| backend.program())
+        .collect();
+
+    // Assert
+    assert_eq!(
+        programs,
+        [
+            "ip6tables-legacy-save",
+            "ip6tables-nft-save",
+            "iptables-legacy-save",
+            "iptables-nft-save"
+        ]
+    );
+    assert!(
+        !programs.contains(&"iptables-save"),
+        "the alternatives symlink is exactly what must not be run"
+    );
+}
+
+#[test]
+fn a_subsystem_the_kernel_never_loaded_is_reported_without_running_anything() {
+    // Arrange: `nf_tables` is buildable and unloaded, so no nftables ruleset exists and
+    // asking would be the thing that created one.
+    let sources = FirewallSource::detect_all(&residency());
+    let nft = sources
+        .iter()
+        .find(|source| source.backend() == FirewallBackend::IptablesNft)
+        .expect("every backend is reported");
+
+    // Act
+    let report = nft.read();
+
+    // Assert
+    assert_eq!(report, BackendReport::SubsystemAbsent);
+}
+
+#[test]
+fn an_unreadable_kernel_configuration_is_an_error_not_an_empty_ruleset() {
+    // Arrange: no `/boot/config-<release>`, so an unloaded subsystem might still be
+    // compiled in and holding rules. Reporting `absent` here would describe a filtered box
+    // as an unfiltered one.
+    let blind = KernelResidency::parse(Some(""), None);
+    let sources = FirewallSource::detect_all(&blind);
+    let nft = sources
+        .iter()
+        .find(|source| source.backend() == FirewallBackend::IptablesNft)
+        .expect("every backend is reported");
+
+    // Act
+    let report = nft.read();
+
+    // Assert
+    let BackendReport::Unreadable(reason) = report else {
+        panic!("an undetermined subsystem must be loud, got: {report:?}");
+    };
+    assert!(
+        reason.contains("kernel configuration"),
+        "the reason must say what could not be read, got: {reason}"
+    );
+}
+
+#[test]
+fn a_resident_subsystem_whose_tool_is_missing_is_an_error() {
+    // Arrange: `ip_tables` is loaded, so rules may well exist, and with no program to dump
+    // them rastro cannot see them. That is the one case where silence would hide a
+    // firewall, so the tool is withheld here rather than left to the build host.
+    let source = FirewallSource::using(FirewallBackend::IptablesLegacy, Residency::Loaded, None);
+
+    // Act
+    let report = source.read();
+
+    // Assert
+    let BackendReport::Unreadable(reason) = report else {
+        panic!("a loaded subsystem rastro cannot dump must be loud, got: {report:?}");
+    };
+    assert!(
+        reason.contains("iptables-legacy-save") && reason.contains("ip_tables"),
+        "the reason must name both the program and the subsystem, got: {reason}"
+    );
+}
+
+#[test]
+fn an_absent_subsystem_is_reported_even_when_its_tool_is_installed() {
+    // Arrange: the tool being present is not a reason to run it. `nf_tables` is unloaded,
+    // so there are no rules, and running the dump is what would create the subsystem.
+    let source = FirewallSource::using(FirewallBackend::IptablesNft, Residency::Absent, None);
+
+    // Act & Assert
+    assert_eq!(source.read(), BackendReport::SubsystemAbsent);
+}
+
+#[test]
+fn a_subsystem_compiled_into_the_kernel_is_read_rather_than_assumed_empty() {
+    // Arrange: a kernel built with `CONFIG_NF_TABLES=y` never lists the module, and rules
+    // in it are perfectly real. Treating "not in /proc/modules" as "no rules" would miss
+    // them entirely.
+    let source = FirewallSource::using(FirewallBackend::IptablesNft, Residency::BuiltIn, None);
+
+    // Act
+    let report = source.read();
+
+    // Assert: no tool here, so it lands on the loud path rather than on `absent`.
+    assert!(matches!(report, BackendReport::Unreadable(_)));
+}
+
+#[test]
+fn every_backend_is_reported_so_the_document_shape_never_moves() {
+    // Act
+    let sources = FirewallSource::detect_all(&residency());
+
+    // Assert
+    assert_eq!(sources.len(), FirewallBackend::ALL.len());
+}
+
+#[test]
+fn the_two_families_share_the_nftables_subsystem_and_not_the_legacy_one() {
+    // Assert: one `nf_tables` serves both families, so loading it for IPv4 would have
+    // loaded it for IPv6 too. The legacy tables are a module each.
+    assert_eq!(
+        FirewallBackend::IptablesNft.subsystem().module(),
+        FirewallBackend::Ip6tablesNft.subsystem().module()
+    );
+    assert_ne!(
+        FirewallBackend::IptablesLegacy.subsystem().module(),
+        FirewallBackend::Ip6tablesLegacy.subsystem().module()
+    );
+}
+
+#[test]
+fn a_resident_subsystem_with_a_readable_tool_is_dumped() {
+    // Arrange: the path every other test here approaches from one side or the other. `true`
+    // stands in for the dump program: it exits zero and prints nothing, which is exactly
+    // what a real `iptables-save` does on a box with no tables.
+    let tool =
+        CanonicalTool::located_in("true", &["/bin", "/usr/bin"]).expect("every unix has a `true`");
+    let source = FirewallSource::using(FirewallBackend::IptablesNft, Residency::Loaded, Some(tool));
+
+    // Act
+    let report = source.read();
+
+    // Assert
+    let BackendReport::Read(ruleset) = report else {
+        panic!("a resident subsystem with a working tool must be read, got: {report:?}");
+    };
+    assert!(ruleset.is_empty());
+}
+
+#[test]
+fn a_dump_that_fails_is_reported_rather_than_read_as_an_empty_ruleset() {
+    // Arrange: `false` stands in for a dump program that runs and does not succeed. The
+    // subsystem is loaded, so rules may well exist, and treating a failed dump as "no
+    // rules" would describe a filtered box as an open one.
+    let tool = CanonicalTool::located_in("false", &["/bin", "/usr/bin"])
+        .expect("every unix has a `false`");
+    let source = FirewallSource::using(FirewallBackend::IptablesNft, Residency::Loaded, Some(tool));
+
+    // Act
+    let report = source.read();
+
+    // Assert
+    assert!(
+        matches!(report, BackendReport::Unreadable(_)),
+        "a failed dump must be loud, got: {report:?}"
+    );
 }

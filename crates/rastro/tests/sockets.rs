@@ -1,39 +1,155 @@
-//! Reading what the host is listening on, without needing an `ss` to run.
+//! Reading what the host is listening on, over a `/proc` tree the test owns.
 //!
-//! Every fixture row is a real row from `ss` on the development box. The address forms
-//! are the point: five spellings appear there, and each one breaks a different naive
-//! parser.
+//! Every fixture row is a real row from the development box. The whole facet is assembled
+//! here rather than parsed in pieces, because the join from a socket to the process holding
+//! it runs across two interfaces — `/proc/net/*` for the socket and `/proc/<pid>/fd` for
+//! the holder — and neither half is worth much without the other.
 
 mod support;
 
+use std::os::unix::fs::symlink;
+
 use rastro::collectors::sockets::{
-    InetHost, ListeningSocket, SocketAddress, SocketTable, SocketsCollector, Ss, ss_address,
-    ss_users,
+    InetHost, ListeningSocket, ProcNet, SocketAddress, SocketTable, SocketsCollector,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
+use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, items_of, object_of};
 
-/// Real internet rows: an IPv4 wildcard, an any-family wildcard, a loopback binding, an
-/// address scoped to an interface, an IPv6 wildcard, and a link-local IPv6 with a scope.
-const INET: &str = "\
-tcp LISTEN 0      128                              0.0.0.0:22   0.0.0.0:* users:((\"sshd\",pid=24169,fd=3))
-tcp LISTEN 0      4096                                   *:9100       *:* users:((\"node_exporter\",pid=44549,fd=3))
-tcp LISTEN 0      200                            127.0.0.1:5432 0.0.0.0:* users:((\"postgres\",pid=44012,fd=7))
-tcp LISTEN 0      4096                       127.0.0.53%lo:53   0.0.0.0:* users:((\"systemd-resolve\",pid=22920,fd=19))
-tcp LISTEN 0      128                                 [::]:22      [::]:* users:((\"sshd\",pid=24169,fd=4))
-udp UNCONN 0      0      [fe80::a00:27ff:fea0:9cdd]%enp0s9:546     [::]:* users:((\"systemd-network\",pid=3984,fd=23))
+const TCP: &str = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 45643 1 00000000ee7a3cea 100 0 0 10 0
+   1: 0100007F:1538 00000000:0000 0A 00000000:00000000 00:00000000 00000000   105        0 66633 1 000000006d675ddf 100 0 0 10 0
 ";
 
-/// Real unix rows, including one held by two processes and one abstract socket.
-const LOCAL: &str = "\
-u_str LISTEN 0      4096                       /run/systemd/journal/stdout 11955  * 0 users:((\"systemd-journal\",pid=3989,fd=5),(\"systemd\",pid=1,fd=117))
-u_dgr UNCONN 0      0                 @/var/spool/exim4/exim_daemon_notify 22346  * 0 users:((\"exim4\",pid=2636,fd=3))
-u_str LISTEN 0      4096        /run/systemd/userdb/io.systemd.DynamicUser 12996  * 0 users:((\"systemd\",pid=1,fd=44))
+const TCP6: &str = "\
+   0: 00000000000000000000000001000000:0019 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 22348 1 00000000f53bcb72 100 0 0 10 20
+   1: 00000000000000000000000000000000:238F 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 96835 1 00000000b8b804c7 100 0 0 10 0
 ";
 
-fn table() -> SocketTable {
-    Ss::parse(INET, LOCAL).expect("these fixtures are well formed")
+const UDP: &str = "\
+15006: 3600007F:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000   996        0 43874 2 000000001b2ef305 0
+";
+
+const UDP6: &str = "\
+15499: 000080FE00000000FF27000ADD9CA0FE:0222 00000000000000000000000000000000:0000 07 00000000:00000000 00:00000000 00000000   998        0 146930 2 00000000706425d8 0
+";
+
+/// A stream socket held by two processes, a sequenced-packet socket held by none that the
+/// fixture admits to, and an abstract socket.
+const UNIX: &str = "\
+Num       RefCount Protocol Flags    Type St Inode Path
+000000004bfa98b1: 00000002 00000000 00010000 0001 01 11955 /run/systemd/journal/stdout
+00000000256667e3: 00000002 00000000 00010000 0005 01 11958 /run/udev/control
+0000000033f7d9c3: 00000002 00000000 00000000 0002 01 22346 @/var/spool/exim4/exim_daemon_notify
+";
+
+/// One descriptor a process holds open, and the socket it points at.
+struct HeldSocket {
+    descriptor: &'static str,
+    inode: u64,
+}
+
+/// One process, and every socket descriptor it holds.
+struct Holder {
+    process_id: &'static str,
+    name: &'static str,
+    sockets: &'static [HeldSocket],
+}
+
+/// The processes holding those sockets, as `/proc/<pid>/fd` presents them.
+///
+/// The last entry holds nothing and gets no `fd` directory at all, which is what rastro
+/// meets when a process exits between being listed and being read.
+const HOLDERS: [Holder; 6] = [
+    Holder {
+        process_id: "1",
+        name: "systemd",
+        sockets: &[HeldSocket {
+            descriptor: "117",
+            inode: 11955,
+        }],
+    },
+    Holder {
+        process_id: "3989",
+        name: "systemd-journal",
+        sockets: &[HeldSocket {
+            descriptor: "5",
+            inode: 11955,
+        }],
+    },
+    Holder {
+        process_id: "24169",
+        name: "sshd",
+        sockets: &[HeldSocket {
+            descriptor: "3",
+            inode: 45643,
+        }],
+    },
+    Holder {
+        process_id: "44012",
+        name: "postgres",
+        sockets: &[HeldSocket {
+            descriptor: "7",
+            inode: 66633,
+        }],
+    },
+    Holder {
+        process_id: "2636",
+        name: "exim4",
+        sockets: &[
+            HeldSocket {
+                descriptor: "3",
+                inode: 22346,
+            },
+            HeldSocket {
+                descriptor: "4",
+                inode: 22348,
+            },
+        ],
+    },
+    Holder {
+        process_id: "9999",
+        name: "gone",
+        sockets: &[],
+    },
+];
+
+fn source(name: &str) -> ProcNet {
+    let root = scratch_tree(name, &["net", "proc"]);
+
+    for (file, contents) in [
+        ("net/tcp", TCP),
+        ("net/tcp6", TCP6),
+        ("net/udp", UDP),
+        ("net/udp6", UDP6),
+        ("net/unix", UNIX),
+    ] {
+        write(&root, file, contents);
+    }
+
+    for holder in HOLDERS {
+        let process_id = holder.process_id;
+        write(
+            &root,
+            &format!("proc/{process_id}/comm"),
+            &format!("{}\n", holder.name),
+        );
+        for held in holder.sockets {
+            let link = root.join(format!("proc/{process_id}/fd/{}", held.descriptor));
+            std::fs::create_dir_all(link.parent().expect("a parent")).expect("a writable tree");
+            // A dangling link on purpose: `socket:[N]` is what the kernel writes, and it
+            // resolves to nothing on any filesystem. `read_link` never follows it.
+            symlink(format!("socket:[{}]", held.inode), &link).expect("a writable tree");
+        }
+    }
+
+    ProcNet::at(root.join("net"), root.join("proc"))
+}
+
+fn table(name: &str) -> SocketTable {
+    source(name).read().expect("these fixtures are real rows")
 }
 
 fn bound_to(table: &SocketTable, host: &str, port: u16) -> ListeningSocket {
@@ -44,7 +160,6 @@ fn bound_to(table: &SocketTable, host: &str, port: u16) -> ListeningSocket {
             SocketAddress::Inet {
                 host: found,
                 port: bound,
-                ..
             } => found.as_str() == host && bound.as_u16() == port,
             SocketAddress::Local { .. } => false,
         })
@@ -73,9 +188,12 @@ fn names_of(socket: &ListeningSocket) -> Vec<&str> {
 }
 
 #[test]
-fn parse_reads_an_ipv4_binding() {
+fn a_socket_is_joined_to_the_process_holding_it() {
+    // Arrange: `/proc/net/tcp` names no process at all. The inode in its last read column
+    // is the only route to one, through every open descriptor on the box.
+
     // Act
-    let ssh = bound_to(&table(), "0.0.0.0", 22);
+    let ssh = bound_to(&table("sockets_holder"), "0.0.0.0", 22);
 
     // Assert
     assert_eq!(ssh.kind.as_str(), "tcp");
@@ -84,68 +202,52 @@ fn parse_reads_an_ipv4_binding() {
 }
 
 #[test]
-fn parse_splits_an_ipv6_address_on_the_last_colon_not_the_first() {
-    // Act: an IPv6 address contains up to seven colons, so any other split mis-slots
-    // every IPv6 row.
-    let address = ss_address::parse("[fe80::a00:27ff:fea0:9cdd]%enp0s9:546")
-        .expect("this is a real address form");
+fn a_socket_held_by_more_than_one_process_names_both() {
+    // Arrange: `/run/systemd/journal/stdout` really is held by both on the development box.
 
-    // Assert
-    match address {
-        SocketAddress::Inet { host, port, scope } => {
-            assert_eq!(host.as_str(), "fe80::a00:27ff:fea0:9cdd");
-            assert_eq!(port.as_u16(), 546);
-            assert_eq!(
-                scope.map(|scope| scope.as_str().to_owned()),
-                Some("enp0s9".to_owned())
-            );
-        }
-        other => panic!("expected an internet address, got {other:?}"),
-    }
+    // Act
+    let journal = at_path(&table("sockets_two_holders"), "/run/systemd/journal/stdout");
+
+    // Assert: sorted, so the order the descriptors happened to be walked in never reaches
+    // the document.
+    assert_eq!(names_of(&journal), ["systemd", "systemd-journal"]);
 }
 
 #[test]
-fn parse_takes_the_brackets_off_an_ipv6_address() {
-    // Act: they are `ss`'s punctuation for separating the address from the port.
-    let address = ss_address::parse("[::]:22").expect("a legal address");
+fn a_socket_no_visible_process_holds_is_reported_without_one() {
+    // Arrange: the holder exited between the two reads, or an unprivileged run cannot open
+    // that process's descriptors. `ss -p` gives the same partial view under the same
+    // conditions, and a socket rastro cannot attribute is still a port the box has open.
+
+    // Act
+    let udev = at_path(&table("sockets_no_holder"), "/run/udev/control");
 
     // Assert
-    match address {
-        SocketAddress::Inet { host, port, scope } => {
-            assert_eq!(host.as_str(), "::");
-            assert_eq!(port.as_u16(), 22);
-            assert_eq!(scope, None);
-        }
-        other => panic!("expected an internet address, got {other:?}"),
-    }
+    assert!(udev.processes.is_empty());
 }
 
 #[test]
-fn parse_keeps_an_interface_scope_as_its_own_fact() {
-    // Act: the same address scoped to a different interface is a different binding.
-    let resolved = bound_to(&table(), "127.0.0.53", 53);
+fn both_families_land_in_one_table() {
+    // Act
+    let table = table("sockets_families");
 
-    // Assert
-    match resolved.address {
-        SocketAddress::Inet { scope, .. } => {
-            assert_eq!(
-                scope.map(|scope| scope.as_str().to_owned()),
-                Some("lo".to_owned())
-            );
-        }
-        other => panic!("expected an internet address, got {other:?}"),
-    }
+    // Assert: two TCP, two TCP over IPv6, one UDP, one UDP over IPv6, three unix.
+    assert_eq!(table.len(), 9);
 }
 
 #[test]
-fn parse_keeps_the_three_wildcard_spellings_apart() {
-    // Act: `*`, `0.0.0.0` and `::` are a real difference in what a daemon asked the kernel
-    // for, and normalising them would erase it.
-    let table = table();
+fn a_wildcard_is_told_apart_from_a_loopback_binding() {
+    // Act: the difference between a service reachable from the network and one reachable
+    // only from the box, which is the whole point of the facet.
+    let table = table("sockets_wildcard");
 
     // Assert
-    assert!(bound_to(&table, "*", 9100).address != bound_to(&table, "0.0.0.0", 22).address);
-    for host in ["*", "0.0.0.0", "::"] {
+    assert!(
+        bound_to(&table, "0.0.0.0", 22)
+            .address
+            .ne(&bound_to(&table, "127.0.0.1", 5432).address)
+    );
+    for host in ["0.0.0.0", "::"] {
         assert!(
             InetHost::new(host).expect("legal").is_a_wildcard(),
             "{host} reaches the network"
@@ -155,30 +257,13 @@ fn parse_keeps_the_three_wildcard_spellings_apart() {
 }
 
 #[test]
-fn parse_refuses_a_port_outside_the_range_a_port_can_hold() {
-    // Act: the width is the check. A number too large means the split found the wrong
-    // colon.
-    let result = ss_address::parse("10.0.0.1:99999");
-
-    // Assert
-    assert!(result.is_err());
-}
-
-#[test]
-fn parse_reads_a_unix_socket_by_its_path() {
-    // Act
-    let socket = at_path(&table(), "/run/systemd/userdb/io.systemd.DynamicUser");
-
-    // Assert
-    assert_eq!(socket.kind.as_str(), "u_str");
-    assert_eq!(names_of(&socket), ["systemd"]);
-}
-
-#[test]
-fn parse_keeps_an_abstract_unix_socket() {
+fn an_abstract_unix_socket_is_kept() {
     // Act: an abstract socket has a name in no filesystem, so a filesystem walk cannot see
     // it and this facet is the only place it appears.
-    let socket = at_path(&table(), "@/var/spool/exim4/exim_daemon_notify");
+    let socket = at_path(
+        &table("sockets_abstract"),
+        "@/var/spool/exim4/exim_daemon_notify",
+    );
 
     // Assert
     match &socket.address {
@@ -188,56 +273,10 @@ fn parse_keeps_an_abstract_unix_socket() {
 }
 
 #[test]
-fn parse_reads_a_socket_held_by_more_than_one_process() {
-    // Act: `/run/systemd/journal/stdout` really is held by both.
-    let journal = at_path(&table(), "/run/systemd/journal/stdout");
-
-    // Assert: sorted, so the order `ss` listed them in never reaches the document.
-    assert_eq!(names_of(&journal), ["systemd", "systemd-journal"]);
-}
-
-#[test]
-fn parse_reads_a_socket_with_no_holding_process() {
-    // Arrange: `ss` omits the column when the kernel holds a socket with no userspace
-    // process behind it, or when rastro is not privileged enough to be told.
-    let row = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n";
-
-    // Act
-    let table = Ss::parse(row, "").expect("a missing process column is not a failure");
-
-    // Assert
-    assert!(table.sockets()[0].processes.is_empty());
-}
-
-#[test]
-fn parse_refuses_a_truncated_row() {
-    // Act
-    let result = Ss::parse("tcp LISTEN 0\n", "");
-
-    // Assert
-    let failure = result.expect_err("a truncated row must not be accepted");
-    assert!(
-        failure.to_string().contains("fields"),
-        "the message must say what was wrong, got: {failure}"
-    );
-}
-
-#[test]
-fn parse_refuses_a_unix_row_that_reached_the_internet_grammar() {
-    // Act: the two shapes are seven fields and nine, which is exactly why they are asked
-    // for in two runs rather than counted apart in one.
-    let unix_row = "u_str LISTEN 0 4096 /run/x 11955 * 0\n";
-    let result = Ss::parse(unix_row, "");
-
-    // Assert: read as an internet row, `11955` is not an address and port.
-    assert!(result.is_err());
-}
-
-#[test]
-fn parse_sorts_the_sockets() {
-    // Act: `ss` walks the kernel's hash tables, whose order depends on which sockets were
-    // opened when.
-    let table = table();
+fn the_sockets_are_sorted() {
+    // Act: the tables are walked in the order the kernel keeps them, which depends on
+    // which sockets were opened when.
+    let table = table("sockets_sorted");
 
     // Assert
     let mut sorted = table.sockets().to_vec();
@@ -246,41 +285,28 @@ fn parse_sorts_the_sockets() {
 }
 
 #[test]
-fn parse_reads_both_families_into_one_table() {
-    // Act
-    let table = table();
+fn a_missing_address_family_is_state_rather_than_a_failure() {
+    // Arrange: a kernel with IPv6 disabled has no `/proc/net/tcp6`, and it is listening on
+    // no IPv6 socket. Failing the facet over that would report a box with no exposure at
+    // all.
+    let root = scratch_tree("sockets_no_ipv6", &["net", "proc"]);
+    write(&root, "net/tcp", TCP);
+    write(&root, "net/unix", UNIX);
 
-    // Assert: six internet rows and three unix rows.
-    assert_eq!(table.len(), 9);
-}
-
-#[test]
-fn users_parses_the_nested_triple_grammar() {
     // Act
-    let processes = ss_users::parse(Some(
-        "users:((\"systemd-journal\",pid=3989,fd=5),(\"systemd\",pid=1,fd=117))",
-    ))
-    .expect("this is the column `ss -p` writes");
+    let table = ProcNet::at(root.join("net"), root.join("proc"))
+        .read()
+        .expect("a kernel without IPv6 is not a failure");
 
     // Assert
-    assert_eq!(processes.len(), 2);
-    let first = processes.iter().next().expect("a process");
-    assert_eq!(first.name.as_str(), "systemd");
-    assert_eq!(first.process_id, 1);
-    assert_eq!(first.file_descriptor, 117);
-}
-
-#[test]
-fn users_refuses_a_column_that_is_not_the_process_column() {
-    // Act & Assert
-    assert!(ss_users::parse(Some("something-else")).is_err());
+    assert_eq!(table.len(), 5);
 }
 
 #[test]
 fn a_process_id_is_volatile_and_its_name_is_not() {
     // Act: a pid changes every time a service restarts. `postgres` no longer holding 5432
     // is a change; `postgres` holding it under a new pid is not.
-    let observation = Observation::from(&table());
+    let observation = Observation::from(&table("sockets_volatile"));
     let diffable = observation
         .in_view(View::Diffable)
         .expect("the facet survives the diffable view");
@@ -295,26 +321,28 @@ fn a_process_id_is_volatile_and_its_name_is_not() {
 }
 
 #[test]
-fn an_address_renders_the_same_four_keys_for_either_family() {
+fn an_address_renders_the_same_keys_for_either_family() {
     // Act
-    let observation = Observation::from(&table());
+    let observation = Observation::from(&table("sockets_keys"));
 
     // Assert: a consumer never meets a key that is sometimes absent, and which family it
-    // is stays readable from which keys are null.
+    // is stays readable from which keys are null. `scope` is gone from this list because
+    // no `/proc` column carries it, and a key that is always null would assert rastro
+    // looked.
     for socket in items_of(&observation) {
         let address = field(&socket, "address");
         let keys: Vec<String> = object_of(&address)
             .into_iter()
             .map(|(key, _)| key)
             .collect();
-        assert_eq!(keys, ["host", "path", "port", "scope"]);
+        assert_eq!(keys, ["host", "path", "port"]);
     }
 }
 
 #[test]
 fn a_unix_socket_renders_a_null_port() {
     // Act
-    let observation = Observation::from(&table());
+    let observation = Observation::from(&table("sockets_null_port"));
     let local = items_of(&observation)
         .into_iter()
         .find(|socket| {
@@ -333,9 +361,9 @@ fn a_unix_socket_renders_a_null_port() {
 }
 
 #[test]
-fn presence_is_undetermined_without_ss_rather_than_absent() {
-    // Act: a box with no `ss` has not stopped listening on anything, so `absent` would be
-    // a confident lie about the box's exposure.
+fn presence_is_undetermined_without_a_procfs_rather_than_absent() {
+    // Act: a box rastro cannot read `/proc/net` on has not stopped listening on anything,
+    // so `absent` would be a confident lie about the box's exposure.
     let presence = SocketsCollector::reading(None).presence();
 
     // Assert
@@ -349,22 +377,59 @@ fn presence_is_undetermined_without_ss_rather_than_absent() {
 }
 
 #[test]
-fn presence_is_present_when_ss_is_on_the_host() {
-    // Arrange
-    let ss = Ss::using(
-        rastro::collectors::canonical_tool::CanonicalTool::located_in("sh", &["/bin"])
-            .expect("every unix has /bin/sh"),
-    );
-
+fn presence_is_present_when_the_tables_are_there() {
     // Act & Assert
     assert_eq!(
-        SocketsCollector::reading(Some(ss)).presence(),
+        SocketsCollector::reading(Some(source("sockets_presence"))).presence(),
         Presence::Present
     );
 }
 
 #[test]
-fn collect_fails_rather_than_reporting_an_empty_table_without_ss() {
+fn collect_fails_rather_than_reporting_an_empty_table_without_a_procfs() {
     // Act & Assert
     assert!(SocketsCollector::reading(None).collect().is_err());
+}
+
+#[test]
+fn a_table_that_exists_but_cannot_be_read_fails_rather_than_reporting_nothing() {
+    // Arrange: a missing table is a kernel without that family, which is state. A table
+    // that is there and unreadable is not, and reporting an empty socket list for it would
+    // describe a box as listening on nothing.
+    let root = scratch_tree("sockets_unreadable", &["net", "proc"]);
+    std::fs::create_dir_all(root.join("net/unix")).expect("a writable tree");
+
+    // Act
+    let result = ProcNet::at(root.join("net"), root.join("proc")).read();
+
+    // Assert
+    let failure = result.expect_err("an unreadable table must not read as an empty one");
+    assert!(
+        failure.to_string().contains("could not read"),
+        "the message must name the failure, got: {failure}"
+    );
+}
+
+#[test]
+fn a_process_tree_rastro_cannot_read_leaves_the_sockets_unattributed() {
+    // Arrange: an unprivileged run cannot open other users' descriptors, and a socket rastro
+    // cannot attribute is still a port the box has open. Losing the whole facet over it
+    // would trade a complete answer for no answer.
+    let root = scratch_tree("sockets_no_proc", &["net"]);
+    write(&root, "net/tcp", TCP);
+    write(&root, "net/unix", UNIX);
+
+    // Act
+    let table = ProcNet::at(root.join("net"), root.join("nothing-here"))
+        .read()
+        .expect("an unreadable process tree is not a failure");
+
+    // Assert
+    assert_eq!(table.len(), 5);
+    assert!(
+        table
+            .sockets()
+            .iter()
+            .all(|socket| socket.processes.is_empty())
+    );
 }
