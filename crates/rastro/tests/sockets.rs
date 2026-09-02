@@ -382,3 +382,46 @@ fn collect_fails_rather_than_reporting_an_empty_table_without_a_procfs() {
     // Act & Assert
     assert!(SocketsCollector::reading(None).collect().is_err());
 }
+
+#[test]
+fn a_table_that_exists_but_cannot_be_read_fails_rather_than_reporting_nothing() {
+    // Arrange: a missing table is a kernel without that family, which is state. A table
+    // that is there and unreadable is not, and reporting an empty socket list for it would
+    // describe a box as listening on nothing.
+    let root = scratch_tree("sockets_unreadable", &["net", "proc"]);
+    std::fs::create_dir_all(root.join("net/unix")).expect("a writable tree");
+
+    // Act
+    let result = ProcNet::at(root.join("net"), root.join("proc")).read();
+
+    // Assert
+    let failure = result.expect_err("an unreadable table must not read as an empty one");
+    assert!(
+        failure.to_string().contains("could not read"),
+        "the message must name the failure, got: {failure}"
+    );
+}
+
+#[test]
+fn a_process_tree_rastro_cannot_read_leaves_the_sockets_unattributed() {
+    // Arrange: an unprivileged run cannot open other users' descriptors, and a socket rastro
+    // cannot attribute is still a port the box has open. Losing the whole facet over it
+    // would trade a complete answer for no answer.
+    let root = scratch_tree("sockets_no_proc", &["net"]);
+    write(&root, "net/tcp", TCP);
+    write(&root, "net/unix", UNIX);
+
+    // Act
+    let table = ProcNet::at(root.join("net"), root.join("nothing-here"))
+        .read()
+        .expect("an unreadable process tree is not a failure");
+
+    // Assert
+    assert_eq!(table.len(), 5);
+    assert!(
+        table
+            .sockets()
+            .iter()
+            .all(|socket| socket.processes.is_empty())
+    );
+}

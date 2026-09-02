@@ -298,3 +298,112 @@ fn a_unix_path_containing_a_space_survives_the_column_split() {
         other => panic!("expected a local address, got {other:?}"),
     }
 }
+
+#[test]
+fn a_row_whose_inode_is_not_a_number_is_refused() {
+    // Arrange: the inode is the only route from a socket to its holder, so a column that
+    // does not hold one means the columns were counted wrong.
+    let row = "   0: 00000000:0016 00000000:0000 0A 0 0 0 0 0 notanumber 1 x 100 0 0 10 0\n";
+
+    // Act & Assert
+    assert!(proc_net_inet::parse(InetTable::Tcp, row).is_err());
+}
+
+#[test]
+fn an_address_column_with_no_port_is_refused() {
+    // Arrange: `HEX:HEX` is the whole grammar of that column.
+    let row = "   0: 00000000 00000000:0000 0A 0 0 0 0 0 45643 1 x 100 0 0 10 0\n";
+
+    // Act
+    let failure = proc_net_inet::parse(InetTable::Tcp, row)
+        .expect_err("an address with no port must not be accepted");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("address and port"),
+        "the message must say what was wrong, got: {failure}"
+    );
+}
+
+#[test]
+fn an_ipv6_address_of_the_wrong_width_is_refused() {
+    // Arrange: the width is the check. Sixteen bytes is not negotiable, and a short field
+    // read as an address would produce a real-looking and wrong one.
+    let row = "   0: 0000000000000001:0016 00000000000000000000000000000000:0000 0A 0 0 0 0 0 45643 1 x\n";
+
+    // Act
+    let failure = proc_net_inet::parse(InetTable::Tcp6, row)
+        .expect_err("a short IPv6 address must not be accepted");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("16-byte"),
+        "the message must name the width, got: {failure}"
+    );
+}
+
+#[test]
+fn an_ipv6_address_that_is_not_hexadecimal_is_refused() {
+    // Arrange: right width, wrong alphabet, so the length check passes and the parse must
+    // catch it.
+    let row = "   0: 0000000000000000000000000000ZZZZ:0016 00000000000000000000000000000000:0000 0A 0 0 0 0 0 45643 1 x\n";
+
+    // Act & Assert
+    assert!(proc_net_inet::parse(InetTable::Tcp6, row).is_err());
+}
+
+#[test]
+fn an_ipv4_address_that_is_not_hexadecimal_is_refused() {
+    // Arrange
+    let row = "   0: ZZZZZZZZ:0016 00000000:0000 0A 0 0 0 0 0 45643 1 x 100 0 0 10 0\n";
+
+    // Act
+    let failure = proc_net_inet::parse(InetTable::Tcp, row)
+        .expect_err("a non-hexadecimal address must not be accepted");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("address word"),
+        "the message must say what was wrong, got: {failure}"
+    );
+}
+
+#[test]
+fn a_unix_row_with_too_few_columns_is_refused() {
+    // Arrange
+    let row = "0000000045c0e880: 00000002 00000000 00010000\n";
+
+    // Act
+    let failure = proc_net_unix::parse(row).expect_err("a truncated row must not be accepted");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("too few columns"),
+        "the message must say what was wrong, got: {failure}"
+    );
+}
+
+#[test]
+fn a_unix_row_whose_inode_is_not_a_number_is_refused() {
+    // Arrange
+    let row = "0000000045c0e880: 00000002 00000000 00010000 0001 01 notanumber /run/x\n";
+
+    // Act & Assert
+    assert!(proc_net_unix::parse(row).is_err());
+}
+
+#[test]
+fn a_unix_row_whose_flags_are_not_hexadecimal_are_refused() {
+    // Arrange: the flags word is what separates a listener from a bound datagram socket, so
+    // guessing at an unreadable one would mislabel the socket's state.
+    let row = "0000000045c0e880: 00000002 00000000 NOTHEX00 0001 01 72721 /run/x\n";
+
+    // Act
+    let failure = proc_net_unix::parse(row).expect_err("unreadable flags must not be accepted");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("flags word"),
+        "the message must say what was wrong, got: {failure}"
+    );
+}

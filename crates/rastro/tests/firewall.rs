@@ -2,6 +2,7 @@
 
 mod support;
 
+use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::firewall::{
     BackendReport, ChainName, FirewallBackend, FirewallCollector, FirewallInventory,
     FirewallSource, Ruleset, TableName, iptables_save,
@@ -449,4 +450,23 @@ fn the_two_families_share_the_nftables_subsystem_and_not_the_legacy_one() {
         FirewallBackend::IptablesLegacy.subsystem().module(),
         FirewallBackend::Ip6tablesLegacy.subsystem().module()
     );
+}
+
+#[test]
+fn a_resident_subsystem_with_a_readable_tool_is_dumped() {
+    // Arrange: the path every other test here approaches from one side or the other. `true`
+    // stands in for the dump program: it exits zero and prints nothing, which is exactly
+    // what a real `iptables-save` does on a box with no tables.
+    let tool =
+        CanonicalTool::located_in("true", &["/bin", "/usr/bin"]).expect("every unix has a `true`");
+    let source = FirewallSource::using(FirewallBackend::IptablesNft, Residency::Loaded, Some(tool));
+
+    // Act
+    let report = source.read();
+
+    // Assert
+    let BackendReport::Read(ruleset) = report else {
+        panic!("a resident subsystem with a working tool must be read, got: {report:?}");
+    };
+    assert!(ruleset.is_empty());
 }

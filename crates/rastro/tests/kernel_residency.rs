@@ -130,3 +130,15 @@ fn absent_needs_both_sources_read() {
     );
     assert_eq!(residency().of(&NF_TABLES), Residency::Absent);
 }
+
+#[test]
+fn a_subsystem_keeps_its_two_names_apart() {
+    // Arrange: the module name and the configuration symbol are different strings for the
+    // same thing and are easy to transpose, which would silently make every residency
+    // answer wrong rather than fail.
+    let subsystem = KernelSubsystem::new("nf_tables", "CONFIG_NF_TABLES");
+
+    // Act & Assert
+    assert_eq!(subsystem.module(), "nf_tables");
+    assert_eq!(subsystem.config_symbol(), "CONFIG_NF_TABLES");
+}
