@@ -66,13 +66,13 @@ pub fn parse(text: &str) -> Result<Vec<SocketRow>, CollectionError> {
             continue;
         }
 
-        // A socket in this state always has a name: an unnamed one has nothing to be
-        // reported as, and none was found on the development box. Refusing it is louder
-        // than inventing a placeholder path.
+        // **An unnamed socket here is ordinary, not malformed.** `unix_seq_show` prints
+        // this state for any socket a process holds that is not established, so one created
+        // and not yet bound appears with no name at all. It is not a listener and has no
+        // address to report, and refusing it would fail the whole facet whenever a process
+        // happened to sit between `socket()` and `bind()`.
         if row.path.is_empty() {
-            return Err(CollectionError::new(format!(
-                "{line:?} is an unconnected socket with no path, so the table was misread"
-            )));
+            continue;
         }
 
         rows.push(SocketRow {

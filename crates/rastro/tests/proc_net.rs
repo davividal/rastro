@@ -254,13 +254,33 @@ fn a_unix_socket_type_the_family_does_not_have_is_refused() {
 }
 
 #[test]
-fn a_unix_listener_with_no_path_is_refused_rather_than_given_one() {
-    // Arrange: it has nothing to be reported as, and none was found on the development
-    // box. Inventing a placeholder would put a socket in the document that has no name.
-    let row = "0000000045c0e880: 00000002 00000000 00010000 0001 01 72721\n";
+fn an_unbound_unix_socket_is_skipped_rather_than_failing_the_facet() {
+    // Arrange: a socket that has been created and neither bound nor connected is listed in
+    // this state with no name at all — `unix_seq_show` prints `SS_UNCONNECTED` for any
+    // socket a process still holds that is not established. It is not a listener and has no
+    // address to report, so it is skipped. Refusing it would fail the whole facet whenever
+    // any process on the box happened to be between `socket()` and `bind()`.
+    let unbound = "0000000045c0e880: 00000002 00000000 00000000 0001 01 72721\n";
 
-    // Act & Assert
-    assert!(proc_net_unix::parse(row).is_err());
+    // Act
+    let rows = proc_net_unix::parse(unbound).expect("an unnamed socket is not a failure");
+
+    // Assert
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn a_named_listener_beside_an_unbound_socket_is_still_reported() {
+    // Arrange: skipping the nameless one must not cost the row next to it.
+    let mixed = "0000000045c0e880: 00000002 00000000 00000000 0001 01 72721\n\
+                 000000004bfa98b1: 00000002 00000000 00010000 0001 01 11955 /run/systemd/journal/stdout\n";
+
+    // Act
+    let rows = proc_net_unix::parse(mixed).expect("these are real rows");
+
+    // Assert
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].inode, 11955);
 }
 
 #[test]
