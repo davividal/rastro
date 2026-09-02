@@ -101,9 +101,9 @@ pub fn parse_free_bytes(reported: &str) -> Option<u64> {
 /// Inodes in use across the filesystems `df` reports, kernel interfaces aside.
 ///
 /// Through the hardened `canonical_tool` seam rather than `statfs`, which std does not wrap:
-/// reaching that syscall would cost `#![deny(unsafe_code)]` for a number that is only ever a
-/// warning. Shelling out to `df` is bounded in time and output and leaves the box as it found
-/// it, which the syscall's cost does not buy anything over.
+/// reaching that syscall would cost the workspace's `unsafe_code = "forbid"` for a number that
+/// is only ever a warning. Shelling out to `df` is bounded in time and output and leaves the
+/// box as it found it, which the syscall's cost does not buy anything over.
 fn inodes_in_use() -> Option<u64> {
     let df = CanonicalTool::located("df")?;
 

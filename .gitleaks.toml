@@ -1,0 +1,41 @@
+# Secret-scanning policy, at the root so a local `gitleaks detect` applies the same
+# rules CI does.
+#
+# Read by two workflows: `ci.yml` scans the range each push or pull request adds,
+# `secret-scan.yml` scans the whole reachable history weekly and on demand.
+#
+# Why a fingerprint tool needs this more than most. Every fixture in the suite is a
+# transcript of some host's output: `/etc/shadow` lines, `pg_hba.conf` rules,
+# connection strings, unit files. The natural way to write the next one is to paste
+# what a real box printed, and the natural box to paste from is the one under the
+# desk. That is a mistake this catches on the way in rather than after publication.
+
+title = "rastro secret-scan policy"
+
+[extend]
+# gitleaks' own ruleset: cloud provider keys, GitHub and GitLab tokens, Slack, Stripe,
+# private key blocks, and the generic high-entropy assignments. rastro adds no rules of
+# its own, because the shapes it would want to catch are the shapes that ruleset
+# already knows.
+useDefault = true
+
+# Scan git, which is the default and what CI does:
+#
+#     gitleaks detect
+#
+# Not `--no-git`. That walks the working tree instead, `target/` included, and
+# rustdoc's own search index carries enough entropy to trip the Square access-token
+# rule. It is a build artefact in an ignored directory that reaches no commit, so the
+# answer is to scan what git tracks rather than to add a path exemption for it.
+#
+# There is deliberately no allowlist and no `.gitleaksignore`. The full history scans
+# clean today, and the fixtures are what keep it that way: they use values that are
+# obviously invented rather than real ones with a character changed. `$y$j9T$SECRETSALT$SECRETHASH`,
+# `abcdefghijklmnop$0123456789` and `password=secret` all read as fake at a glance and
+# none of them trips a rule.
+#
+# Keep writing them that way. An allowlist entry is the wrong first reflex: it is a
+# standing exemption for a shape, and the next real credential of that shape passes
+# through it silently. If one is genuinely needed, it goes here as a specific regex
+# with the reason beside it, never a path or a rule switched off wholesale, and never
+# instead of rotating a credential that reached the tree.
