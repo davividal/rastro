@@ -4,8 +4,10 @@
 OS runtime, and the internal state of the services it finds running.
 
 One static binary, dropped on a Linux box you know nothing about, run as root.
-It writes a JSON document and exits. It opens no file on the box it is describing,
-so it moves no access time and evicts nothing from the page cache.
+It writes a JSON document and exits. The walk stats every path and reads no file's
+contents, so fingerprinting the whole box moves no file's access time and pulls no
+file data into the page cache. The collectors read the handful of files they name,
+and nothing else.
 
 ```sh
 rastro -o before.json
@@ -159,12 +161,18 @@ on every push and is unrelated to any version.
 
 ```sh
 base=https://github.com/davividal/rastro/releases/download/rolling
-curl -fLO $base/rastro-x86_64-unknown-linux-musl
-curl -fLO $base/rastro-x86_64-unknown-linux-musl.sha256
-sha256sum -c rastro-x86_64-unknown-linux-musl.sha256
-gh attestation verify rastro-x86_64-unknown-linux-musl --repo davividal/rastro
-chmod +x rastro-x86_64-unknown-linux-musl
+asset=rastro-x86_64-unknown-linux-musl   # or rastro-aarch64-unknown-linux-musl
+curl -fLO $base/$asset
+curl -fLO $base/$asset.sha256
+sha256sum -c $asset.sha256
+gh attestation verify $asset --repo davividal/rastro
+chmod +x $asset
 ```
+
+Both architectures are published, built and smoke-tested on a runner of their own
+rather than cross-compiled. The one to fetch is the *target host's*, which is not
+necessarily the one you are downloading on: `uname -m` there says `x86_64` or
+`aarch64`, matching the triple in the asset name.
 
 The checksum catches a corrupted download. The attestation is the one that matters:
 it is signed by GitHub at build time and ties these bytes to the commit and the
@@ -176,6 +184,9 @@ is not published this way; it stays an artifact on its own CI run.
 
 ## Building
 
+The tests need Linux: rastro reads `/proc`, and the ones that matter drive the binary
+against a real host. Build and lint anywhere; run the suite in a container or a VM.
+
 ```sh
 cargo test
 cargo clippy --all-targets -- -D warnings
@@ -186,19 +197,37 @@ cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 The musl target is what ships: one static binary for a host with nothing
-installed on it. CI asserts it really is static. Swap in
-`aarch64-unknown-linux-musl` for an arm64 host.
+installed on it. CI asserts it really is static, for both published
+architectures. Swap in `aarch64-unknown-linux-musl` for an arm64 host, which
+needs a linker for that target, so cross-compiling is easier in a container of
+the target architecture than on the workstation.
+
+Those three commands are the beginning of the gate, not the whole of it. A macOS
+pass proves the fixtures and not the walk, so the real one is a Linux container,
+Debian and Alpine, unprivileged as well as root:
+[CONTRIBUTING.md](CONTRIBUTING.md#the-gates) has it.
 
 ## Documentation
 
-| document                               | contents                                          |
-| -------------------------------------- | ------------------------------------------------- |
-| [docs/config.md](docs/config.md)       | the config file: format, options, refusals        |
-| [docs/design.md](docs/design.md)       | architecture, collector contract, output format   |
-| [docs/decisions.md](docs/decisions.md) | what was chosen, why, and what it costs           |
-| [docs/research.md](docs/research.md)   | prior art, and why the alternatives were rejected |
+| document                                 | contents                                            |
+| ---------------------------------------- | --------------------------------------------------- |
+| [docs/config.md](docs/config.md)         | the config file: format, options, refusals          |
+| [docs/design.md](docs/design.md)         | architecture, collector contract, output format     |
+| [docs/decisions.md](docs/decisions.md)   | what was chosen, why, and what it costs             |
+| [docs/research.md](docs/research.md)     | prior art, and why the alternatives were rejected   |
+| [CONTRIBUTING.md](CONTRIBUTING.md)       | how to build it, the gates, and how to send a patch |
+| [SECURITY.md](SECURITY.md)               | reporting a vulnerability, and the threat model     |
+
+## Handling a fingerprint
+
+Treat it as sensitive operational data. It inventories every package and its exact
+version, which turns CVE lookup into a filter, and it names every path on the box.
+The output file is created `0600` for that reason; nothing protects it once you
+move it. [SECURITY.md](SECURITY.md#handle-a-fingerprint-as-sensitive-operational-data)
+is the longer version, including what redaction does and does not do today.
 
 ## Licence
 
-AGPL-3.0-only, see [LICENSE](LICENSE). Contributions under DCO sign-off, no CLA.
-[Why](docs/decisions.md#licence-agpl-30-only).
+AGPL-3.0-only, see [LICENSE](LICENSE). Contributions under DCO sign-off, no CLA:
+[CONTRIBUTING.md](CONTRIBUTING.md#sign-off-not-a-cla) has the how,
+[docs/decisions.md](docs/decisions.md#licence-agpl-30-only) the why.

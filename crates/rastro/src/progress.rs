@@ -152,9 +152,9 @@ impl Reporting {
     /// **A counter, not a bar, and that is a decision rather than a shortcut.** The walk finds
     /// its own work as it goes, so a percentage needs a denominator that does not exist yet.
     /// The one cheap source of a bound is the used-inode count per mount, which needs `statfs`
-    /// — a syscall std does not wrap, so reaching it would cost `#![deny(unsafe_code)]`, and
-    /// even then it would bound entries rather than time. A number that slides smoothly and
-    /// means nothing is worse than an honest count.
+    /// — a syscall std does not wrap, so reaching it would cost the workspace's
+    /// `unsafe_code = "forbid"`, and even then it would bound entries rather than time. A
+    /// number that slides smoothly and means nothing is worse than an honest count.
     fn draw(&self, force: bool) {
         if !self.live {
             return;

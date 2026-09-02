@@ -402,7 +402,7 @@ fn dpkg_is_read_through_the_tool_rastro_actually_runs() {
     .expect("the temp directory should be writable");
     std::fs::set_permissions(
         &program,
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
     )
     .expect("the stand-in should be executable");
 

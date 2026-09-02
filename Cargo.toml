@@ -13,6 +13,23 @@ edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/davividal/rastro"
 
+# Declared once here and inherited by every member through `[lints] workspace = true`,
+# rather than repeated as `#![deny(...)]` in four crate roots. The difference that
+# matters is the crate nobody has written yet: it inherits these, where it would have
+# been the one that forgot the attribute.
+#
+# `forbid` and not `deny` for unsafe. `deny` can be switched off again by an `#[allow]`
+# further down the file, `forbid` cannot, and "this binary contains no unsafe" is a
+# claim SECURITY.md makes about the whole workspace rather than about whichever crate
+# roots still carry the attribute.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Only checked when the documentation is built, which is why `cargo doc` is a CI gate
+# rather than a courtesy: a rename cannot leave a stale path behind.
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+
 [workspace.dependencies]
 rastro-collector = { path = "crates/rastro-collector" }
 rastro-fingerprint = { path = "crates/rastro-fingerprint" }
