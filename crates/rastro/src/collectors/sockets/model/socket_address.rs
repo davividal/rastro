@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::sockets::value_objects::{InetHost, InterfaceScope, PortNumber, SocketPath};
+use crate::collectors::sockets::value_objects::{InetHost, PortNumber, SocketPath};
 
 /// A listening socket's local end, in whichever shape its family has one.
 ///
@@ -13,39 +13,24 @@ use crate::collectors::sockets::value_objects::{InetHost, InterfaceScope, PortNu
 /// compiler name every site when a third family arrives.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SocketAddress {
-    Inet {
-        host: InetHost,
-        port: PortNumber,
-        /// Present when the binding is pinned to one interface, which is mandatory for a
-        /// link-local IPv6 address.
-        scope: Option<InterfaceScope>,
-    },
-    Local {
-        path: SocketPath,
-    },
+    Inet { host: InetHost, port: PortNumber },
+    Local { path: SocketPath },
 }
 
 impl From<&SocketAddress> for Observation {
     fn from(address: &SocketAddress) -> Self {
         match address {
-            SocketAddress::Inet { host, port, scope } => Observation::object([
+            SocketAddress::Inet { host, port } => Observation::object([
                 ("host", Observation::from(host)),
                 ("path", Observation::null()),
                 ("port", Observation::from(port)),
-                (
-                    "scope",
-                    scope
-                        .as_ref()
-                        .map_or_else(Observation::null, Observation::from),
-                ),
             ]),
-            // The same four keys, so a consumer never meets a key that is sometimes
+            // The same three keys, so a consumer never meets a key that is sometimes
             // absent. Which family it is stays readable from which keys are null.
             SocketAddress::Local { path } => Observation::object([
                 ("host", Observation::null()),
                 ("path", Observation::from(path)),
                 ("port", Observation::null()),
-                ("scope", Observation::null()),
             ]),
         }
     }

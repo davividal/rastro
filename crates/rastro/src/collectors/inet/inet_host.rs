@@ -2,20 +2,23 @@
 
 use rastro_collector::{CollectionError, NonEmptyText, Observation};
 
-/// The address half of an internet socket's local end, as `ss` writes it.
+/// The address half of an internet socket's local end.
 ///
-/// **Kept as text and not parsed into an address type.** The values `ss` prints are not
-/// all addresses: `*` means every address of every family, and it is the single most
-/// important value here because it is the difference between a service reachable from
-/// the network and one reachable only from the box. `0.0.0.0` and `[::]` mean the same
-/// thing for one family each. Parsing would have to invent a representation for `*`, and
-/// normalising would erase the distinction between the three spellings, which is a real
-/// difference in what a daemon asked the kernel for.
+/// **Kept as text and not parsed into an address type**, because the exporters facet shares
+/// this leaf and reaches it from configuration, where a name rather than an address is
+/// ordinary. What the sockets facet puts here is always the printed form of an address the
+/// kernel published.
 ///
-/// The brackets around an IPv6 address are removed, because they are `ss`'s punctuation
-/// for separating the address from the port rather than part of the address. The
-/// interface scope after a `%` is removed too and kept as its own field: it is a
-/// different fact from the address.
+/// **A wildcard is the most important value here**, because it is the difference between a
+/// service reachable from the network and one reachable only from the box. There are two
+/// spellings and not three: `0.0.0.0` for IPv4 and `::` for IPv6.
+///
+/// `ss` prints a third, `*`, for a dual-stack socket that serves both families through one
+/// IPv6 binding, and it is deliberately absent. `ss` derives it from a socket option the
+/// kernel returns over diag netlink and no `/proc` column carries, so rastro cannot observe
+/// it. Nothing is lost from the document by that: a dual-stack socket appears once as an
+/// IPv6 wildcard, and a family-separated pair appears as two rows, so the arrangement is
+/// still readable from the facet. Only the spelling of one row changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InetHost(NonEmptyText);
 
@@ -34,7 +37,7 @@ impl InetHost {
     /// the renderer's job. It exists so a test can state the distinction the doc above
     /// claims matters.
     pub fn is_a_wildcard(&self) -> bool {
-        matches!(self.as_str(), "*" | "0.0.0.0" | "::")
+        matches!(self.as_str(), "0.0.0.0" | "::")
     }
 }
 
