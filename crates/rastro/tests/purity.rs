@@ -232,3 +232,22 @@ fn the_config_is_a_plain_settings_type() {
         "assembling a facet's tree is the collector's job",
     );
 }
+
+#[test]
+fn no_collector_runs_a_program_that_makes_the_kernel_load_a_module() {
+    // Act & Assert: rastro must not change the box it is describing. Each of these three
+    // programs was measured loading modules that then stay loaded — `ss -t -u` loads
+    // `udp_diag`, `ss -x` loads `unix_diag`, and `iptables-save` is the alternatives
+    // symlink to `iptables-nft`, which loads `nf_tables`, `nfnetlink` and `libcrc32c`.
+    //
+    // A first run on a fresh box would leave five modules behind, and the before-and-after
+    // pair an operator takes around a change would report them as if the change had caused
+    // them. That is the exact class of unattributed drift rastro exists to surface, so
+    // reaching for one of these again has to fail here rather than in the field.
+    assert_module_never_mentions(
+        "collectors",
+        &["\"ss\"", "\"iptables-save\"", "\"ip6tables-save\""],
+        "read `/proc` instead, or gate the read on `kernel_residency` when only a \
+         subsystem-specific tool will do",
+    );
+}
