@@ -86,7 +86,7 @@ Violating one is a plan change, not a detail.
   version and the effective config.
 - **Secrets** are hashed by default, `--raw` opts out. Redaction is a collector
   responsibility, an option not a guarantee.
-- **Layer 1 reads metadata and opens no file.** An entry is one XXH3-64 digest of
+- **The filesystem collector reads metadata and opens no file.** An entry is one XXH3-64 digest of
   its attributes, taken over exactly those the view keeps, so a volatile stamp
   cannot break byte-identity. `--detail` records the attributes themselves.
 - **The document goes to a file by default**, `0600`, `-o -` for stdout. stdout
