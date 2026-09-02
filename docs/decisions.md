@@ -5,82 +5,6 @@ what it costs. Reversing one is a new entry, not an edit to an old one.
 
 Entries are grouped by the work that produced them, and each group is dated where it begins.
 
-| decision | choice |
-| --- | --- |
-| [Native collectors](#native-collectors-no-external-tool-as-a-dependency) | no AIDE, no configsnap; collectors are native |
-| [Form](#form-single-static-rust-binary) | single static Rust binary, musl target |
-| [Extensibility](#extensibility-collector-trait-plus-an-exec-contract) | built-in trait plus an exec contract, no recompile |
-| [Audience](#audience-debiansystemd-first) | Debian/systemd first, generalisable without breaking changes |
-| [v1 scope](#v1-scope-generate-only-current-box) | generate only, current box, stdout or file |
-| [Output](#output-json-only-in-v1) | JSON only in v1, canonical, rendering as a decorator |
-| [No diff verb](#no-diff-verb-in-v1) | out of v1; the format is contractually diffable instead |
-| [Config](#configuration-is-mandatory) | mandatory config file. **Superseded** |
-| [Config, revised](#superseded-config-is-optional-opt-in-and-exclusion-only) | optional, opt-in, exclusion-only; everything runs by default |
-| [Secrets](#secrets-hashed-by-default) | sensitive values hashed by default, `--raw` opts out |
-| [v1 collectors](#v1-collectors-layers-1-and-2-plus-three-layer-3-starters) | Layer 1 and Layer 2 complete, plus nginx, postgres, docker |
-| [Licence](#licence-agpl-30-only) | AGPL-3.0-only |
-| [Everything is a collector](#everything-observed-comes-from-a-collector) | host identity and invocation metadata are collectors, in a metadata category |
-| [Annotations](#collectors-annotate-values-renderers-act-on-them) | collectors mark values volatile and sensitive; rendering decides what to do |
-| [Volatile handling](#volatile-values-stay-in-place-the-diffable-view-omits-them) | in place, and omitted by the diffable view |
-| [Diffable by default](#the-diffable-view-is-the-default) | `--include-volatile` opts into volatile values |
-| [Key order](#keys-are-declared-where-the-shape-is-known-sorted-where-it-is-not) | fixed either way; readable where rastro owns the shape |
-| [No floating point](#the-format-admits-no-floating-point-numbers) | leaf values are null, boolean, integer or text |
-| [Presence is three-valued](#presence-is-three-valued-not-a-bool) | a collector that cannot tell says so, rather than reporting absence |
-| [Layering](#layered-domain-application-infrastructure-presentation) | hexagonal, dependencies inward. **Superseded** |
-| [Workspace](#superseded-a-cargo-workspace-replaces-the-hexagonal-layout) | three crates; cargo enforces what a test used to |
-| [Layered collectors](#a-collector-is-layered-source-model-value-objects) | one host interface's spelling stays out of the model |
-| [Keyed or listed](#keyed-where-the-name-is-unique-listed-where-it-is-not) | keyed loses nothing when names are unique, and removes ordering churn |
-| [No load address](#a-modules-load-address-is-not-recorded) | a kernel text pointer is noise and a KASLR leak |
-| [One execution seam](#shelling-out-goes-through-one-hardened-seam) | bounded, no shell, cleared environment, group-killed |
-| [One packages collector](#one-packages-collector-dispatching-over-the-managers-it-finds) | keyed by manager; dpkg and apk read from different sources |
-| [No MSRV floor](#no-msrv-floor-the-toolchain-is-pinned-by-mise) | only the latest Rust is maintained, and a floor constrained resolution |
-| [Unclassified error text](#a-facets-error-text-is-not-classified-yet) | revisits when redaction exists to classify against |
-| [Fingerprints are sensitive](#a-fingerprint-is-sensitive-operational-data-until-redaction-exists) | a package inventory is a target-selection aid, so handle the document accordingly |
-| [Signalling by pid](#accepted-residual-risk-signalling-by-pid) | a pid-reuse window remains, accepted. **Superseded** |
-| [Unconditional group signal](#superseded-the-group-signal-is-unconditional) | the guard that created the window was hiding the leak it was meant to guard |
-| [What a unit starts](#a-unit-records-what-it-starts-resolved-by-systemd) | the `units` facet carries every unit's effective `ExecStart=` |
-| [argv stays whole](#a-units-argument-vector-is-recorded-whole-not-split) | systemd loses the quoting, so splitting would invent a structure |
-| [Exporters facet](#layer-3-a-telemetry-fleet-facet-dispatched-from-the-binary-a-unit-starts) | telemetry agents are read as their own facet, keyed by unit |
-| [A named catalogue](#the-exporters-facet-knows-its-agents-by-name-rather-than-by-heuristic) | a heuristic would sweep in daemons and still miss two of six |
-| [Both streams](#the-execution-seam-can-capture-stderr) | two of six agents print `--version` to stderr and exit zero |
-| [Configured, not bound](#a-configured-endpoint-is-a-different-fact-from-a-bound-socket) | `exporters` and `sockets` observe separately so they can disagree |
-| [Inode timestamps](#an-inodes-timestamps-are-nanoseconds-since-the-epoch-and-atime-is-not-recorded) | mtime and ctime in nanoseconds, neither volatile; no atime, since hashing moves it |
-| [Device numbers](#a-device-node-records-its-major-and-minor-numbers) | a device node's state is its major and minor, split out of the packed `st_rdev` |
-| [Hardened open](#hashing-opens-with-o_nofollow-and-o_nonblock) | the stat and the open are two calls, so the open refuses a swapped-in symlink or fifo |
-| [Attributes owed](#acls-and-extended-attributes-are-owed-not-dropped) | ACLs and xattrs are one decision, deferred whole rather than built a third at a time |
-| [pg_settings is one session's view](#pg_settings-is-one-sessions-view-not-the-clusters) | the facet compensates with the lens, role settings, and file settings rather than trusting it |
-| [Running vs configured port](#a-clusters-running-port-comes-from-postmasterpid-its-configured-port-from-pg_lsclusters) | postmaster.pid is the observed half, kept apart from what pg_lsclusters configures |
-| [Stable columns only](#only-the-stable-columns-of-a-moving-catalogue-are-read) | slots and pg_control give identity and shape, never the LSNs and counters that move |
-| [Derived stamps are volatile](#a-directorys-stamps-and-link-count-are-derived-so-they-are-volatile) | a directory summarises children the walk already reports one by one |
-| [Collectors claim their own trees](#a-collector-claims-the-trees-it-owns-and-the-walk-narrows-to-fit) | the owner of a tree knows where it is and what already reports it; a claim only narrows |
-| [A contested tree fails the facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet) | no winner is picked, because two rules for one tree is a bug in a collector pair |
-| [Churn stops reporting what moves](#a-tree-that-churns-without-meaning-stops-reporting-the-attributes-that-move) | withholding only the digest left the journals in the diff on mtime alone |
-| [The walk table is self-description](#the-effective-walk-table-travels-in-the-invocation-facet) | one place says which rule applied to a tree and which facet asked for it |
-| [The observer is not state](#superseded-rastro-omits-the-file-it-is-running-from) | the running binary is omitted unconditionally. **Superseded** |
-| [Only a staged run omits it](#only-a-staged-run-omits-the-binary-and-the-caller-says-so) | an installed rastro is part of the box; only the caller that staged a copy knows it is transient |
-| [A rolling build, not a release](#the-newest-master-build-is-a-moving-pre-release-not-a-release) | one anonymous URL for the newest master build; the tag moves, and the release job is still owed |
-| [The Sonar check waits for its verdict](#the-required-sonarqube-check-waits-for-the-quality-gate) | a required check that could not fail on a quality regression now can |
-| [Renovate, not Dependabot](#renovate-not-dependabot-because-the-toolchain-is-a-dependency-too) | mise has no Dependabot ecosystem, and the toolchain pin is the one that decides what the compiler does |
-| [Metadata everywhere, content nowhere](#metadata-everywhere-content-nowhere-by-default) | hashing every file read 84 GB and never finished; stat detects a change anywhere, and ctime has no userspace setter |
-| [An entry is a digest](#an-entry-is-a-digest-of-its-metadata) | one XXH3-64 per path, 81 bytes against 444; completeness is not for sale |
-| [The digest follows the view](#the-digest-covers-exactly-what-the-view-would-have-shown) | a digest over volatile attributes would end byte-identity at the facet that dominates the document |
-| [A gone path is omitted, a closed one recorded](#a-path-that-is-gone-is-omitted-a-path-that-will-not-be-read-is-recorded) | one rotating log used to cost the whole facet; the entry fails, not the facet |
-| [An undecodable name is reported](#a-name-that-will-not-decode-is-reported-not-fatal) | no key to be filed under is not a reason to lose every path on the box |
-| [A file by default](#the-fingerprint-goes-to-a-file-by-default-and-stdout-only-when-asked) | megabytes do not belong on a terminal; `-o -` restores the pipe |
-| [The output is left out of the walk](#the-output-file-is-left-out-of-the-walk-and-the-invocation-facet-says-so) | run two would otherwise report run one's document and break byte-identity |
-| [A counter, not a bar](#progress-is-a-counter-not-a-bar-and-only-on-a-terminal) | the walk finds its own work, so a percentage would be invented |
-| [Timings never enter the document](#timings-are-told-to-the-operator-never-written-into-the-document) | the library is handed no clock, so it could not write one in |
-| [Estimated and warned, never limited](#the-run-is-estimated-before-it-starts-and-warned-about-never-limited) | a budget presupposes the operator investigated the box, which is rastro's job |
-| [The renderer streams](#the-renderer-streams-and-the-document-is-never-copied-to-filter-it) | four copies at peak became one, proved byte-neutral by golden tests |
-| [posix_fadvise, rejected](#considered-and-rejected-posix_fadvise-to-give-the-page-cache-back) | the problem was removed at the source: nothing opens a file any more |
-| [The filesystem's own record, rejected](#considered-and-rejected-the-filesystems-own-record-of-what-changed) | a journal is for crash recovery; CoW snapshots are right but need arranging beforehand |
-| [Tests skip the walk they ignore](#a-test-that-is-not-about-the-walk-does-not-pay-for-one) | forty-five whole-host walks made the suite eight minutes, and the harness's own files broke determinism |
-| [A tool's null is not a broken document](#a-tools-null-is-not-a-broken-document) | one timer with a null field cost the whole facet on every run of a host |
-| [A config narrows the walk](#a-config-can-narrow-the-walk-and-the-operator-outranks-a-collector) | three narrowings, no `hashed`; an operator corrects rastro rather than conflicting with it |
-| [nextest runs the suite](#nextest-runs-the-suite-and-each-test-gets-its-own-process) | 43 s against 64 s, and process isolation found a fixture race libtest had hidden |
-| [Concurrent collectors, lone walk](#collectors-run-concurrently-and-the-walk-runs-alone) | 83% of a run was waiting on subprocesses; the walk is the one collector that can notice the others |
-| [`ip` is asked for details](#ip-is-asked-for-details-because-it-hides-a-routes-defaults) | iproute2 prints no `protocol` for a proto-boot route, which cost the whole facet on an ordinary Debian box |
-
 ## Native collectors, no external tool as a dependency
 
 rastro reads state itself. AIDE and configsnap appear throughout
@@ -140,25 +64,6 @@ unchanged box produce byte-identical output.
 
 A generic structural `diff` verb is roadmap UX. It needs nothing from the
 collectors, which is exactly why it can wait.
-
-## Configuration is mandatory
-
-rastro runs as `./rastro` or `./rastro --config=/path/to/config.toml`. Without
-`--config` it looks for `config.toml` beside the binary. If no config is found
-it fails loudly and points at `--generate-config`.
-
-There is no implicit default configuration. The scope of what gets fingerprinted
-is too consequential to inherit silently, and rastro's own files are excluded
-through explicit config entries rather than built-in magic.
-
-## Secrets: hashed by default
-
-Values a collector marks `sensitive` are replaced by their digest at
-serialisation time. `--raw` opts out and warns.
-
-This is a configuration option, not a security guarantee. Marking fields is the
-collector author's responsibility, and the exec contract, the documentation, the
-tests and rastro's own output all say so.
 
 ## v1 collectors: Layers 1 and 2, plus three Layer 3 starters
 
@@ -308,52 +213,7 @@ where it is visible and tested. And "collection failed" stays distinct from "the
 subject is not here", which a merged design would have let a collector conflate
 by accident.
 
-## Layered: domain, application, infrastructure, presentation
-
-Dependencies point inward. `domain` depends on nothing; `application`,
-`infrastructure` and `presentation` depend on `domain`; `main` is the
-composition root and the only place that wires an adapter to a port.
-
-| layer | holds |
-| --- | --- |
-| `domain` | what a fingerprint is, and its rules. No I/O, no JSON, no `/proc` |
-| `application` | the one use case: fingerprint this host |
-| `infrastructure` | the adapters that read the host, and the exec-collector bridge |
-| `presentation` | rendering and the command line |
-
-Two reasons specific to this tool, rather than a general preference for
-architecture:
-
-The collectors are almost entirely infrastructure. They read `/proc`, shell out
-to `systemctl` and `nft`, and spawn external executables. Without a declared
-boundary they end up beside the domain, and the model that has to stay
-deterministic starts importing `std::process`.
-
-The domain must be buildable and testable on a machine that is not the target
-platform. Development happens on macOS; the target is Debian. Ports and adapters
-is what makes "the whole model tests without a Linux host" a property of the
-design rather than a coincidence that will lapse.
-
-**Modules are named for the model, not for the types they hold.** Inside
-`domain`, the modules are the model's joints: `fingerprint` (the document and
-its consistency rules), `observation` (what was seen and what the seer asserted
-about it), `collector` (who observes, under what contract). A `FacetName` lives
-beside `Facet` because it names one, not in a file called `identifier` beside
-every other newtype. Grouping by what a type *is* to the compiler rather than by
-what it *means* leaves the module structure carrying no information about the
-model, which is the failure mode a `domain/` directory name hides rather than
-fixes.
-
-**Deliberately not adopted: repositories and unit of work.** rastro persists
-nothing, has no database, no transaction, and no aggregate to load by id. The
-nearest thing is the output sink, which is a one-way write, not a repository.
-Those blocks are load-bearing in the backend templates this layering is borrowed
-from and would be empty ceremony here.
-
-## Superseded: a Cargo workspace replaces the hexagonal layout
-
-Supersedes [Layered](#layered-domain-application-infrastructure-presentation)
-and the "single Rust crate" line in the repo-shape notes.
+## A Cargo workspace replaces the hexagonal layout
 
 `src/domain`, `src/application`, `src/infrastructure` and `src/presentation`
 became three crates under `crates/`:
@@ -377,17 +237,6 @@ source as text. It could be defeated by a `super::super::` path and it could
 false-positive on a doc comment. Their disposition, one by one rather than by a
 count.
 
-One caveat on reading the left-hand column, because it caused a review to reach
-the wrong conclusion once. That file is in **no git object**. It was staged
-early, in a five-assertion form, and then grew two more during review before the
-move deleted it from the working tree, so the version this table describes is
-not recoverable and a reader cannot diff it. Recovering the staged blob and
-concluding the last two rows were invented is the trap; the corroboration is
-that the cycle assertion is what reported `collector -> fingerprint -> collector`
-and caused the port split recorded below, which happened before the workspace
-existed. The right-hand column is the checkable half: every test it names exists
-today.
-
 | assertion | now |
 | --- | --- |
 | domain depends on no other layer | refused by cargo; a crate cycle does not compile |
@@ -398,7 +247,7 @@ today.
 | observations know nothing about documents | covered by that cycle walk, with the direction recorded in a comment |
 | presentation and infrastructure do not know each other | **not** a crate boundary: `cli` and `collectors` are siblings in `rastro`, so it kept its own test |
 
-It also settles the argument that produced the previous entry. The
+It also settles the cycle argument. The
 `collector` to `fingerprint` cycle could be waved away inside one crate; across
 crates it is a hard error, which forced the identity types into
 `rastro-fingerprint` where a facet records them, and left `rastro-collector`
@@ -415,14 +264,30 @@ dependency, `rastro-collector`, which is asserted rather than claimed.
 single bounded context, and the split above is modularity for contributors, not
 strategic DDD.
 
-## Superseded: config is optional, opt-in and exclusion-only
+**Modules are named for the model, not for the types they hold.** Inside
+`rastro-fingerprint`, the modules are the model's joints: `fingerprint` (the
+document and its consistency rules), `observation` (what was seen and what the
+seer asserted about it), `collector` (who observes, under what contract). A
+`FacetName` lives beside `Facet` because it names one, not in a file called
+`identifier` beside every other newtype. Grouping by what a type *is* to the
+compiler rather than by what it *means* leaves the module structure carrying no
+information about the model.
 
-Supersedes [Configuration is mandatory](#configuration-is-mandatory).
+**Deliberately not adopted: repositories and unit of work.** rastro persists
+nothing, has no database, no transaction, and no aggregate to load by id. The
+nearest thing is the output sink, which is a one-way write, not a repository.
+Those blocks are load-bearing in the backend templates the layering was borrowed
+from and would be empty ceremony here.
+
+## Config is optional, opt-in and exclusion-only
+
+Replaces the earlier rule that a config file was mandatory and looked for beside
+the binary.
 
 `rastro` with no arguments collects everything. `--config <path>` can only
 narrow that, and there is no way to say which collectors *do* run.
 
-**The old entry contradicted the project's founding disqualifier.**
+**The old rule contradicted the project's founding disqualifier.**
 `docs/research.md` rules out any tool that "requires you to declare *what to
 watch*", because if you could enumerate what changes you would not need the
 diff. That is what disqualified AIDE and configsnap. Refusing to run without a
@@ -431,7 +296,7 @@ config file is the same disqualifier one level up.
 It was also internally inconsistent with the project's own "exclusions, never
 inclusions" (`CLAUDE.md`), which presupposes a default scope to exclude *from*.
 
-**What the old entry was reaching for was never explicit input.** It is that a
+**What the old rule was reaching for was never explicit input.** It is that a
 fingerprint records what produced it, so two runs under different scope cannot
 be diffed by accident. That is the envelope self-description invariant, and it
 works better with defaults: the effective config reaches the `invocation` facet
@@ -706,32 +571,18 @@ Whether `PackageVersion` and the module taint flags should carry the `sensitive`
 annotation is deferred to the same point as the previous entry, because an
 annotation nothing acts on would be decoration.
 
-## Accepted residual risk: signalling by pid
+## The group signal is unconditional
 
-`canonical_tool` calls `poll` before signalling a tool's process group, which reaps
-an already-exited child so the crate's own guard can skip the signal. Between that
-check and the signal there remains a window in which the pid could be reaped and
-recycled by an unrelated process that is itself a group leader, which would then
-receive a stray `SIGKILL`.
-
-This is inherent to signalling by pid on Unix rather than anything rastro
-introduces, and closing it properly needs `pidfd`. Accepted, and recorded here so it
-is a known residual rather than an oversight.
-
-## Superseded: the group signal is unconditional
-
-Supersedes [Accepted residual risk: signalling by pid](#accepted-residual-risk-signalling-by-pid),
-which described a `poll` call that no longer exists.
-
-That entry accepted a window between polling the job and signalling its group, on the grounds
-that a reaped pid could be recycled. A challenge round then showed the guard was not merely
-imperfect, it was actively hiding the bug it sat next to: a tool that backgrounds a helper and
+`canonical_tool` used to `poll` the job before signalling its process group, skipping the signal
+when the direct child had already been reaped. That guard was accepted as leaving a pid-reuse
+window. It was worse than imperfect: it was hiding the bug it sat next to: a tool that backgrounds a helper and
 exits at once leaves the helper holding the pipes open, `poll` reports the direct child gone, and
 the early return spared exactly the descendant the group kill exists to reach. The test that
 covered the area used a parent that was still alive at kill time, so it exercised the branch that
 worked and never the one that did not.
 
-The signal is now sent unconditionally, and the window the old entry accepted does not arise. A
+The signal is now sent unconditionally, and the window the guard was accepted for does not
+arise. A
 group with living members cannot have its leader's pid recycled, because each member holds that
 `struct pid` as its group id, and a group with nothing left in it simply yields `ESRCH`. This was
 checked against `subprocess`'s own `WNOWAIT` rationale rather than assumed.
@@ -741,12 +592,6 @@ cached an exit status, so the unconditional signal only helps because nothing ca
 `poll` before it. That dependency is real and nothing enforces it, so it is named in the code at
 the point where it would be broken, and
 `run_kills_a_descendant_of_a_tool_that_already_exited` is the test that would catch it.
-
-**Cost:** a residual risk that was recorded as accepted turns out to have been the wrong trade,
-and the entry recording it stood for four commits while describing code that had been deleted.
-The lesson is the one the `nix` reversal already taught: an entry justified by a mechanism needs
-re-reading whenever that mechanism changes, and neither of the two commits that touched this file
-afterwards did so.
 
 ## The accounts collector records no password hash, so it cannot see a password change
 
@@ -821,7 +666,7 @@ anticipated. Refusing a dependency at the price of a parser that can be quietly 
 is the wrong trade for a tool whose one unacceptable failure is reporting something it
 half-understood as complete.
 
-## Superseded: the time collector reads files, because `timedatectl` starts a unit
+## The time collector reads files, because `timedatectl` starts a unit
 
 The time collector was written to run `timedatectl show`, on the rule that effective,
 resolved state beats reading configuration files. That was the wrong call, and the
@@ -1297,48 +1142,10 @@ entries of the reference cycle become 17, and with the three claims that follow,
 view, and neither does a journal replaced wholesale. The complete view still carries
 both, and `/var/log` was never the tree a fingerprint was watching.
 
-## Superseded: rastro omits the file it is running from
-
-Superseded by [only a staged run omits it](#only-a-staged-run-omits-the-binary-and-the-caller-says-so),
-which keeps the mechanism and drops the unconditional rule. What follows is what was
-built first, blind spot included.
-
-The walk skips exactly one path: the executable this process was started from, as
-`std::env::current_exe` reports it. `rastro-ssh` stages the binary with
-`mktemp /var/tmp/rastro.XXXXXXXX` and `/var/tmp` is walked on purpose, so every remote
-run otherwise reported one added and one removed file under a fresh name. On the
-reference cycle that was the single largest contributor to a six-path noise floor, and
-it was the tool measuring its own footprint.
-
-**One path, compared whole.** Not a name pattern: a file an operator called `rastro` is
-theirs and belongs in the document. Not a directory either, so the staged binary's
-neighbours in `/var/tmp` are reported as before.
-
-**The omission is accounted for.** The `invocation` facet carries `observer`, the path
-that was left out, annotated volatile because the `mktemp` name differs on every run and
-the diffable view has to stay byte-identical. The complete view names the file. An
-omission nothing in the document explains is the one thing this format does not do.
-
-**Resolved once, in the seam.** Two facets answer for the same path, so
-`FilesystemCollector::running_binary` is the only definition and `collectors::built_in`
-hands it to both. Two independent reads could disagree, and then the envelope would
-account for a different file than the walk skipped.
-
-**The known blind spot:** a rastro installed permanently, say in `/usr/local/bin`, will
-not appear in its own fingerprint. That is a real loss, accepted because the alternative
-is worse in both directions: a rule that only omitted the binary inside a scratch tree
-would make the document depend on where the operator staged it, and `argv[0]` is not a
-path the kernel vouches for. The version is in the envelope, and the complete view has
-the path.
-
-**Cost:** `current_exe` is a host read in a collector that had none, and a run that
-cannot resolve it reports the binary like any other file. One entry too many is the
-right direction to fail in; omitting somebody else's file is not.
-
 ## Only a staged run omits the binary, and the caller says so
 
-Supersedes [rastro omits the file it is running from](#superseded-rastro-omits-the-file-it-is-running-from).
-The omission was right; making it unconditional was not.
+The walk used to omit the executable it was started from, unconditionally. The omission was
+right; making it unconditional was not.
 
 **The question that broke it:** can rastro recognise itself wherever it is? It already
 does, exactly, and that was never the problem. `/proc/self/exe` is a kernel link to the
@@ -1572,16 +1379,16 @@ prevention and monitoring, and `docs/research.md` rejects AIDE as a dependency. 
 355 GB of reads and a production incident for the one property the tool says it does not
 have is the wrong trade.
 
-**Two things follow that are worth more than the time saved.** rastro now opens no file at
-all, so it moves no atime and pulls no file data into the page cache — it cannot evict the
-working set of the database it is fingerprinting, which is a harm that lands *after* the
-tool exits with nothing connecting the two. And peak resident memory fell from 267 MB to
+**Two things follow that are worth more than the time saved.** The walk now reads no file's
+contents, so it moves no file's atime and pulls no file data into the page cache — it cannot
+evict the working set of the database it is fingerprinting, which is a harm that lands
+*after* the tool exits with nothing connecting the two. And peak resident memory fell from 267 MB to
 23 MB, measured, because an entry stopped being a twelve-key map.
 
 **Cost, accepted knowingly:** a same-size, stamp-preserving rewrite anywhere on the box is
 now invisible. The box that needs that caught is the box that should be running an IDS.
 
-**This does not supersede [Config, revised](#superseded-config-is-optional-opt-in-and-exclusion-only).**
+**This does not supersede [Config](#config-is-optional-opt-in-and-exclusion-only).**
 The walk stays total and exclusion-only. A future reader must not read this as licence to
 make the *walk* opt-in.
 
@@ -1802,8 +1609,9 @@ where it had got to, or how much longer — so the only available action was to 
 
 **No percentage and no ETA, and that is a decision rather than a shortfall.** The walk
 discovers its own work as it goes. The one cheap denominator is the used-inode count per
-mount, which needs `statfs` — a syscall std does not wrap, so reaching it would cost
-`#![deny(unsafe_code)]` — and even bought, it would bound entries rather than time. A number
+mount, which needs `statfs` — a syscall std does not wrap, so reaching it would cost the
+workspace's `unsafe_code = "forbid"` — and even bought, it would bound entries rather than
+time. A number
 that slides smoothly and means nothing is worse than an honest count.
 
 So: a live single-line counter of the current collector, entries walked and elapsed, gated on
@@ -1889,13 +1697,13 @@ fingerprinted, and the resulting latency lands *after* rastro has exited with no
 connecting the two. `posix_fadvise(DONTNEED)` after each file would limit that.
 
 **Rejected, because the problem was removed at the source instead.** With nothing
-content-hashed rastro opens no file at all, so the harm falls by four orders of magnitude and
-there is nothing left to advise about. It was never a complete fix either: `DONTNEED` cannot
+content-hashed the walk reads no file's contents, so the harm falls by four orders of
+magnitude and there is nothing left to advise about. It was never a complete fix either: `DONTNEED` cannot
 distinguish a page rastro brought in from one the database already had hot, so it evicts the
 database's pages either way, and it does not write back dirty pages at all.
 
 It also has a price beyond its own code. std does not wrap the call, so reaching it means
-either an `unsafe` block — against `#![deny(unsafe_code)]` in all three crates, and against
+either an `unsafe` block — against the workspace's `unsafe_code = "forbid"`, and against
 `docs/design.md` advertising the unsafe-free build as one of only two security properties
 that are true today — or a fourth runtime dependency for one syscall. Neither is worth
 paying for a mitigation of a problem that no longer exists.
@@ -2261,3 +2069,113 @@ looking right, is `cargo-zigbuild` on the x86 runner, giving up the smoke run.
 harness has never gated on arm. A first manual run on aarch64 Debian 12 produced a
 complete document, five facets erroring loudly on an unprivileged user's permission
 denials and the rest `ok`.
+
+# Governance: the gates a contributor meets, and the ones CI meets for them
+
+Dated 2026-09-01, from an audit of what a contributor meets before they run
+anything. The pipeline held up. What was missing was the documentation around it,
+and two gates whose absence nothing announced.
+
+## The container gate is a workflow of its own, opened by a label
+
+`CLAUDE.md` has said since Layer 1 landed that the real gate is a Linux container,
+Alpine as well as Debian, unprivileged as well as root. Nothing enforced it. CI ran
+one distribution as one unprivileged user, and the musl binary was asserted static
+and then only asked its version, on a host with a glibc.
+
+Adding it to `ci.yml` was rejected on cost: two images pulled and the workspace
+compiled four times, in front of every pull request, for a gate that most changes
+cannot break. It lives in `container.yml` instead, on every push to master, nightly,
+on demand, and on any pull request carrying the `container` label. `ci.yml` carries a
+comment saying which changes should add the label, because a label nobody knows to
+apply is the same as no gate.
+
+**One script, called from both places.** `scripts/container-suite.sh` runs inside the
+container; `scripts/test-in-container.sh` is what a working machine calls, and the
+workflow calls the same inner script. The recipe was documentation before, which is
+the form that drifts: what CI asks and what a contributor asks are now the same file.
+
+**The unprivileged half is not optional and has to be explicit.** A container job is
+root by default, which is the opposite of the runner it replaces, so the script
+creates a user and runs the suite a second time as them. Three defects have already
+hidden in that difference: a test that skipped itself as root, a mode assertion that
+depended on the caller's umask, and an unreadable mount point that failed a facet.
+
+**Cost:** the images float rather than being pinned by digest, unlike every action
+here. Deliberate, since the question is whether rastro works on today's Debian and
+today's Alpine, but it means the nightly run can go red for a reason no commit
+introduced. That is news rather than noise, and it is why the schedule exists.
+
+## Lints are declared once, and `unsafe` is forbidden rather than denied
+
+`#![deny(unsafe_code)]` and `#![deny(rustdoc::broken_intra_doc_links)]` were repeated
+in four crate roots. They now sit in `[workspace.lints]`, inherited through
+`[lints] workspace = true`. The repetition was not the problem: the crate nobody has
+written yet was, since it would have been the one that forgot the attribute.
+
+**`forbid`, not `deny`.** `deny` can be switched off again by an `#[allow]` further
+down the same file. `forbid` cannot, and it is now a compile error to try. That
+matters because SECURITY.md makes the no-unsafe claim about the whole workspace
+rather than about whichever crate roots still carry an attribute.
+
+**Considered and rejected: `missing_docs = "warn"`.** It is the obvious third lint
+for a project whose libraries are the contract, and it produces 776 warnings on the
+library targets alone, which CI's `-D warnings` would turn into a wall. That is a
+documentation project, not a lint change, and it is not this one.
+
+## `cargo install` is gated, without the lockfile
+
+Every job passes `--locked`, which is right: the graph cargo-deny audits must be the
+graph CI builds. The consequence is that nothing here resolves dependencies the way a
+user does. `cargo install --path` ignores the workspace lockfile, so a semver-compatible
+upstream release that does not compile would break the build-from-source path the
+README documents, and the whole workflow would stay green.
+
+A debug-profile install and a `--version` smoke test. This asks whether a fresh graph
+resolves and compiles, not how fast the result runs.
+
+## The secret scan is split: this push, and the whole history
+
+The fixtures in this repository are transcripts of some host's output: `/etc/shadow`
+lines, `pg_hba.conf` rules, connection strings. The natural way to write the next one
+is to paste what a real box printed, and the natural box is the one under the desk.
+gitleaks with its default ruleset gates every push and pull request over the range it
+adds, which is the affordable form for a gate in front of every change.
+
+The whole reachable history is a different question and gets a weekly workflow. It is
+what makes a rule added next month apply to a commit from last year, which a
+differential scan of a range that predates the rule never will.
+
+**No allowlist, and that is a position rather than an oversight.** The 223-commit
+history scans clean today, because the fixtures use values that are obviously
+invented rather than real ones with a character changed. An allowlist entry is a
+standing exemption for a shape, and the next real credential of that shape passes
+through it silently.
+
+**Cost:** the action is free for a public repository under a personal account and
+would need a licence under an organisation, which is a thing to know before such a
+move rather than from the red run after it.
+
+## The security policy states what is not defended, redaction included
+
+SECURITY.md exists because a tool that runs as root, reads `/etc/shadow` and emits a
+complete package inventory had no channel for a vulnerability report. Its more useful
+half is the out-of-scope list.
+
+**It says plainly that redaction is not built.** The design describes values carrying
+a `sensitive` annotation and a `--raw` that opts out of hashing. Collectors do set the
+annotation; nothing acts on it, and `--raw` does not exist. Read quickly, the design
+document promises a protection the binary does not have. The consequence, that a
+stored fingerprint is sensitive operational data in full, was already recorded here;
+it is now where somebody deciding where to put the file will see it.
+
+**It names the one value that is annotated and still emitted.** Of the three collectors
+that meet a credential, two keep it out structurally: `/etc/shadow`'s hash column is
+dropped at parse, and a credential-bearing PostgreSQL setting reports only whether it is
+set. `sysctl` marks and emits, because marking is all there is to do, so
+`net.ipv4.tcp_fastopen_key` and every interface's `stable_secret` reach the document in
+cleartext. Writing the policy is what turned "redaction is unbuilt" from a general
+statement into two key names an operator can act on.
+
+**Cost:** three documents now describe redaction, and they will disagree the moment one
+is updated alone. The entry that lands with the redaction layer has to touch all of them.
