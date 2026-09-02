@@ -5,3 +5,10 @@
 .DS_Store
 
 review-results.md
+
+# Fingerprints are sensitive operational data, see SECURITY.md.
+/rastro-*.json
+/reports/
+
+# Transient agentic-workflow artifact.
+/.code-goal-run.md
