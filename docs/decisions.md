@@ -2225,8 +2225,23 @@ a second run added none. The five were `libcrc32c`, `nf_tables`, `nfnetlink`,
 
 ## rastro does not change the host it describes
 
-**The invariant: reading the host must leave it as it was found.** It was implicit
-before and is now written down, because two collectors were quietly breaking it.
+**The invariant: reading the host must leave it as it was found.** It was not new. It
+was already stated outright, in
+[the `timedatectl` reversal](#superseded-the-time-collector-reads-files-because-timedatectl-starts-a-unit):
+"A fingerprint must not change the box: rastro runs as root on production to observe, and
+starting a unit is a mutation however small."
+
+**What that entry got wrong is the sentence after it**, which listed the tools believed to
+be safe: "Nothing else it runs does this — `systemctl`, `ss`, `ip`, `lsblk`,
+`iptables-save`, `dpkg-query` and `sshd -T` all leave the box as they found it." Two of
+those seven do not. `ss` and `iptables-save` are exactly the offenders here, and they were
+cleared by inspection rather than by measurement at a moment when the entry's own subject
+was a tool that had been cleared the same way and was not safe.
+
+So the invariant is now in `design.md` where a collector author meets it, rather than in a
+decision entry about the time collector, and the tool list that stood beside it is
+withdrawn: the five other tools were re-measured for this change and load nothing, but
+"measured on this box, this kernel" is the only claim any of them supports.
 
 Attribution was measured per command on a restored snapshot, not inferred from the
 module names:
