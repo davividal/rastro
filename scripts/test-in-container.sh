@@ -39,11 +39,18 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # `target/` behind in the checkout.
 #
 # The named volume is one registry cache across runs and images, so each invocation
-# does not download the index again.
+# does not download the index again. It needs no `:z`: podman labels a volume it manages.
+#
+# The checkout does. Podman does not change the labels the OS set, so on an
+# SELinux-enforcing host, which is Fedora and RHEL by default, the container is denied
+# the bind-mounted source and dies before the suite starts. `:z` relabels it shared
+# rather than `:Z` private, because the checkout is still the operator's to edit and a
+# private label would lock them out of their own tree. On a host with no SELinux the
+# option is ignored.
 for image in "${IMAGES[@]}"; do
     echo "### $image"
     "$ENGINE" run --rm \
-        -v "$REPO_ROOT":/w \
+        -v "$REPO_ROOT":/w:z \
         -w /w \
         -e CARGO_TARGET_DIR=/tmp/target \
         -v rastro-cargo-registry:/usr/local/cargo/registry \
