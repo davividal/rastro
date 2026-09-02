@@ -1,6 +1,6 @@
 //! One role a cluster knows, and what it may do.
 
-use rastro_collector::Observation;
+use rastro_collector::{Observation, Xxh3Digest};
 
 use crate::collectors::postgresql::value_objects::{PasswordMethod, RoleName};
 
@@ -11,9 +11,9 @@ use crate::collectors::postgresql::value_objects::{PasswordMethod, RoleName};
 /// one worth naming: the reference box carries two besides the cluster owner, and a third
 /// appearing is the change this facet exists to make loud.
 ///
-/// **No password, and no hash.** `password_method` says whether the role has one and how it
-/// is stored, and that is the whole of it. The value is derived in the query, so the hash
-/// never leaves the server; a fingerprint has no business carrying one.
+/// **No password, and no verifier.** `password_method` says whether the role has one and how
+/// it is stored, `password_digest` whether it changed. Both are derived in the query, so the
+/// verifier never leaves the server; a fingerprint has no business carrying one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Role {
     pub name: RoleName,
@@ -41,6 +41,14 @@ pub struct Role {
     /// A role with no password cannot log in with one, whatever `can_login` says, so the two
     /// together are what an operator reads.
     pub password_method: Option<PasswordMethod>,
+
+    /// Whether the role's password changed, or `None` where it has none.
+    ///
+    /// The companion `password_method` cannot answer that: it names the algorithm, so a
+    /// rotation from one SCRAM password to another leaves it untouched, and PostgreSQL
+    /// re-salts on every set. The digest is taken over the sha256 the *server* computed, so
+    /// the verifier is never read into this process at all.
+    pub password_digest: Option<Xxh3Digest>,
 }
 
 impl From<&Role> for Observation {
@@ -76,6 +84,13 @@ impl From<&Role> for Observation {
                 "password_method",
                 match role.password_method {
                     Some(method) => Observation::text(method.as_str()),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "password_digest",
+                match &role.password_digest {
+                    Some(digest) => digest.into(),
                     None => Observation::null(),
                 },
             ),

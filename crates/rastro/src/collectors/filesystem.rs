@@ -34,7 +34,7 @@ pub use source::{
 };
 pub use value_objects::{
     CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
-    FileMode, MetadataDigest, NanosecondsSinceEpoch,
+    FileMode, NanosecondsSinceEpoch,
 };
 
 use std::path::{Path, PathBuf};

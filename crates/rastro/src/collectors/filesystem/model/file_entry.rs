@@ -1,10 +1,10 @@
 //! One entry on the disk, in rastro's terms.
 
-use rastro_collector::{AbsolutePath, ByteSize, Observation};
+use rastro_collector::{AbsolutePath, ByteSize, Observation, Xxh3Digest};
 
 use crate::collectors::filesystem::value_objects::{
     CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, FileKind, FileMode,
-    MetadataDigest, NanosecondsSinceEpoch,
+    NanosecondsSinceEpoch,
 };
 
 /// What the walk recorded about one path.
@@ -80,7 +80,7 @@ impl FileEntry {
     /// configuration rather than the box's state, so folding it in would report a changed
     /// config as a change to every file on the host. The effective table in the `invocation`
     /// facet is where a reader learns which rule applied.
-    pub fn metadata_digest(&self) -> MetadataDigest {
+    pub fn metadata_digest(&self) -> Xxh3Digest {
         let derived = self.stamps_are_derived();
         let churns = self.churns();
 

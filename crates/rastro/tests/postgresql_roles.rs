@@ -6,13 +6,16 @@
 
 use rastro::collectors::postgresql::{PasswordMethod, PsqlRoles, Role, RoleName};
 
-/// The ten columns the collector's query asks for, in order. The tenth is how the password
-/// is stored, derived in the query so no hash is ever read.
+/// The eleven columns the collector's query asks for, in order. The last two are derived in
+/// the query from `pg_authid.rolpassword`: how the password is stored, and the sha256 of the
+/// stored verifier. Neither is the verifier, so no secret is ever read. `migrator` carries an
+/// md5 password and so an empty digest column, which is what the query prints for every
+/// scheme but SCRAM.
 const ROLES: &str = "\
-ops_admin,t,t,t,t,f,t,-1,,scram-sha-256
-postgres,t,t,t,t,t,t,-1,,scram-sha-256
-app,f,f,f,f,f,t,-1,,scram-sha-256
-migrator,f,f,f,f,f,t,-1,,md5
+ops_admin,t,t,t,t,f,t,-1,,scram-sha-256,b6f5ee30bf59607fcb1a5029c343bb875f4f197e9752d636d3b2a933dde9b192
+postgres,t,t,t,t,t,t,-1,,scram-sha-256,122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db
+app,f,f,f,f,f,t,-1,,scram-sha-256,84757bf01cf42c7fdb177d4f37e255bb0dfa6ce3c92ecf71345002fdcaf8813a
+migrator,f,f,f,f,f,t,-1,,md5,
 ";
 
 fn parsed(csv: &str) -> Vec<Role> {
@@ -84,7 +87,7 @@ fn parse_reads_an_unlimited_connection_limit_as_no_limit() {
 #[test]
 fn parse_reads_a_connection_limit_the_operator_set() {
     // Arrange
-    let capped = "reporting,f,f,f,f,f,t,5,,scram-sha-256\n";
+    let capped = "reporting,f,f,f,f,f,t,5,,scram-sha-256,b6f5ee30bf59607fcb1a5029c343bb875f4f197e9752d636d3b2a933dde9b192\n";
 
     // Act
     let roles = parsed(capped);
@@ -107,7 +110,7 @@ fn parse_reads_an_empty_expiry_as_no_expiry() {
 fn parse_reads_an_expiry_the_operator_set() {
     // Arrange: the timestamp is kept as the server printed it. Reformatting would invent a
     // timezone rendering rastro does not own.
-    let expiring = "contractor,f,f,f,f,f,t,-1,2027-01-01 00:00:00+00,scram-sha-256\n";
+    let expiring = "contractor,f,f,f,f,f,t,-1,2027-01-01 00:00:00+00,scram-sha-256,122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db\n";
 
     // Act
     let roles = parsed(expiring);
@@ -123,9 +126,9 @@ fn parse_reads_an_expiry_the_operator_set() {
 fn parse_orders_roles_by_name() {
     // Arrange
     let unsorted = "\
-app,f,f,f,f,f,t,-1,,scram-sha-256
-ops_admin,t,t,t,t,f,t,-1,,scram-sha-256
-postgres,t,t,t,t,t,t,-1,,scram-sha-256
+app,f,f,f,f,f,t,-1,,scram-sha-256,84757bf01cf42c7fdb177d4f37e255bb0dfa6ce3c92ecf71345002fdcaf8813a
+ops_admin,t,t,t,t,f,t,-1,,scram-sha-256,b6f5ee30bf59607fcb1a5029c343bb875f4f197e9752d636d3b2a933dde9b192
+postgres,t,t,t,t,t,t,-1,,scram-sha-256,122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db
 ";
 
     // Act
@@ -140,7 +143,10 @@ postgres,t,t,t,t,t,t,-1,,scram-sha-256
 #[test]
 fn parse_refuses_a_flag_that_is_not_a_boolean() {
     // Act
-    let refused = PsqlRoles::parse("postgres,yes,f,f,f,f,t,-1,,scram-sha-256\n");
+    let refused = PsqlRoles::parse(
+        "postgres,yes,f,f,f,f,t,-1,,scram-sha-256,\
+         122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db\n",
+    );
 
     // Assert: guessing that `yes` means true would put an invented privilege in the
     // document, and a privilege is the last thing to guess about.
@@ -160,8 +166,8 @@ fn parse_refuses_a_row_with_the_wrong_number_of_columns() {
 fn parse_refuses_two_rows_for_one_role() {
     // Arrange
     let contradiction = "\
-postgres,t,t,t,t,t,t,-1,,scram-sha-256
-postgres,f,f,f,f,f,f,-1,,md5
+postgres,t,t,t,t,t,t,-1,,scram-sha-256,122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db
+postgres,f,f,f,f,f,f,-1,,md5,122b86ea371aaa1f7176c6eb880cb9ac57b21a8f10ad502b321ddb42688067db
 ";
 
     // Act
@@ -201,7 +207,7 @@ fn parse_reads_how_a_password_is_stored() {
 #[test]
 fn parse_reads_a_role_with_no_password() {
     // Arrange: a group role nobody logs in as.
-    let passwordless = "readers,f,f,f,f,f,f,-1,,\n";
+    let passwordless = "readers,f,f,f,f,f,f,-1,,,\n";
 
     // Act
     let roles = parsed(passwordless);
@@ -219,4 +225,156 @@ fn parse_refuses_a_password_method_its_own_query_cannot_produce() {
     // Assert: the column is derived by this collector's own CASE, so a value it does not
     // recognise means the query and the parser have drifted apart.
     assert!(refused.is_err());
+}
+
+#[test]
+fn parse_reads_a_password_digest() {
+    // Act
+    let roles = parsed(ROLES);
+
+    // Assert: the value the document carries is XXH3-64 over the sha256 the server printed,
+    // rendered the way the filesystem walker renders an entry digest.
+    let digest = named(&roles, "app")
+        .password_digest
+        .expect("the fixture role has a password");
+    assert_eq!(digest.as_str().len(), 16);
+    assert!(
+        digest
+            .as_str()
+            .bytes()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+    );
+}
+
+#[test]
+fn parse_reads_no_digest_for_a_role_with_no_password() {
+    // Arrange: a group role nobody logs in as. The query prints an empty column for it,
+    // because there is no verifier to hash rather than a verifier that hashed to nothing.
+    let passwordless = "readers,f,f,f,f,f,f,-1,,,\n";
+
+    // Act
+    let roles = parsed(passwordless);
+
+    // Assert
+    assert_eq!(named(&roles, "readers").password_digest, None);
+}
+
+#[test]
+fn a_rotated_password_gives_a_different_digest() {
+    // Arrange: the same role either side of an `ALTER ROLE ... PASSWORD`. PostgreSQL
+    // re-salts on every set, so the verifier differs even where the password does not, and
+    // this is the whole change the digest exists to make visible.
+    let before = "app,f,f,f,f,f,t,-1,,scram-sha-256,\
+                  84757bf01cf42c7fdb177d4f37e255bb0dfa6ce3c92ecf71345002fdcaf8813a\n";
+    let after = "app,f,f,f,f,f,t,-1,,scram-sha-256,\
+                 64acc59a019e74b5794bc6bc005ce55a48dcb7f1ca9dda37cc2b3af72f9c47a9\n";
+
+    // Act
+    let first = parsed(before);
+    let second = parsed(after);
+
+    // Assert
+    assert_ne!(
+        named(&first, "app").password_digest,
+        named(&second, "app").password_digest
+    );
+}
+
+#[test]
+fn an_untouched_password_gives_the_same_digest() {
+    // Act: two reads of one unchanged cluster, which is the case the output format's
+    // byte-identity promise rests on.
+    let first = parsed(ROLES);
+    let second = parsed(ROLES);
+
+    // Assert
+    assert_eq!(
+        named(&first, "app").password_digest,
+        named(&second, "app").password_digest
+    );
+}
+
+#[test]
+fn a_password_digest_tells_two_roles_apart() {
+    // Act
+    let roles = parsed(ROLES);
+
+    // Assert: each role's verifier carries its own salt, so two roles sharing a password
+    // still differ here. A digest equal across two roles would mean the same verifier was
+    // written to both, which only a pushed pre-computed verifier can do.
+    assert_ne!(
+        named(&roles, "app").password_digest,
+        named(&roles, "postgres").password_digest
+    );
+}
+
+#[test]
+fn parse_refuses_a_digest_its_own_query_cannot_produce() {
+    // Arrange: the query prints sixty-four hex characters or nothing at all.
+    let truncated = "app,f,f,f,f,f,t,-1,,scram-sha-256,84757bf0\n";
+
+    // Act
+    let refused = PsqlRoles::parse(truncated);
+
+    // Assert: hashing a short column anyway would put a digest in the document that no
+    // later run can reproduce, and a fingerprint that cannot be compared is worse than a
+    // read that failed.
+    assert!(refused.is_err());
+}
+
+#[test]
+fn parse_refuses_a_digest_that_is_not_hexadecimal() {
+    // Arrange
+    let corrupt = format!("app,f,f,f,f,f,t,-1,,scram-sha-256,{}\n", "z".repeat(64));
+
+    // Act
+    let refused = PsqlRoles::parse(&corrupt);
+
+    // Assert
+    assert!(refused.is_err());
+}
+
+#[test]
+fn parse_refuses_a_digest_in_the_other_case() {
+    // Arrange: `encode` prints lowercase. The same sixty-four characters uppercased are the
+    // same sha256 and would digest differently.
+    let uppercased = "app,f,f,f,f,f,t,-1,,scram-sha-256,\
+                      84757BF01CF42C7FDB177D4F37E255BB0DFA6CE3C92ECF71345002FDCAF8813A\n";
+
+    // Act
+    let refused = PsqlRoles::parse(uppercased);
+
+    // Assert: accepting it would report a password change on a cluster where nothing moved,
+    // which is the one failure a fingerprint must not invent.
+    assert!(refused.is_err());
+}
+
+#[test]
+fn parse_reads_no_digest_for_an_md5_password() {
+    // Act
+    let roles = parsed(ROLES);
+
+    // Assert: the query prints an empty digest column for md5, because an md5 verifier is
+    // `md5(password || rolname)` with no random salt, and the role name is this facet's own
+    // key. Digesting it would put an offline password oracle in the document. The method is
+    // still recorded, which is what makes the absence readable.
+    let migrator = named(&roles, "migrator");
+    assert_eq!(migrator.password_method, Some(PasswordMethod::Md5));
+    assert_eq!(migrator.password_digest, None);
+}
+
+#[test]
+fn parse_reads_no_digest_for_a_scheme_it_does_not_recognise() {
+    // Arrange: the query tests for SCRAM rather than excluding md5, so a scheme a later
+    // PostgreSQL adds arrives with an empty digest column until somebody has checked how it
+    // is salted.
+    let unknown = "future,f,f,f,f,f,t,-1,,unrecognised,\n";
+
+    // Act
+    let roles = parsed(unknown);
+
+    // Assert
+    let role = named(&roles, "future");
+    assert_eq!(role.password_method, Some(PasswordMethod::Unrecognised));
+    assert_eq!(role.password_digest, None);
 }

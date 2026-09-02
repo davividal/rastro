@@ -2330,3 +2330,115 @@ proving it means adding a rule to a box, which is a change rather than a reading
 
 **The collector's version went to `2`**, and the key set changed from two names to
 four, so a diff across the change is unmistakable.
+
+# Seeing a password change without holding a password
+
+Dated 2026-09-02. Driven by a test-VM run either side of a provisioning script:
+three role passwords were rotated, both fingerprints were byte-identical, and the
+document said `password_method: scram-sha-256` on both sides.
+
+## A role password change is visible, and is hashed twice to get there
+
+`Role` carries `password_digest` beside `password_method`. The query prints
+`encode(sha256(convert_to(a.rolpassword, 'UTF8')), 'hex')` and rastro records an
+[`Xxh3Digest`](#one-digest-spelling-lives-in-the-port) of that hex. PostgreSQL re-salts
+on every `ALTER ROLE ... PASSWORD`, so the stored verifier differs even where the new
+password equals the old one, and a rotation that was invisible is now a changed line.
+
+**Why the method alone was not enough.** `password_method` names the algorithm, so a
+rotation within one algorithm left it untouched. It would only move on a switch between
+schemes, say scram to md5, which is drift worth seeing and is not what a rotation is.
+Anybody reading a `postgresql` diff as evidence that credentials were untouched was
+reading it wrong, and nothing in the document said so.
+
+**The first hash is on the server, so nothing to leak ever arrives.** The verifier is
+never read into this process: not into the psql pipe, not into a parser, not into a
+model field, not into rastro's heap. Selecting the verifier and hashing it here is one
+line shorter and trades a structural guarantee for a disciplinary one. Absence of the
+material is a promise no later mistake in the parser or the renderer can weaken, which
+is the argument `Setting` already makes when it withholds a credential-bearing value
+instead of trusting an annotation.
+
+**The second hash is so a pile of leaked documents is not a dictionary.** What the
+document carries is not the server's sha256 but a digest of it, at 64 bits. So it is no
+standard digest of any standard input, and cannot be looked up in or built into a
+precomputed table. The one inference it leaves: two hosts printing one digest for one
+role share a verifier, hence a password *and* its salt, which happens only where a
+pre-computed verifier was pushed to both.
+
+**Only a SCRAM verifier is digested, and that condition is doing the security work.**
+Neither added hash makes a verifier un-guessable; the *salt inside the verifier* does.
+SCRAM has a random one per `ALTER ROLE`, and the digest keeps neither it nor the
+iteration count, so a candidate password cannot be tested against a fingerprint. An md5
+verifier is `md5(password || rolname)` and has no random salt at all: its only variable
+input is the role name, which is this facet's own key, sitting in the same document. A
+digest of it is therefore a fast offline oracle — md5, sha256 and XXH3 over each
+candidate, compared against 64 bits — and unkeyed hashing cannot fix that, because
+everything the attacker needs to recompute it is published beside it. So the query
+digests SCRAM and prints an empty column for anything else.
+
+**Fail closed, by testing for SCRAM rather than excluding md5.** A scheme a later
+PostgreSQL adds gets no digest until somebody has checked how it is salted, rather than
+one by default. The cost is that an md5 role's rotation stays invisible, which is the
+state this entry set out to fix; it is the right trade because `password_method: md5` is
+already reported and is itself the finding, and because a keyed construction is the only
+alternative and would need a persisted secret that a stateless generate-only tool has
+nowhere to keep.
+
+**An absent digest means two things, and the field beside it says which.**
+`password_digest: null` is either a role with no password or a verifier that must not be
+digested. `password_method` distinguishes them — `null` against `md5` — which is what
+that field is for, so no sentinel is invented in the digest field to repeat it.
+
+**Nothing here is marked `sensitive`, and that is not an oversight.** The verifier is
+sensitive and never reaches a value to annotate; the digest is not, because
+[`Sensitivity::Sensitive`](../crates/rastro-fingerprint/src/observation/annotation.rs)
+means *must not be printed as it stands*, which is false for a digest and would tell the
+redaction layer to suppress the one value that makes a rotation visible.
+
+**Revisit when redaction lands.** The designed mechanism —
+secrets hashed at serialisation time, `--raw` opting out, as
+[the security policy states plainly](#the-security-policy-states-what-is-not-defended-redaction-included) — would
+have the collector select `rolpassword`, mark it `sensitive`, and let the renderer decide. That
+is the better shape and it is unreachable today, because nothing acts on the annotation and
+`--raw` is not built, so marking a verifier sensitive prints a verifier. When both exist this
+becomes the one value where `--raw` cannot be a render-time decision: the material is not in
+the process to render, so opting out means the collector asking a different question of the
+server. That is a query change, not an annotation, and it needs deciding before `--raw` claims
+to cover this facet.
+
+**The collector's version went to `3`.** On identical host state every role now carries
+a key it did not, so a consumer diffing across the change has to be able to see that the
+collector moved rather than the host.
+
+**Cost: the roles query now needs PostgreSQL 11.** `sha256` arrived in 11 and this query
+has no fallback, so on 10 or older the roles read fails loudly and the whole roles list
+is lost rather than only the digest. The hba read already needs 10, Debian 10 shipped
+PostgreSQL 11, and 11 has been end-of-life since 2023. A version-gated `md5(rolpassword)`
+for older clusters was considered and rejected: it would make one password produce two
+different digests across a major upgrade, and report every password as changed on the run
+after one.
+
+**`convert_to` rather than `rolpassword::bytea`.** Casting text to bytea runs the value
+through bytea's input parser, which interprets a backslash. No base64 or hex verifier
+contains one, so the cast would work and would be wrong for a reason a reader could not
+see.
+
+## One digest spelling lives in the port
+
+`Xxh3Digest` is in `rastro-collector`, beside the rest of the shared collector
+vocabulary, and both the walker's entry digest and the role password digest are it.
+
+**Why not one per collector.** They were, for one commit: `MetadataDigest` in the
+filesystem collector and a `PasswordDigest` beside it in postgresql, same algorithm and
+same width by hand. That is the exact failure the port's `value_objects` module exists to
+prevent — two collectors spelling one concept differently in a single document — and the
+second one is where it stops being hypothetical. An out-of-tree collector reaches it
+through `rastro_collector::` like every other shared type, so it does not have to invent
+a third.
+
+**What each collector kept.** The digest is generic; what is hashed is not. `CanonicalBytes`
+stays in the filesystem collector, because length-prefixing an entry's attributes so two
+paths cannot collide by construction is a fact about walked entries. The 64-hex column
+check stays in the postgresql source layer beside its sibling column parsers, because
+`encode` printing lowercase is a fact about that query.

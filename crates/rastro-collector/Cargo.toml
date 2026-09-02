@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 rastro-fingerprint = { workspace = true }
 thiserror = { workspace = true }
+# The digest every facet spells the same way, and pinned because it *is* part of the
+# output format: changing the hash invalidates every archived fingerprint.
+xxhash-rust = { workspace = true }
