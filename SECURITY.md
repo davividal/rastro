@@ -34,6 +34,10 @@ of the facet in question is what a bug report needs.
 The output file is created `0600` for this reason. That protects it where it
 lands, and nothing protects it after you move it.
 
+A checkout of rastro is the easiest place to break this by accident, since a bare
+run drops `rastro-<host>-<UTC>.json` wherever it was started. `.gitignore` covers
+that name and `reports/`.
+
 ## Threat model
 
 rastro is a **single-box, single-operator, generate-only** tool. It has no daemon,
