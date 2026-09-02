@@ -470,3 +470,22 @@ fn a_resident_subsystem_with_a_readable_tool_is_dumped() {
     };
     assert!(ruleset.is_empty());
 }
+
+#[test]
+fn a_dump_that_fails_is_reported_rather_than_read_as_an_empty_ruleset() {
+    // Arrange: `false` stands in for a dump program that runs and does not succeed. The
+    // subsystem is loaded, so rules may well exist, and treating a failed dump as "no
+    // rules" would describe a filtered box as an open one.
+    let tool = CanonicalTool::located_in("false", &["/bin", "/usr/bin"])
+        .expect("every unix has a `false`");
+    let source = FirewallSource::using(FirewallBackend::IptablesNft, Residency::Loaded, Some(tool));
+
+    // Act
+    let report = source.read();
+
+    // Assert
+    assert!(
+        matches!(report, BackendReport::Unreadable(_)),
+        "a failed dump must be loud, got: {report:?}"
+    );
+}

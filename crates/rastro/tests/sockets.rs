@@ -59,7 +59,10 @@ struct Holder {
 }
 
 /// The processes holding those sockets, as `/proc/<pid>/fd` presents them.
-const HOLDERS: [Holder; 5] = [
+///
+/// The last entry holds nothing and gets no `fd` directory at all, which is what rastro
+/// meets when a process exits between being listed and being read.
+const HOLDERS: [Holder; 6] = [
     Holder {
         process_id: "1",
         name: "systemd",
@@ -105,6 +108,11 @@ const HOLDERS: [Holder; 5] = [
                 inode: 22348,
             },
         ],
+    },
+    Holder {
+        process_id: "9999",
+        name: "gone",
+        sockets: &[],
     },
 ];
 
