@@ -37,7 +37,7 @@
 //!   attributes" is one decision rather than three. See `docs/decisions.md`.
 
 use std::fs::{self, Metadata};
-use std::io::Read;
+use std::io::{self, Read};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -277,29 +277,39 @@ impl FileTree {
 }
 
 /// Hashes a file without holding it in memory.
+fn sha256_of(path: &Path) -> Result<Digest, Refusal> {
+    let file = open_without_following(path)?;
+
+    sha256_of_stream(file)
+        .map_err(|error| Refusal::at(path, "could not be read to the end", &error))
+}
+
+/// Digests everything a reader yields, a buffer at a time.
 ///
 /// A fixed buffer read in a loop, so a multi-gigabyte file costs the buffer rather than its
 /// own size. rastro runs as root on production and must not be the reason a box runs out of
 /// memory.
 ///
 /// Not `io::copy`, which would be shorter: that needs the hasher to implement
-/// [`std::io::Write`], and `sha2` dropped that impl in 0.11 with no feature to restore it. An
-/// explicit loop owes the digest crate nothing but `update`, which every version of it has.
-fn sha256_of(path: &Path) -> Result<Digest, Refusal> {
-    let mut file = open_without_following(path)?;
+/// [`io::Write`], and `sha2` dropped that impl in 0.11 with no feature to restore it. An
+/// explicit loop owes the digest crate nothing but `update`, which every version has.
+///
+/// **An interrupted read is retried, not reported.** `io::copy` did this for us, and losing
+/// it silently would cost the invariant the whole format rests on: a caught signal arriving
+/// mid-read would record the file as unreadable in one run and digest it in the next, so two
+/// runs of an unchanged host would differ. Reading a reader rather than a path is what lets a
+/// test arrange that, which is why the halves are split.
+pub fn sha256_of_stream(mut reader: impl Read) -> Result<Digest, io::Error> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
 
     loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| Refusal::at(path, "could not be read to the end", &error))?;
-
-        if read == 0 {
-            return Ok(Digest::of(DigestAlgorithm::Sha256, &hasher.finalize()));
+        match reader.read(&mut buffer) {
+            Ok(0) => return Ok(Digest::of(DigestAlgorithm::Sha256, &hasher.finalize())),
+            Ok(read) => hasher.update(&buffer[..read]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
         }
-
-        hasher.update(&buffer[..read]);
     }
 }
 
