@@ -140,3 +140,31 @@ fn the_facet_is_named_nginx() {
     // Act & Assert
     assert_eq!(NginxCollector::reading(None).name().as_str(), "nginx");
 }
+
+/// A build with the five temp paths a distribution's nginx carries.
+const TEMP_PATHS: &str = "\
+nginx version: nginx/1.30.4
+configure arguments: --prefix=/etc/nginx \
+--http-client-body-temp-path=/var/cache/nginx/client_temp \
+--http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+--http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+--with-http_ssl_module
+";
+
+#[test]
+fn a_binary_names_the_trees_it_was_built_to_write_into() {
+    // Arrange: these are the trees nginx writes into when no directive overrides them, so
+    // they are claimed by the walk whether or not the configuration mentions them.
+    // Act
+    let trees = binary(TEMP_PATHS).working_trees();
+
+    // Assert: sorted, and nothing that is not a tree.
+    assert_eq!(
+        trees,
+        [
+            "/var/cache/nginx/client_temp",
+            "/var/cache/nginx/fastcgi_temp",
+            "/var/cache/nginx/proxy_temp",
+        ]
+    );
+}

@@ -39,11 +39,11 @@ pub use value_objects::{
     Permission, SecondsSinceEpoch, ServerName, ServerParameter, UpstreamName,
 };
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 pub struct NginxCollector {
@@ -68,6 +68,59 @@ impl NginxCollector {
             binary,
         }
     }
+}
+
+impl NginxCollector {
+    /// One reading of the binary, the running master and the configuration on disk.
+    ///
+    /// Shared by [`Collector::collect`] and [`Collector::filesystem_claims`] so that the two
+    /// cannot disagree about which file is the configuration — which they would, if one
+    /// followed the running master's `-c` and the other did not.
+    fn read(&self) -> Result<ServerReading, CollectionError> {
+        let source = self.binary.as_ref().ok_or_else(|| {
+            CollectionError::new(
+                "no nginx was found in a system directory, so there is none to ask",
+            )
+        })?;
+
+        let binary = source.read()?;
+        let master = master_process::find(Path::new(binary.path.as_str()))?;
+
+        // What the running server was told beats what the binary was built with, because a
+        // master started with `-c` is reading a different file from the one nginx defaults
+        // to, and describing the default would describe a service nobody is running.
+        let running = master.as_ref();
+        let told_root = running.and_then(|master| master.configuration_path.as_ref());
+        let told_prefix = running.and_then(|master| master.prefix.as_ref());
+
+        let chosen_by = match told_root {
+            Some(_) => ConfigurationSource::RunningMaster,
+            None => ConfigurationSource::CompiledIn,
+        };
+        let root = told_root.map_or_else(
+            || binary.configuration_path(),
+            |path| path.as_str().to_owned(),
+        );
+        let prefix =
+            told_prefix.map_or_else(|| binary.prefix(), |prefix| prefix.as_str().to_owned());
+        let configuration = ConfigurationFiles::at(root, prefix.clone(), chosen_by)?.read();
+
+        Ok(ServerReading {
+            binary,
+            master,
+            configuration,
+            prefix: PathBuf::from(prefix),
+        })
+    }
+}
+
+/// What one reading of this box's nginx produced.
+struct ServerReading {
+    binary: Binary,
+    master: Option<Master>,
+    configuration: Configuration,
+    /// What relative paths in the configuration resolve against.
+    prefix: PathBuf,
 }
 
 impl Default for NginxCollector {
@@ -105,42 +158,54 @@ impl Collector for NginxCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let source = self.binary.as_ref().ok_or_else(|| {
-            CollectionError::new(
-                "no nginx was found in a system directory, so there is none to ask",
-            )
-        })?;
-
-        let binary = source.read()?;
-        let master = master_process::find(Path::new(binary.path.as_str()))?;
-
-        // What the running server was told beats what the binary was built with, because a
-        // master started with `-c` is reading a different file from the one nginx defaults
-        // to, and describing the default would describe a service nobody is running.
-        let running = master.as_ref();
-        let told_root = running.and_then(|master| master.configuration_path.as_ref());
-        let told_prefix = running.and_then(|master| master.prefix.as_ref());
-
-        let chosen_by = match told_root {
-            Some(_) => ConfigurationSource::RunningMaster,
-            None => ConfigurationSource::CompiledIn,
-        };
-        let root = told_root.map_or_else(
-            || binary.configuration_path(),
-            |path| path.as_str().to_owned(),
-        );
-        let prefix =
-            told_prefix.map_or_else(|| binary.prefix(), |prefix| prefix.as_str().to_owned());
-
-        let configuration = ConfigurationFiles::at(root, prefix.clone(), chosen_by)?.read();
-        let prefix = Path::new(&prefix);
+        let reading = self.read()?;
 
         Ok(Observation::from(&WebServer {
-            hosts: nginx_directives::virtual_hosts(&configuration.directives, prefix)?,
-            upstreams: nginx_directives::upstreams(&configuration.directives)?,
-            binary,
-            master,
-            configuration,
+            hosts: nginx_directives::virtual_hosts(
+                &reading.configuration.directives,
+                &reading.prefix,
+            )?,
+            upstreams: nginx_directives::upstreams(&reading.configuration.directives)?,
+            binary: reading.binary,
+            master: reading.master,
+            configuration: reading.configuration,
         }))
+    }
+
+    /// The trees nginx writes into for its own purposes, sealed.
+    ///
+    /// **Sealed rather than merely unhashed**, which is the strongest claim in the
+    /// vocabulary and is the same call the postgresql facet makes about a cluster's data
+    /// directory. A `proxy_cache_path` on a busy server is tens of thousands of files that
+    /// nginx creates, renames and unlinks on its own schedule: walking them reports change on
+    /// every run for reasons nobody caused, and the entries are nginx's bookkeeping rather
+    /// than anything an operator put there. The root entry stays, so a reader still sees the
+    /// directory, its mode and its owner, and the effective table in the `invocation` facet
+    /// names this facet as the reason nothing is under it.
+    ///
+    /// Both halves are claimed: the trees the configuration names, and the ones the binary
+    /// was built with, since a box that overrides none of the latter still has five of them.
+    ///
+    /// **This reads the configuration a second time**, because claims are gathered before any
+    /// collector runs and the walk has to know where not to go before it starts. A
+    /// configuration edited between the two readings would be claimed as it was and reported
+    /// as it became, which is the narrower of the two wrong answers: the alternative is a
+    /// walk that hashes a cache because the claim came from a stale read.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        let Ok(reading) = self.read() else {
+            return Vec::new();
+        };
+
+        let mut trees =
+            nginx_directives::working_trees(&reading.configuration.directives, &reading.prefix);
+        trees.extend(reading.binary.working_trees());
+        trees.sort();
+        trees.dedup();
+
+        trees
+            .into_iter()
+            .filter_map(|tree| WalkedTree::new(tree).ok())
+            .map(FilesystemClaim::sealed)
+            .collect()
     }
 }
