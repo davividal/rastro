@@ -16,10 +16,18 @@ observed, never guessed.
   unit, a listening socket, a container image.
 
 Wherever a choice exists, prefer **effective, resolved** state over reading
-config files. `nginx -T` resolves every `include`; `sysctl -a` reflects runtime
+config files. `sshd -T` applies every drop-in; `sysctl -a` reflects runtime
 rather than intent. Both failure modes matter: a file that changed without
 changing meaning is noise, and a meaning that changed without touching a file is
 the one a file-hashing tool is silent about.
+
+Two conditions bound that preference. The effective source must not **change the
+host** to report itself, and it must genuinely be effective state. nginx meets
+neither: `nginx -T` re-reads the same files from disk, and testing a
+configuration creates every log file it names that is missing. So its
+configuration is read and parsed instead — a licence granted only where a service
+offers no non-mutating account of itself, with the measurement attached. See
+[decisions.md](decisions.md#nginx--t-is-not-a-read-and-it-is-not-effective-state-either).
 
 ## Collector contract
 
@@ -116,9 +124,11 @@ a collector must not be able to hang or flood the box it is inspecting. It retur
 stdout, or both streams for the tools that answer on the wrong one — two of the six
 telemetry agents print `--version` to stderr and exit zero.
 
-**Layer 3 starters:** `nginx -T`; `pg_dumpall --globals-only` plus `SHOW ALL`;
-`docker inspect` plus volumes and networks. Enough to prove the
-detect-and-dispatch pattern exec-contract authors will copy.
+**Layer 3 starters:** nginx, read from its own configuration files and its
+running master; `pg_dumpall --globals-only` plus `SHOW ALL`; `docker inspect`
+plus volumes and networks. Enough to prove the detect-and-dispatch pattern
+exec-contract authors will copy, and between them the two shapes it comes in: a
+service that will report its effective state, and a service that will not.
 
 **Layer 3, telemetry.** The agents watching the box — Prometheus-style exporters,
 cAdvisor, collectd — as one `exporters` facet, keyed by the unit that starts each.
