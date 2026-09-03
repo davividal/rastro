@@ -2461,3 +2461,37 @@ which deep check their change needs. That is a reviewer's call.
 
 **The label must exist in repository settings.** Gated on one that does not, a workflow
 never runs and reports nothing.
+
+# Redacting a sensitive value
+
+Dated 2026-09-03. `Sensitivity` had been carried on every node since the model was
+written and nothing acted on it.
+
+A value a collector marked sensitive renders as `redacted:sha256+xxh3:<digest>`: sha256
+of the material as lowercase hex, then XXH3-64 over those hex characters. Sensitivity
+descends into a subtree, as volatility does. A null is not redacted.
+
+**Redaction is not a view.** A volatile value is dropped from the diffable view and kept
+in the complete one; a sensitive value is withheld from both. So `Presentation` carries a
+`Disclosure` beside the `View`, and `From<View>` fills in `Redacted` — redaction-by-default
+is then structural, not a discipline.
+
+**Two stages, two jobs.** sha256 makes the stand-in defensible for a secret; XXH3-64 keeps
+every digest in the document one width and one spelling. The pair also reproduces the
+PostgreSQL role digest exactly, so archived fingerprints still compare — true only while
+the hex is lowercase and the XXH3 covers the hex characters, which `tests/redaction.rs`
+holds with an outside vector.
+
+**Non-text scalars carry their type; text does not.** Untagged, boolean `true` and text
+`"true"` digest alike and a type change reads as unchanged. Text is untagged because
+comparability requires it.
+
+**A digest proves change; it does not hide a guessable value** — see `SECURITY.md`.
+
+**Supersedes [One digest spelling lives in the port](#one-digest-spelling-lives-in-the-port).**
+The renderer spells the same digest, and `rastro-collector` depends on `rastro-fingerprint`,
+so `Xxh3Digest` moved into the document crate. The port re-exports it.
+
+**Not built:** `--raw`. Until it exists no sensitive value can be read out of a document.
+The two collectors that withhold a credential structurally still do, and reversing either
+means a new entry.

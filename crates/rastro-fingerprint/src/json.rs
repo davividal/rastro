@@ -30,7 +30,7 @@ use serde::{Serialize, Serializer};
 use crate::collector::{CollectorCategory, CollectorIdentity};
 use crate::facet::{Facet, FacetOutcome};
 use crate::observation::{Scalar, Visible, VisibleContent};
-use crate::view::View;
+use crate::presentation::Presentation;
 use crate::{Fingerprint, SCHEMA_VERSION};
 
 /// Renders a fingerprint as canonical JSON, with a trailing newline so the
@@ -39,9 +39,13 @@ use crate::{Fingerprint, SCHEMA_VERSION};
 /// Prefer [`to_canonical_json_writer`] for anything but a small document: this
 /// materialises the whole thing as one `String` first, and a fingerprint of a
 /// real host is tens of megabytes.
-pub fn to_canonical_json(fingerprint: &Fingerprint, view: View) -> String {
+pub fn to_canonical_json(
+    fingerprint: &Fingerprint,
+    presentation: impl Into<Presentation>,
+) -> String {
     let mut rendered = Vec::new();
-    to_canonical_json_writer(fingerprint, view, &mut rendered).expect("a Vec accepts every byte");
+    to_canonical_json_writer(fingerprint, presentation, &mut rendered)
+        .expect("a Vec accepts every byte");
 
     String::from_utf8(rendered).expect("a fingerprint document is always UTF-8")
 }
@@ -60,10 +64,13 @@ pub fn to_canonical_json(fingerprint: &Fingerprint, view: View) -> String {
 /// knowing where the bytes were going.
 pub fn to_canonical_json_writer(
     fingerprint: &Fingerprint,
-    view: View,
+    presentation: impl Into<Presentation>,
     out: &mut impl io::Write,
 ) -> io::Result<()> {
-    let document = WireDocument { fingerprint, view };
+    let document = WireDocument {
+        fingerprint,
+        presentation: presentation.into(),
+    };
     serde_json::to_writer_pretty(&mut *out, &document)?;
 
     out.write_all(b"\n")
@@ -72,13 +79,13 @@ pub fn to_canonical_json_writer(
 /// The document: how to read it, who ran, then what was found.
 struct WireDocument<'a> {
     fingerprint: &'a Fingerprint,
-    view: View,
+    presentation: Presentation,
 }
 
 /// One facet, leading with the name a reader scans for.
 struct WireFacet<'a> {
     facet: &'a Facet,
-    view: View,
+    presentation: Presentation,
 }
 
 struct WireCollector<'a>(&'a CollectorIdentity);
@@ -89,7 +96,7 @@ impl<'a> WireDocument<'a> {
             .facets_in(category)
             .map(|facet| WireFacet {
                 facet,
-                view: self.view,
+                presentation: self.presentation,
             })
             .collect()
     }
@@ -117,7 +124,7 @@ impl Serialize for WireFacet<'_> {
         match &self.facet.outcome {
             FacetOutcome::Ok { observation } => {
                 entries.serialize_entry("status", "ok")?;
-                if let Some(visible) = observation.visible_in(self.view) {
+                if let Some(visible) = observation.visible_in(self.presentation) {
                     entries.serialize_entry("data", &WireObservation(visible))?;
                 }
             }
@@ -152,10 +159,12 @@ struct WireObservation<'a>(Visible<'a>);
 impl Serialize for WireObservation<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0.content() {
-            VisibleContent::Scalar(Scalar::Null) => serializer.serialize_unit(),
-            VisibleContent::Scalar(Scalar::Boolean(value)) => serializer.serialize_bool(*value),
-            VisibleContent::Scalar(Scalar::Integer(value)) => serializer.serialize_i64(*value),
-            VisibleContent::Scalar(Scalar::Text(value)) => serializer.serialize_str(value),
+            VisibleContent::Scalar(scalar) => match scalar.as_ref() {
+                Scalar::Null => serializer.serialize_unit(),
+                Scalar::Boolean(value) => serializer.serialize_bool(*value),
+                Scalar::Integer(value) => serializer.serialize_i64(*value),
+                Scalar::Text(value) => serializer.serialize_str(value),
+            },
             VisibleContent::Object(entries) => {
                 let mut object = serializer.serialize_map(None)?;
                 for (key, child) in entries.iter() {

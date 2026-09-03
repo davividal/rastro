@@ -12,23 +12,30 @@
 //! - [`collector`]: which collector produced a facet. Identity only; the
 //!   contract a collector fulfils lives in the `rastro-collector` crate.
 //! - [`view`]: which part of a document is being asked for.
+//! - [`presentation`]: that, plus whether sensitive values stand in as digests.
+//! - [`digest`]: the one way a value is reduced to something a document may
+//!   carry, spelled once for collectors and for redaction alike.
 //! - [`error`]: why a value was refused entry to the model.
 //! - [`json`]: the wire shape, and the only place that knows it.
 
 pub mod collector;
+pub mod digest;
 pub mod error;
 pub mod facet;
 pub mod json;
 pub mod observation;
+pub mod presentation;
 pub mod view;
 
 pub use collector::{CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion};
+pub use digest::Xxh3Digest;
 pub use error::FingerprintError;
 pub use facet::{Facet, FacetName, FacetOutcome};
 pub use observation::{
     Content, Observation, Scalar, Sensitivity, Visible, VisibleContent, VisibleList, VisibleObject,
     Volatility,
 };
+pub use presentation::{Disclosure, Presentation};
 pub use view::View;
 
 use crate::collector::CollectorCategory as Category;

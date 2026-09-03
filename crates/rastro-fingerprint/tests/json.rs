@@ -77,7 +77,7 @@ fn every_shape() -> Observation {
             "dropped_subtree",
             Observation::object([("gone", Observation::text("with it"))]).volatile(),
         ),
-        ("secret", Observation::text("kept, marked").sensitive()),
+        ("secret", Observation::text("password=hunter2").sensitive()),
     ])
 }
 
@@ -318,7 +318,7 @@ fn to_canonical_json_renders_this_exact_document() {
         "nested": {
           "inner": "deep"
         },
-        "secret": "kept, marked"
+        "secret": "redacted:sha256+xxh3:afdfd5279de51e0f"
       }
     }
   ]
@@ -374,7 +374,7 @@ fn to_canonical_json_renders_this_exact_document_in_the_complete_view() {
           "dropped_leaf": 1,
           "inner": "deep"
         },
-        "secret": "kept, marked"
+        "secret": "redacted:sha256+xxh3:afdfd5279de51e0f"
       }
     }
   ]

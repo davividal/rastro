@@ -14,12 +14,14 @@ mod non_empty_text;
 mod process_name;
 mod setting_value;
 mod walked_tree;
-mod xxh3_digest;
 
 pub use absolute_path::AbsolutePath;
 pub use byte_size::ByteSize;
 pub use non_empty_text::NonEmptyText;
 pub use process_name::ProcessName;
+/// Re-exported rather than defined here: redaction spells the same digest, and that rule is
+/// about observations, so the type moved down into the document crate. A collector's import
+/// is unchanged.
+pub use rastro_fingerprint::Xxh3Digest;
 pub use setting_value::SettingValue;
 pub use walked_tree::WalkedTree;
-pub use xxh3_digest::Xxh3Digest;
