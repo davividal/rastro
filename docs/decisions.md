@@ -2495,3 +2495,212 @@ so `Xxh3Digest` moved into the document crate. The port re-exports it.
 **Not built:** `--raw`. Until it exists no sensitive value can be read out of a document.
 The two collectors that withhold a credential structurally still do, and reversing either
 means a new entry.
+# nginx: the configuration as it lies, not as a test run reports it
+
+Dated 2026-09-03. The first Layer 3 collector for a service with no runtime
+introspection at all, which turned out to be the interesting part.
+
+## `nginx -T` is not a read, and it is not effective state either
+
+The plan said `nginx -T`. Two things are wrong with it, and the second is worse
+than the first.
+
+**It changes the host.** Testing a configuration loads it, and loading it opens
+every log file it names — creating the ones that are not there. Measured on
+nginx 1.30: a configuration naming `/tmp/logs/created-by-config-test.log`, which
+did not exist, left a root-owned empty file behind after a plain `nginx -t`. `-T`
+is `-t` plus a dump, so it does the same. A fingerprint tool that creates files
+on the box it was called to describe has changed the thing it is measuring, and
+the run after it differs from the run before it for no reason but rastro. That is
+the `modules` autoload defect again, in a facet that had not been written yet.
+
+**And it would not have bought effective state anyway.** `sshd -T`, `systemctl
+show` and `pg_settings` each report what the *running* service is using. `nginx
+-T` re-reads the same files from disk and re-resolves the same includes: a vhost
+edited without a reload reaches `-T` while the running server carries on with the
+old one. Outside the commercial API, nginx has no runtime introspection to ask.
+So the choice was never effective-state-versus-files; it was files read by nginx
+against files read by rastro.
+
+What `-T` genuinely offers over reading the files is include resolution — it does
+not flatten includes, apply inheritance or resolve variables, so a parser is
+needed either way.
+
+**The rule this establishes, which is narrower than "rastro may parse configs".**
+Parse a service's configuration only where the service offers no non-mutating way
+to report its own effective state, with the measurement attached. Where it does,
+ask it. Apache, haproxy and docker each need their own measurement before they
+come through this gate; `sshd -T`, `systemctl show`, `sysctl` and `psql` are all
+unaffected.
+
+This also **corrects an earlier entry**. "The general rule this does not overturn"
+above claims `nginx -T` and `sshd -T` do not change the host. It is right about
+`sshd -T` and wrong about `nginx -T`, and the correction is here rather than in
+an edit to that entry.
+
+**Cost, accepted knowingly.** rastro's include resolution can in principle
+disagree with nginx's. Three things bound it: the resolved file list is in the
+facet, so a disagreement is visible rather than silent; the resolution rules have
+fixture tests; and the conformance check against `nginx -T`'s own `# configuration
+file` markers is run in a container during development, never on a host being
+fingerprinted.
+
+## The grammar is measured rather than remembered
+
+Two rules would have been wrong from memory, and both are the kind that corrupt a
+value silently rather than failing loudly.
+
+**Escapes work outside quotes too.** `a\tb` in a bare token holds a tab, and
+`a\;b` is one token whose semicolon terminates nothing, because nginx spends the
+backslash before it looks for a delimiter. A grammar that ended the token at that
+`;` would report two directives where nginx reads one.
+
+**An unrecognised escape keeps its backslash.** `\q` is `\q`, so dropping the
+backslash would put a value in the document that was never in the file. The six
+that are spent are `\"`, `\'`, `\\`, `\n`, `\r` and `\t`, in both quote styles and
+outside them.
+
+Also measured: `#` starts a comment only where a token starts, so `a#b` is one
+token; and a quote opens a quoted token only where a token starts, so `a"b` is
+one token as well.
+
+**How.** Because `nginx -t` creates the log files a configuration names, a quoted
+`access_log` path becomes a filename on disk, and `od -c` on that name shows
+exactly what nginx's parser made of the token. The defect above is what made the
+measurement possible.
+
+## Includes resolve like `glob(3)`, sorted by bytes
+
+Measured: a relative include resolves against the prefix (`/usr/share/nginx` on
+Debian, not `/etc/nginx`), a glob is read in sorted order, a glob matching nothing
+is not an error, and a literal include of a missing file stops nginx from
+starting — so that one is recorded as a refusal rather than passed over.
+
+**Byte order rather than the caller's collation.** `glob(3)` sorts with
+`strcoll`, so the same directory can order differently under two locales. rastro
+sorts by bytes so a fingerprint means the same on every box; the two differ only
+where two files differ solely in case or punctuation *and* both set the same
+directive.
+
+**A bracket expression is refused, not guessed.** `include conf.d/[a-m]*.conf`
+would need `glob(3)`'s character classes; matching it wrongly would report a set
+of vhosts the server does not have, and nothing in the document would say so.
+
+**An include cycle stops.** nginx recurses until it fails; rastro records the
+second visit as a refusal and carries on. Cycle identity is the path resolved
+through symlinks, because `sites-enabled/x` and `sites-available/x` are one file
+under two names.
+
+## A file's digest is over its parsed form, not its bytes
+
+A comment added, a block re-indented or an argument requoted leaves nginx serving
+exactly what it served before. A digest of the bytes would report all three as a
+change to the service, which is the noise this tool exists to remove. The digest
+is taken over the directives with every token length-prefixed, so no separator can
+be forged by a value containing it.
+
+**Cost:** the digest covers the whole file, so a change to a directive the model
+*does* name shows in both places. The sharper alternative — digesting only what
+the model does not cover — was rejected for now because it couples every file's
+digest to the model's coverage, and extending the model would then move digests
+for files nobody touched.
+
+## Order is kept where nginx reads it, sorted where it does not
+
+Virtual hosts, locations, access rules and certificate/key pairs keep their
+written order, because nginx uses it: a default server is resolved by it,
+locations are matched in it, `allow`/`deny` is first-match, and the first key
+belongs to the first certificate. Server names, listen addresses, listen options,
+pool members and pool member parameters are sorted, because nginx reads each as a
+set and an operator rearranging one has changed nothing.
+
+## The workers date the last reload, and the master cannot
+
+The obvious signal for "is the configuration on disk the one being served" is the
+master's start time against the newest configuration mtime. It is wrong, and
+measurably: a reload leaves the master untouched — its `/proc/<pid>` mtime did not
+move across a `nginx -s reload` — while every worker is replaced. So the *oldest
+worker's* start time dates the last reload, and that is what the facet records
+beside `configuration.newest_modified`.
+
+**A start time from a directory's mtime.** `/proc/<pid>`'s mtime is the moment the
+process began, measured against a freshly started master. Reading it that way
+needs no clock-tick arithmetic, no `btime` and no `sysconf` — which matters,
+because this workspace forbids unsafe code and `sysconf` is a call rather than a
+constant.
+
+**The master's own command line is where `-c` and `-p` are read back.** nginx
+rewrites its argument vector into a process title, so `/proc/<pid>/cmdline` reads
+`nginx: master process /usr/sbin/nginx -c /etc/nginx/other.conf`. rastro reads the
+configuration the running server was told to read, and the facet says which
+authority decided the path. The title has lost its quoting, exactly as
+`systemctl show` has lost a unit's, so a path holding a space cannot be recovered
+from it.
+
+**` (deleted)` is allowed for when matching the binary.** After a package upgrade
+the kernel marks `/proc/<pid>/exe` that way; comparing without stripping it would
+report an upgraded-but-not-restarted server as no server at all. The marker itself
+is recorded, because it is the state.
+
+## A basic-auth password is digested only where its verifier is salted
+
+The same rule as the postgresql facet's role passwords, and the same reason.
+`$apr1$`, `$2y$` and `$5$`/`$6$` carry a random salt, so a digest of one says only
+that the password changed. `{SHA}` is an unsalted SHA-1 of the password itself:
+anybody holding the document could hash a guess, spell it the way the file does,
+digest that and compare, which would turn a fingerprint into an offline oracle
+over everybody in the file. Recognising the salted schemes rather than excluding
+the unsalted ones fails closed, so a scheme nobody has checked yet gets no digest.
+
+## The certificate is read; the key is only described
+
+A certificate is the public half — every client that connects is handed a copy —
+so reading it puts nothing in the document the server does not already give away.
+It is also the difference between a renewal and an edit: a path and an mtime say a
+file changed, while a serial, a validity window and a digest say whether the same
+authority reissued the same names.
+
+The private key is `stat`ed and never opened. No digest of it either: that would
+be a way to confirm a guessed key, and there is nothing a fingerprint could do
+with it worth that. What is recorded is the mode and the owner, which is what
+catches a key that became group-readable.
+
+**The serial is the number, not the bytes.** DER pads a serial whose high bit is
+set with a leading zero byte, so the raw form and the one `openssl x509 -serial`
+prints differ for half of all certificates. The number is the same either way.
+
+**No "days remaining".** It would differ between two runs of an unchanged host,
+which is the one thing a value in this document may not do. The expiry is an
+instant; how close it is is the reader's arithmetic.
+
+## The trees nginx writes into are sealed
+
+`proxy_cache_path` on a busy server is tens of thousands of files that nginx
+creates, renames and unlinks on its own schedule. Walking them reports change on
+every run for reasons nobody caused, so the claim is `sealed`, as it is for a
+PostgreSQL cluster's data directory: the root entry stays, nothing under it is
+walked, and the `invocation` facet names this facet as the reason.
+
+Both halves are claimed — the trees the configuration names, found by the
+`_cache_path`/`_temp_path` suffix rather than by a list of directive names, and
+the `--http-*-temp-path` values the binary was built with, since a box that
+overrides none of them still has five.
+
+**Cost:** claims are gathered before any collector runs, so the configuration is
+read twice per run. A configuration edited between the two readings is claimed as
+it was and reported as it became, which is the narrower of the two wrong answers.
+
+## What this facet does not model
+
+Named because a silent gap is worse than a stated one.
+
+- **`stream {}`**, nginx's TCP and UDP proxying. Its servers have no names and no
+  locations, and modelling them as though they did would put a shape in the
+  document the configuration does not have. Its files are still digested.
+- **Inheritance.** A `root` in the `http` block is not copied into the hosts under
+  it. Asserting nginx's inheritance rules from the outside is a conclusion, not an
+  observation.
+- **Variables.** `proxy_pass http://$backend` is recorded as written. Resolving it
+  would mean claiming to know a value that only exists per request.
+- **Directives outside the model**, which is most of them. Each is covered by its
+  file's digest, so a change to one is visible even where its meaning is not.

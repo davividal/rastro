@@ -179,6 +179,12 @@ status.
 
 Prefer **resolved and effective** dumps over reading configuration files.
 `nginx -T` resolves every `include`. `systemctl show` resolves every drop-in.
+
+> Later, and measured: `nginx -T` is the exception that shaped the rule. It is
+> not effective state — it re-reads the same files from disk — and testing a
+> configuration creates every log file it names that is missing, so rastro parses
+> nginx's configuration itself. See
+> [decisions.md](decisions.md#nginx--t-is-not-a-read-and-it-is-not-effective-state-either).
 `sysctl -a` reflects runtime. `SHOW ALL` reflects `ALTER SYSTEM` plus CLI
 overrides.
 
