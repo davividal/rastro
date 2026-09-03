@@ -2,7 +2,7 @@
 
 use rastro_collector::{NonEmptyText, Observation};
 
-use crate::collectors::nginx::model::{AccessRule, Authentication, PassTarget};
+use crate::collectors::nginx::model::{AccessRule, Authentication, LogDestination, PassTarget};
 use crate::collectors::nginx::value_objects::LocationPattern;
 
 /// A `location` block: what it matches, where it sends, and who may reach it.
@@ -18,6 +18,7 @@ pub struct Location {
     pub pass: Option<PassTarget>,
     pub root: Option<NonEmptyText>,
     pub access: Vec<AccessRule>,
+    pub logs: Vec<LogDestination>,
     pub authentication: Option<Authentication>,
     pub locations: Vec<Location>,
 }
@@ -39,6 +40,10 @@ impl From<&Location> for Observation {
             (
                 "locations",
                 Observation::list(location.locations.iter().map(Observation::from)),
+            ),
+            (
+                "logs",
+                Observation::list(location.logs.iter().map(Observation::from)),
             ),
             (
                 "pass",

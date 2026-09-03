@@ -26,8 +26,9 @@ pub mod value_objects;
 
 pub use model::{
     AccessRule, Authentication, AuthorisedUser, Binary, Certificate, CertificateDetails,
-    CertificateReading, Configuration, ConfigurationFile, Directive, KeyFile, KeyReading, Listen,
-    Location, Master, PassTarget, Upstream, UpstreamServer, VirtualHost, WebServer,
+    CertificateReading, Configuration, ConfigurationFile, Directive, HttpService, KeyFile,
+    KeyReading, Listen, Location, LogDestination, Master, PassTarget, StreamServer, StreamService,
+    Upstream, UpstreamServer, VirtualHost, WebServer,
 };
 pub use source::{
     ConfigurationFiles, NginxBinary, certificate_file, conf_syntax, htpasswd, master_process,
@@ -35,8 +36,8 @@ pub use source::{
 };
 pub use value_objects::{
     AddressPattern, BuildVersion, ConfigurationSource, ConfigureArgument, DirectiveArgument,
-    DirectiveName, Endpoint, FileReading, ListenOption, LocationPattern, PassKind, PasswordScheme,
-    Permission, SecondsSinceEpoch, ServerName, ServerParameter, UpstreamName,
+    DirectiveName, Endpoint, FileReading, ListenOption, LocationPattern, LogKind, PassKind,
+    PasswordScheme, Permission, SecondsSinceEpoch, ServerName, ServerParameter, UpstreamName,
 };
 
 use std::path::{Path, PathBuf};
@@ -161,14 +162,17 @@ impl Collector for NginxCollector {
         let reading = self.read()?;
 
         Ok(Observation::from(&WebServer {
-            // The hosts resolve their certificates and user files against the
+            // Both contexts resolve their certificates and user files against the
             // configuration's own directory, and the claimed trees resolve against the
             // prefix, because that is how nginx resolves each.
-            hosts: nginx_directives::virtual_hosts(
+            http: nginx_directives::http_service(
                 &reading.configuration.directives,
                 Path::new(reading.configuration.configuration_prefix.as_str()),
             )?,
-            upstreams: nginx_directives::upstreams(&reading.configuration.directives)?,
+            stream: nginx_directives::stream_service(
+                &reading.configuration.directives,
+                Path::new(reading.configuration.configuration_prefix.as_str()),
+            )?,
             binary: reading.binary,
             master: reading.master,
             configuration: reading.configuration,

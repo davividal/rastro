@@ -2,26 +2,26 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::nginx::model::{Binary, Configuration, Master, Upstream, VirtualHost};
+use crate::collectors::nginx::model::{Binary, Configuration, HttpService, Master, StreamService};
 
-/// Everything the facet reports: the binary, the configuration it would read, and what that
-/// configuration says it serves.
+/// Everything the facet reports: the binary, the configuration it would read, the master
+/// running it, and the two services that configuration describes.
 ///
 /// The binary and the configuration are kept apart on purpose. A package upgrade changes the
 /// binary and leaves the configuration alone; an edit does the opposite; and a reader looking
 /// at a diff needs to see which of the two moved.
 ///
-/// The hosts and the pools are a projection of the same configuration, not a second reading
-/// of it: they name what the model understands, while `configuration.files` digests
-/// everything each file says, modelled or not.
+/// `http` and `stream` are a projection of the same configuration, not a second reading of
+/// it: they name what the model understands, while `configuration.files` digests everything
+/// each file says, modelled or not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebServer {
     pub binary: Binary,
     /// The running master, or nothing when nginx is installed and stopped.
     pub master: Option<Master>,
     pub configuration: Configuration,
-    pub hosts: Vec<VirtualHost>,
-    pub upstreams: Vec<Upstream>,
+    pub http: HttpService,
+    pub stream: StreamService,
 }
 
 impl From<&WebServer> for Observation {
@@ -29,6 +29,7 @@ impl From<&WebServer> for Observation {
         Observation::object([
             ("binary", Observation::from(&server.binary)),
             ("configuration", Observation::from(&server.configuration)),
+            ("http", Observation::from(&server.http)),
             (
                 "master",
                 server
@@ -36,14 +37,7 @@ impl From<&WebServer> for Observation {
                     .as_ref()
                     .map_or_else(Observation::null, Observation::from),
             ),
-            (
-                "hosts",
-                Observation::list(server.hosts.iter().map(Observation::from)),
-            ),
-            (
-                "upstreams",
-                Observation::list(server.upstreams.iter().map(Observation::from)),
-            ),
+            ("stream", Observation::from(&server.stream)),
         ])
     }
 }

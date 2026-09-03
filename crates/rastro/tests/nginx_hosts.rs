@@ -80,8 +80,9 @@ fn hosts_of(prefix: &Path) -> Vec<VirtualHost> {
     .expect("the scratch tree is absolute")
     .read();
 
-    nginx_directives::virtual_hosts(&configuration.directives, prefix)
+    nginx_directives::http_service(&configuration.directives, prefix)
         .expect("this configuration holds no directive rastro cannot read")
+        .hosts
 }
 
 fn pools_of(prefix: &Path) -> Vec<Upstream> {
@@ -93,8 +94,9 @@ fn pools_of(prefix: &Path) -> Vec<Upstream> {
     .expect("the scratch tree is absolute")
     .read();
 
-    nginx_directives::upstreams(&configuration.directives)
+    nginx_directives::http_service(&configuration.directives, prefix)
         .expect("this configuration holds no pool rastro cannot read")
+        .upstreams
 }
 
 fn names_of(host: &VirtualHost) -> Vec<&str> {
