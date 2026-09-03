@@ -2461,3 +2461,104 @@ which deep check their change needs. That is a reviewer's call.
 
 **The label must exist in repository settings.** Gated on one that does not, a workflow
 never runs and reports nothing.
+
+# Redacting a sensitive value
+
+Dated 2026-09-03. `Sensitivity` had been carried on every node since the model was
+written and nothing acted on it, so a value a collector marked sensitive printed
+verbatim. Three documents said so, and
+[the security policy](#the-security-policy-states-what-is-not-defended-redaction-included)
+named the two keys it cost.
+
+## A sensitive value stands in as a digest, and sensitivity is not a view
+
+**Volatility and sensitivity are both per-value annotations and they are acted on
+differently, which the one `View` parameter could not express.** A volatile value is
+dropped from the diffable view and kept in the complete one. A sensitive value is
+withheld from *both*, because the complete view is a fuller document and not a way round
+an annotation. So disclosure is a second axis, and `Presentation` is the named pair of the
+two.
+
+**`From<View>` fills in `Disclosure::Redacted`.** That is what makes redaction-on-by-default
+structural rather than a discipline: the 70-odd call sites that care only about the view
+were left as they were, and a caller who has never heard of the second axis cannot opt out
+of it by omission. The alternative, a second positional parameter everywhere, would have
+put `Redacted` in seventy places for a reader to check one by one.
+
+**Annotating a node covers everything under it**, the rule volatility already followed. A
+child of a withheld object is withheld whatever its own annotation says, resolved on the
+way down because a child cannot see its ancestors.
+
+**Rendering stays ignorant.** The substitution is a rule about observations, so it lives
+beside the volatility filter and not in `json.rs`, whose charter is encoding only. What
+reaches a renderer is a tree that has already had its volatile values dropped and its
+sensitive ones replaced. Only a withheld leaf is owned; every other scalar is still
+borrowed, which for a document of half a million walked paths is the difference between
+one copy and two.
+
+## The recipe is sha256 then XXH3-64, and text is its untagged domain
+
+A withheld value renders as `redacted:sha256+xxh3:<sixteen hex characters>`: sha256 of the
+material as lowercase hex, then XXH3-64 over those hex *characters*.
+
+**Both stages earn their place.** The sha256 is what makes a stand-in defensible for a
+secret, because inverting the pair costs one sha256 per guess and XXH3-64 alone is
+brute-forced over any small space in seconds. The XXH3-64 keeps every digest in the
+document one width and one spelling, and it takes nothing away: anyone able to invert the
+pair could invert the sha256 alone.
+
+**It also preserves comparability.** The PostgreSQL role digest was already this recipe
+with the server computing the sha256, so a fingerprint archived before redaction existed
+still compares against one taken after. That holds only while the hex is lowercase and the
+XXH3 is taken over the hex characters rather than the 32 raw bytes, which is why an outside
+sha256 vector holds it in `tests/redaction.rs` rather than an assertion that calls the same
+code on both sides.
+
+**The prefix is in the document rather than only here.** A bare digest on a field whose
+name is not obviously a secret reads exactly like a value.
+
+**Non-text scalars carry their type; text does not.** Untagged, the boolean `true` and the
+text `"true"` digest identically, and a value that changed type would read as unchanged,
+which is the one thing this document exists to get right. Text is the untagged domain
+because comparability requires it. The residue is that a text spelling another domain's
+tag, `"boolean:true"` exactly, still collides — implausible where `"true"` was not.
+
+**A null is not redacted.** It withholds nothing, so a stand-in there would replace an
+honest absence with evidence of a value that was never present.
+
+## The digest spelling moved out of the port
+
+**Supersedes [One digest spelling lives in the port](#one-digest-spelling-lives-in-the-port).**
+That entry's argument was that two collectors spelling one concept differently in a single
+document is the failure `value_objects` exists to prevent, and it still holds. What it did
+not foresee is a *third* speller that is not a collector: redaction. The renderer needs the
+same digest, `rastro-collector` depends on `rastro-fingerprint` and not the other way round,
+so the type moved down into the document crate and the port re-exports it. A collector's
+import is unchanged, in tree or out of it.
+
+The move exposed a module cycle the crate's own purity test caught: `impl From<&Xxh3Digest>
+for Observation` had `digest` reaching back into `observation` while redaction reached
+forward. The conversion now lives in `observation`, where the dependency actually runs.
+
+## What this does not do
+
+Named because the layer landing invites the assumption that all of it landed.
+
+- **`--raw` is not built.** The design describes it opting out with a warning on stderr.
+  Until it exists there is no way to read a sensitive value out of a document, including
+  for an operator who legitimately wants one.
+- **No collector's annotations changed.** `sysctl` already marked its two secret
+  parameters, so those values are digested from this change onwards and the exposure the
+  security policy named is closed. Nothing else gained an annotation, which means the two
+  entries that keep a credential out *structurally* still do: the
+  [`accounts` crypt hash](#the-accounts-collector-records-no-password-hash-so-it-cannot-see-a-password-change)
+  and the credential-bearing
+  PostgreSQL setting. Both rest on redaction not existing, both are now reversible, and
+  neither is reversed here. Reversing them means a new entry each.
+- **Error text is still unclassified.** The
+  [known exception](#a-facets-error-text-is-not-classified-yet) stands. One thing is settled
+  narrowly: a diagnostic must never quote a sensitive value, whatever is decided about
+  error text in general.
+
+**Cost:** the three documents that described redaction as unbuilt are updated together, as
+that entry required. They will disagree again the moment `--raw` lands alone.

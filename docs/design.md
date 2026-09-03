@@ -209,9 +209,9 @@ path with `-o`, to a tmpfs, or off the box.
 
 ## Security posture
 
-Of the following, the `unsafe`-free build, the absence of network I/O and the
-output file's mode are true today. Redaction arrives with the collectors that need
-it; the root requirement arrives with Layer 1.
+Of the following, the `unsafe`-free build, the absence of network I/O, the output
+file's mode and redaction itself are true today. `--raw` is not built, so there is
+no opting out of redaction yet; the root requirement arrives with Layer 1.
 
 - **Requires root.** It reads `/etc`, user crontabs and firewall state.
   Degrading gracefully without root is roadmap.
@@ -219,8 +219,11 @@ it; the root requirement arrives with Layer 1.
   there is no window in which a document naming every path on the box is
   world-readable. Written to a temporary sibling and renamed, so a run that died
   half way leaves no half document to be diffed.
-- **Redaction on by default**, `--raw` opts out with a warning. It is an option,
-  not a guarantee: marking fields `sensitive` is the collector author's job.
+- **Redaction on by default**, in both views, and `--raw` will opt out with a
+  warning once it exists. A withheld value stands in as
+  `redacted:sha256+xxh3:<digest>`. It is an option, not a guarantee: marking fields
+  `sensitive` is the collector author's job, and a digest proves a value changed
+  rather than hiding a guessable one.
 - **No network I/O in v1.** A simplification, not policy — a firewall collector
   verifying rules from outside the ruleset dump would be legitimate.
 

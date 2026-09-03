@@ -116,32 +116,39 @@ invocation, one document.
 Named rather than implied, because several of these read as promises elsewhere in
 the documentation and are not built yet.
 
-- **Redaction is not implemented.** The design has values carrying a `sensitive`
-  annotation. Nothing acts on it, there is no `--raw`, and no value is hashed or
-  masked on the way out. Redaction arrives with the collectors that need it, and
-  until then the previous section is the whole of the answer: the document is
-  sensitive, all of it.
+- **`--raw` is not implemented, and redaction now is.** A value a collector marked
+  `sensitive` is replaced on the way out by `redacted:sha256+xxh3:` and sixteen hex
+  characters: sha256 of the value as lowercase hex, then XXH3-64 over those hex
+  characters. It happens in both views, because the complete view is a fuller
+  document and not a way round an annotation. The digest proves the value changed
+  between two runs without carrying it.
 
-  Where a credential would otherwise be emitted, two of the three collectors that
-  meet one keep it out structurally rather than by annotation, which is a guarantee
-  the missing redaction layer cannot weaken. `/etc/shadow`'s hash column is dropped
-  where the line is parsed, and a credential-bearing PostgreSQL setting reports
-  `[redacted]` or the empty string, so what is recorded is whether it is set.
+  **It is not protection for a guessable value.** Inverting the pair costs one
+  sha256 per guess, so a weak password, a small integer or a boolean is recoverable
+  by brute force. Redaction keeps a secret out of the document; it is not a reason
+  to put one in.
 
-  **The third does not, and it is the one concrete exposure this section names.**
-  `sysctl` annotates a secret parameter and emits its value verbatim, because
-  annotating is all there is to do today. That is `net.ipv4.tcp_fastopen_key` and
-  every interface's `net.ipv6.conf.<interface>.stable_secret`, in cleartext, in the
-  document. Exclude the collector if that matters more to you than the rest of what
-  it reports, and note in the trade that this is all of `sysctl`, not the two keys:
+  **It is an option, not a guarantee**, because marking a field `sensitive` is the
+  collector author's job. An unmarked credential is emitted like any other value.
 
-  ```toml
-  [collectors]
-  exclude = ["sysctl"]
-  ```
+  The design describes `--raw` opting out of redaction with a warning on stderr.
+  That flag does not exist yet, so there is currently no way to read a sensitive
+  value out of a document, including for an operator who legitimately wants one.
 
-  The exclusion is itself recorded in the `invocation` facet, so a later reader can
-  see the fingerprint was narrowed rather than the host being quiet.
+  Two of the three collectors that meet a credential keep it out *structurally*
+  rather than by annotation, which is a stronger guarantee than the layer above
+  and is unchanged by it: `/etc/shadow`'s hash column is dropped where the line is
+  parsed, and a credential-bearing PostgreSQL setting reports `[redacted]` or the
+  empty string, so what is recorded is whether it is set.
+
+  **The exposure this section used to name is closed.** `sysctl` annotates
+  `net.ipv4.tcp_fastopen_key` and every interface's
+  `net.ipv6.conf.<interface>.stable_secret`, and those two are digested rather than
+  emitted in cleartext. Excluding the whole `sysctl` collector is no longer the
+  answer to them, and it never cost less than the entire facet.
+
+  The previous section still stands whatever is redacted: the document is sensitive
+  operational data in full, because it is a fingerprint of every path on the box.
 
 - **A facet's error text is not classified.** A failing collector's message,
   including a bounded tail of a tool's stderr, reaches the document verbatim without
