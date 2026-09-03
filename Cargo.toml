@@ -35,7 +35,7 @@ rastro-collector = { path = "crates/rastro-collector" }
 rastro-fingerprint = { path = "crates/rastro-fingerprint" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.9"
+toml = "1.0"
 libc = "0.2"
 serde_json = "1"
 # Pure Rust on purpose. `blake3` and `ring` build C and assembly through `cc`, which
