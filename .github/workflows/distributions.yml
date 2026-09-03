@@ -60,7 +60,7 @@ jobs:
           - image: rust:alpine
             host: alpine musl
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # The same script a working machine runs through `scripts/test-in-container.sh`,
       # so the two cannot drift. It runs the suite as root, then again as a user it
       # creates with no privilege at all: a container job is root by default, and
