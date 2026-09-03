@@ -325,3 +325,36 @@ fn a_pool_sorts_its_members_and_keeps_what_each_was_given() {
         Endpoint::Unix { path } if path.as_str() == "/run/app.sock"
     ));
 }
+
+#[test]
+fn a_working_tree_is_found_wherever_it_is_declared() {
+    // Arrange: a cache declared in the http block and a temp path inside a server, which is
+    // where nginx allows them. Both are trees nginx writes into on its own schedule.
+    let prefix = scratch_tree("nginx-hosts-working-trees", &[]);
+    write(
+        &prefix,
+        "nginx.conf",
+        "http {\n    proxy_cache_path /var/cache/nginx/pages levels=1:2 keys_zone=pages:10m;\n\
+         \n    server {\n        client_body_temp_path bodies;\n    }\n}\n",
+    );
+    let configuration = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
+
+    // Act
+    let trees = nginx_directives::working_trees(&configuration.directives, &prefix);
+
+    // Assert: the relative one resolved against the prefix, the absolute one left alone, and
+    // the pair sorted, because a claim is about a set of trees rather than about the order
+    // somebody declared them in.
+    let mut expected = [
+        "/var/cache/nginx/pages".to_owned(),
+        prefix.join("bodies").to_string_lossy().into_owned(),
+    ];
+    expected.sort();
+    assert_eq!(trees, expected);
+}

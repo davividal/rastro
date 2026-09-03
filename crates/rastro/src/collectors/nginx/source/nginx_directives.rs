@@ -57,6 +57,44 @@ const VARIABLE: char = '$';
 /// nginx's way of writing a certificate into the configuration instead of a path to one.
 const INLINE: &str = "data:";
 
+/// The two directive suffixes that name a tree nginx writes into for its own purposes.
+const CACHE_PATH: &str = "_cache_path";
+const TEMP_PATH: &str = "_temp_path";
+
+/// The trees nginx keeps its own working files in, resolved against the prefix.
+///
+/// **A cache is the one tree on a web server where the walk's agnosticism turns against
+/// it.** `proxy_cache_path` is tens of thousands of files that nginx creates, renames and
+/// unlinks on its own schedule, so a walk of it reports change on every run for reasons that
+/// have nothing to do with anybody changing the box. The temp paths are the same story with
+/// fewer files.
+///
+/// Found by suffix rather than by a list of directive names, because every protocol nginx
+/// proxies brings its own pair — `proxy_`, `fastcgi_`, `uwsgi_`, `scgi_`, `grpc_` — and a
+/// list would go quiet about the next one.
+pub fn working_trees(directives: &[Directive], prefix: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    collect_working_trees(directives, prefix, &mut found);
+    found.sort();
+    found.dedup();
+    found
+}
+
+fn collect_working_trees(directives: &[Directive], prefix: &Path, found: &mut Vec<String>) {
+    for directive in directives {
+        let name = directive.name.as_str();
+
+        let names_a_tree = name.ends_with(CACHE_PATH) || name.ends_with(TEMP_PATH);
+        if let Some(path) = directive.arguments.first().filter(|_| names_a_tree) {
+            found.push(prefix.join(path.as_str()).to_string_lossy().into_owned());
+        }
+
+        if let Some(block) = &directive.block {
+            collect_working_trees(block, prefix, found);
+        }
+    }
+}
+
 /// Every virtual host the configuration declares, in the order it declares them.
 pub fn virtual_hosts(
     directives: &[Directive],

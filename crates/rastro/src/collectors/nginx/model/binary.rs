@@ -13,6 +13,12 @@ const DEFAULT_PREFIX: &str = "/usr/local/nginx";
 const DEFAULT_CONFIGURATION: &str = "conf/nginx.conf";
 
 const PREFIX_ARGUMENT: &str = "--prefix=";
+
+/// What separates a configure argument's name from its value.
+const SETTING: char = '=';
+
+/// The suffix of every configure argument that names a tree nginx writes into.
+const TEMP_PATH: &str = "-temp-path";
 const CONFIGURATION_ARGUMENT: &str = "--conf-path=";
 
 /// The binary, as it describes itself.
@@ -42,6 +48,27 @@ impl Binary {
         self.argument(CONFIGURATION_ARGUMENT)
             .unwrap_or(DEFAULT_CONFIGURATION)
             .to_owned()
+    }
+
+    /// The working trees this binary was *built* to use, which are what it uses unless a
+    /// directive says otherwise.
+    ///
+    /// `--http-client-body-temp-path=/var/cache/nginx/client_temp` and its four siblings.
+    /// They belong beside the ones the configuration names: a box that overrides none of
+    /// them still has five trees nginx writes into, and nothing in the configuration would
+    /// say so.
+    pub fn working_trees(&self) -> Vec<String> {
+        let mut found: Vec<String> = self
+            .configure_arguments
+            .iter()
+            .filter_map(|argument| argument.as_str().split_once(SETTING))
+            .filter(|(name, _)| name.ends_with(TEMP_PATH))
+            .map(|(_, path)| path.to_owned())
+            .collect();
+
+        found.sort();
+        found.dedup();
+        found
     }
 
     fn argument(&self, name: &str) -> Option<&str> {
