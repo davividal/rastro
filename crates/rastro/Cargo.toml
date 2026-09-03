@@ -34,6 +34,8 @@ subprocess = { workspace = true }
 thiserror = { workspace = true }
 # The digest of one entry's metadata, which is what the default view records per path.
 toml = { workspace = true }
+# Reading a certificate a virtual host serves, rather than only the path it lives at.
+x509-parser = { workspace = true }
 
 [dev-dependencies]
 rastro-fingerprint = { workspace = true }

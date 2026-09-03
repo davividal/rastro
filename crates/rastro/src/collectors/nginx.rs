@@ -25,17 +25,18 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    AccessRule, Authentication, AuthorisedUser, Binary, Certificate, Configuration,
-    ConfigurationFile, Directive, Listen, Location, PassTarget, Upstream, UpstreamServer,
-    VirtualHost, WebServer,
+    AccessRule, Authentication, AuthorisedUser, Binary, Certificate, CertificateDetails,
+    CertificateReading, Configuration, ConfigurationFile, Directive, KeyFile, KeyReading, Listen,
+    Location, PassTarget, Upstream, UpstreamServer, VirtualHost, WebServer,
 };
 pub use source::{
-    ConfigurationFiles, NginxBinary, conf_syntax, htpasswd, nginx_binary, nginx_directives,
+    ConfigurationFiles, NginxBinary, certificate_file, conf_syntax, htpasswd, nginx_binary,
+    nginx_directives,
 };
 pub use value_objects::{
     AddressPattern, BuildVersion, ConfigureArgument, DirectiveArgument, DirectiveName, Endpoint,
-    FileReading, ListenOption, LocationPattern, PassKind, PasswordScheme, Permission, ServerName,
-    ServerParameter, UpstreamName,
+    FileReading, ListenOption, LocationPattern, PassKind, PasswordScheme, Permission,
+    SecondsSinceEpoch, ServerName, ServerParameter, UpstreamName,
 };
 
 use rastro_collector::{

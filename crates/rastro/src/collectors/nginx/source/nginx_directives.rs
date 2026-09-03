@@ -23,10 +23,11 @@ use std::path::Path;
 
 use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
+use super::certificate_file;
 use super::htpasswd;
 use crate::collectors::nginx::model::{
-    AccessRule, Authentication, Certificate, Directive, Listen, Location, PassTarget, Upstream,
-    UpstreamServer, VirtualHost,
+    AccessRule, Authentication, Certificate, CertificateReading, Directive, KeyFile, Listen,
+    Location, PassTarget, Upstream, UpstreamServer, VirtualHost,
 };
 use crate::collectors::nginx::value_objects::{
     AddressPattern, Endpoint, ListenOption, LocationPattern, PassKind, Permission, ServerName,
@@ -49,6 +50,12 @@ const RESOLVER: &str = "resolver";
 
 /// What separates a `resolver`'s settings from its addresses: `valid=30s`, `ipv6=off`.
 const SETTING_SEPARATOR: char = '=';
+
+/// What makes a path something nginx only resolves when a request arrives.
+const VARIABLE: char = '$';
+
+/// nginx's way of writing a certificate into the configuration instead of a path to one.
+const INLINE: &str = "data:";
 
 /// Every virtual host the configuration declares, in the order it declares them.
 pub fn virtual_hosts(
@@ -155,7 +162,7 @@ fn virtual_host(block: &[Directive], prefix: &Path) -> Result<VirtualHost, Colle
         }
     }
 
-    host.certificates = paired(certificates, keys);
+    host.certificates = paired(certificates, keys, prefix);
     host.authentication = authentication(realm, user_file)?;
     host.listens.sort();
     host.server_names.sort();
@@ -323,17 +330,75 @@ fn resolved(path: &NonEmptyText, prefix: &Path) -> Result<AbsolutePath, Collecti
     AbsolutePath::new(joined.to_string_lossy(), "nginx file path")
 }
 
-/// Certificates and keys, paired the way nginx pairs them.
-fn paired(certificates: Vec<NonEmptyText>, mut keys: Vec<NonEmptyText>) -> Vec<Certificate> {
-    let mut keys = keys.drain(..);
+/// Certificates and keys, paired the way nginx pairs them, and each read where it can be.
+fn paired(
+    certificates: Vec<NonEmptyText>,
+    keys: Vec<NonEmptyText>,
+    prefix: &Path,
+) -> Vec<Certificate> {
+    let mut keys = keys.into_iter();
 
     certificates
         .into_iter()
-        .map(|certificate| Certificate {
-            certificate,
-            key: keys.next(),
+        .map(|certificate| {
+            let key = keys.next();
+
+            Certificate {
+                reading: certificate_reading(&certificate, prefix),
+                key_file: key.as_ref().and_then(|key| key_file(key, prefix)),
+                certificate,
+                key,
+            }
         })
         .collect()
+}
+
+fn certificate_reading(written: &NonEmptyText, prefix: &Path) -> CertificateReading {
+    let refused = |reason: String| CertificateReading::Refused {
+        reason: NonEmptyText::new(reason, "certificate refusal")
+            .expect("every reason below says something"),
+    };
+
+    match on_disk(written, prefix) {
+        Err(reason) => refused(reason),
+        Ok(path) => match certificate_file::read(Path::new(path.as_str())) {
+            Ok(details) => CertificateReading::Parsed(Box::new(details)),
+            Err(error) => refused(error.to_string()),
+        },
+    }
+}
+
+/// The key file described, when the configuration names one that is a path at all.
+///
+/// A key named through a variable leaves this empty, and the written value stays in the
+/// certificate's `key` where a reader can see what was asked for.
+fn key_file(written: &NonEmptyText, prefix: &Path) -> Option<KeyFile> {
+    on_disk(written, prefix)
+        .ok()
+        .map(|path| certificate_file::describe_key(&path))
+}
+
+/// A written certificate or key path as a file on this box, or why it is not one.
+///
+/// Two of nginx's spellings name no file at all: a path holding a variable is only resolved
+/// when a request arrives, and `data:` carries the certificate inline. Neither is a failure,
+/// and reporting either as an unreadable file would be wrong about the host.
+fn on_disk(written: &NonEmptyText, prefix: &Path) -> Result<AbsolutePath, String> {
+    if written.as_str().contains(VARIABLE) {
+        return Err(format!(
+            "{:?} names a variable, which nginx resolves per request rather than per file",
+            written.as_str()
+        ));
+    }
+
+    if written.as_str().starts_with(INLINE) {
+        return Err(format!(
+            "{:?} holds the certificate inline rather than naming a file",
+            written.as_str()
+        ));
+    }
+
+    resolved(written, prefix).map_err(|error| error.to_string())
 }
 
 /// The wall in front of a host or a location, when either half of one was declared.
