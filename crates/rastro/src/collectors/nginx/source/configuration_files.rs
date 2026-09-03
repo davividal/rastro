@@ -5,9 +5,12 @@
 //! a read.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
+
+use crate::collectors::nginx::value_objects::{ConfigurationSource, SecondsSinceEpoch};
 
 use super::conf_syntax;
 use super::file_glob;
@@ -25,18 +28,24 @@ const INCLUDE: &str = "include";
 pub struct ConfigurationFiles {
     root: PathBuf,
     prefix: PathBuf,
+    chosen_by: ConfigurationSource,
 }
 
 impl ConfigurationFiles {
     pub fn at(
         root: impl Into<PathBuf>,
         prefix: impl Into<PathBuf>,
+        chosen_by: ConfigurationSource,
     ) -> Result<Self, CollectionError> {
         let prefix = absolute(prefix.into(), "nginx prefix")?;
         // nginx resolves a relative `-c` against the prefix, so this does too.
         let root = absolute(prefix.join(root.into()), "nginx configuration path")?;
 
-        Ok(Self { root, prefix })
+        Ok(Self {
+            root,
+            prefix,
+            chosen_by,
+        })
     }
 
     /// Reads every file nginx would read, recording each one's fate.
@@ -50,6 +59,7 @@ impl ConfigurationFiles {
             prefix: &self.prefix,
             files: Vec::new(),
             open: Vec::new(),
+            newest: None,
         };
         let directives = reading.visit(&self.root);
 
@@ -58,6 +68,8 @@ impl ConfigurationFiles {
             root: recorded(&self.root),
             files: reading.files,
             directives,
+            chosen_by: self.chosen_by,
+            newest_modified: reading.newest.map(SecondsSinceEpoch::new),
         }
     }
 }
@@ -84,6 +96,8 @@ struct Reading<'a> {
     /// included twice from *different* branches is not a cycle and is read twice, which is
     /// what nginx does.
     open: Vec<PathBuf>,
+    /// The newest mtime seen among the files that were read.
+    newest: Option<i64>,
 }
 
 impl Reading<'_> {
@@ -124,6 +138,7 @@ impl Reading<'_> {
 
         self.files
             .push(ConfigurationFile::parsed(recorded(path), &directives));
+        self.note_change(path);
 
         self.open.push(identity);
         let expanded = self.expanded(directives);
@@ -173,6 +188,18 @@ impl Reading<'_> {
         }
 
         found
+    }
+
+    /// Remembers the file's mtime if it is the newest one read so far.
+    ///
+    /// A file that cannot be stat'ed contributes nothing rather than failing the read: it was
+    /// just parsed, so it exists, and a race that removes it between the two is not worth a
+    /// facet.
+    fn note_change(&mut self, path: &Path) {
+        if let Ok(metadata) = fs::metadata(path) {
+            let modified = metadata.mtime();
+            self.newest = Some(self.newest.map_or(modified, |newest| newest.max(modified)));
+        }
     }
 
     fn refuse(&mut self, path: &Path, reason: String) {

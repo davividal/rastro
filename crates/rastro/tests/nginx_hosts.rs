@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 mod support;
 
 use rastro::collectors::nginx::source::ConfigurationFiles;
-use rastro::collectors::nginx::value_objects::{Endpoint, PassKind, PasswordScheme, Permission};
+use rastro::collectors::nginx::value_objects::{
+    ConfigurationSource, Endpoint, PassKind, PasswordScheme, Permission,
+};
 use rastro::collectors::nginx::{Upstream, VirtualHost, nginx_directives};
 use support::fs_tree::{scratch_tree, write};
 
@@ -70,18 +72,26 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn hosts_of(prefix: &Path) -> Vec<VirtualHost> {
-    let configuration = ConfigurationFiles::at(prefix.join("nginx.conf"), prefix)
-        .expect("the scratch tree is absolute")
-        .read();
+    let configuration = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
 
     nginx_directives::virtual_hosts(&configuration.directives, prefix)
         .expect("this configuration holds no directive rastro cannot read")
 }
 
 fn pools_of(prefix: &Path) -> Vec<Upstream> {
-    let configuration = ConfigurationFiles::at(prefix.join("nginx.conf"), prefix)
-        .expect("the scratch tree is absolute")
-        .read();
+    let configuration = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
 
     nginx_directives::upstreams(&configuration.directives)
         .expect("this configuration holds no pool rastro cannot read")
