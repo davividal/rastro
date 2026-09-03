@@ -37,7 +37,7 @@
 //!   attributes" is one decision rather than three. See `docs/decisions.md`.
 
 use std::fs::{self, Metadata};
-use std::io;
+use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -278,17 +278,29 @@ impl FileTree {
 
 /// Hashes a file without holding it in memory.
 ///
-/// `io::copy` streams it through the hasher, so a multi-gigabyte file costs a buffer
-/// rather than its own size. rastro runs as root on production and must not be the reason
-/// a box runs out of memory.
+/// A fixed buffer read in a loop, so a multi-gigabyte file costs the buffer rather than its
+/// own size. rastro runs as root on production and must not be the reason a box runs out of
+/// memory.
+///
+/// Not `io::copy`, which would be shorter: that needs the hasher to implement
+/// [`std::io::Write`], and `sha2` dropped that impl in 0.11 with no feature to restore it. An
+/// explicit loop owes the digest crate nothing but `update`, which every version of it has.
 fn sha256_of(path: &Path) -> Result<Digest, Refusal> {
     let mut file = open_without_following(path)?;
     let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
 
-    io::copy(&mut file, &mut hasher)
-        .map_err(|error| Refusal::at(path, "could not be read to the end", &error))?;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| Refusal::at(path, "could not be read to the end", &error))?;
 
-    Ok(Digest::of(DigestAlgorithm::Sha256, &hasher.finalize()))
+        if read == 0 {
+            return Ok(Digest::of(DigestAlgorithm::Sha256, &hasher.finalize()));
+        }
+
+        hasher.update(&buffer[..read]);
+    }
 }
 
 /// Opens a file for hashing in a way the path cannot be swapped out from under.
