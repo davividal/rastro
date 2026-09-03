@@ -3,6 +3,7 @@
 use rastro_collector::{AbsolutePath, Observation};
 
 use crate::collectors::nginx::model::{ConfigurationFile, Directive};
+use crate::collectors::nginx::value_objects::{ConfigurationSource, SecondsSinceEpoch};
 
 /// The whole configuration: what was read, and what it says.
 ///
@@ -23,6 +24,16 @@ pub struct Configuration {
     pub root: AbsolutePath,
     pub files: Vec<ConfigurationFile>,
     pub directives: Vec<Directive>,
+    /// Which authority decided the root path: the running master, or the binary's own build.
+    pub chosen_by: ConfigurationSource,
+    /// The newest mtime among the files that were read.
+    ///
+    /// Held against the oldest worker's start time in the `master` node, this is the answer
+    /// to the question the facet exists for: whether what is on disk is what is being
+    /// served. It is an mtime and therefore only ever a *lower* bound on staleness — a file
+    /// rewritten with the same content still moves it — which is why it sits beside the
+    /// per-file digests rather than instead of them.
+    pub newest_modified: Option<SecondsSinceEpoch>,
 }
 
 impl From<&Configuration> for Observation {
@@ -31,6 +42,14 @@ impl From<&Configuration> for Observation {
             (
                 "files",
                 Observation::list(configuration.files.iter().map(Observation::from)),
+            ),
+            ("chosen_by", Observation::from(&configuration.chosen_by)),
+            (
+                "newest_modified",
+                configuration
+                    .newest_modified
+                    .as_ref()
+                    .map_or_else(Observation::null, Observation::from),
             ),
             ("prefix", Observation::text(configuration.prefix.as_str())),
             ("root", Observation::text(configuration.root.as_str())),

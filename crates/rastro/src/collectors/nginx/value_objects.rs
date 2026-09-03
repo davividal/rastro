@@ -5,6 +5,7 @@
 
 mod address_pattern;
 mod build_version;
+mod configuration_source;
 mod configure_argument;
 mod directive_argument;
 mod directive_name;
@@ -22,6 +23,7 @@ mod upstream_name;
 
 pub use address_pattern::AddressPattern;
 pub use build_version::BuildVersion;
+pub use configuration_source::ConfigurationSource;
 pub use configure_argument::ConfigureArgument;
 pub use directive_argument::DirectiveArgument;
 pub use directive_name::DirectiveName;

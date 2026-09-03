@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::nginx::model::{Binary, Configuration, Upstream, VirtualHost};
+use crate::collectors::nginx::model::{Binary, Configuration, Master, Upstream, VirtualHost};
 
 /// Everything the facet reports: the binary, the configuration it would read, and what that
 /// configuration says it serves.
@@ -17,6 +17,8 @@ use crate::collectors::nginx::model::{Binary, Configuration, Upstream, VirtualHo
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebServer {
     pub binary: Binary,
+    /// The running master, or nothing when nginx is installed and stopped.
+    pub master: Option<Master>,
     pub configuration: Configuration,
     pub hosts: Vec<VirtualHost>,
     pub upstreams: Vec<Upstream>,
@@ -27,6 +29,13 @@ impl From<&WebServer> for Observation {
         Observation::object([
             ("binary", Observation::from(&server.binary)),
             ("configuration", Observation::from(&server.configuration)),
+            (
+                "master",
+                server
+                    .master
+                    .as_ref()
+                    .map_or_else(Observation::null, Observation::from),
+            ),
             (
                 "hosts",
                 Observation::list(server.hosts.iter().map(Observation::from)),

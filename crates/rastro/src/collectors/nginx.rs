@@ -27,17 +27,19 @@ pub mod value_objects;
 pub use model::{
     AccessRule, Authentication, AuthorisedUser, Binary, Certificate, CertificateDetails,
     CertificateReading, Configuration, ConfigurationFile, Directive, KeyFile, KeyReading, Listen,
-    Location, PassTarget, Upstream, UpstreamServer, VirtualHost, WebServer,
+    Location, Master, PassTarget, Upstream, UpstreamServer, VirtualHost, WebServer,
 };
 pub use source::{
-    ConfigurationFiles, NginxBinary, certificate_file, conf_syntax, htpasswd, nginx_binary,
-    nginx_directives,
+    ConfigurationFiles, NginxBinary, certificate_file, conf_syntax, htpasswd, master_process,
+    nginx_binary, nginx_directives,
 };
 pub use value_objects::{
-    AddressPattern, BuildVersion, ConfigureArgument, DirectiveArgument, DirectiveName, Endpoint,
-    FileReading, ListenOption, LocationPattern, PassKind, PasswordScheme, Permission,
-    SecondsSinceEpoch, ServerName, ServerParameter, UpstreamName,
+    AddressPattern, BuildVersion, ConfigurationSource, ConfigureArgument, DirectiveArgument,
+    DirectiveName, Endpoint, FileReading, ListenOption, LocationPattern, PassKind, PasswordScheme,
+    Permission, SecondsSinceEpoch, ServerName, ServerParameter, UpstreamName,
 };
+
+use std::path::Path;
 
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
@@ -110,15 +112,34 @@ impl Collector for NginxCollector {
         })?;
 
         let binary = source.read()?;
-        let prefix = binary.prefix();
-        let configuration =
-            ConfigurationFiles::at(binary.configuration_path(), prefix.clone())?.read();
-        let prefix = std::path::Path::new(&prefix);
+        let master = master_process::find(Path::new(binary.path.as_str()))?;
+
+        // What the running server was told beats what the binary was built with, because a
+        // master started with `-c` is reading a different file from the one nginx defaults
+        // to, and describing the default would describe a service nobody is running.
+        let running = master.as_ref();
+        let told_root = running.and_then(|master| master.configuration_path.as_ref());
+        let told_prefix = running.and_then(|master| master.prefix.as_ref());
+
+        let chosen_by = match told_root {
+            Some(_) => ConfigurationSource::RunningMaster,
+            None => ConfigurationSource::CompiledIn,
+        };
+        let root = told_root.map_or_else(
+            || binary.configuration_path(),
+            |path| path.as_str().to_owned(),
+        );
+        let prefix =
+            told_prefix.map_or_else(|| binary.prefix(), |prefix| prefix.as_str().to_owned());
+
+        let configuration = ConfigurationFiles::at(root, prefix.clone(), chosen_by)?.read();
+        let prefix = Path::new(&prefix);
 
         Ok(Observation::from(&WebServer {
             hosts: nginx_directives::virtual_hosts(&configuration.directives, prefix)?,
             upstreams: nginx_directives::upstreams(&configuration.directives)?,
             binary,
+            master,
             configuration,
         }))
     }

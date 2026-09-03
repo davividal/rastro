@@ -10,6 +10,7 @@ mod support;
 
 use rastro::collectors::nginx::model::{Configuration, ConfigurationFile};
 use rastro::collectors::nginx::source::ConfigurationFiles;
+use rastro::collectors::nginx::value_objects::ConfigurationSource;
 use rastro::collectors::nginx::value_objects::FileReading;
 use support::fs_tree::{scratch_tree, write};
 
@@ -26,9 +27,13 @@ fn tree(name: &str) -> PathBuf {
 }
 
 fn read(prefix: &Path) -> Configuration {
-    ConfigurationFiles::at(prefix.join("nginx.conf"), prefix)
-        .expect("the scratch tree is absolute")
-        .read()
+    ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read()
 }
 
 fn paths_of(configuration: &Configuration) -> Vec<String> {

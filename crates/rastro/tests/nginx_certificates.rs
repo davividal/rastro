@@ -11,6 +11,7 @@ mod support;
 
 use rastro::collectors::nginx::model::{CertificateReading, KeyReading};
 use rastro::collectors::nginx::source::ConfigurationFiles;
+use rastro::collectors::nginx::value_objects::ConfigurationSource;
 use rastro::collectors::nginx::{VirtualHost, nginx_directives};
 use support::fs_tree::{scratch_tree, write};
 
@@ -41,9 +42,13 @@ const KEY: &str = "-----BEGIN PRIVATE KEY-----\nnot a key\n-----END PRIVATE KEY-
 
 fn host(configuration: &str, name: &str) -> VirtualHost {
     let prefix = fixture(configuration, name);
-    let read = ConfigurationFiles::at(prefix.join("nginx.conf"), &prefix)
-        .expect("the scratch tree is absolute")
-        .read();
+    let read = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
 
     nginx_directives::virtual_hosts(&read.directives, &prefix)
         .expect("this configuration holds no directive rastro cannot read")
@@ -165,9 +170,13 @@ fn a_file_that_is_not_a_certificate_is_refused_rather_than_believed() {
         "http { server { ssl_certificate junk.crt; } }",
     );
     write(&prefix, "junk.crt", "this is not a certificate\n");
-    let read = ConfigurationFiles::at(prefix.join("nginx.conf"), &prefix)
-        .expect("the scratch tree is absolute")
-        .read();
+    let read = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
 
     // Act
     let hosts = nginx_directives::virtual_hosts(&read.directives, &prefix)
