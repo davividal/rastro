@@ -16,4 +16,10 @@ serde = { workspace = true }
 # The default (non-`preserve_order`) Map is a BTreeMap, which is what makes
 # sorted keys structural rather than a convention. See src/json.rs.
 serde_json = { workspace = true }
+# The inner stage of a redaction digest. What makes a stand-in defensible for a
+# secret is that inverting it costs a sha256 per guess. See observation/redaction.rs.
+sha2 = { workspace = true }
 thiserror = { workspace = true }
+# The digest every facet spells the same way, and pinned because it *is* part of the
+# output format: changing the hash invalidates every archived fingerprint.
+xxhash-rust = { workspace = true }

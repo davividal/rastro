@@ -1,5 +1,5 @@
 use rastro_fingerprint::View;
-use rastro_fingerprint::{Content, Observation, Sensitivity, Volatility};
+use rastro_fingerprint::{Content, Observation, Presentation, Scalar, Sensitivity, Volatility};
 
 fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, Observation> {
     match observation.content() {
@@ -12,6 +12,13 @@ fn items_of(observation: &Observation) -> &[Observation] {
     match observation.content() {
         Content::List(items) => items,
         other => panic!("expected a list observation, got {other:?}"),
+    }
+}
+
+fn text_of(observation: &Observation) -> &str {
+    match observation.content() {
+        Content::Scalar(Scalar::Text(value)) => value,
+        other => panic!("expected a text observation, got {other:?}"),
     }
 }
 
@@ -185,4 +192,48 @@ fn the_diffable_view_drops_a_wholly_volatile_observation() {
 
     // Act & Assert
     assert_eq!(observation.in_view(View::Diffable), None);
+}
+
+#[test]
+fn a_redacted_view_does_not_carry_a_sensitive_value_as_it_stands() {
+    // Arrange: the annotation is the only signal there is. Nothing about the characters of
+    // a verifier says it is one, which is why the collector's judgement cannot be
+    // reconstructed at render time.
+    let observation = Observation::object([
+        ("method", Observation::text("scram-sha-256")),
+        (
+            "verifier",
+            Observation::text("SCRAM-SHA-256$4096:salt$stored:server").sensitive(),
+        ),
+    ]);
+
+    // Act
+    let visible = observation
+        .in_view(Presentation::complete())
+        .expect("a public parent survives");
+
+    // Assert
+    let entries = entries_of(&visible);
+    assert_eq!(text_of(&entries["method"]), "scram-sha-256");
+    assert_ne!(
+        text_of(&entries["verifier"]),
+        "SCRAM-SHA-256$4096:salt$stored:server",
+        "a sensitive value must not be rendered as it stands"
+    );
+}
+
+#[test]
+fn a_raw_view_carries_a_sensitive_value_as_it_stands() {
+    // Arrange: what `--raw` is for. The annotation stays on the value either way, because
+    // the collector's judgement does not change with how the document is rendered.
+    let observation = Observation::text("password=hunter2").sensitive();
+
+    // Act
+    let visible = observation
+        .in_view(Presentation::complete().raw())
+        .expect("the complete view drops nothing");
+
+    // Assert
+    assert_eq!(text_of(&visible), "password=hunter2");
+    assert_eq!(visible.sensitivity(), Sensitivity::Sensitive);
 }

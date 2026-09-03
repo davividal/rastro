@@ -250,7 +250,6 @@ version = "0.0.0"
 dependencies = [
  "rastro-fingerprint",
  "thiserror",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -259,7 +258,9 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
+ "xxhash-rust",
 ]
 
 [[package]]
