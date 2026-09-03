@@ -2539,11 +2539,20 @@ above claims `nginx -T` and `sshd -T` do not change the host. It is right about
 an edit to that entry.
 
 **Cost, accepted knowingly.** rastro's include resolution can in principle
-disagree with nginx's. Three things bound it: the resolved file list is in the
-facet, so a disagreement is visible rather than silent; the resolution rules have
-fixture tests; and the conformance check against `nginx -T`'s own `# configuration
-file` markers is run in a container during development, never on a host being
-fingerprinted.
+disagree with nginx's, and nothing executable stands behind the claim that it does
+not. Each rule was measured against a running nginx once, the measurements are in
+the entries below, and fixture tests pin what rastro does with them — but a test
+that asserts a file list only re-encodes the belief it was written from, so it
+cannot catch a belief that was wrong to begin with.
+
+**A conformance check against `nginx -T` was considered and rejected.** Only nginx
+knows which files nginx reads, so `-T` is the one non-circular oracle, and using it
+would mean putting the mutating tool back into the tooling — in the test suite and
+in the documented container recipe — to guard rules that have not moved in a
+decade. What bounds the risk instead is already in the facet: the resolved file
+list is recorded, so a divergence shows up to whoever reads a fingerprint from a
+real box rather than staying silent. That is how the `conf_prefix` mistake below
+was actually found.
 
 ## The grammar is measured rather than remembered
 
