@@ -3,6 +3,20 @@
 //! One `include` at a time, depth first, exactly where the directive stood. What this does
 //! not do is run nginx: see the module documentation for why testing a configuration is not
 //! a read.
+//!
+//! **nginx has two bases for a relative path, and using one for both is wrong on Debian.**
+//! `prefix` is `-p`, or `--prefix` at build time, and it is what a cache or a temp path
+//! resolves against. `conf_prefix` is the *directory of the configuration file* — `-c`'s, or
+//! `--conf-path`'s — and it is what an `include`, a certificate and a user file resolve
+//! against. Debian builds nginx with `--prefix=/usr/share/nginx` and
+//! `--conf-path=/etc/nginx/nginx.conf`, so the two are different directories and a collector
+//! that knew only the first would look for every included file in a directory that holds
+//! none.
+//!
+//! Measured, on nginx 1.30 started as `-p /tmp/altprefix -c /etc/nginx/nginx.conf`: a request
+//! against a location with `auth_basic_user_file relative.htpasswd` logged
+//! `open() "/etc/nginx/relative.htpasswd" failed`. nginx derives `conf_prefix` by taking the
+//! directory of the configuration file it ended up with, which is what this does.
 
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -28,6 +42,9 @@ const INCLUDE: &str = "include";
 pub struct ConfigurationFiles {
     root: PathBuf,
     prefix: PathBuf,
+    /// The directory of the root configuration file, which is what an `include` resolves
+    /// against.
+    configuration_prefix: PathBuf,
     chosen_by: ConfigurationSource,
 }
 
@@ -41,9 +58,14 @@ impl ConfigurationFiles {
         // nginx resolves a relative `-c` against the prefix, so this does too.
         let root = absolute(prefix.join(root.into()), "nginx configuration path")?;
 
+        let configuration_prefix = root
+            .parent()
+            .map_or_else(|| prefix.clone(), Path::to_path_buf);
+
         Ok(Self {
             root,
             prefix,
+            configuration_prefix,
             chosen_by,
         })
     }
@@ -56,7 +78,7 @@ impl ConfigurationFiles {
     /// missing, and it does not have to — that file is in the record like any other.
     pub fn read(&self) -> Configuration {
         let mut reading = Reading {
-            prefix: &self.prefix,
+            configuration_prefix: &self.configuration_prefix,
             files: Vec::new(),
             open: Vec::new(),
             newest: None,
@@ -65,6 +87,7 @@ impl ConfigurationFiles {
 
         Configuration {
             prefix: recorded(&self.prefix),
+            configuration_prefix: recorded(&self.configuration_prefix),
             root: recorded(&self.root),
             files: reading.files,
             directives,
@@ -87,7 +110,7 @@ fn absolute(path: PathBuf, kind: &str) -> Result<PathBuf, CollectionError> {
 
 /// One pass over the configuration, carrying what has been read and what is still open.
 struct Reading<'a> {
-    prefix: &'a Path,
+    configuration_prefix: &'a Path,
     files: Vec<ConfigurationFile>,
     /// The files on the current include stack, resolved through symlinks.
     ///
@@ -170,7 +193,7 @@ impl Reading<'_> {
         let mut found = Vec::new();
 
         for argument in &include.arguments {
-            let named = self.prefix.join(argument.as_str());
+            let named = self.configuration_prefix.join(argument.as_str());
 
             if !file_glob::is_pattern(&named) {
                 found.extend(self.visit(&named));

@@ -18,8 +18,12 @@ use crate::collectors::nginx::value_objects::{ConfigurationSource, SecondsSinceE
 /// by which was read first, so a sort would discard the fact that decides the outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Configuration {
-    /// What the configuration's relative paths are relative to.
+    /// What a cache or a temp path is relative to: `-p`, or `--prefix` at build time.
     pub prefix: AbsolutePath,
+    /// What an `include`, a certificate and a user file are relative to: the directory of
+    /// the root configuration file. nginx calls it `conf_prefix`, and on Debian it is a
+    /// different directory from the prefix.
+    pub configuration_prefix: AbsolutePath,
     /// The file nginx would open first.
     pub root: AbsolutePath,
     pub files: Vec<ConfigurationFile>,
@@ -50,6 +54,10 @@ impl From<&Configuration> for Observation {
                     .newest_modified
                     .as_ref()
                     .map_or_else(Observation::null, Observation::from),
+            ),
+            (
+                "configuration_prefix",
+                Observation::text(configuration.configuration_prefix.as_str()),
             ),
             ("prefix", Observation::text(configuration.prefix.as_str())),
             ("root", Observation::text(configuration.root.as_str())),

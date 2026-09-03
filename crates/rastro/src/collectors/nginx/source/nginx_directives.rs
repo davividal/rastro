@@ -98,12 +98,12 @@ fn collect_working_trees(directives: &[Directive], prefix: &Path, found: &mut Ve
 /// Every virtual host the configuration declares, in the order it declares them.
 pub fn virtual_hosts(
     directives: &[Directive],
-    prefix: &Path,
+    configuration_prefix: &Path,
 ) -> Result<Vec<VirtualHost>, CollectionError> {
     let mut hosts = Vec::new();
 
     for server in blocks_of(directives, SERVER) {
-        hosts.push(virtual_host(server, prefix)?);
+        hosts.push(virtual_host(server, configuration_prefix)?);
     }
 
     Ok(hosts)
@@ -153,7 +153,10 @@ fn blocks_of<'a>(
         .filter_map(|directive| directive.block.as_deref())
 }
 
-fn virtual_host(block: &[Directive], prefix: &Path) -> Result<VirtualHost, CollectionError> {
+fn virtual_host(
+    block: &[Directive],
+    configuration_prefix: &Path,
+) -> Result<VirtualHost, CollectionError> {
     let mut host = VirtualHost {
         listens: Vec::new(),
         server_names: Vec::new(),
@@ -185,11 +188,15 @@ fn virtual_host(block: &[Directive], prefix: &Path) -> Result<VirtualHost, Colle
             RESOLVER => host.resolvers.extend(addresses(directive)?),
             AUTH_BASIC => realm = Some(first(directive, "a realm")?),
             AUTH_BASIC_USER_FILE => {
-                user_file = Some(resolved(&first(directive, "a user file")?, prefix)?);
+                user_file = Some(resolved(
+                    &first(directive, "a user file")?,
+                    configuration_prefix,
+                )?);
             }
             LOCATION => {
                 if let Some(inside) = &directive.block {
-                    host.locations.push(location(directive, inside, prefix)?);
+                    host.locations
+                        .push(location(directive, inside, configuration_prefix)?);
                 }
             }
             name => {
@@ -200,7 +207,7 @@ fn virtual_host(block: &[Directive], prefix: &Path) -> Result<VirtualHost, Colle
         }
     }
 
-    host.certificates = paired(certificates, keys, prefix);
+    host.certificates = paired(certificates, keys, configuration_prefix);
     host.authentication = authentication(realm, user_file)?;
     host.listens.sort();
     host.server_names.sort();
@@ -213,7 +220,7 @@ fn virtual_host(block: &[Directive], prefix: &Path) -> Result<VirtualHost, Colle
 fn location(
     directive: &Directive,
     block: &[Directive],
-    prefix: &Path,
+    configuration_prefix: &Path,
 ) -> Result<Location, CollectionError> {
     let pattern = directive
         .arguments
@@ -248,13 +255,16 @@ fn location(
             ROOT => location.root = Some(first(inside, "a directory")?),
             AUTH_BASIC => realm = Some(first(inside, "a realm")?),
             AUTH_BASIC_USER_FILE => {
-                user_file = Some(resolved(&first(inside, "a user file")?, prefix)?);
+                user_file = Some(resolved(
+                    &first(inside, "a user file")?,
+                    configuration_prefix,
+                )?);
             }
             LOCATION => {
                 if let Some(nested) = &inside.block {
                     location
                         .locations
-                        .push(self::location(inside, nested, prefix)?);
+                        .push(self::location(inside, nested, configuration_prefix)?);
                 }
             }
             _ => {
@@ -361,9 +371,12 @@ fn first(directive: &Directive, expected: &str) -> Result<NonEmptyText, Collecti
     NonEmptyText::new(argument.as_str(), directive.name.as_str())
 }
 
-/// A path as nginx would open it: relative to the prefix unless it is already absolute.
-fn resolved(path: &NonEmptyText, prefix: &Path) -> Result<AbsolutePath, CollectionError> {
-    let joined = prefix.join(path.as_str());
+/// A path as nginx would open it: relative to the configuration_prefix unless it is already absolute.
+fn resolved(
+    path: &NonEmptyText,
+    configuration_prefix: &Path,
+) -> Result<AbsolutePath, CollectionError> {
+    let joined = configuration_prefix.join(path.as_str());
 
     AbsolutePath::new(joined.to_string_lossy(), "nginx file path")
 }
@@ -372,7 +385,7 @@ fn resolved(path: &NonEmptyText, prefix: &Path) -> Result<AbsolutePath, Collecti
 fn paired(
     certificates: Vec<NonEmptyText>,
     keys: Vec<NonEmptyText>,
-    prefix: &Path,
+    configuration_prefix: &Path,
 ) -> Vec<Certificate> {
     let mut keys = keys.into_iter();
 
@@ -382,8 +395,10 @@ fn paired(
             let key = keys.next();
 
             Certificate {
-                reading: certificate_reading(&certificate, prefix),
-                key_file: key.as_ref().and_then(|key| key_file(key, prefix)),
+                reading: certificate_reading(&certificate, configuration_prefix),
+                key_file: key
+                    .as_ref()
+                    .and_then(|key| key_file(key, configuration_prefix)),
                 certificate,
                 key,
             }
@@ -391,13 +406,13 @@ fn paired(
         .collect()
 }
 
-fn certificate_reading(written: &NonEmptyText, prefix: &Path) -> CertificateReading {
+fn certificate_reading(written: &NonEmptyText, configuration_prefix: &Path) -> CertificateReading {
     let refused = |reason: String| CertificateReading::Refused {
         reason: NonEmptyText::new(reason, "certificate refusal")
             .expect("every reason below says something"),
     };
 
-    match on_disk(written, prefix) {
+    match on_disk(written, configuration_prefix) {
         Err(reason) => refused(reason),
         Ok(path) => match certificate_file::read(Path::new(path.as_str())) {
             Ok(details) => CertificateReading::Parsed(Box::new(details)),
@@ -410,8 +425,8 @@ fn certificate_reading(written: &NonEmptyText, prefix: &Path) -> CertificateRead
 ///
 /// A key named through a variable leaves this empty, and the written value stays in the
 /// certificate's `key` where a reader can see what was asked for.
-fn key_file(written: &NonEmptyText, prefix: &Path) -> Option<KeyFile> {
-    on_disk(written, prefix)
+fn key_file(written: &NonEmptyText, configuration_prefix: &Path) -> Option<KeyFile> {
+    on_disk(written, configuration_prefix)
         .ok()
         .map(|path| certificate_file::describe_key(&path))
 }
@@ -421,7 +436,7 @@ fn key_file(written: &NonEmptyText, prefix: &Path) -> Option<KeyFile> {
 /// Two of nginx's spellings name no file at all: a path holding a variable is only resolved
 /// when a request arrives, and `data:` carries the certificate inline. Neither is a failure,
 /// and reporting either as an unreadable file would be wrong about the host.
-fn on_disk(written: &NonEmptyText, prefix: &Path) -> Result<AbsolutePath, String> {
+fn on_disk(written: &NonEmptyText, configuration_prefix: &Path) -> Result<AbsolutePath, String> {
     if written.as_str().contains(VARIABLE) {
         return Err(format!(
             "{:?} names a variable, which nginx resolves per request rather than per file",
@@ -436,7 +451,7 @@ fn on_disk(written: &NonEmptyText, prefix: &Path) -> Result<AbsolutePath, String
         ));
     }
 
-    resolved(written, prefix).map_err(|error| error.to_string())
+    resolved(written, configuration_prefix).map_err(|error| error.to_string())
 }
 
 /// The wall in front of a host or a location, when either half of one was declared.
