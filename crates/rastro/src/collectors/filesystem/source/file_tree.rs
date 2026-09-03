@@ -49,8 +49,9 @@ use sha2::{Digest as _, Sha256};
 use crate::collectors::filesystem::model::{
     FileEntry, FilesystemInventory, Refusal, UnreadablePath, UnspellablePath, WalkPolicy,
 };
+use crate::collectors::file_metadata::FileMode;
 use crate::collectors::filesystem::value_objects::{
-    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, FileMode, NanosecondsSinceEpoch,
+    ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, NanosecondsSinceEpoch,
 };
 use crate::progress::WalkProgress;
 
