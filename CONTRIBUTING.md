@@ -85,12 +85,21 @@ that skipped itself as root, a mode assertion that depended on the caller's umas
 and an unreadable mount point that failed a whole facet. The script runs the suite
 as root, then creates a user with no privilege and runs it again as them.
 
-`.github/workflows/container.yml` calls the same
+`.github/workflows/distributions.yml` calls the same
 [`scripts/container-suite.sh`](scripts/container-suite.sh) inside the container, so
 what CI asks and what you just asked cannot drift. It runs on every push to master,
-nightly, on demand, and on a pull request labelled `container`. **Add that label**
-to a pull request touching the walk, the `packages` collector, anything reading
-`/proc`, the output file's mode, or the execution seam.
+nightly, on demand, and on a pull request labelled `extended-verification`.
+
+**Add the `extended-verification` label** to a pull request touching the walk, the
+`packages` collector, anything reading `/proc`, the output file's mode, or the
+execution seam.
+
+That label is a *tier*, not this workflow. It says two things at once: this change
+needs more than the ordinary gates, and the deeper checks are now running for it.
+Every workflow in the tier reacts to that one label, so you never have to work out
+which deep check your change needs — that is a reviewer's question. The tier holds
+the distributions run today, and `docs/design.md`'s "Planned, not yet running" list
+is what joins it next.
 
 ## Working conventions
 

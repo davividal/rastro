@@ -58,14 +58,10 @@ jobs:
       # `deny(rustdoc::broken_intra_doc_links)` in lib.rs bite.
       - run: cargo doc --locked --no-deps
 
-  # This job runs one distribution, as one unprivileged user. It therefore cannot
-  # tell dpkg from apk, cannot see what the walk does as root, and cannot see a musl
-  # host at all. `.github/workflows/container.yml` covers that: Debian and Alpine,
-  # root and unprivileged, on every push to master, nightly, on demand, and on any
-  # pull request carrying the `container` label. It compiles the workspace four times
-  # over two pulled images, which is why it is not in front of every pull request.
-  # **Add the `container` label** to one touching the walk, the `packages` collector,
-  # anything reading /proc, the output file's mode, or the execution seam.
+  # This job runs one distribution, as one unprivileged user. It cannot tell dpkg from
+  # apk, cannot see what the walk does as root, and cannot see a musl host at all. A
+  # change needing any of that carries the `extended-verification` label, which opens
+  # every workflow in the deep tier. When to apply it: CONTRIBUTING.md.
 
   # `cargo install` deliberately resolves without the workspace lockfile, and every
   # other job here passes `--locked`. So an upstream releasing a semver-compatible
