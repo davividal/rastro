@@ -33,9 +33,10 @@ pub use source::{
     FileTree, MountedFilesystems, WalkBoundaries, as_document_integer, open_without_following,
     sha256_of_stream,
 };
+pub use crate::collectors::file_metadata::FileMode;
 pub use value_objects::{
     CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
-    FileMode, NanosecondsSinceEpoch,
+    NanosecondsSinceEpoch,
 };
 
 use std::path::{Path, PathBuf};
