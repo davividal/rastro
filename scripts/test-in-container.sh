@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the suite in a Linux container, on Debian and on Alpine, from a working
-# machine. CI does the same thing from `.github/workflows/container.yml`; both call
+# machine. CI does the same thing from `.github/workflows/distributions.yml`; both call
 # `container-suite.sh` inside the container, so neither can quietly drift from the
 # other.
 #

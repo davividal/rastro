@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs the test suite on a real Linux, twice: as root, then as a user holding no
 # privilege at all. Meant to be executed *inside* a container, by
-# `test-in-container.sh` on a working machine and by `.github/workflows/container.yml`
+# `test-in-container.sh` on a working machine and by `.github/workflows/distributions.yml`
 # in CI, so both ask the same question of the same code.
 #
 # Why twice. rastro is run as root on a production box, and most of the suite has only

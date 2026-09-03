@@ -2442,3 +2442,22 @@ stays in the filesystem collector, because length-prefixing an entry's attribute
 paths cannot collide by construction is a fact about walked entries. The 64-hex column
 check stays in the postgresql source layer beside its sibling column parsers, because
 `encode` printing lowercase is a fact about that query.
+
+# The extended-verification label opens the deep gates
+
+Dated 2026-09-03. Supersedes the naming in
+[the container gate](#the-container-gate-is-a-workflow-of-its-own-opened-by-a-label),
+whose substance stands.
+
+`extended-verification` on a pull request runs every workflow in the deep tier. Today
+that is `distributions.yml`: Debian and Alpine, root and unprivileged. `CONTRIBUTING.md`
+holds the criterion for applying it.
+
+**One label for the tier, not one per workflow**, so a contributor never has to work out
+which deep check their change needs. That is a reviewer's call.
+
+**The label names what is promised; the workflow names what it does.** `container` and
+`full-matrix` both named today's implementation, which the next tenant falsifies.
+
+**The label must exist in repository settings.** Gated on one that does not, a workflow
+never runs and reports nothing.

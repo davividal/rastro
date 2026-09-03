@@ -1,18 +1,12 @@
-name: container
+name: distributions
 
-# The suite on a real Linux, on Debian and on Alpine, as root and unprivileged.
+# The suite on Debian and on Alpine, as root and unprivileged. One tenant of the
+# `extended-verification` tier, which every deep workflow enters through that one label.
+# When to apply it: CONTRIBUTING.md.
 #
-# Not in `ci.yml`, and the reason is the same one that keeps a Windows job out of
-# other people's: this pulls two images and compiles the workspace four times, so
-# putting it in front of every pull request would multiply the wait for a gate that
-# almost never catches anything a Linux runner would not. It runs where the cost is
-# affordable instead: every push to master, nightly, on demand, and on any pull
-# request carrying the `container` label.
-#
-# **Add the `container` label** to a pull request that touches the filesystem walk,
-# the `packages` collector, anything reading /proc, the output file's mode, or the
-# execution seam. Those are the changes `ci.yml` cannot see: it runs one distribution,
-# as one unprivileged user, and cannot tell dpkg from apk.
+# Not in `ci.yml` on cost: two images pulled and the workspace compiled four times, for a
+# gate most changes cannot break. Here instead, where the cost is affordable — every push
+# to master, nightly, on demand, and on a labelled pull request.
 
 on:
   push:
@@ -33,10 +27,14 @@ concurrency:
 
 jobs:
   suite:
-    name: ${{ matrix.image }}
+    # Leads with a static word on purpose. Actions cannot interpolate a matrix value for
+    # a job it skipped, so a name that is only `${{ matrix.host }}` reports the literal
+    # string `matrix.host` in the checks list, which tells a reader nothing about what
+    # was skipped.
+    name: suite on ${{ matrix.host }}, root and unprivileged
     if: >-
       github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'container')
+      || contains(github.event.pull_request.labels.*.name, 'extended-verification')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -48,11 +46,19 @@ jobs:
         # separate branches of the `packages` collector, and glibc and musl are two
         # different answers about what a filename is.
         #
+        # `host` exists because the image tag does not say either of those things. A
+        # check reading `rust:latest` leaves a reader to know that it means Debian and
+        # glibc, and the whole point of this job is the difference between the two legs.
+        #
         # Floating tags, deliberately, unlike the actions this repository pins by
         # commit. The question is whether rastro still works on today's Debian and
         # today's Alpine; a digest answers it about the day somebody wrote the digest.
         # A break here is news, which is what the nightly schedule is for.
-        image: [rust:latest, rust:alpine]
+        include:
+          - image: rust:latest
+            host: debian glibc
+          - image: rust:alpine
+            host: alpine musl
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The same script a working machine runs through `scripts/test-in-container.sh`,
