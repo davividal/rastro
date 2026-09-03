@@ -26,15 +26,17 @@ use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 use super::certificate_file;
 use super::htpasswd;
 use crate::collectors::nginx::model::{
-    AccessRule, Authentication, Certificate, CertificateReading, Directive, KeyFile, Listen,
-    Location, PassTarget, Upstream, UpstreamServer, VirtualHost,
+    AccessRule, Authentication, Certificate, CertificateReading, Directive, HttpService, KeyFile,
+    Listen, Location, LogDestination, PassTarget, StreamServer, StreamService, Upstream,
+    UpstreamServer, VirtualHost,
 };
 use crate::collectors::nginx::value_objects::{
-    AddressPattern, Endpoint, ListenOption, LocationPattern, PassKind, Permission, ServerName,
-    ServerParameter, UpstreamName,
+    AddressPattern, Endpoint, ListenOption, LocationPattern, LogKind, PassKind, Permission,
+    ServerName, ServerParameter, UpstreamName,
 };
 
 const HTTP: &str = "http";
+const STREAM: &str = "stream";
 const SERVER: &str = "server";
 const UPSTREAM: &str = "upstream";
 const LOCATION: &str = "location";
@@ -95,25 +97,45 @@ fn collect_working_trees(directives: &[Directive], prefix: &Path, found: &mut Ve
     }
 }
 
-/// Every virtual host the configuration declares, in the order it declares them.
-pub fn virtual_hosts(
+/// What the `http` context declares: its virtual hosts, in written order, and its pools.
+pub fn http_service(
     directives: &[Directive],
     configuration_prefix: &Path,
-) -> Result<Vec<VirtualHost>, CollectionError> {
+) -> Result<HttpService, CollectionError> {
     let mut hosts = Vec::new();
 
-    for server in blocks_of(directives, SERVER) {
+    for server in blocks_of(directives, HTTP, SERVER) {
         hosts.push(virtual_host(server, configuration_prefix)?);
     }
 
-    Ok(hosts)
+    Ok(HttpService {
+        hosts,
+        upstreams: upstreams_of(directives, HTTP)?,
+    })
 }
 
-/// Every pool the configuration declares, sorted by name.
-pub fn upstreams(directives: &[Directive]) -> Result<Vec<Upstream>, CollectionError> {
+/// What the `stream` context declares: its servers, in written order, and its pools.
+pub fn stream_service(
+    directives: &[Directive],
+    configuration_prefix: &Path,
+) -> Result<StreamService, CollectionError> {
+    let mut servers = Vec::new();
+
+    for server in blocks_of(directives, STREAM, SERVER) {
+        servers.push(stream_server(server, configuration_prefix)?);
+    }
+
+    Ok(StreamService {
+        servers,
+        upstreams: upstreams_of(directives, STREAM)?,
+    })
+}
+
+/// Every pool one context declares, sorted by name.
+fn upstreams_of(directives: &[Directive], context: &str) -> Result<Vec<Upstream>, CollectionError> {
     let mut pools = Vec::new();
 
-    for directive in served(directives) {
+    for directive in inside(directives, context) {
         if directive.name.as_str() != UPSTREAM {
             continue;
         }
@@ -129,28 +151,78 @@ pub fn upstreams(directives: &[Directive]) -> Result<Vec<Upstream>, CollectionEr
     Ok(pools)
 }
 
-/// The directives inside every `http` block.
+/// The directives inside every block of one context.
 ///
-/// A `stream` block declares servers and upstreams of its own, and this deliberately does
-/// not read them: they proxy TCP and UDP rather than HTTP, their `server` blocks have no
-/// names and no locations, and modelling them as though they did would put a shape in the
-/// document that the configuration does not have. What they hold is still in the file
-/// digests.
-fn served(directives: &[Directive]) -> impl Iterator<Item = &Directive> {
+/// `http` and `stream` are read separately rather than together: the same port number means
+/// different things in each, and a server that moved from one to the other has changed what
+/// it does with every connection.
+fn inside<'a>(
+    directives: &'a [Directive],
+    context: &'a str,
+) -> impl Iterator<Item = &'a Directive> {
     directives
         .iter()
-        .filter(|directive| directive.name.as_str() == HTTP)
-        .filter_map(|http| http.block.as_deref())
+        .filter(move |directive| directive.name.as_str() == context)
+        .filter_map(|block| block.block.as_deref())
         .flatten()
 }
 
 fn blocks_of<'a>(
     directives: &'a [Directive],
+    context: &'a str,
     name: &'a str,
 ) -> impl Iterator<Item = &'a [Directive]> {
-    served(directives)
+    inside(directives, context)
         .filter(move |directive| directive.name.as_str() == name)
         .filter_map(|directive| directive.block.as_deref())
+}
+
+/// One `stream` server, which has no names and no locations to have.
+fn stream_server(
+    block: &[Directive],
+    configuration_prefix: &Path,
+) -> Result<StreamServer, CollectionError> {
+    let mut server = StreamServer {
+        listens: Vec::new(),
+        pass: None,
+        certificates: Vec::new(),
+        access: Vec::new(),
+        logs: Vec::new(),
+    };
+    let mut certificates = Vec::new();
+    let mut keys = Vec::new();
+
+    for directive in block {
+        let name = directive.name.as_str();
+
+        if let Some(kind) = PassKind::of(name) {
+            server.pass = Some(PassTarget {
+                kind,
+                target: first(directive, "a target")?,
+            });
+            continue;
+        }
+
+        match name {
+            LISTEN => server.listens.push(listen(directive)?),
+            SSL_CERTIFICATE => certificates.push(first(directive, "a certificate path")?),
+            SSL_CERTIFICATE_KEY => keys.push(first(directive, "a key path")?),
+            _ => {
+                if let Some(rule) = access_rule(name, directive)? {
+                    server.access.push(rule);
+                }
+                if let Some(log) = log_destination(name, directive)? {
+                    server.logs.push(log);
+                }
+            }
+        }
+    }
+
+    server.certificates = paired(certificates, keys, configuration_prefix);
+    server.listens.sort();
+    server.logs.sort();
+
+    Ok(server)
 }
 
 fn virtual_host(
@@ -163,6 +235,7 @@ fn virtual_host(
         root: None,
         certificates: Vec::new(),
         access: Vec::new(),
+        logs: Vec::new(),
         authentication: None,
         trusted_proxies: Vec::new(),
         resolvers: Vec::new(),
@@ -203,6 +276,9 @@ fn virtual_host(
                 if let Some(rule) = access_rule(name, directive)? {
                     host.access.push(rule);
                 }
+                if let Some(log) = log_destination(name, directive)? {
+                    host.logs.push(log);
+                }
             }
         }
     }
@@ -210,6 +286,7 @@ fn virtual_host(
     host.certificates = paired(certificates, keys, configuration_prefix);
     host.authentication = authentication(realm, user_file)?;
     host.listens.sort();
+    host.logs.sort();
     host.server_names.sort();
     host.trusted_proxies.sort();
     host.resolvers.sort();
@@ -234,6 +311,7 @@ fn location(
         pass: None,
         root: None,
         access: Vec::new(),
+        logs: Vec::new(),
         authentication: None,
         locations: Vec::new(),
     };
@@ -271,10 +349,14 @@ fn location(
                 if let Some(rule) = access_rule(name, inside)? {
                     location.access.push(rule);
                 }
+                if let Some(log) = log_destination(name, inside)? {
+                    location.logs.push(log);
+                }
             }
         }
     }
 
+    location.logs.sort();
     location.authentication = authentication(realm, user_file)?;
     Ok(location)
 }
@@ -331,6 +413,38 @@ fn access_rule(name: &str, directive: &Directive) -> Result<Option<AccessRule>, 
     Ok(Some(AccessRule {
         permission,
         subject: address(directive)?,
+    }))
+}
+
+/// One `access_log` or `error_log`, when the directive is one.
+///
+/// The first argument says where — a path, `off`, or a `syslog:` destination — and the rest
+/// says how: an access log's format name and buffering, an error log's level. The rest is
+/// kept whole rather than taken apart, because the two directives spell it differently and
+/// neither spelling is state a reader compares field by field.
+fn log_destination(
+    name: &str,
+    directive: &Directive,
+) -> Result<Option<LogDestination>, CollectionError> {
+    let Some(kind) = LogKind::of(name) else {
+        return Ok(None);
+    };
+
+    let detail = directive
+        .arguments
+        .iter()
+        .skip(1)
+        .map(|argument| argument.as_str())
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    Ok(Some(LogDestination {
+        kind,
+        target: first(directive, "a destination")?,
+        detail: match detail.is_empty() {
+            true => None,
+            false => Some(NonEmptyText::new(detail, "log detail")?),
+        },
     }))
 }
 

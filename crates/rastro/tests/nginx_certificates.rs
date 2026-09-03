@@ -50,8 +50,9 @@ fn host(configuration: &str, name: &str) -> VirtualHost {
     .expect("the scratch tree is absolute")
     .read();
 
-    nginx_directives::virtual_hosts(&read.directives, &prefix)
+    nginx_directives::http_service(&read.directives, &prefix)
         .expect("this configuration holds no directive rastro cannot read")
+        .hosts
         .remove(0)
 }
 
@@ -179,8 +180,9 @@ fn a_file_that_is_not_a_certificate_is_refused_rather_than_believed() {
     .read();
 
     // Act
-    let hosts = nginx_directives::virtual_hosts(&read.directives, &prefix)
-        .expect("a bad certificate costs the certificate, not the facet");
+    let hosts = nginx_directives::http_service(&read.directives, &prefix)
+        .expect("a bad certificate costs the certificate, not the facet")
+        .hosts;
 
     // Assert
     let CertificateReading::Refused { reason } = &hosts[0].certificates[0].reading else {

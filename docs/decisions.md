@@ -2709,17 +2709,61 @@ overrides none of them still has five.
 read twice per run. A configuration edited between the two readings is claimed as
 it was and reported as it became, which is the narrower of the two wrong answers.
 
+## `http` and `stream` are separate services in the document
+
+A box can proxy a database port and serve a website, and the same port number in
+the two contexts means different things. They are separate nodes, so a server
+moved from one to the other — a change to what happens on every connection —
+reads as the change it is rather than as nothing at all.
+
+A `stream` server is a different shape rather than a poorer one: no
+`server_name`, no locations, because nginx has no request to name a host with.
+What it does share with a virtual host is where it listens, what it serves TLS
+with, who may reach it and where it logs, so those are the same types and compare
+directly. An `upstream` is spelled identically in both contexts, so it is one
+model in both.
+
+## Log destinations are state
+
+A request log redirected to `off`, to a syslog server, or to a path nothing
+rotates changes what a box can tell you about itself afterwards, and none of it
+touches a byte of served content — so nothing else in a fingerprint would say it
+moved. Each `access_log` and `error_log` is recorded where it is declared, with
+the destination as written (a path, `off`, or `syslog:…`) and the rest of the
+directive kept whole as detail: a format name for one, a level for the other.
+
+Sorted rather than kept in written order, because a block may declare several and
+nginx writes to all of them.
+
+## Inheritance is not resolved, and that is not a gap
+
+rastro reports the state of a server. What nginx would *make* of that state is a
+different question, answered by nginx.
+
+Resolving inheritance means reimplementing nginx's merge semantics from the
+outside, and there is no single rule to reimplement: simple values inherit unless
+redefined, array-valued directives like `add_header` and `allow`/`deny` are
+replaced wholesale the moment an inner block declares one, `auth_basic off` is a
+sentinel rather than a value, and every third-party module writes its own merge
+function. Getting any of it wrong means asserting an effective value the server is
+not using, which is the failure this tool exists to prevent — and getting it right
+would make rastro a configuration evaluator, which is not what it is.
+
+So each block's own declarations are recorded at the level that declares them,
+and the reader does the merging with nginx's rules rather than with rastro's
+imitation of them.
+
+The same reasoning rules out the syntax check. `nginx -t` would answer "is this
+configuration valid", which is nginx's question at reload time; a file the grammar
+cannot read is already recorded as a refusal, which is the part that is state.
+
 ## What this facet does not model
 
 Named because a silent gap is worse than a stated one.
 
-- **`stream {}`**, nginx's TCP and UDP proxying. Its servers have no names and no
-  locations, and modelling them as though they did would put a shape in the
-  document the configuration does not have. Its files are still digested.
-- **Inheritance.** A `root` in the `http` block is not copied into the hosts under
-  it. Asserting nginx's inheritance rules from the outside is a conclusion, not an
-  observation.
 - **Variables.** `proxy_pass http://$backend` is recorded as written. Resolving it
   would mean claiming to know a value that only exists per request.
+- **The `http` and `stream` blocks' own directives**, which are declared outside
+  any server and reach the document only through their file's digest.
 - **Directives outside the model**, which is most of them. Each is covered by its
   file's digest, so a change to one is visible even where its meaning is not.

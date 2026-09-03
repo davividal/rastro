@@ -2,7 +2,9 @@
 
 use rastro_collector::{NonEmptyText, Observation};
 
-use crate::collectors::nginx::model::{AccessRule, Authentication, Certificate, Listen, Location};
+use crate::collectors::nginx::model::{
+    AccessRule, Authentication, Certificate, Listen, Location, LogDestination,
+};
 use crate::collectors::nginx::value_objects::{AddressPattern, ServerName};
 
 /// A virtual host, with what it listens on, what it answers to, and who may reach it.
@@ -20,6 +22,7 @@ pub struct VirtualHost {
     pub root: Option<NonEmptyText>,
     pub certificates: Vec<Certificate>,
     pub access: Vec<AccessRule>,
+    pub logs: Vec<LogDestination>,
     pub authentication: Option<Authentication>,
     /// `set_real_ip_from`: whose `X-Forwarded-For` this host believes.
     pub trusted_proxies: Vec<AddressPattern>,
@@ -52,6 +55,10 @@ impl From<&VirtualHost> for Observation {
             (
                 "locations",
                 Observation::list(host.locations.iter().map(Observation::from)),
+            ),
+            (
+                "logs",
+                Observation::list(host.logs.iter().map(Observation::from)),
             ),
             (
                 "resolvers",
