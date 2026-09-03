@@ -2,7 +2,7 @@
 //!
 //! One `user:verifier` per line, `#` for a comment, blank lines ignored. What the verifier
 //! looks like depends on which tool wrote it, and
-//! [`PasswordScheme`](crate::collectors::nginx::value_objects::PasswordScheme) is where that
+//! [`PasswordScheme`] is where that
 //! is decided — including whether a digest of it may be recorded at all.
 
 use std::fs;
