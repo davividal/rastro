@@ -25,6 +25,7 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
+pub use crate::collectors::file_metadata::FileMode;
 pub use model::{
     FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, UnspellablePath,
     WalkPolicy, is_absence,
@@ -33,7 +34,6 @@ pub use source::{
     FileTree, MountedFilesystems, WalkBoundaries, as_document_integer, open_without_following,
     sha256_of_stream,
 };
-pub use crate::collectors::file_metadata::FileMode;
 pub use value_objects::{
     CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
     NanosecondsSinceEpoch,

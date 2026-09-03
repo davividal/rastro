@@ -1,5 +1,6 @@
 //! The host interfaces this facet reads.
 
+pub mod certificate_file;
 pub mod conf_syntax;
 mod configuration_files;
 mod file_glob;

@@ -4,8 +4,7 @@ use rastro_collector::{AbsolutePath, ByteSize, Observation, Xxh3Digest};
 
 use crate::collectors::file_metadata::FileMode;
 use crate::collectors::filesystem::value_objects::{
-    CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, FileKind,
-    NanosecondsSinceEpoch,
+    CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, FileKind, NanosecondsSinceEpoch,
 };
 
 /// What the walk recorded about one path.
