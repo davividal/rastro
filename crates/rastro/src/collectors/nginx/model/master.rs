@@ -18,10 +18,15 @@ use crate::collectors::nginx::value_objects::SecondsSinceEpoch;
 /// marks ` (deleted)` when the file has been replaced under the running process. That is how
 /// a package upgrade without a restart looks from the outside, and it is worth the one field
 /// it costs.
+///
+/// It is optional because reading that link needs privilege over the process. A run as
+/// somebody other than root finds the master by its title and cannot read its executable,
+/// and the honest answer there is a master whose binary is unknown — not, as an earlier
+/// version had it, no master at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Master {
     pub process_id: i64,
-    pub executable: NonEmptyText,
+    pub executable: Option<NonEmptyText>,
     pub started_at: SecondsSinceEpoch,
     /// The `-c` the master was started with, when it was given one.
     pub configuration_path: Option<NonEmptyText>,
@@ -42,7 +47,15 @@ impl From<&Master> for Observation {
                     .as_ref()
                     .map_or_else(Observation::null, |path| Observation::text(path.as_str())),
             ),
-            ("executable", Observation::text(master.executable.as_str())),
+            (
+                "executable",
+                master
+                    .executable
+                    .as_ref()
+                    .map_or_else(Observation::null, |executable| {
+                        Observation::text(executable.as_str())
+                    }),
+            ),
             (
                 "prefix",
                 master
