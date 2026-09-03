@@ -243,3 +243,37 @@ fn an_absolute_include_is_taken_as_it_stands() {
     // Assert
     assert_eq!(inside_http(&configuration), ["server"]);
 }
+
+#[test]
+fn an_include_resolves_against_the_configuration_s_own_directory() {
+    // Arrange: nginx keeps two bases and they are different directories on Debian, where the
+    // build sets `--prefix=/usr/share/nginx` and `--conf-path=/etc/nginx/nginx.conf`. An
+    // include resolves against the second. Measured on nginx 1.30, whose error log named
+    // `/etc/nginx/relative.htpasswd` for a relative user file while running under
+    // `-p /tmp/altprefix`.
+    let root = scratch_tree("nginx-two-bases", &["etc/conf.d", "prefix"]);
+    write(
+        &root,
+        "etc/nginx.conf",
+        "http {\n    include conf.d/*.conf;\n}\n",
+    );
+    write(&root, "etc/conf.d/site.conf", "server { listen 80; }\n");
+    // A decoy at the same relative path under the prefix, which nginx would not read.
+    write(
+        &root,
+        "prefix/conf.d/decoy.conf",
+        "server { listen 9999; }\n",
+    );
+
+    // Act
+    let configuration = ConfigurationFiles::at(
+        root.join("etc/nginx.conf"),
+        root.join("prefix"),
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
+
+    // Assert
+    assert_eq!(paths_of(&configuration), ["nginx.conf", "site.conf"]);
+}

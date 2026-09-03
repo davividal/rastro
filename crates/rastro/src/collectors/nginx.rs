@@ -161,9 +161,12 @@ impl Collector for NginxCollector {
         let reading = self.read()?;
 
         Ok(Observation::from(&WebServer {
+            // The hosts resolve their certificates and user files against the
+            // configuration's own directory, and the claimed trees resolve against the
+            // prefix, because that is how nginx resolves each.
             hosts: nginx_directives::virtual_hosts(
                 &reading.configuration.directives,
-                &reading.prefix,
+                Path::new(reading.configuration.configuration_prefix.as_str()),
             )?,
             upstreams: nginx_directives::upstreams(&reading.configuration.directives)?,
             binary: reading.binary,

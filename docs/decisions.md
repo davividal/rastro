@@ -2591,6 +2591,25 @@ second visit as a refusal and carries on. Cycle identity is the path resolved
 through symlinks, because `sites-enabled/x` and `sites-available/x` are one file
 under two names.
 
+## nginx has two bases for a relative path, and they differ on Debian
+
+Found by running the collector against a real Debian nginx rather than by reading
+about it. `prefix` is `-p`, or `--prefix` at build time, and a cache or a temp
+path resolves against it. `conf_prefix` is the **directory of the configuration
+file** — `-c`'s, or `--conf-path`'s — and an `include`, a certificate and a user
+file resolve against that. Debian builds with `--prefix=/usr/share/nginx` and
+`--conf-path=/etc/nginx/nginx.conf`, so the two are different directories.
+
+The first implementation used the prefix for everything, which on Debian looks
+for every relative include in a directory that holds none. Measured on nginx 1.30
+started as `-p /tmp/altprefix -c /etc/nginx/nginx.conf`: a request against a
+location with `auth_basic_user_file relative.htpasswd` logged
+`open() "/etc/nginx/relative.htpasswd" failed` — the configuration's directory,
+neither the prefix nor the `-p`.
+
+nginx derives `conf_prefix` by taking the directory of whichever configuration
+file it ended up with, so rastro does the same, and the facet records both bases.
+
 ## A file's digest is over its parsed form, not its bytes
 
 A comment added, a block re-indented or an argument requoted leaves nginx serving
