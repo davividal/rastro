@@ -134,7 +134,7 @@ impl Observation {
 
         let withheld = self.withheld_under(presentation, inherited);
         let content = match &self.content {
-            Content::Scalar(scalar) => Content::Scalar(stood_in_for(scalar, withheld)),
+            Content::Scalar(scalar) => Content::Scalar(shown(scalar, withheld).into_owned()),
             Content::Object(entries) => Content::Object(
                 entries
                     .iter()
@@ -207,13 +207,14 @@ impl From<&Xxh3Digest> for Observation {
 
 /// The scalar a presentation shows, which is the value itself or a digest standing in.
 ///
-/// Owned only where something was withheld: a document of half a million walked paths
-/// borrows every one of its scalars, and the handful of secrets on a box are the only
-/// allocations redaction costs.
-fn stood_in_for(scalar: &Scalar, withheld: bool) -> Scalar {
+/// Borrowed unless something was withheld, so a document of half a million walked paths
+/// still borrows every one of its scalars and the handful of secrets on a box are the only
+/// allocations redaction costs. The borrowed and the owned walk both call this, because two
+/// spellings of the substitution could disagree about what a document says.
+fn shown(scalar: &Scalar, withheld: bool) -> Cow<'_, Scalar> {
     match withheld.then(|| redaction::redacted(scalar)).flatten() {
-        Some(stand_in) => Scalar::Text(stand_in),
-        None => scalar.clone(),
+        Some(stand_in) => Cow::Owned(Scalar::Text(stand_in)),
+        None => Cow::Borrowed(scalar),
     }
 }
 
@@ -258,12 +259,7 @@ pub struct VisibleList<'a> {
 impl<'a> Visible<'a> {
     pub fn content(&self) -> VisibleContent<'a> {
         match &self.observation.content {
-            Content::Scalar(scalar) => VisibleContent::Scalar(
-                match self.withheld.then(|| redaction::redacted(scalar)).flatten() {
-                    Some(stand_in) => Cow::Owned(Scalar::Text(stand_in)),
-                    None => Cow::Borrowed(scalar),
-                },
-            ),
+            Content::Scalar(scalar) => VisibleContent::Scalar(shown(scalar, self.withheld)),
             Content::Object(entries) => VisibleContent::Object(VisibleObject {
                 entries,
                 presentation: self.presentation,
@@ -275,11 +271,6 @@ impl<'a> Visible<'a> {
                 withheld: self.withheld,
             }),
         }
-    }
-
-    /// What the collector judged, which a presentation never changes.
-    pub fn sensitivity(&self) -> Sensitivity {
-        self.observation.sensitivity
     }
 }
 

@@ -20,7 +20,9 @@ fn text_of(observation: &Observation) -> String {
 fn a_redaction_is_xxh3_over_the_lowercase_sha256_hex() {
     // Arrange: the two stages, and the order between them, are the contract. PostgreSQL's
     // role digest was already this recipe with the server computing the sha256, so a
-    // document taken before redaction existed still compares against one taken after.
+    // document taken before redaction existed still compares against one taken after. It
+    // also pins text as the *untagged* domain, which is what stops a later tidy-up giving
+    // it the type tag the other scalars carry.
     let secret = Scalar::Text("password=hunter2".to_owned());
 
     // Act
@@ -48,6 +50,31 @@ fn a_redaction_names_the_substitution_and_the_recipe() {
 
     // Assert
     assert!(stand_in.starts_with("redacted:sha256+xxh3:"));
+}
+
+#[test]
+fn a_scalar_that_changed_type_does_not_redact_to_the_same_stand_in() {
+    // Arrange: without a domain tag these digest identically, and a value that changed type
+    // would read as unchanged, which is the one thing the document exists to get right.
+    let boolean = Scalar::Boolean(true);
+    let text = Scalar::Text("true".to_owned());
+
+    // Act
+    let from_boolean = redacted(&boolean).expect("a boolean has material to withhold");
+    let from_text = redacted(&text).expect("a text value has material to withhold");
+
+    // Assert
+    assert_ne!(from_boolean, from_text);
+}
+
+#[test]
+fn an_integer_and_the_text_of_that_integer_redact_differently() {
+    // Act
+    let from_integer = redacted(&Scalar::Integer(1)).expect("an integer has material");
+    let from_text = redacted(&Scalar::Text("1".to_owned())).expect("a text value has material");
+
+    // Assert
+    assert_ne!(from_integer, from_text);
 }
 
 #[test]

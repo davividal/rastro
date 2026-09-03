@@ -52,11 +52,19 @@ pub fn redacted(scalar: &Scalar) -> Option<String> {
 ///
 /// A null withholds nothing, so digesting it would replace an honest absence with a
 /// stand-in for a value that was never there.
+///
+/// **The non-text variants carry their type, and text deliberately does not.** Without a
+/// tag the boolean `true` and the text `"true"` digest identically, so a value that changed
+/// type would show as unchanged in a diff, which is the one thing this document exists to
+/// get right. Text is the untagged domain because it has to be: PostgreSQL's role digest
+/// was taken over the verifier's own bytes, and a tag here would break every archived
+/// comparison. The residue is that a text spelling another domain's tag, `"boolean:true"`
+/// exactly, still collides — implausible where `"true"` was not.
 fn material_of(scalar: &Scalar) -> Option<String> {
     match scalar {
         Scalar::Null => None,
-        Scalar::Boolean(value) => Some(value.to_string()),
-        Scalar::Integer(value) => Some(value.to_string()),
+        Scalar::Boolean(value) => Some(format!("boolean:{value}")),
+        Scalar::Integer(value) => Some(format!("integer:{value}")),
         Scalar::Text(value) => Some(value.clone()),
     }
 }
