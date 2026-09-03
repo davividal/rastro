@@ -76,11 +76,21 @@ pub fn find_in(proc: &Path, binary: &Path) -> Result<Option<Master>, CollectionE
     // rather than whichever the directory happened to list first.
     masters.sort_by_key(|master| master.process_id);
 
-    masters
-        .into_iter()
-        .find(|master| runs(&master.path, binary))
-        .map(|master| describe(&master, &workers))
-        .transpose()
+    // A master whose executable can be read and matches is the answer. Failing that, one
+    // whose executable cannot be read at all still is: it called itself an nginx master, and
+    // an unprivileged run cannot do better than believe it.
+    let chosen = masters
+        .iter()
+        .find(|master| {
+            executable_of(&master.path).is_some_and(|executable| runs(&executable, binary))
+        })
+        .or_else(|| {
+            masters
+                .iter()
+                .find(|master| executable_of(&master.path).is_none())
+        });
+
+    chosen.map(|master| describe(master, &workers)).transpose()
 }
 
 /// One process that named itself an nginx master.
@@ -91,16 +101,13 @@ struct Found {
 }
 
 fn describe(master: &Found, workers: &[SecondsSinceEpoch]) -> Result<Master, CollectionError> {
-    let executable = fs::read_link(master.path.join("exe")).map_err(|error| {
-        CollectionError::new(format!(
-            "the running nginx is process {} and its executable could not be read: {error}",
-            master.process_id
-        ))
-    })?;
+    let executable = executable_of(&master.path)
+        .map(|executable| NonEmptyText::new(executable, "nginx executable"))
+        .transpose()?;
 
     Ok(Master {
         process_id: master.process_id,
-        executable: NonEmptyText::new(executable.to_string_lossy(), "nginx executable")?,
+        executable,
         started_at: started_at(&master.path)?,
         configuration_path: flag(&master.title, CONFIGURATION_FLAG)?,
         prefix: flag(&master.title, PREFIX_FLAG)?,
@@ -109,18 +116,24 @@ fn describe(master: &Found, workers: &[SecondsSinceEpoch]) -> Result<Master, Col
     })
 }
 
-/// Whether this process is running the binary the collector located.
+/// What `/proc/<pid>/exe` points at, when the reader is allowed to look.
+///
+/// Only root, or the process's own owner, may read that link. Everybody else gets
+/// `EACCES`, which is why this answers `None` rather than a failure: not knowing which
+/// binary a process runs is a fact about the reader, not about the host.
+fn executable_of(process: &Path) -> Option<String> {
+    fs::read_link(process.join("exe"))
+        .ok()
+        .map(|executable| executable.to_string_lossy().into_owned())
+}
+
+/// Whether an executable is the binary the collector located.
 ///
 /// The ` (deleted)` the kernel appends after a package upgrade is stripped before comparing,
 /// which is the difference between reporting an upgraded-but-not-restarted server and
 /// reporting no server at all. The marker itself is still recorded, because it is the state.
-fn runs(process: &Path, binary: &Path) -> bool {
-    let Ok(executable) = fs::read_link(process.join("exe")) else {
-        return false;
-    };
-
-    let executable = executable.to_string_lossy();
-    let replaced = executable.strip_suffix(DELETED).unwrap_or(&executable);
+fn runs(executable: &str, binary: &Path) -> bool {
+    let replaced = executable.strip_suffix(DELETED).unwrap_or(executable);
 
     Path::new(replaced) == binary
 }

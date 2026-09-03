@@ -61,7 +61,10 @@ fn the_master_is_the_process_whose_title_says_so() {
     // Assert
     assert_eq!(master.process_id, 4);
     assert_eq!(
-        master.executable.as_str(),
+        master
+            .executable
+            .expect("this fixture's exe link is readable")
+            .as_str(),
         proc.join("nginx").to_str().unwrap()
     );
     assert_eq!(master.started_at.as_i64(), started(&proc.join("4")));
@@ -155,7 +158,13 @@ fn an_upgraded_binary_is_still_the_running_nginx() {
         .expect("an upgraded nginx is still running");
 
     // Assert: the marker itself reaches the document, because it is the state.
-    assert_eq!(master.executable.as_str(), replaced);
+    assert_eq!(
+        master
+            .executable
+            .expect("the link is readable, it is its target that is gone")
+            .as_str(),
+        replaced
+    );
 }
 
 #[test]
@@ -169,4 +178,22 @@ fn an_nginx_that_is_not_running_is_not_invented() {
 
     // Assert
     assert_eq!(master, None);
+}
+
+#[test]
+fn a_master_whose_executable_cannot_be_read_is_still_a_master() {
+    // Arrange: only root, or the process's own owner, may read `/proc/<pid>/exe`. An
+    // unprivileged run gets EACCES, and reporting that as "nginx is not running" would be a
+    // confident lie about the host. The fixture stands in for it with no link at all.
+    let proc = proc_tree("unreadable", MASTER);
+    fs::remove_file(proc.join("4/exe")).expect("a writable scratch tree");
+
+    // Act
+    let master = master_process::find_in(&proc, &proc.join("nginx"))
+        .expect("the fixture is readable")
+        .expect("a process that calls itself an nginx master is one");
+
+    // Assert
+    assert_eq!(master.process_id, 4);
+    assert_eq!(master.executable, None);
 }
