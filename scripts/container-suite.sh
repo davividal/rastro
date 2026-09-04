@@ -30,6 +30,19 @@ WORKSPACE=$(pwd)
 distribution=$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}" )
 echo "==> $distribution, $(uname -srm), $(cargo --version)"
 
+# One test asks nginx which files it reads, so that rastro's own include resolution is
+# checked against the only authority on the question rather than against what somebody
+# wrote down. It runs `nginx -T` inside a prefix it owns; the shipped binary never runs
+# it at all, for the reason in docs/decisions.md.
+echo "==> installing nginx for the include-resolution check"
+if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache nginx >/dev/null
+else
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends nginx >/dev/null
+fi
+echo "==> $(nginx -v 2>&1)"
+
 echo "==> suite as root"
 cargo test --workspace --locked
 

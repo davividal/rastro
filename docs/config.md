@@ -29,6 +29,7 @@ exclude = ["mounts"]
 | `modules`      | state    | yes        |
 | `mounts`       | state    | yes        |
 | `network`      | state    | yes        |
+| `nginx`        | state    | yes        |
 | `packages`     | state    | yes        |
 | `postgresql`   | state    | yes        |
 | `processes`    | state    | yes        |
@@ -99,8 +100,8 @@ be read would widen the walk — which is the inclusion list this tool exists to
 unknown key is an error, so an attempt at one fails rather than quietly doing nothing.
 
 **The operator's rule beats a collector's claim.** A collector that owns a tree claims it from
-the host — `postgresql` seals each cluster's data directory, `packages` churns the package
-database. That is rastro's reckoning about a tree from the outside; the operator knows their
+the host — `postgresql` seals each cluster's data directory, `nginx` seals the caches and
+temp trees it writes into, `packages` churns the package database. That is rastro's reckoning about a tree from the outside; the operator knows their
 box, so naming the same tree in a config replaces the claim rather than conflicting with it.
 Naming one tree twice *in the config* is still an error: the operator meant one of them and
 rastro cannot know which.

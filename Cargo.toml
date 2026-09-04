@@ -50,6 +50,11 @@ thiserror = "2"
 # Not cryptographic, and it does not need to be: each digest is only ever compared with the
 # same subject's on another run.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# The certificates a virtual host serves, read from the files the configuration names.
+# Pure Rust like everything else here, so the musl cross-build from a macOS workstation
+# still links; MIT/Apache-2.0, both already allowed. What it buys over hand-rolled DER is
+# the part nobody should hand-roll in a binary that runs as root: the ASN.1.
+x509-parser = "0.18"
 
 [profile.release]
 strip = true
