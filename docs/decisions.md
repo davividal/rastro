@@ -2798,3 +2798,26 @@ Named because a silent gap is worse than a stated one.
   any server and reach the document only through their file's digest.
 - **Directives outside the model**, which is most of them. Each is covered by its
   file's digest, so a change to one is visible even where its meaning is not.
+
+## A dying process answers `ESRCH`, and the guard only knew `ENOENT`
+
+Not an nginx decision, but this work is what surfaced it: installing nginx into
+`scripts/container-suite.sh` for the conformance check above made the container's
+process table busy enough to lose a race that had always been there.
+
+The `processes` collector already knows that listing `/proc` and then reading each
+entry is inherently racy, and drops a process whose files have gone. Its guard
+tested [`ErrorKind::NotFound`](std::io::ErrorKind) alone, under a comment claiming
+that `ESRCH` arrives that way too. It does not: Rust leaves `ESRCH` uncategorised,
+so a process reaped *while* its `status` was being read fell through to the failure
+arm and turned the whole facet into an `error`. The determinism harness caught it,
+naming the facet and the two states — `could not read /proc/9214/status: No such
+process (os error 3)` against a clean second run.
+
+On a production box, which is where rastro runs, a process exiting mid-walk is not
+an event: it is Tuesday. The facet would have failed there far more often than in
+CI, for no reason at all.
+
+The guard now names both errnos, and the distinction is reachable from a test,
+because neither can be provoked from a fixture and the alternative is a rule
+nothing checks.
