@@ -10,8 +10,10 @@
 //! **This is the one place `-T` is allowed, and the collector still never runs it.** Testing
 //! a configuration creates every log file it names, which is why the shipped binary reads the
 //! files itself — see `docs/decisions.md`. Here the mutation is contained twice over: the run
-//! is given a prefix inside this test's own scratch tree, and `-e stderr` leaves it no error
-//! log to create.
+//! is given a prefix inside this test's own scratch tree, `-e stderr` leaves it no error log
+//! to create, and the fixture names its own `pid` file so the run touches nothing outside
+//! the tree. All three were measured, the last of them by the unprivileged half of the
+//! container suite failing on `/run/nginx.pid`.
 
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -37,6 +39,10 @@ const MARKER_END: char = ':';
 /// giving them directives would only add ways for the fixture to be rejected for reasons
 /// that are not about resolution.
 const ROOT: &str = "\
+# Its own pid file, inside the prefix this test hands nginx. Measured: a configuration
+# test opens the pid path, so without this line the unprivileged half of the container
+# suite fails on the compiled-in `/run/nginx.pid` rather than on anything rastro did.
+pid nginx.pid;
 events { }
 http {
     include conf.d/*.conf;
