@@ -190,3 +190,99 @@ fn a_file_that_is_not_a_certificate_is_refused_rather_than_believed() {
     };
     assert!(reason.as_str().contains("not PEM"), "{reason:?}");
 }
+
+/// A certificate carrying every kind of alternative name a web server's does: two forms of
+/// address, a hostname, an address for a human, and a URI.
+const MANY_NAMES: &str = "\
+-----BEGIN CERTIFICATE-----
+MIIDGzCCAgOgAwIBAgIJAP180G/YhMyOMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNV
+BAMMEG1hbnkuZXhhbXBsZS5vcmcwIBcNMjYwOTA0MTI1NjE0WhgPMjEyNjA4MTEx
+MjU2MTRaMBsxGTAXBgNVBAMMEG1hbnkuZXhhbXBsZS5vcmcwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQCnz7Q9yda67AgY+MhNoK1FuUfQwmsyi1TTtzZC
+1o8+KdOS2pMA20n5h9dryNflRKktqDPF92cHS+d0+GusUdSGFJbzTP6Pa6Wud/E6
+UlU6i5PH5Szm7Q8lZbAWQ0BuLTFJ6azhsqbA/gj+bN8UNq4CQ4hbzZtLBG2Lseld
+574JzBgPfgZn9B6Nfra7uV+RxX1+LVkb3qddYHonMQVlXqn0Sx4hLCCcA5W55XVL
+8s2fwIEHEFtY6TUNeFlEq+vFpyspckrOQbjyDnA0md8WtNsS1tfveQDTI05nDHNv
+RHd6JVhFLBRnpVSJFjz1w4wVNrZQ4XQt2My+IO33b4Ai122/AgMBAAGjYDBeMFwG
+A1UdEQRVMFOCEG1hbnkuZXhhbXBsZS5vcmeHBAoAAAeHECABDbgAAAAAAAAAAAAA
+AAGBD29wc0BleGFtcGxlLm9yZ4YWaHR0cHM6Ly9leGFtcGxlLm9yZy9jYTANBgkq
+hkiG9w0BAQsFAAOCAQEAXJFgGpjC+IxabvOrgwDVFCBSCU+WT8W2lqgRfJYJyVBD
+2VX3afSX1WEClgOpYDh8pLVAyeGmYipUOd4hnaC2QjHgNkdJjC6YD621QhoN6jzI
+i1XILxCyNQBpdC7xqcqUqjPtr0MBvdXUoNgwVbWnXPmztdmztHkN/wCuEW/Utl4U
+vT5Gfs6V3llrWTxr487CTBoKrB9E8DR8Z1Q4DNIRD5FL0kb9jLtwpuPaZEJXHeuY
+6jntKEy0Ax5obDpfdqkAY6SED98wh0REraV6Uv1mrNd1uXz0rnTYe0UrQlqAuAdk
+c1XQo6kp0MD/qSy2EIkir9u+323NCEv6cgEpPCMWfg==
+-----END CERTIFICATE-----
+";
+
+#[test]
+fn every_kind_of_alternative_name_reaches_the_document_as_itself() {
+    // Arrange: the parser's own rendering is a debugging form — `DNSName(example.org)`,
+    // and an address as raw bytes — which would put the extension's vocabulary in the
+    // document and make a name unusable as a name.
+    let prefix = scratch_tree("nginx-certificates-many-names", &[]);
+    write(
+        &prefix,
+        "nginx.conf",
+        "http { server { ssl_certificate many.crt; } }",
+    );
+    write(&prefix, "many.crt", MANY_NAMES);
+    let read = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
+    let hosts = nginx_directives::http_service(&read.directives, &prefix)
+        .expect("this configuration holds no directive rastro cannot read")
+        .hosts;
+
+    // Act
+    let CertificateReading::Parsed(details) = &hosts[0].certificates[0].reading else {
+        panic!("the certificate is a readable file");
+    };
+
+    // Assert: four bytes render as IPv4 and sixteen as IPv6, both in std's spelling.
+    assert_eq!(
+        details
+            .subject_alternative_names
+            .iter()
+            .map(|name| name.as_str())
+            .collect::<Vec<&str>>(),
+        [
+            "10.0.0.7",
+            "2001:db8::1",
+            "https://example.org/ca",
+            "many.example.org",
+            "ops@example.org"
+        ]
+    );
+    assert_eq!(details.serial.as_str(), "fd7cd06fd884cc8e");
+}
+
+#[test]
+fn a_key_that_cannot_be_described_says_so() {
+    // Arrange: an unprivileged run cannot stat a key under a directory it may not enter, and
+    // a key file recorded with no facts at all would read as one nobody has to worry about.
+    let host = host(
+        "http { server { ssl_certificate example.org.crt;\n\
+         ssl_certificate_key /nowhere-at-all/example.key; } }",
+        "unreadable-key",
+    );
+
+    // Act
+    let key = host.certificates[0]
+        .key_file
+        .as_ref()
+        .expect("the configuration names a key");
+
+    // Assert
+    let KeyReading::Refused { reason } = &key.reading else {
+        panic!("there is no such key file");
+    };
+    assert!(
+        reason.as_str().contains("could not be described"),
+        "{reason:?}"
+    );
+}

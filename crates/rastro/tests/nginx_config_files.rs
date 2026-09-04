@@ -299,3 +299,28 @@ fn a_file_included_twice_is_read_twice_and_recorded_once() {
     assert_eq!(paths_of(&configuration), ["nginx.conf", "site.conf"]);
     assert_eq!(inside_http(&configuration), ["server", "server"]);
 }
+
+#[test]
+fn a_bracket_expression_is_refused_rather_than_guessed_at() {
+    // Arrange: `glob(3)` understands character classes and rastro does not. Matching one
+    // wrongly would report a set of vhosts the server does not have, and nothing in the
+    // document would say so.
+    let prefix = tree("bracket");
+    write(
+        &prefix,
+        "nginx.conf",
+        "http { include conf.d/[a-m]*.conf; }\n",
+    );
+    write(&prefix, "conf.d/alpha.conf", "server { listen 80; }\n");
+
+    // Act
+    let configuration = read(&prefix);
+
+    // Assert
+    assert!(
+        refusal_of(&configuration.files[1]).contains("bracket expression"),
+        "{}",
+        refusal_of(&configuration.files[1])
+    );
+    assert_eq!(inside_http(&configuration), Vec::<&str>::new());
+}

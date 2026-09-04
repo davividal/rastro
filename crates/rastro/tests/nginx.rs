@@ -168,3 +168,25 @@ fn a_binary_names_the_trees_it_was_built_to_write_into() {
         ]
     );
 }
+
+#[test]
+fn a_host_without_nginx_claims_no_trees() {
+    // Arrange: claims are gathered before any collector runs, so this is asked of a box that
+    // may have no nginx at all. It must answer nothing rather than fail the run.
+    let collector = NginxCollector::reading(None);
+
+    // Act & Assert
+    assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn a_banner_that_names_no_version_is_refused() {
+    // Arrange: every nginx and every fork spells itself `name/version`. Something without
+    // the slash is not a banner rastro can read, and guessing at it would put a version in
+    // the document that the box does not have.
+    let refused = nginx_binary::parse("nginx version: nginx\n", Path::new("/usr/sbin/nginx"))
+        .expect_err("this banner carries no version");
+
+    // Assert
+    assert!(refused.to_string().contains('/'), "{refused}");
+}
