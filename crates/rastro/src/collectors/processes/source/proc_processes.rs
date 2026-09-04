@@ -153,15 +153,29 @@ impl ProcProcesses {
     fn read_optional(&self, path: &Path) -> Result<Option<String>, CollectionError> {
         match fs::read_to_string(path) {
             Ok(contents) => Ok(Some(contents)),
-            // Every errno a departed process produces. `ESRCH` reaches userspace as
-            // `NotFound` here, and reading a dead process's files gives `ENOENT`.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) if departed(&error) => Ok(None),
             Err(error) => Err(CollectionError::new(format!(
                 "could not read {}: {error}",
                 path.display()
             ))),
         }
     }
+}
+
+/// Whether an error means the process left rather than that the read failed.
+///
+/// **Two errnos, not one, and the second was found the hard way.** A directory that is gone
+/// answers `ENOENT`, which Rust maps to [`ErrorKind::NotFound`](std::io::ErrorKind::NotFound).
+/// A process that is *going* — listed, then reaped while its `status` was being read — answers
+/// `ESRCH`, which Rust leaves uncategorised, so a guard on `NotFound` alone lets it through.
+/// The comment here used to claim `ESRCH` arrived as `NotFound`; a container run with a busy
+/// process table failed the whole facet with `could not read /proc/9214/status: No such
+/// process (os error 3)` and settled it.
+///
+/// Public so the distinction is reachable from a test. Neither errno can be provoked from a
+/// fixture, and the alternative is a rule nothing checks.
+pub fn departed(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
 }
 
 impl Default for ProcProcesses {
