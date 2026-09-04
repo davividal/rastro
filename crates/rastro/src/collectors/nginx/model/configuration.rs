@@ -16,6 +16,10 @@ use crate::collectors::nginx::value_objects::{ConfigurationSource, SecondsSinceE
 /// The reading order is kept rather than sorted, for the reason the mount table keeps the
 /// kernel's: order is state here. Two files that both define a `default_server` are resolved
 /// by which was read first, so a sort would discard the fact that decides the outcome.
+///
+/// A file included from two places appears once, at the point it was first read, which is
+/// what `nginx -T` reports of its own dump. `directives` still holds its contents twice,
+/// because nginx applies them twice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Configuration {
     /// What a cache or a temp path is relative to: `-p`, or `--prefix` at build time.

@@ -2538,21 +2538,30 @@ above claims `nginx -T` and `sshd -T` do not change the host. It is right about
 `sshd -T` and wrong about `nginx -T`, and the correction is here rather than in
 an edit to that entry.
 
-**Cost, accepted knowingly.** rastro's include resolution can in principle
-disagree with nginx's, and nothing executable stands behind the claim that it does
-not. Each rule was measured against a running nginx once, the measurements are in
-the entries below, and fixture tests pin what rastro does with them — but a test
-that asserts a file list only re-encodes the belief it was written from, so it
-cannot catch a belief that was wrong to begin with.
+**Cost, and what pays it down.** rastro's include resolution can in principle
+disagree with nginx's. Fixture tests pin what rastro does with each rule, but a
+test whose expected file list was written by the same person who wrote the resolver
+only re-encodes that person's belief, and cannot catch a belief that was wrong to
+begin with.
 
-**A conformance check against `nginx -T` was considered and rejected.** Only nginx
-knows which files nginx reads, so `-T` is the one non-circular oracle, and using it
-would mean putting the mutating tool back into the tooling — in the test suite and
-in the documented container recipe — to guard rules that have not moved in a
-decade. What bounds the risk instead is already in the facet: the resolved file
-list is recorded, so a divergence shows up to whoever reads a fingerprint from a
-real box rather than staying silent. That is how the `conf_prefix` mistake below
-was actually found.
+**So one test asks nginx.** `nginx -T` prints a `# configuration file <path>:`
+marker for every file it read, which makes it the one non-circular oracle for the
+question, and `tests/nginx_conformance.rs` compares that list against rastro's over
+a tree holding every awkward case at once: a relative glob, an absolute include, a
+nested include, a symlinked one, a glob matching nothing, and a file pulled in from
+two places.
+
+**The boundary is the point, and it holds.** The shipped binary never runs `-T`,
+because testing a configuration creates every log file it names. The test may,
+because there the mutation is contained twice over: the run is given a prefix inside
+the test's own scratch tree, and `-e stderr` leaves it no error log to create. It
+needs no privilege, so it runs in both halves of the container suite. nginx is
+installed for it in `scripts/container-suite.sh` and in the CI check job, and
+nowhere else.
+
+**It earned its place on the first run**, by catching a divergence no fixture test
+would have: a file included from two places was being recorded twice, where nginx's
+own dump lists it once. See the entry on that below.
 
 ## The grammar is measured rather than remembered
 
@@ -2618,6 +2627,19 @@ neither the prefix nor the `-p`.
 
 nginx derives `conf_prefix` by taking the directory of whichever configuration
 file it ended up with, so rastro does the same, and the facet records both bases.
+
+## A file included twice is read twice and recorded once
+
+Found by the conformance test above on its first run, which is the kind of thing it
+exists for: rastro listed a twice-included file twice, and `nginx -T` lists it once.
+
+Both halves were then measured on nginx 1.26. The dump prints one marker for the
+file, and including a `server` block twice produces the `conflicting server name`
+warning — which only two server blocks can produce. So nginx reads the file twice
+and *reports* it once, and rastro now does the same: `directives` holds its contents
+twice, because that is what the server is running, and `files` names it once,
+because that list answers which files make up the configuration and a second
+identical entry with an identical digest answers nothing.
 
 ## A file's digest is over its parsed form, not its bytes
 
