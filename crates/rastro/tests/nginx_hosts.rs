@@ -371,3 +371,25 @@ fn a_working_tree_is_found_wherever_it_is_declared() {
     expected.sort();
     assert_eq!(trees, expected);
 }
+
+#[test]
+fn a_directive_given_no_arguments_is_a_failure_that_names_it() {
+    // Arrange: `listen;` is not a configuration nginx would start on, and reading it as a
+    // host listening nowhere would be worse than refusing it.
+    let prefix = scratch_tree("nginx-hosts-no-arguments", &[]);
+    write(&prefix, "nginx.conf", "http { server { listen; } }");
+    let configuration = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
+
+    // Act
+    let refused = nginx_directives::http_service(&configuration.directives, &prefix)
+        .expect_err("a listen with no address is not a listen");
+
+    // Assert
+    assert!(refused.to_string().contains("listen"), "{refused}");
+}

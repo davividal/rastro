@@ -206,3 +206,32 @@ fn a_backslash_hides_a_delimiter_from_the_grammar() {
     // Assert
     assert_eq!(arguments_of(&directive), [r"/srv/a\;b"]);
 }
+
+#[test]
+fn a_semicolon_that_terminates_nothing_is_a_failure() {
+    // Act
+    let refused = refusal("http { }\n;\n");
+
+    // Assert
+    assert!(refused.contains("line 2"), "{refused}");
+}
+
+#[test]
+fn a_block_that_no_directive_names_is_a_failure() {
+    // Act
+    let refused = refusal("http {\n    { listen 80; }\n}\n");
+
+    // Assert
+    assert!(refused.contains("line 2"), "{refused}");
+}
+
+#[test]
+fn a_trailing_backslash_ends_the_file_rather_than_the_reader() {
+    // Arrange: a backslash with nothing after it has nothing to escape. The failure belongs
+    // to whoever was waiting for a `;`, not to the escape itself, and neither may loop.
+    // Act
+    let refused = refusal("root /srv/a\\");
+
+    // Assert
+    assert!(refused.contains("root"), "{refused}");
+}
