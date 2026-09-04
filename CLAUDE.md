@@ -43,8 +43,19 @@ that depended on the caller's umask, and an unreadable mount point that failed a
 The container recipe:
 
 ```sh
+scripts/test-in-container.sh              # both images, root and unprivileged
+scripts/test-in-container.sh rust:latest  # one of them
+```
+
+That script installs nginx before running the suite, because one test asks nginx which
+files it reads and compares the answer with rastro's own include resolution. Running
+`cargo test` in a bare image instead fails that one test, loudly and by design: a check
+that quietly skips itself is how three earlier defects hid.
+
+```sh
 podman run --rm -v "$PWD":/w -w /w -e CARGO_TARGET_DIR=/tmp/target \
-  -v rastro-cargo-registry:/usr/local/cargo/registry rust:latest sh -c 'cargo test'
+  -v rastro-cargo-registry:/usr/local/cargo/registry rust:latest \
+  sh -c 'apt-get update -qq && apt-get install -y -qq nginx && cargo test'
 ```
 
 `CARGO_TARGET_DIR` is not optional. `CARGO_TARGET_TMPDIR` is derived from it, and the

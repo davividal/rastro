@@ -159,8 +159,7 @@ impl Reading<'_> {
             }
         };
 
-        self.files
-            .push(ConfigurationFile::parsed(recorded(path), &directives));
+        self.record(ConfigurationFile::parsed(recorded(path), &directives));
         self.note_change(path);
 
         self.open.push(identity);
@@ -213,6 +212,23 @@ impl Reading<'_> {
         found
     }
 
+    /// Records a file the first time it is read, and not again.
+    ///
+    /// **A file included from two places is read twice and recorded once**, which is what
+    /// `nginx -T` does with its own dump and is the right answer for the same reason: this
+    /// list says which files make up the configuration, and a second identical entry with an
+    /// identical digest answers nothing a reader asked. The directives are still expanded
+    /// both times, because nginx applies them both times — measured, on nginx 1.26: a
+    /// `server` block in a file included twice produces the `conflicting server name`
+    /// warning, which only two server blocks can produce.
+    fn record(&mut self, file: ConfigurationFile) {
+        if self.files.iter().any(|recorded| recorded.path == file.path) {
+            return;
+        }
+
+        self.files.push(file);
+    }
+
     /// Remembers the file's mtime if it is the newest one read so far.
     ///
     /// A file that cannot be stat'ed contributes nothing rather than failing the read: it was
@@ -228,8 +244,7 @@ impl Reading<'_> {
     fn refuse(&mut self, path: &Path, reason: String) {
         let reason = NonEmptyText::new(reason, "configuration file refusal")
             .expect("every refusal above says something");
-        self.files
-            .push(ConfigurationFile::refused(recorded(path), reason));
+        self.record(ConfigurationFile::refused(recorded(path), reason));
     }
 }
 

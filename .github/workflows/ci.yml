@@ -41,6 +41,12 @@ jobs:
           fallback: none
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # One test asks nginx which files it reads, so rastro's include resolution is checked
+      # against nginx rather than against what somebody wrote down. It runs `nginx -T` in a
+      # prefix it owns and needs no privilege; the shipped binary never runs it, which is
+      # why this is the only place nginx is installed.
+      - name: Install nginx, for the include-resolution check
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nginx
       # `--no-fail-fast` because nextest stops at the first failure by default, and a CI log
       # that reports one failure when there are four sends somebody round the loop three more
       # times. libtest ran everything, so this keeps that.

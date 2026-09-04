@@ -277,3 +277,25 @@ fn an_include_resolves_against_the_configuration_s_own_directory() {
     // Assert
     assert_eq!(paths_of(&configuration), ["nginx.conf", "site.conf"]);
 }
+
+#[test]
+fn a_file_included_twice_is_read_twice_and_recorded_once() {
+    // Arrange: measured against nginx 1.26. Its `-T` dump prints one marker for such a file,
+    // and the `conflicting server name` warning it emits proves it built two server blocks
+    // from it, so the two halves of this assertion are nginx's own behaviour rather than a
+    // convenience.
+    let prefix = tree("included-twice");
+    write(
+        &prefix,
+        "nginx.conf",
+        "http {\n    include conf.d/site.conf;\n    include conf.d/site.conf;\n}\n",
+    );
+    write(&prefix, "conf.d/site.conf", "server { listen 80; }\n");
+
+    // Act
+    let configuration = read(&prefix);
+
+    // Assert
+    assert_eq!(paths_of(&configuration), ["nginx.conf", "site.conf"]);
+    assert_eq!(inside_http(&configuration), ["server", "server"]);
+}
