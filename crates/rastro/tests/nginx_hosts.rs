@@ -13,6 +13,7 @@ use rastro::collectors::nginx::value_objects::{
     ConfigurationSource, Endpoint, PassKind, PasswordScheme, Permission,
 };
 use rastro::collectors::nginx::{Upstream, VirtualHost, nginx_directives};
+use rastro_collector::Xxh3Digest;
 use support::fs_tree::{scratch_tree, write};
 
 const CONFIGURATION: &str = r#"
@@ -245,6 +246,16 @@ fn a_wall_names_its_users_and_never_their_passwords() {
         "metrics"
     );
     assert_eq!(wall.refusal, None);
+
+    // The recipe, pinned against a vector computed outside this workspace:
+    // `sha256("$apr1$Ur6Nn2Cd$0dJH0R3xC5xM0Qb2eYyOM.")`, then XXH3 over its lowercase hex.
+    // That is what the postgresql facet records for a role password and what the renderer's
+    // redaction produces, so one document holds one function of "a withheld password".
+    const ALICE_SHA256: &str = "78b42ec118b79f582eab6e88e123081a32d7229f30eece94bfe4dcd98d1afaf4";
+    assert_eq!(
+        wall.users[0].digest.expect("a salted verifier is digested"),
+        Xxh3Digest::of(ALICE_SHA256.as_bytes())
+    );
 
     let users: Vec<(&str, PasswordScheme, bool)> = wall
         .users

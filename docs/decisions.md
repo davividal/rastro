@@ -2694,7 +2694,12 @@ is recorded, because it is the state.
 
 ## A basic-auth password is digested only where its verifier is salted
 
-The same rule as the postgresql facet's role passwords, and the same reason.
+The same rule as the postgresql facet's role passwords, the same reason, and — since
+the branch was rebased onto the redaction work — the same recipe: XXH3 over the
+lowercase sha256 hex of the verifier. postgresql digests a role's password that way
+with the server computing the sha256, and the renderer's own redaction takes the
+same two stages in the same order, so one document holds one function of "a
+withheld password" rather than three.
 `$apr1$`, `$2y$` and `$5$`/`$6$` carry a random salt, so a digest of one says only
 that the password changed. `{SHA}` is an unsalted SHA-1 of the password itself:
 anybody holding the document could hash a guess, spell it the way the file does,
