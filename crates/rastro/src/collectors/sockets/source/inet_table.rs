@@ -17,7 +17,7 @@ pub enum InetTable {
 
 impl InetTable {
     /// Every table rastro reads, with the file each lives in.
-    pub const ALL: [(Self, &'static str); 4] = [
+    pub const ALL: [(Self, &str); 4] = [
         (Self::Tcp, "tcp"),
         (Self::Tcp6, "tcp6"),
         (Self::Udp, "udp"),
