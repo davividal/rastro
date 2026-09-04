@@ -27,6 +27,10 @@ const PROC: &str = "/proc";
 const MASTER_TITLE: &str = "nginx: master process";
 const WORKER_TITLE: &str = "nginx: worker process";
 
+/// Where a process's parent is written, and the field that carries it.
+const STATUS: &str = "status";
+const PARENT_FIELD: &str = "PPid:";
+
 /// The flags whose values decide which configuration the running server read.
 const CONFIGURATION_FLAG: &str = "-c";
 const PREFIX_FLAG: &str = "-p";
@@ -66,7 +70,10 @@ pub fn find_in(proc: &Path, binary: &Path) -> Result<Option<Master>, CollectionE
             }),
             false => {
                 if title.starts_with(WORKER_TITLE) {
-                    workers.push(started_at(&path)?);
+                    workers.push(Worker {
+                        parent: parent_of(&path),
+                        started_at: started_at(&path),
+                    });
                 }
             }
         }
@@ -90,7 +97,19 @@ pub fn find_in(proc: &Path, binary: &Path) -> Result<Option<Master>, CollectionE
                 .find(|master| executable_of(&master.path).is_none())
         });
 
-    chosen.map(|master| describe(master, &workers)).transpose()
+    match chosen {
+        Some(master) => describe(master, &workers),
+        None => Ok(None),
+    }
+}
+
+/// One process that named itself an nginx worker.
+///
+/// Both fields are optional because both are read from a process that may leave between the
+/// listing and the read. A worker rastro cannot place is not counted rather than guessed at.
+struct Worker {
+    parent: Option<i64>,
+    started_at: Option<SecondsSinceEpoch>,
 }
 
 /// One process that named itself an nginx master.
@@ -100,20 +119,50 @@ struct Found {
     title: String,
 }
 
-fn describe(master: &Found, workers: &[SecondsSinceEpoch]) -> Result<Master, CollectionError> {
+/// The chosen master, with the workers that belong to *it*.
+///
+/// **Workers are matched by parent, not by title.** A box running two nginx instances has
+/// two sets of workers, and counting all of them against one master would make its worker
+/// count wrong and its oldest-worker time — the thing that dates the last reload — belong to
+/// somebody else's reload. A binary upgrade produces the same shape for a while, with the
+/// old master's workers still running beside the new one's.
+fn describe(master: &Found, workers: &[Worker]) -> Result<Option<Master>, CollectionError> {
+    let Some(started_at) = started_at(&master.path) else {
+        // The master left between the listing and this read, so there is no master to
+        // describe. That is the same race the workers below are skipped for, and the same
+        // one the `processes` collector treats as a departure rather than a failure.
+        return Ok(None);
+    };
+
     let executable = executable_of(&master.path)
         .map(|executable| NonEmptyText::new(executable, "nginx executable"))
         .transpose()?;
 
-    Ok(Master {
+    let ours: Vec<SecondsSinceEpoch> = workers
+        .iter()
+        .filter(|worker| worker.parent == Some(master.process_id))
+        .filter_map(|worker| worker.started_at)
+        .collect();
+
+    Ok(Some(Master {
         process_id: master.process_id,
         executable,
-        started_at: started_at(&master.path)?,
+        started_at,
         configuration_path: flag(&master.title, CONFIGURATION_FLAG)?,
         prefix: flag(&master.title, PREFIX_FLAG)?,
-        worker_count: workers.len() as i64,
-        workers_started_at: workers.iter().min().copied(),
-    })
+        worker_count: ours.len() as i64,
+        workers_started_at: ours.iter().min().copied(),
+    }))
+}
+
+/// The process that started this one, from the `PPid:` line of its `status`.
+fn parent_of(process: &Path) -> Option<i64> {
+    let status = fs::read_to_string(process.join(STATUS)).ok()?;
+
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix(PARENT_FIELD))
+        .and_then(|parent| parent.trim().parse().ok())
 }
 
 /// What `/proc/<pid>/exe` points at, when the reader is allowed to look.
@@ -150,15 +199,14 @@ fn title_of(process: &Path) -> Result<String, std::io::Error> {
 }
 
 /// When the process began, from the mtime of its own directory.
-fn started_at(process: &Path) -> Result<SecondsSinceEpoch, CollectionError> {
-    let metadata = fs::metadata(process).map_err(|error| {
-        CollectionError::new(format!(
-            "{} could not be read, so nginx's start time is unknown: {error}",
-            process.display()
-        ))
-    })?;
-
-    Ok(SecondsSinceEpoch::new(metadata.mtime()))
+///
+/// `None` where the directory has gone, which during a reload is ordinary: a worker listed a
+/// moment ago is replaced while the scan is still running. Failing the whole facet for that
+/// would be the same mistake the `processes` collector carried until this branch fixed it.
+fn started_at(process: &Path) -> Option<SecondsSinceEpoch> {
+    fs::metadata(process)
+        .ok()
+        .map(|metadata| SecondsSinceEpoch::new(metadata.mtime()))
 }
 
 /// The value of a flag in the process title.

@@ -5,6 +5,7 @@
 //! names and an IP address, because the three appear together on a real server certificate
 //! and the extension spells the address as bytes rather than as text.
 
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
 mod support;
@@ -285,4 +286,44 @@ fn a_key_that_cannot_be_described_says_so() {
         reason.as_str().contains("could not be described"),
         "{reason:?}"
     );
+}
+
+#[test]
+fn a_key_reached_through_a_symlink_is_described_by_its_target() {
+    // Arrange: the common shape. A Let's Encrypt deployment points `ssl_certificate_key` at
+    // `live/<host>/privkey.pem`, itself a link into `archive/`, and a symlink's own mode is
+    // 0777 on Linux — so describing the link would report every such key as world-readable
+    // and every genuinely world-readable one as fine.
+    let prefix = scratch_tree("nginx-certificates-symlinked-key", &[]);
+    write(
+        &prefix,
+        "nginx.conf",
+        "http { server { ssl_certificate example.org.crt; ssl_certificate_key live.key; } }",
+    );
+    write(&prefix, "example.org.crt", CERTIFICATE);
+    write(&prefix, "archive.key", KEY);
+    symlink(prefix.join("archive.key"), prefix.join("live.key")).expect("a writable tree");
+    let read = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
+    let hosts = nginx_directives::http_service(&read.directives, &prefix)
+        .expect("this configuration holds no directive rastro cannot read")
+        .hosts;
+
+    // Act
+    let key = hosts[0].certificates[0]
+        .key_file
+        .as_ref()
+        .expect("the configuration names a key");
+
+    // Assert: the target's mode, and the path the configuration named.
+    let KeyReading::Described { mode, .. } = &key.reading else {
+        panic!("the target is there to be described");
+    };
+    assert_eq!(mode.as_str(), "0640");
+    assert!(key.path.as_str().ends_with("/live.key"));
 }

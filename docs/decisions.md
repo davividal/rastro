@@ -2673,6 +2673,19 @@ move across a `nginx -s reload` — while every worker is replaced. So the *olde
 worker's* start time dates the last reload, and that is what the facet records
 beside `configuration.newest_modified`.
 
+**Workers are matched to their master by parent, not by title.** A box running two nginx
+instances has two sets of workers, and a binary upgrade briefly has the old master's
+running beside the new one's. Counting every process titled `nginx: worker process`
+against one master would make its worker count wrong and its oldest-worker time — the
+thing that dates the reload — belong to somebody else's reload. The parent comes from
+the `PPid:` line of each worker's `status`.
+
+**A process that leaves mid-scan is skipped, not fatal.** During a reload every worker is
+replaced, so one listed a moment ago can be gone before its start time is read. Failing
+the facet for that would repeat, in a new collector, the mistake this same branch fixes in
+the `processes` one. A master that goes the same way is reported as no master, which is
+what it is.
+
 **A start time from a directory's mtime.** `/proc/<pid>`'s mtime is the moment the
 process began, measured against a freshly started master. Reading it that way
 needs no clock-tick arithmetic, no `btime` and no `sysconf` — which matters,
@@ -2720,6 +2733,15 @@ be a way to confirm a guessed key, and there is nothing a fingerprint could do
 with it worth that. What is recorded is the mode and the owner, which is what
 catches a key that became group-readable.
 
+**Through the symlink, and that is not the usual call.** A key is very often reached
+by one — a Let's Encrypt deployment points `ssl_certificate_key` at
+`live/<host>/privkey.pem`, itself a link into `archive/` — and a symlink's own mode
+is `0777` on Linux. Describing the link would report every such key as world-readable
+and every genuinely world-readable one as fine, which is worse than not recording the
+mode at all. nginx opens the target, so the target answers the question. The link
+itself is the `filesystem` facet's business, and the path recorded here is still the
+one the configuration named.
+
 **The serial is the number, not the bytes.** DER pads a serial whose high bit is
 set with a leading zero byte, so the raw form and the one `openssl x509 -serial`
 prints differ for half of all certificates. The number is the same either way.
@@ -2737,9 +2759,15 @@ PostgreSQL cluster's data directory: the root entry stays, nothing under it is
 walked, and the `invocation` facet names this facet as the reason.
 
 Both halves are claimed — the trees the configuration names, found by the
-`_cache_path`/`_temp_path` suffix rather than by a list of directive names, and
-the `--http-*-temp-path` values the binary was built with, since a box that
-overrides none of them still has five.
+`_cache_path`/`_temp_path` suffix rather than by a list of directive names, and the
+five temp trees of the binary itself.
+
+**All five of those, always, and resolved against the prefix.** A build that named
+none of them on its configure line still writes into all five, at nginx's own
+defaults under the prefix, so reading only the arguments would leave them unclaimed
+on exactly the hosts nobody packaged. A configure argument may also be relative, and
+a relative path is one `WalkedTree` refuses — it would have been dropped from the
+claims without a word, and the walk would have hashed a cache.
 
 **Cost:** claims are gathered before any collector runs, so the configuration is
 read twice per run. A configuration edited between the two readings is claimed as

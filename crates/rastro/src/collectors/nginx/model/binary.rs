@@ -1,5 +1,7 @@
 //! The nginx that would serve, and what it was built to read.
 
+use std::path::Path;
+
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
 use crate::collectors::nginx::value_objects::{BuildVersion, ConfigureArgument};
@@ -14,11 +16,40 @@ const DEFAULT_CONFIGURATION: &str = "conf/nginx.conf";
 
 const PREFIX_ARGUMENT: &str = "--prefix=";
 
-/// What separates a configure argument's name from its value.
-const SETTING: char = '=';
+/// One tree nginx writes into: the configure argument that names it, and what nginx uses
+/// when the build never named it.
+///
+/// The fallbacks are nginx's own compiled defaults, relative to the prefix. They are here
+/// because a build from source with no switches still writes into all five, and a facet that
+/// only knew the ones a distribution spells out would leave them unclaimed on exactly the
+/// hosts nobody packaged.
+struct TemporaryTree {
+    argument: &'static str,
+    fallback: &'static str,
+}
 
-/// The suffix of every configure argument that names a tree nginx writes into.
-const TEMP_PATH: &str = "-temp-path";
+const TEMPORARY_TREES: [TemporaryTree; 5] = [
+    TemporaryTree {
+        argument: "--http-client-body-temp-path=",
+        fallback: "client_body_temp",
+    },
+    TemporaryTree {
+        argument: "--http-proxy-temp-path=",
+        fallback: "proxy_temp",
+    },
+    TemporaryTree {
+        argument: "--http-fastcgi-temp-path=",
+        fallback: "fastcgi_temp",
+    },
+    TemporaryTree {
+        argument: "--http-uwsgi-temp-path=",
+        fallback: "uwsgi_temp",
+    },
+    TemporaryTree {
+        argument: "--http-scgi-temp-path=",
+        fallback: "scgi_temp",
+    },
+];
 const CONFIGURATION_ARGUMENT: &str = "--conf-path=";
 
 /// The binary, as it describes itself.
@@ -53,17 +84,16 @@ impl Binary {
     /// The working trees this binary was *built* to use, which are what it uses unless a
     /// directive says otherwise.
     ///
-    /// `--http-client-body-temp-path=/var/cache/nginx/client_temp` and its four siblings.
-    /// They belong beside the ones the configuration names: a box that overrides none of
-    /// them still has five trees nginx writes into, and nothing in the configuration would
-    /// say so.
+    /// All five, always: a build that named none of them still writes into all of them, at
+    /// nginx's own defaults under the prefix. Each is resolved against that prefix, because
+    /// a configure argument may be relative and a relative tree is one the walk cannot be
+    /// told to step back from.
     pub fn working_trees(&self) -> Vec<String> {
-        let mut found: Vec<String> = self
-            .configure_arguments
+        let prefix = self.prefix();
+        let mut found: Vec<String> = TEMPORARY_TREES
             .iter()
-            .filter_map(|argument| argument.as_str().split_once(SETTING))
-            .filter(|(name, _)| name.ends_with(TEMP_PATH))
-            .map(|(_, path)| path.to_owned())
+            .map(|tree| self.argument(tree.argument).unwrap_or(tree.fallback))
+            .map(|path| under(&prefix, path))
             .collect();
 
         found.sort();
@@ -76,6 +106,11 @@ impl Binary {
             .iter()
             .find_map(|argument| argument.as_str().strip_prefix(name))
     }
+}
+
+/// A path as nginx would use it: relative ones hang off the prefix.
+fn under(prefix: &str, path: &str) -> String {
+    Path::new(prefix).join(path).to_string_lossy().into_owned()
 }
 
 impl From<&Binary> for Observation {

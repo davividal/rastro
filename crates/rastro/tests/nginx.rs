@@ -158,14 +158,58 @@ fn a_binary_names_the_trees_it_was_built_to_write_into() {
     // Act
     let trees = binary(TEMP_PATHS).working_trees();
 
-    // Assert: sorted, and nothing that is not a tree.
+    // Assert: the three this build names, and the two it does not — nginx writes into all
+    // five, and the two it was never told about sit at its own defaults under the prefix.
     assert_eq!(
         trees,
         [
+            "/etc/nginx/scgi_temp",
+            "/etc/nginx/uwsgi_temp",
             "/var/cache/nginx/client_temp",
             "/var/cache/nginx/fastcgi_temp",
             "/var/cache/nginx/proxy_temp",
         ]
+    );
+}
+
+#[test]
+fn a_build_that_names_no_temp_path_still_claims_the_five_nginx_uses() {
+    // Arrange: a build from source with no switches. It writes into all five trees and says
+    // so nowhere, so a facet that only read the configure line would leave them unclaimed
+    // and the walk would hash them.
+    // Act
+    let trees = binary(BARE_BANNER).working_trees();
+
+    // Assert: nginx's own defaults, under nginx's own default prefix.
+    assert_eq!(
+        trees,
+        [
+            "/usr/local/nginx/client_body_temp",
+            "/usr/local/nginx/fastcgi_temp",
+            "/usr/local/nginx/proxy_temp",
+            "/usr/local/nginx/scgi_temp",
+            "/usr/local/nginx/uwsgi_temp",
+        ]
+    );
+}
+
+#[test]
+fn a_relative_temp_path_is_claimed_where_nginx_would_put_it() {
+    // Arrange: measured shape — a configure argument may be relative, and a relative tree
+    // is one `WalkedTree` refuses, so it would have been dropped from the claims without a
+    // word and the walk would have hashed a cache.
+    const RELATIVE: &str = "\
+nginx version: nginx/1.30.4
+configure arguments: --prefix=/srv/nginx --http-proxy-temp-path=spool/proxy
+";
+
+    // Act
+    let trees = binary(RELATIVE).working_trees();
+
+    // Assert
+    assert!(
+        trees.contains(&"/srv/nginx/spool/proxy".to_owned()),
+        "{trees:?}"
     );
 }
 

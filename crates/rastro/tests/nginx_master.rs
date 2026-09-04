@@ -21,7 +21,7 @@ const MASTER: &str = "nginx: master process /usr/sbin/nginx\0-c\0/etc/nginx/othe
 const WORKER: &str = "nginx: worker process      \0";
 
 fn proc_tree(name: &str, master_title: &str) -> PathBuf {
-    let root = scratch_tree(&format!("nginx-master-{name}"), &["4", "5", "6", "7"]);
+    let root = scratch_tree(&format!("nginx-master-{name}"), &["4", "5", "6", "7", "8"]);
     let binary = root.join("nginx");
     write(&root, "nginx", "#!/bin/false\n");
 
@@ -32,8 +32,21 @@ fn proc_tree(name: &str, master_title: &str) -> PathBuf {
     for worker in ["5", "6"] {
         write(&root, &format!("{worker}/comm"), "nginx\n");
         write(&root, &format!("{worker}/cmdline"), WORKER);
+        write(
+            &root,
+            &format!("{worker}/status"),
+            "Name:\tnginx\nPPid:\t4\n",
+        );
         symlink(&binary, root.join(worker).join("exe")).expect("a writable scratch tree");
     }
+
+    // A worker of a second nginx on the same box. Counting it against this master would
+    // make its worker count wrong and its oldest-worker time — which dates the last reload
+    // — belong to somebody else's reload.
+    write(&root, "8/comm", "nginx\n");
+    write(&root, "8/cmdline", WORKER);
+    write(&root, "8/status", "Name:\tnginx\nPPid:\t99\n");
+    symlink(&binary, root.join("8/exe")).expect("a writable scratch tree");
 
     // A process that is not nginx at all, to prove the scan does not take everything it finds.
     write(&root, "7/comm", "sshd\n");
@@ -132,7 +145,7 @@ fn the_workers_date_the_last_reload() {
         .expect("the fixture is readable")
         .expect("the fixture holds a master");
 
-    // Assert
+    // Assert: two, not three. The third belongs to another master.
     assert_eq!(master.worker_count, 2);
     assert_eq!(
         master
@@ -196,4 +209,42 @@ fn a_master_whose_executable_cannot_be_read_is_still_a_master() {
     // Assert
     assert_eq!(master.process_id, 4);
     assert_eq!(master.executable, None);
+}
+
+#[test]
+fn a_worker_that_leaves_mid_scan_is_skipped_rather_than_fatal() {
+    // Arrange: during a reload every worker is replaced, so one listed a moment ago can be
+    // gone before its start time is read. Failing the facet for that would repeat the
+    // mistake this branch fixes in the `processes` collector.
+    let proc = proc_tree("worker-left", MASTER);
+    fs::remove_dir_all(proc.join("6")).expect("a writable scratch tree");
+
+    // Act
+    let master = master_process::find_in(&proc, &proc.join("nginx"))
+        .expect("a departed worker is not a failure")
+        .expect("the master is still there");
+
+    // Assert
+    assert_eq!(master.worker_count, 1);
+    assert_eq!(
+        master
+            .workers_started_at
+            .expect("one worker is left")
+            .as_i64(),
+        started(&proc.join("5"))
+    );
+}
+
+#[test]
+fn a_master_that_leaves_mid_scan_is_no_master_rather_than_a_failure() {
+    // Arrange: the same race, one process up. There is no master to describe, and that is
+    // an answer rather than an error.
+    let proc = proc_tree("master-left", MASTER);
+    fs::remove_dir_all(proc.join("4")).expect("a writable scratch tree");
+
+    // Act & Assert
+    assert_eq!(
+        master_process::find_in(&proc, &proc.join("nginx")).expect("a departure is not a failure"),
+        None
+    );
 }

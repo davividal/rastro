@@ -71,8 +71,15 @@ pub fn read(path: &Path) -> Result<CertificateDetails, CollectionError> {
 }
 
 /// Describes the private key without opening it.
+///
+/// **Through a symlink, deliberately.** A key is very often reached by one — a Let's Encrypt
+/// deployment points `ssl_certificate_key` at `live/<host>/privkey.pem`, itself a link into
+/// `archive/` — and a symlink's own mode is `0777` on Linux, which would report every such
+/// key as world-readable and every genuinely world-readable one as fine. nginx opens the
+/// target, so the target's mode is the one that decides who can read the key. The link
+/// itself is the `filesystem` facet's business.
 pub fn describe_key(path: &AbsolutePath) -> KeyFile {
-    let reading = match fs::symlink_metadata(path.as_str()) {
+    let reading = match fs::metadata(path.as_str()) {
         Ok(metadata) => KeyReading::Described {
             mode: FileMode::of(metadata.mode()),
             owner: metadata.uid().into(),
