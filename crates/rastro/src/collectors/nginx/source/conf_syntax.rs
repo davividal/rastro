@@ -23,6 +23,17 @@ use crate::collectors::nginx::value_objects::{DirectiveArgument, DirectiveName};
 /// The characters that end a bare token wherever they appear in one.
 const DELIMITERS: [char; 3] = [';', '{', '}'];
 
+/// nginx's braced variable form, which suspends those delimiters.
+///
+/// Measured on nginx 1.30, and the pair of results is why this is a special case rather
+/// than "braces are ordinary": `access_log /tmp/literal{x}.log;` is refused with "directive
+/// access_log is not terminated by \";\"", so a bare `{` really does end a token, while
+/// `proxy_pass http://${backend};` reaches variable resolution and fails there on the *name*
+/// — so nginx read that whole argument as one token.
+const VARIABLE: char = '$';
+const VARIABLE_OPENS: char = '{';
+const VARIABLE_CLOSES: char = '}';
+
 /// Turns a configuration file's text into the directives it holds.
 ///
 /// Nesting is kept, order is kept, and nothing is dropped but comments and whitespace.
@@ -255,6 +266,7 @@ impl Tokens {
     /// two directives where nginx reads one.
     fn bare(&mut self) -> String {
         let mut value = String::new();
+        let mut inside_variable = false;
 
         while let Some(character) = self.peek() {
             if character == '\\' {
@@ -263,7 +275,28 @@ impl Tokens {
                 continue;
             }
 
-            if character.is_whitespace() || DELIMITERS.contains(&character) {
+            // Whitespace ends the token even inside `${`, which bounds an unterminated one:
+            // a variable name cannot hold a space, so the alternative is swallowing the rest
+            // of the file over a typo nginx would refuse anyway.
+            if character.is_whitespace() {
+                break;
+            }
+
+            if inside_variable {
+                inside_variable = character != VARIABLE_CLOSES;
+                value.push(character);
+                self.take();
+                continue;
+            }
+
+            if character == VARIABLE && self.peek_after() == Some(VARIABLE_OPENS) {
+                inside_variable = true;
+                value.push(character);
+                self.take();
+                continue;
+            }
+
+            if DELIMITERS.contains(&character) {
                 break;
             }
 
@@ -295,6 +328,12 @@ impl Tokens {
 
     fn peek(&self) -> Option<char> {
         self.characters.get(self.position).copied()
+    }
+
+    /// The character after the one [`Self::peek`] answers, which is what tells a `$` that
+    /// opens a variable from one that is just a dollar sign.
+    fn peek_after(&self) -> Option<char> {
+        self.characters.get(self.position + 1).copied()
     }
 
     fn take(&mut self) -> Option<char> {

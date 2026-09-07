@@ -181,10 +181,25 @@ fn executable_of(process: &Path) -> Option<String> {
 /// The ` (deleted)` the kernel appends after a package upgrade is stripped before comparing,
 /// which is the difference between reporting an upgraded-but-not-restarted server and
 /// reporting no server at all. The marker itself is still recorded, because it is the state.
+///
+/// **Compared as text first and as resolved paths second, and it needs both.** The tool is
+/// located by walking system directories, so it keeps the name it was found under, which may
+/// be a symlink; `/proc/<pid>/exe` always reports the target. Text alone would reject the
+/// very process that is running and report no master on a box that is serving. Resolution
+/// alone would reject the upgraded-but-not-restarted case, where the target is gone and
+/// canonicalising it fails.
 fn runs(executable: &str, binary: &Path) -> bool {
     let replaced = executable.strip_suffix(DELETED).unwrap_or(executable);
+    let running = Path::new(replaced);
 
-    Path::new(replaced) == binary
+    if running == binary {
+        return true;
+    }
+
+    match (fs::canonicalize(running), fs::canonicalize(binary)) {
+        (Ok(running), Ok(located)) => running == located,
+        _ => false,
+    }
 }
 
 fn process_id_of(path: &Path) -> Option<i64> {

@@ -34,6 +34,11 @@ impl ConfigurationFile {
         }
     }
 
+    /// Whether this entry says why a file could not be read rather than what it holds.
+    pub fn is_refusal(&self) -> bool {
+        matches!(self.reading, FileReading::Refused { .. })
+    }
+
     pub fn refused(path: AbsolutePath, reason: NonEmptyText) -> Self {
         Self {
             path,

@@ -235,3 +235,40 @@ fn a_trailing_backslash_ends_the_file_rather_than_the_reader() {
     // Assert
     assert!(refused.contains("root"), "{refused}");
 }
+
+#[test]
+fn a_braced_variable_does_not_open_a_block() {
+    // Arrange: measured on nginx 1.30. `proxy_pass http://${backend};` reaches variable
+    // resolution — it fails there with "unknown backend variable", which is a complaint
+    // about the name rather than about the syntax — so nginx read the whole thing as one
+    // token. A grammar that let the `{` open a block would refuse the file, and a
+    // configuration using the braced form would produce no facet at all.
+    // Act
+    let directive = only("proxy_pass http://${backend};");
+
+    // Assert
+    assert_eq!(arguments_of(&directive), ["http://${backend}"]);
+    assert!(directive.block.is_none());
+}
+
+#[test]
+fn a_braced_variable_inside_a_path_keeps_the_path_whole() {
+    // Act
+    let directive = only("root /srv/${host}/www;");
+
+    // Assert
+    assert_eq!(arguments_of(&directive), ["/srv/${host}/www"]);
+}
+
+#[test]
+fn a_brace_that_is_not_a_variable_still_opens_a_block() {
+    // Arrange: the other half of the same measurement, and the reason this is not simply
+    // "braces are ordinary characters". `access_log /tmp/literal{x}.log;` is refused by
+    // nginx itself with "directive access_log is not terminated by \";\"", so the `{` is a
+    // delimiter wherever it is not part of `${`.
+    // Act
+    let refused = refusal("access_log /tmp/literal{x}.log;\n");
+
+    // Assert
+    assert!(!refused.is_empty());
+}

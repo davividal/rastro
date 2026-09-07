@@ -221,8 +221,15 @@ impl Reading<'_> {
     /// both times, because nginx applies them both times — measured, on nginx 1.26: a
     /// `server` block in a file included twice produces the `conflicting server name`
     /// warning, which only two server blocks can produce.
+    /// **A refusal is never the entry that gets dropped.** A file that includes itself is
+    /// recorded once as parsed and then again as a cycle, under the same path, and the
+    /// second says something the first does not: nginx would refuse this configuration
+    /// outright. Deduplicating it away would describe a server that cannot start as one
+    /// that can.
     fn record(&mut self, file: ConfigurationFile) {
-        if self.files.iter().any(|recorded| recorded.path == file.path) {
+        let already_recorded = self.files.iter().any(|recorded| recorded.path == file.path);
+
+        if already_recorded && !file.is_refusal() {
             return;
         }
 

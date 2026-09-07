@@ -248,3 +248,23 @@ fn a_master_that_leaves_mid_scan_is_no_master_rather_than_a_failure() {
         None
     );
 }
+
+#[test]
+fn a_binary_reached_through_a_symlink_is_still_the_running_one() {
+    // Arrange: the tool is located by walking system directories, so it keeps the name it
+    // was found under — which may be a symlink. `/proc/<pid>/exe` always reports the
+    // resolved target, so comparing the two as text rejects the very process that is
+    // running and the facet reports no master on a box that is serving.
+    let proc = proc_tree("symlinked-binary", MASTER);
+    let real = proc.join("nginx");
+    let link = proc.join("nginx-link");
+    symlink(&real, &link).expect("a writable scratch tree");
+
+    // Act: located as the link, running as the target.
+    let master = master_process::find_in(&proc, &link)
+        .expect("the fixture is readable")
+        .expect("the master is running this binary under another name");
+
+    // Assert
+    assert_eq!(master.process_id, 4);
+}

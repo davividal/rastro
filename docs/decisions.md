@@ -2573,6 +2573,15 @@ value silently rather than failing loudly.
 backslash before it looks for a delimiter. A grammar that ended the token at that
 `;` would report two directives where nginx reads one.
 
+**`${name}` is one token, and a bare `{` is not.** Two measurements, and the pair is why
+this is a special case rather than "braces are ordinary characters":
+`access_log /tmp/literal{x}.log;` is refused by nginx itself with "directive access_log is
+not terminated by \";\"", while `proxy_pass http://${backend};` gets past tokenising and
+fails on the *name* with "unknown backend variable". So nginx suspends the delimiters
+inside `${…}` and enforces them everywhere else. A grammar that let that `{` open a block
+would refuse the file, and a configuration using the braced form — which is ordinary —
+would produce no facet at all.
+
 **An unrecognised escape keeps its backslash.** `\q` is `\q`, so dropping the
 backslash would put a value in the document that was never in the file. The six
 that are spent are `\"`, `\'`, `\\`, `\n`, `\r` and `\t`, in both quote styles and

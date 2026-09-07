@@ -324,3 +324,25 @@ fn a_bracket_expression_is_refused_rather_than_guessed_at() {
     );
     assert_eq!(inside_http(&configuration), Vec::<&str>::new());
 }
+
+#[test]
+fn a_file_that_includes_itself_keeps_the_refusal() {
+    // Arrange: the deduplication that records a twice-included file once must not swallow
+    // this. nginx would refuse the configuration outright, and a document showing the file
+    // parsed and saying nothing about the recursion would describe a server that cannot
+    // start as one that can.
+    let prefix = tree("self-include");
+    write(&prefix, "nginx.conf", "http { include nginx.conf; }\n");
+
+    // Act
+    let configuration = read(&prefix);
+
+    // Assert: the same path twice, parsed and then refused, because those say different
+    // things about it.
+    assert_eq!(paths_of(&configuration), ["nginx.conf", "nginx.conf"]);
+    assert!(
+        refusal_of(&configuration.files[1]).contains("includes itself"),
+        "{}",
+        refusal_of(&configuration.files[1])
+    );
+}
