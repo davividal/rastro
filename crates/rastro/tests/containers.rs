@@ -135,6 +135,16 @@ const INSPECT_WEB: &str = r#"[
         "org.opencontainers.image.title": "fixture"
       }
     },
+    "NetworkSettings": {
+      "Ports": {
+        "7777/tcp": null,
+        "80/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "8080" }],
+        "9000/udp": [
+          { "HostIp": "0.0.0.0", "HostPort": "9000" },
+          { "HostIp": "::", "HostPort": "9000" }
+        ]
+      }
+    },
     "Mounts": [
       {
         "Type": "bind",
@@ -826,4 +836,72 @@ fn a_tmpfs_mount_is_read_from_the_only_place_docker_reports_it() {
     assert_eq!(text(&field(&mount, "options")), "rw,size=64m");
     assert!(is_null(&field(&mount, "source")));
     assert!(boolean(&field(&mount, "writable")));
+}
+
+#[test]
+fn the_ports_are_keyed_the_way_the_engine_names_them() {
+    // Arrange: `80/tcp` is the engine's own name for a port, and the one an operator reads
+    // out of `docker ps`, so it is what the document keys on.
+    let ports = field(&container_of("ports", "web"), "ports");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&ports),
+        vec![
+            "7777/tcp".to_owned(),
+            "80/tcp".to_owned(),
+            "9000/udp".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn a_port_exposed_and_published_nowhere_is_recorded_with_no_bindings() {
+    // Arrange: docker reports `"7777/tcp": null` for a port the image exposes and nobody
+    // published. That is real state, and a different fact from the port not being there:
+    // the container listens on it, and only the box can reach it.
+    let ports = field(&container_of("exposed", "web"), "ports");
+
+    // Act & Assert
+    assert!(items_of(&field(&ports, "7777/tcp")).is_empty());
+}
+
+#[test]
+fn a_published_port_records_where_it_is_reachable_from() {
+    // Arrange: the whole point of reading this. `127.0.0.1:8080` is reachable from the box
+    // and `0.0.0.0:9000` is reachable from the network, and which of the two a port is
+    // published on is the difference a fingerprint is taken to catch.
+    let ports = field(&container_of("published", "web"), "ports");
+    let loopback = items_of(&field(&ports, "80/tcp"));
+    let wildcards = items_of(&field(&ports, "9000/udp"));
+
+    // Act & Assert
+    assert_eq!(text(&field(&loopback[0], "host_address")), "127.0.0.1");
+    assert_eq!(integer(&field(&loopback[0], "host_port")), 8080);
+    assert_eq!(
+        wildcards
+            .iter()
+            .map(|binding| text(&field(binding, "host_address")))
+            .collect::<Vec<String>>(),
+        vec!["0.0.0.0".to_owned(), "::".to_owned()]
+    );
+}
+
+#[test]
+fn the_bindings_of_one_port_are_sorted_rather_than_left_in_the_engines_order() {
+    // Arrange: publishing one port without naming an address gives two bindings, one per
+    // family, and docker promises nothing about which comes first.
+    let bindings = items_of(&field(
+        &field(&container_of("binding-order", "web"), "ports"),
+        "9000/udp",
+    ));
+
+    // Act & Assert
+    let addresses: Vec<String> = bindings
+        .iter()
+        .map(|binding| text(&field(binding, "host_address")))
+        .collect();
+    let mut sorted = addresses.clone();
+    sorted.sort();
+    assert_eq!(addresses, sorted);
 }

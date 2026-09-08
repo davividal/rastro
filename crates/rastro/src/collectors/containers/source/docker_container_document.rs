@@ -8,12 +8,13 @@ use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
     ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerMount,
-    ContainerMounts, ContainerState, DockerContainer,
+    ContainerMounts, ContainerPorts, ContainerState, DockerContainer, PublishedBinding,
 };
 use crate::collectors::containers::value_objects::{
-    ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ImageDigest,
-    ImageReference, LabelName, MountKind, VariableName,
+    ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ExposedPort,
+    ImageDigest, ImageReference, LabelName, MountKind, VariableName,
 };
+use crate::collectors::inet::{InetHost, PortNumber};
 
 /// Go's zero time, which is what docker prints for a stamp that has not happened.
 ///
@@ -56,6 +57,8 @@ pub struct DockerContainerDocument {
     /// Volume and bind mounts. **Not tmpfs**, which docker reports nowhere near here.
     #[serde(rename = "Mounts", default)]
     mounts: Vec<MountEntry>,
+    #[serde(rename = "NetworkSettings", default)]
+    network_settings: NetworkSettingsHalf,
     #[serde(rename = "Config")]
     config: ConfigHalf,
     #[serde(rename = "HostConfig")]
@@ -112,6 +115,23 @@ struct HostConfigHalf {
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Tmpfs", default)]
     tmpfs: BTreeMap<String, String>,
+}
+
+/// What the engine did about the ports, as opposed to what was asked of it.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct NetworkSettingsHalf {
+    /// Port to bindings, where a port the image exposes and nobody published is present
+    /// with a null value rather than absent.
+    #[serde(rename = "Ports", default)]
+    ports: BTreeMap<String, Option<Vec<BindingEntry>>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BindingEntry {
+    #[serde(rename = "HostIp")]
+    host_address: String,
+    #[serde(rename = "HostPort")]
+    host_port: String,
 }
 
 /// One entry of docker's own mount list.
@@ -172,6 +192,7 @@ impl DockerContainerDocument {
             environment: self.environment()?,
             labels: self.labels()?,
             mounts: self.mounts()?,
+            ports: self.ports()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -248,6 +269,26 @@ impl DockerContainerDocument {
         }
 
         ContainerMounts::new(mounts)
+    }
+
+    /// The port table, with an unpublished port kept and given no bindings.
+    fn ports(&self) -> Result<ContainerPorts, CollectionError> {
+        let mut ports = Vec::new();
+
+        for (key, bindings) in &self.network_settings.ports {
+            let mut published = Vec::new();
+
+            for binding in bindings.iter().flatten() {
+                published.push(PublishedBinding {
+                    host_address: InetHost::new(binding.host_address.clone())?,
+                    host_port: PortNumber::parse(&binding.host_port)?,
+                });
+            }
+
+            ports.push((ExposedPort::parse(key)?, published));
+        }
+
+        ContainerPorts::new(ports)
     }
 
     fn labels(&self) -> Result<ContainerLabels, CollectionError> {

@@ -32,14 +32,15 @@ pub mod value_objects;
 
 pub use model::{
     CgroupControl, ContainerCommand, ContainerEngine, ContainerEngines, ContainerEnvironment,
-    ContainerImage, ContainerLabels, ContainerMount, ContainerMounts, ContainerState,
-    DockerContainer, DockerContainers, DockerEngine, DockerServer, UnreadableContainer,
+    ContainerImage, ContainerLabels, ContainerMount, ContainerMounts, ContainerPorts,
+    ContainerState, DockerContainer, DockerContainers, DockerEngine, DockerServer,
+    PublishedBinding, UnreadableContainer,
 };
 pub use source::{Docker, EngineSource};
 pub use value_objects::{
     ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus, EngineFlavour,
-    EngineInstant, EngineVersion, ImageDigest, ImageReference, LabelName, MountKind, StorageDriver,
-    SwarmState, VariableName,
+    EngineInstant, EngineVersion, ExposedPort, ImageDigest, ImageReference, LabelName, MountKind,
+    StorageDriver, SwarmState, VariableName,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs. A collector written

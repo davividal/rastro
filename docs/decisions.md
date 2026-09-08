@@ -3103,3 +3103,31 @@ The tmpfs option string is kept whole rather than split into pairs, for the same
 reason `/proc/mounts` options are: splitting on every comma corrupts any value that
 holds one. Whether the mount is read-only is read from that string, because for a
 tmpfs docker keeps it there rather than in a flag of its own.
+
+## A port's bindings are read from what the engine did, not what was asked of it
+
+Measured on docker 26.1.5, publishing one port two ways:
+
+| asked | `HostConfig.PortBindings` | `NetworkSettings.Ports` |
+| --- | --- | --- |
+| `-p 127.0.0.1:8080:80/tcp` | `HostIp: "127.0.0.1"` | `127.0.0.1:8080` |
+| `-p 9000:9000/udp` | `HostIp: ""` | `0.0.0.0:9000` **and** `[::]:9000` |
+| `--expose 7777` | absent | `"7777/tcp": null` |
+
+The request understates the reach of the second port in the way that matters most: an
+empty host address is not a wildcard until the engine decides it is one, and whether a
+port is reachable from the network or only from the box is the line an operator reads
+first. So the effective table is what the document carries, keyed by the engine's own
+`80/tcp` spelling.
+
+**A port with no bindings is kept, and that is the type's whole reason.** `"7777/tcp":
+null` says the container listens on a port nobody published: real state, and a
+different fact both from the port being unpublished-and-absent and from the container
+not listening at all. Dropping it would lose the difference between an internal
+service and no service.
+
+The bindings of one port are sorted, since publishing without an address gives one per
+family and the engine promises no order. The host address is the shared `InetHost`, the
+same leaf `sockets` reports a listener bound to, so the two facets can be read
+together: a port published on `0.0.0.0` with no listener to match is a different box
+from one where they agree.
