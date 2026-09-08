@@ -33,10 +33,10 @@
 //!
 //! # What this facet does not model
 //!
-//! **Owed, and each would be a change an operator cares about**: devices passed in
-//! (`--device`), per-container ulimits and sysctls, the DNS configuration (`--dns`,
-//! `--dns-search`, `--add-host`), the shared-memory size, and device requests, which is how
-//! a GPU reaches a container.
+//! **Owed, and unmeasurable here**: device requests, which is how a GPU reaches a
+//! container. There is no GPU on any box this was built against, so there is no fixture for
+//! it, and a shape written from the API reference rather than from a run is the mistake this
+//! collector's fixtures exist to avoid.
 //!
 //! **Not owed, because the document already answers it elsewhere.** `Config.ExposedPorts`
 //! and `HostConfig.PortBindings` are the request behind the effective port table.
@@ -55,15 +55,15 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    AddressPool, CgroupControl, ContainerCapabilities, ContainerCommand, ContainerEngine,
-    ContainerEngines, ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels,
-    ContainerLimits, ContainerLogging, ContainerMount, ContainerMounts, ContainerNamespaces,
-    ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState,
-    ContainerdContainer, ContainerdEngine, ContainerdImage, ContainerdNamespace,
+    AddressPool, CgroupControl, ContainerCapabilities, ContainerCommand, ContainerDevice,
+    ContainerEngine, ContainerEngines, ContainerEnvironment, ContainerHealthcheck, ContainerImage,
+    ContainerLabels, ContainerLimits, ContainerLogging, ContainerMount, ContainerMounts,
+    ContainerNamespaces, ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerSecurity,
+    ContainerState, ContainerdContainer, ContainerdEngine, ContainerdImage, ContainerdNamespace,
     ContainerdNamespaces, ContainerdServer, ContainerdTask, DockerContainer, DockerContainers,
     DockerEngine, DockerImage, DockerImages, DockerNetwork, DockerNetworks, DockerServer,
-    DockerVolume, DockerVolumes, ImagePlatform, NetworkAddressing, ObservedHealth,
-    PublishedBinding, RestartPolicy, UnreadableObject,
+    DockerVolume, DockerVolumes, ImagePlatform, NameResolution, NetworkAddressing, ObservedHealth,
+    PublishedBinding, ResourceLimit, RestartPolicy, UnreadableObject,
 };
 pub use source::{Containerd, ContainerdLayout, Docker, EngineSource};
 pub use value_objects::{

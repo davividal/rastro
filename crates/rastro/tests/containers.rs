@@ -368,6 +368,14 @@ const INSPECT_WEB: &str = r#"[
       "PidMode": "",
       "IpcMode": "private",
       "CgroupnsMode": "private",
+      "ShmSize": 67108864,
+      "Devices": [],
+      "Ulimits": [],
+      "Sysctls": null,
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": null,
       "Memory": 0,
       "MemorySwap": 0,
       "MemoryReservation": 0,
@@ -492,7 +500,28 @@ const INSPECT_LIMITED: &str = r#"[
       "NanoCpus": 1500000000,
       "CpuShares": 512,
       "CpusetCpus": "0-1",
-      "PidsLimit": 100
+      "PidsLimit": 100,
+      "ShmSize": 67108864,
+      "Devices": [
+        {
+          "PathOnHost": "/dev/null",
+          "PathInContainer": "/dev/mynull",
+          "CgroupPermissions": "rwm"
+        }
+      ],
+      "DeviceRequests": null,
+      "Ulimits": [
+        { "Name": "nofile", "Hard": 4096, "Soft": 1024 },
+        { "Name": "nproc", "Hard": 64, "Soft": 64 }
+      ],
+      "Sysctls": {
+        "net.core.somaxconn": "1024",
+        "net.ipv4.ping_group_range": "0 0"
+      },
+      "Dns": ["1.1.1.1", "9.9.9.9"],
+      "DnsOptions": ["ndots:2"],
+      "DnsSearch": ["example.test"],
+      "ExtraHosts": ["db:10.0.0.5", "cache:10.0.0.6"]
     }
   }
 ]"#;
@@ -2065,4 +2094,108 @@ fn an_engine_whose_root_is_not_known_claims_nothing() {
 
     // Act & Assert
     assert!(claimed(&collector).is_empty());
+}
+
+#[test]
+fn a_device_passed_in_is_keyed_by_where_it_appears_inside() {
+    // Arrange: a device is the sharpest thing a container can be given short of privilege,
+    // and the path inside is unique per container, which makes it the key. The permissions
+    // are cgroup's own three letters: read, write, mknod.
+    let devices = field(&container_of("devices", "limited"), "devices");
+    let device = field(&devices, "/dev/mynull");
+
+    // Act & Assert
+    assert_eq!(keys_of(&devices), vec!["/dev/mynull".to_owned()]);
+    assert_eq!(text(&field(&device, "host_path")), "/dev/null");
+    assert_eq!(text(&field(&device, "permissions")), "rwm");
+}
+
+#[test]
+fn a_ulimit_records_both_halves_because_they_differ() {
+    // Arrange: `--ulimit nofile=1024:4096` sets a soft limit the process can raise and a
+    // hard one it cannot, and only the pair says which is which. A single-figure ulimit
+    // sets both to the same value, which is docker's own doing rather than rastro's.
+    let ulimits = field(&container_of("ulimits", "limited"), "ulimits");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&ulimits),
+        vec!["nofile".to_owned(), "nproc".to_owned()]
+    );
+    assert_eq!(integer(&field(&field(&ulimits, "nofile"), "soft")), 1024);
+    assert_eq!(integer(&field(&field(&ulimits, "nofile"), "hard")), 4096);
+    assert_eq!(integer(&field(&field(&ulimits, "nproc"), "soft")), 64);
+}
+
+#[test]
+fn a_containers_kernel_parameters_are_its_own_and_not_the_hosts() {
+    // Arrange: these are the container's overrides, which is a different fact from the
+    // `sysctl` facet's reading of the running kernel. One is a request in a container's
+    // definition; the other is what the box is currently set to.
+    let parameters = field(&container_of("sysctls", "limited"), "kernel_parameters");
+
+    // Act & Assert
+    assert_eq!(text(&field(&parameters, "net.core.somaxconn")), "1024");
+    assert_eq!(
+        text(&field(&parameters, "net.ipv4.ping_group_range")),
+        "0 0"
+    );
+}
+
+#[test]
+fn the_name_resolution_a_container_was_given_is_recorded_whole() {
+    // Arrange: which resolver a container uses decides what it can reach, and an
+    // `--add-host` entry is a name that resolves nowhere else on the box.
+    let resolution = field(&container_of("dns", "limited"), "name_resolution");
+
+    // Act & Assert
+    assert_eq!(
+        items_of(&field(&resolution, "servers"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["1.1.1.1".to_owned(), "9.9.9.9".to_owned()]
+    );
+    assert_eq!(
+        items_of(&field(&resolution, "searches"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["example.test".to_owned()]
+    );
+    assert_eq!(
+        items_of(&field(&resolution, "options"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["ndots:2".to_owned()]
+    );
+    assert_eq!(text(&field(&field(&resolution, "hosts"), "db")), "10.0.0.5");
+}
+
+#[test]
+fn a_container_given_none_of_them_records_each_as_the_shape_it_is() {
+    // Arrange: docker spells "none" three ways in one `HostConfig` — an empty array for the
+    // devices and the DNS lists, `null` for the sysctls and the extra hosts — and all of
+    // them mean the container was given nothing.
+    let container = container_of("no-detail", "web");
+
+    // Act & Assert
+    assert!(keys_of(&field(&container, "devices")).is_empty());
+    assert!(keys_of(&field(&container, "ulimits")).is_empty());
+    assert!(keys_of(&field(&container, "kernel_parameters")).is_empty());
+    let resolution = field(&container, "name_resolution");
+    assert!(items_of(&field(&resolution, "servers")).is_empty());
+    assert!(keys_of(&field(&resolution, "hosts")).is_empty());
+}
+
+#[test]
+fn the_shared_memory_size_is_recorded_with_the_other_limits() {
+    // Arrange: it belongs with the limits because that is what it is, and it is recorded
+    // even at docker's default of 64 MiB: a container given `--shm-size 1g` differs from one
+    // that was not, and nothing else in the document would say so.
+    let limits = field(&container_of("shm", "limited"), "limits");
+
+    // Act & Assert
+    assert_eq!(integer(&field(&limits, "shared_memory_bytes")), 67_108_864);
 }

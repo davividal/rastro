@@ -3597,3 +3597,36 @@ entry is what an operator gets pointed at.
 
 Reversing this means a new entry with a measurement showing a read that leaves the box as it
 was found.
+
+## The rest of a container's definition, and the three ways docker spells "none"
+
+Devices, ulimits, kernel parameters, name resolution and the shared-memory size complete
+what a container was defined with. Each earns its place by being invisible everywhere else:
+
+- **a device** is the sharpest thing a container can be handed short of privilege.
+  `--device /dev/sda:/dev/sda:rwm` gives it the disk the host boots from, and the mount
+  table does not show it. Keyed by the path inside the container, which is unique there;
+- **a ulimit** is recorded as both halves, because the soft limit is what a process starts
+  with and may raise, and the hard one it cannot;
+- **the kernel parameters are the container's own**, which is a different fact from the
+  `sysctl` facet's reading of the running kernel: one is a request in a definition, the
+  other is what the box is currently set to. That is also why they are not the `sysctl`
+  facet's value objects, whose volatility and secrecy rules are about a runtime reading;
+- **name resolution** decides what a container can reach, and an `--add-host` entry is a
+  name that resolves nowhere else on the box. The lists keep the engine's order, because a
+  resolver list is ordered and sorting it would change what the container does. An added
+  host is split on its *first* colon only: an IPv6 address is full of them, so
+  `db:2001:db8::1` is one name and one address rather than four fields;
+- **the shared-memory size** is recorded even at docker's default of 64 MiB, because a
+  container given `--shm-size 1g` differs from one that was not.
+
+**One `HostConfig` spells "none" three different ways, measured on 26.1.5**: an empty array
+for `Devices`, `Ulimits` and the three DNS lists, `null` for `Sysctls` and `ExtraHosts`,
+and `0` for a limit. All of them read as nothing here, and the tests hold a container with
+none of them beside one with all of them so a future change cannot quietly conflate the
+spellings.
+
+**Device requests are still owed, and deliberately not guessed.** They are how a GPU
+reaches a container, and there is no GPU on any box this collector was built against. A
+shape written from the API reference rather than from a run is precisely the mistake the
+fixtures here exist to avoid, so the field waits for a box that has one.

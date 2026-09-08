@@ -7,11 +7,11 @@ use std::collections::BTreeMap;
 use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
-    ContainerCapabilities, ContainerCommand, ContainerEnvironment, ContainerHealthcheck,
-    ContainerImage, ContainerLabels, ContainerLimits, ContainerLogging, ContainerMount,
-    ContainerMounts, ContainerNamespaces, ContainerNetwork, ContainerNetworks, ContainerPorts,
-    ContainerSecurity, ContainerState, DockerContainer, ObservedHealth, PublishedBinding,
-    RestartPolicy,
+    ContainerCapabilities, ContainerCommand, ContainerDevice, ContainerEnvironment,
+    ContainerHealthcheck, ContainerImage, ContainerLabels, ContainerLimits, ContainerLogging,
+    ContainerMount, ContainerMounts, ContainerNamespaces, ContainerNetwork, ContainerNetworks,
+    ContainerPorts, ContainerSecurity, ContainerState, DockerContainer, NameResolution,
+    ObservedHealth, PublishedBinding, ResourceLimit, RestartPolicy,
 };
 use crate::collectors::containers::value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant,
@@ -193,10 +193,51 @@ struct HostConfigHalf {
     user_namespace: String,
     #[serde(rename = "LogConfig", default)]
     logging: Option<LogConfigHalf>,
+    /// docker's own default is 64 MiB, and it is reported on every container whether or
+    /// not anybody chose it.
+    #[serde(rename = "ShmSize", default)]
+    shared_memory: i64,
+    /// An empty array where there are none, unlike the two maps below.
+    #[serde(rename = "Devices", default)]
+    devices: Vec<DeviceEntry>,
+    #[serde(rename = "Ulimits", default)]
+    ulimits: Vec<UlimitEntry>,
+    /// Null where there are none, which is docker's other spelling of the same thing.
+    #[serde(rename = "Sysctls", default)]
+    kernel_parameters: Option<BTreeMap<String, String>>,
+    #[serde(rename = "Dns", default)]
+    resolvers: Vec<String>,
+    #[serde(rename = "DnsSearch", default)]
+    resolver_searches: Vec<String>,
+    #[serde(rename = "DnsOptions", default)]
+    resolver_options: Vec<String>,
+    /// `name:address` entries, null where there are none.
+    #[serde(rename = "ExtraHosts", default)]
+    extra_hosts: Option<Vec<String>>,
     /// Destination to option string, and the only place a `--tmpfs` mount appears at all.
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Tmpfs", default)]
     tmpfs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DeviceEntry {
+    #[serde(rename = "PathOnHost")]
+    host_path: String,
+    #[serde(rename = "PathInContainer")]
+    container_path: String,
+    #[serde(rename = "CgroupPermissions", default)]
+    permissions: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UlimitEntry {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Soft", default)]
+    soft: i64,
+    #[serde(rename = "Hard", default)]
+    hard: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -330,6 +371,10 @@ impl DockerContainerDocument {
             security: self.security()?,
             healthcheck: self.healthcheck()?,
             logging: self.logging()?,
+            devices: self.devices()?,
+            ulimits: self.ulimits()?,
+            kernel_parameters: self.kernel_parameters()?,
+            name_resolution: self.name_resolution()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -459,6 +504,91 @@ impl DockerContainerDocument {
         })
     }
 
+    /// The devices passed in, keyed by where each appears inside the container.
+    fn devices(&self) -> Result<BTreeMap<AbsolutePath, ContainerDevice>, CollectionError> {
+        let mut devices = BTreeMap::new();
+
+        for entry in &self.host_config.devices {
+            devices.insert(
+                AbsolutePath::new(entry.container_path.clone(), "device path in container")?,
+                ContainerDevice {
+                    host_path: AbsolutePath::new(entry.host_path.clone(), "device path on host")?,
+                    permissions: NonEmptyText::new(
+                        entry.permissions.clone(),
+                        "device permissions",
+                    )?,
+                },
+            );
+        }
+
+        Ok(devices)
+    }
+
+    fn ulimits(&self) -> Result<BTreeMap<NonEmptyText, ResourceLimit>, CollectionError> {
+        let mut ulimits = BTreeMap::new();
+
+        for entry in &self.host_config.ulimits {
+            ulimits.insert(
+                NonEmptyText::new(entry.name.clone(), "ulimit name")?,
+                ResourceLimit {
+                    soft: entry.soft,
+                    hard: entry.hard,
+                },
+            );
+        }
+
+        Ok(ulimits)
+    }
+
+    fn kernel_parameters(&self) -> Result<BTreeMap<NonEmptyText, String>, CollectionError> {
+        let mut parameters = BTreeMap::new();
+
+        for (name, value) in self.host_config.kernel_parameters.iter().flatten() {
+            parameters.insert(
+                NonEmptyText::new(name.clone(), "kernel parameter name")?,
+                value.clone(),
+            );
+        }
+
+        Ok(parameters)
+    }
+
+    /// The resolver the container was given, and the names it was told about directly.
+    ///
+    /// The lists keep the engine's order, because a resolver list is ordered: the first
+    /// server is the one asked first, and sorting them would change what the container does.
+    fn name_resolution(&self) -> Result<NameResolution, CollectionError> {
+        let reported = &self.host_config;
+        let mut hosts = BTreeMap::new();
+
+        for entry in reported.extra_hosts.iter().flatten() {
+            // The first colon only: an IPv6 address is full of them, and `db:2001:db8::1`
+            // is one name and one address rather than four fields.
+            let Some((name, address)) = entry.split_once(':') else {
+                return Err(CollectionError::new(format!(
+                    "docker reported the added host {entry:?}, which names no address"
+                )));
+            };
+
+            hosts.insert(
+                NonEmptyText::new(name, "added host name")?,
+                IpAddress::new(address)?,
+            );
+        }
+
+        let mut servers = Vec::new();
+        for server in &reported.resolvers {
+            servers.push(IpAddress::new(server.clone())?);
+        }
+
+        Ok(NameResolution {
+            servers,
+            searches: texts(&reported.resolver_searches, "resolver search domain")?,
+            options: texts(&reported.resolver_options, "resolver option")?,
+            hosts,
+        })
+    }
+
     /// The confinement, from the engine's effective account of it.
     fn security(&self) -> Result<ContainerSecurity, CollectionError> {
         let reported = &self.host_config;
@@ -517,6 +647,7 @@ impl DockerContainerDocument {
             cpu_shares: positive(reported.cpu_shares),
             cpu_set: NonEmptyText::new(reported.cpu_set.clone(), "cpu set").ok(),
             process_limit: reported.process_limit.filter(|limit| *limit > 0),
+            shared_memory: bytes(reported.shared_memory, "shared memory size")?,
         })
     }
 
@@ -602,6 +733,17 @@ fn capabilities(reported: Option<&[String]>) -> Result<Vec<Capability>, Collecti
 /// container chose nothing.
 fn mode(reported: &str) -> Option<NonEmptyText> {
     NonEmptyText::new(reported, "namespace mode").ok()
+}
+
+/// A list of docker's strings as rastro's, refusing one it left blank.
+fn texts(reported: &[String], kind: &str) -> Result<Vec<NonEmptyText>, CollectionError> {
+    let mut texts = Vec::new();
+
+    for value in reported {
+        texts.push(NonEmptyText::new(value.clone(), kind)?);
+    }
+
+    Ok(texts)
 }
 
 /// The driver a container logs to when nobody chose one.

@@ -28,6 +28,10 @@ pub struct ContainerLimits {
     /// Which CPUs the container may run on: `0-1`, `0,3`.
     pub cpu_set: Option<NonEmptyText>,
     pub process_limit: Option<i64>,
+    /// The size of `/dev/shm`, recorded even at docker's own default of 64 MiB: a container
+    /// given `--shm-size 1g` differs from one that was not, and nothing else in the
+    /// document would say so.
+    pub shared_memory: Option<ByteSize>,
 }
 
 impl From<&ContainerLimits> for Observation {
@@ -49,6 +53,10 @@ impl From<&ContainerLimits> for Observation {
             ),
             ("nano_cpus", number(limits.nano_cpus)),
             ("process_limit", number(limits.process_limit)),
+            (
+                "shared_memory_bytes",
+                number(limits.shared_memory.map(|size| size.bytes())),
+            ),
         ])
     }
 }

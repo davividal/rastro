@@ -1,11 +1,14 @@
 //! One container docker knows about.
 
-use rastro_collector::{AbsolutePath, Observation};
+use std::collections::BTreeMap;
+
+use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
 use crate::collectors::containers::model::{
-    ContainerCommand, ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels,
-    ContainerLimits, ContainerLogging, ContainerMounts, ContainerNetworks, ContainerPorts,
-    ContainerSecurity, ContainerState, RestartPolicy,
+    ContainerCommand, ContainerDevice, ContainerEnvironment, ContainerHealthcheck, ContainerImage,
+    ContainerLabels, ContainerLimits, ContainerLogging, ContainerMounts, ContainerNetworks,
+    ContainerPorts, ContainerSecurity, ContainerState, NameResolution, ResourceLimit,
+    RestartPolicy,
 };
 use crate::collectors::containers::value_objects::{ContainerAccount, ContainerId, EngineInstant};
 
@@ -31,6 +34,17 @@ pub struct DockerContainer {
     /// Absent for a container with no check configured.
     pub healthcheck: Option<ContainerHealthcheck>,
     pub logging: ContainerLogging,
+    /// The host devices it was given, keyed by where each appears inside it.
+    pub devices: BTreeMap<AbsolutePath, ContainerDevice>,
+    /// Its ulimits, keyed by name.
+    pub ulimits: BTreeMap<NonEmptyText, ResourceLimit>,
+    /// The kernel parameters it asked for, keyed by name.
+    ///
+    /// **Its own, not the host's.** The `sysctl` facet reports what the running kernel is
+    /// set to; this is a request in a container's definition, and the two are different
+    /// facts about different things.
+    pub kernel_parameters: BTreeMap<NonEmptyText, String>,
+    pub name_resolution: NameResolution,
     pub ports: ContainerPorts,
     /// Whether the engine will delete this container the moment it stops.
     pub auto_remove: bool,
@@ -53,6 +67,15 @@ impl From<&DockerContainer> for Observation {
             ("auto_remove", Observation::boolean(container.auto_remove)),
             ("command", Observation::from(&container.command)),
             ("created", Observation::from(&container.created)),
+            (
+                "devices",
+                Observation::object(
+                    container
+                        .devices
+                        .iter()
+                        .map(|(inside, device)| (inside.as_str(), Observation::from(device))),
+                ),
+            ),
             ("environment", Observation::from(&container.environment)),
             (
                 "healthcheck",
@@ -63,10 +86,23 @@ impl From<&DockerContainer> for Observation {
             ),
             ("id", Observation::from(&container.id)),
             ("image", Observation::from(&container.image)),
+            (
+                "kernel_parameters",
+                Observation::object(
+                    container
+                        .kernel_parameters
+                        .iter()
+                        .map(|(name, value)| (name.as_str(), Observation::text(value))),
+                ),
+            ),
             ("labels", Observation::from(&container.labels)),
             ("limits", Observation::from(&container.limits)),
             ("logging", Observation::from(&container.logging)),
             ("mounts", Observation::from(&container.mounts)),
+            (
+                "name_resolution",
+                Observation::from(&container.name_resolution),
+            ),
             ("networks", Observation::from(&container.networks)),
             ("ports", Observation::from(&container.ports)),
             (
@@ -74,6 +110,15 @@ impl From<&DockerContainer> for Observation {
                 Observation::from(&container.restart_policy),
             ),
             ("security", Observation::from(&container.security)),
+            (
+                "ulimits",
+                Observation::object(
+                    container
+                        .ulimits
+                        .iter()
+                        .map(|(name, limit)| (name.as_str(), Observation::from(limit))),
+                ),
+            ),
             ("state", Observation::from(&container.state)),
             (
                 "user",
