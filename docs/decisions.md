@@ -3220,3 +3220,30 @@ to be called `host`.
 
 `privileged` is recorded even when false. It is the field an auditor reads first, and an
 absent false would be indistinguishable from a facet that does not report it at all.
+
+## The healthcheck is configuration, its verdict is an observation, and its log is neither
+
+Three things with the same name, and the facet separates them.
+
+**The check as configured is stable state.** Its command and its four timings do not
+move, and a changed interval is a change somebody made. The timings are nanoseconds,
+docker's own unit, which is what lets `--health-interval 30s` be recorded exactly in a
+document that admits no floating point.
+
+**Its verdict is volatile.** `healthy` becoming `unhealthy`, and the failing streak
+counting up, happen on their own on a box nobody touched, so both are annotated and sit
+in `state` beside the container's status. That pairing is the useful one: a container
+that is `running` and `unhealthy` is the case an operator is looking for, and one word
+without the other does not say it.
+
+**Its log is dropped, and it is the only field here that is dropped rather than
+annotated.** docker keeps the last few runs of the check together with their output, and
+the output of a failing database check is its connection error, credentials and all. It
+is also a rolling window that changes on every run. There is no reading of it that
+belongs in a fingerprint, so the deserializer does not declare the field at all: not
+asking is how it stays out.
+
+The log *driver* is recorded, with its options, because an unbounded `json-file` is how a
+box fills its disk and the difference between that and the same driver with `max-size`
+set is invisible unless both are there. A container docker reports no driver for is on
+`json-file`, which is the engine's own default rather than a guess.

@@ -7,10 +7,11 @@ use std::collections::BTreeMap;
 use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
-    ContainerCapabilities, ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels,
-    ContainerLimits, ContainerMount, ContainerMounts, ContainerNamespaces, ContainerNetwork,
-    ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState, DockerContainer,
-    PublishedBinding, RestartPolicy,
+    ContainerCapabilities, ContainerCommand, ContainerEnvironment, ContainerHealthcheck,
+    ContainerImage, ContainerLabels, ContainerLimits, ContainerLogging, ContainerMount,
+    ContainerMounts, ContainerNamespaces, ContainerNetwork, ContainerNetworks, ContainerPorts,
+    ContainerSecurity, ContainerState, DockerContainer, ObservedHealth, PublishedBinding,
+    RestartPolicy,
 };
 use crate::collectors::containers::value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant,
@@ -88,6 +89,23 @@ struct StateHalf {
     started_at: String,
     #[serde(rename = "FinishedAt", default)]
     finished_at: String,
+    /// Null for a container with no healthcheck at all.
+    #[serde(rename = "Health", default)]
+    health: Option<HealthHalf>,
+}
+
+/// What the check currently says.
+///
+/// **`Log` is deliberately not declared.** docker keeps the last few runs with their output,
+/// and the output of a failing database check is its connection error, credentials included.
+/// serde ignores what is not asked for, so not asking is how the field stays out of the
+/// document.
+#[derive(Debug, Clone, Deserialize)]
+struct HealthHalf {
+    #[serde(rename = "Status")]
+    status: String,
+    #[serde(rename = "FailingStreak", default)]
+    failing_streak: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,6 +126,24 @@ struct ConfigHalf {
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Labels", default)]
     labels: BTreeMap<String, String>,
+    /// Null for a container whose image declares no check and which asked for none.
+    #[serde(rename = "Healthcheck", default)]
+    healthcheck: Option<HealthcheckHalf>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HealthcheckHalf {
+    #[serde(rename = "Test", default)]
+    test: Vec<String>,
+    /// Nanoseconds, and zero where the check takes the engine's default.
+    #[serde(rename = "Interval", default)]
+    interval: i64,
+    #[serde(rename = "Timeout", default)]
+    timeout: i64,
+    #[serde(rename = "StartPeriod", default)]
+    start_period: i64,
+    #[serde(rename = "Retries", default)]
+    retries: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -155,10 +191,21 @@ struct HostConfigHalf {
     process_namespace: String,
     #[serde(rename = "UsernsMode", default)]
     user_namespace: String,
+    #[serde(rename = "LogConfig", default)]
+    logging: Option<LogConfigHalf>,
     /// Destination to option string, and the only place a `--tmpfs` mount appears at all.
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Tmpfs", default)]
     tmpfs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LogConfigHalf {
+    #[serde(rename = "Type")]
+    driver: String,
+    /// Empty for a container on the engine's defaults.
+    #[serde(rename = "Config", default)]
+    options: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -265,6 +312,7 @@ impl DockerContainerDocument {
                 started_at: instant(&self.state.started_at)?,
                 finished_at: instant(&self.state.finished_at)?,
                 restart_count: self.restart_count,
+                health: self.health()?,
             },
             user: ContainerAccount::new(self.config.user.clone()).ok(),
             working_directory: AbsolutePath::new(
@@ -280,6 +328,8 @@ impl DockerContainerDocument {
             restart_policy: self.restart_policy()?,
             limits: self.limits()?,
             security: self.security()?,
+            healthcheck: self.healthcheck()?,
+            logging: self.logging()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -356,6 +406,57 @@ impl DockerContainerDocument {
         }
 
         ContainerMounts::new(mounts)
+    }
+
+    /// The check's current verdict, without the log of its output.
+    fn health(&self) -> Result<Option<ObservedHealth>, CollectionError> {
+        let Some(reported) = &self.state.health else {
+            return Ok(None);
+        };
+
+        Ok(Some(ObservedHealth {
+            status: NonEmptyText::new(reported.status.clone(), "health status")?,
+            failing_streak: reported.failing_streak,
+        }))
+    }
+
+    /// The check as configured, with a timing the engine defaults read as absent.
+    fn healthcheck(&self) -> Result<Option<ContainerHealthcheck>, CollectionError> {
+        let Some(reported) = &self.config.healthcheck else {
+            return Ok(None);
+        };
+
+        Ok(Some(ContainerHealthcheck {
+            test: reported.test.clone(),
+            interval_nanoseconds: positive(reported.interval),
+            timeout_nanoseconds: positive(reported.timeout),
+            start_period_nanoseconds: positive(reported.start_period),
+            retries: positive(reported.retries),
+        }))
+    }
+
+    /// Where the container's output goes.
+    ///
+    /// A container whose driver docker did not report is on `json-file`, which is the engine's
+    /// own default and what a container gets when nobody chose.
+    fn logging(&self) -> Result<ContainerLogging, CollectionError> {
+        let reported = self.host_config.logging.as_ref();
+        let mut options = BTreeMap::new();
+
+        for (name, value) in reported.iter().flat_map(|logging| &logging.options) {
+            options.insert(
+                NonEmptyText::new(name.clone(), "log option")?,
+                value.clone(),
+            );
+        }
+
+        Ok(ContainerLogging {
+            driver: NonEmptyText::new(
+                reported.map_or(DEFAULT_LOG_DRIVER, |logging| logging.driver.as_str()),
+                "log driver",
+            )?,
+            options,
+        })
     }
 
     /// The confinement, from the engine's effective account of it.
@@ -502,6 +603,9 @@ fn capabilities(reported: Option<&[String]>) -> Result<Vec<Capability>, Collecti
 fn mode(reported: &str) -> Option<NonEmptyText> {
     NonEmptyText::new(reported, "namespace mode").ok()
 }
+
+/// The driver a container logs to when nobody chose one.
+const DEFAULT_LOG_DRIVER: &str = "json-file";
 
 /// The policy a container has when nobody asked for one.
 const NO_RESTART: &str = "no";

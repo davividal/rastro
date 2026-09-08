@@ -3,9 +3,9 @@
 use rastro_collector::{AbsolutePath, Observation};
 
 use crate::collectors::containers::model::{
-    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerLimits,
-    ContainerMounts, ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState,
-    RestartPolicy,
+    ContainerCommand, ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels,
+    ContainerLimits, ContainerLogging, ContainerMounts, ContainerNetworks, ContainerPorts,
+    ContainerSecurity, ContainerState, RestartPolicy,
 };
 use crate::collectors::containers::value_objects::{ContainerAccount, ContainerId, EngineInstant};
 
@@ -28,6 +28,9 @@ pub struct DockerContainer {
     pub restart_policy: RestartPolicy,
     pub limits: ContainerLimits,
     pub security: ContainerSecurity,
+    /// Absent for a container with no check configured.
+    pub healthcheck: Option<ContainerHealthcheck>,
+    pub logging: ContainerLogging,
     pub ports: ContainerPorts,
     /// Whether the engine will delete this container the moment it stops.
     pub auto_remove: bool,
@@ -51,10 +54,18 @@ impl From<&DockerContainer> for Observation {
             ("command", Observation::from(&container.command)),
             ("created", Observation::from(&container.created)),
             ("environment", Observation::from(&container.environment)),
+            (
+                "healthcheck",
+                match &container.healthcheck {
+                    Some(healthcheck) => Observation::from(healthcheck),
+                    None => Observation::null(),
+                },
+            ),
             ("id", Observation::from(&container.id)),
             ("image", Observation::from(&container.image)),
             ("labels", Observation::from(&container.labels)),
             ("limits", Observation::from(&container.limits)),
+            ("logging", Observation::from(&container.logging)),
             ("mounts", Observation::from(&container.mounts)),
             ("networks", Observation::from(&container.networks)),
             ("ports", Observation::from(&container.ports)),

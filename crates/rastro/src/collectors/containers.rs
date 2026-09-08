@@ -32,10 +32,10 @@ pub mod value_objects;
 
 pub use model::{
     CgroupControl, ContainerCapabilities, ContainerCommand, ContainerEngine, ContainerEngines,
-    ContainerEnvironment, ContainerImage, ContainerLabels, ContainerLimits, ContainerMount,
-    ContainerMounts, ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerState,
-    DockerContainer, DockerContainers, DockerEngine, DockerServer, PublishedBinding, RestartPolicy,
-    UnreadableContainer,
+    ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels, ContainerLimits,
+    ContainerLogging, ContainerMount, ContainerMounts, ContainerNetwork, ContainerNetworks,
+    ContainerPorts, ContainerState, DockerContainer, DockerContainers, DockerEngine, DockerServer,
+    PublishedBinding, RestartPolicy, UnreadableContainer,
 };
 pub use source::{Docker, EngineSource};
 pub use value_objects::{

@@ -204,6 +204,7 @@ const INSPECT_WEB: &str = r#"[
       "AutoRemove": false,
       "NetworkMode": "fixture-net",
       "Tmpfs": { "/scratch": "rw,size=64m" },
+      "LogConfig": { "Type": "json-file", "Config": {} },
       "RestartPolicy": { "Name": "unless-stopped", "MaximumRetryCount": 0 },
       "Privileged": false,
       "ReadonlyRootfs": false,
@@ -285,7 +286,19 @@ const INSPECT_LIMITED: &str = r#"[
       "ExitCode": 0,
       "Error": "",
       "StartedAt": "2026-09-08T11:40:02.100000000Z",
-      "FinishedAt": "0001-01-01T00:00:00Z"
+      "FinishedAt": "0001-01-01T00:00:00Z",
+      "Health": {
+        "Status": "unhealthy",
+        "FailingStreak": 2,
+        "Log": [
+          {
+            "Start": "2026-09-08T11:41:02.000000000Z",
+            "End": "2026-09-08T11:41:02.100000000Z",
+            "ExitCode": 1,
+            "Output": "psql: FATAL: password authentication failed for user \"app\""
+          }
+        ]
+      }
     },
     "Image": "sha256:1991bd789d7184290c3cce84fd6af068b8b745e9bddf178661ce7f5ecf68135c",
     "Name": "/limited",
@@ -297,11 +310,19 @@ const INSPECT_LIMITED: &str = r#"[
       "User": "",
       "WorkingDir": "",
       "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
-      "Labels": {}
+      "Labels": {},
+      "Healthcheck": {
+        "Test": ["CMD-SHELL", "true"],
+        "Interval": 30000000000,
+        "Timeout": 5000000000,
+        "StartPeriod": 10000000000,
+        "Retries": 3
+      }
     },
     "HostConfig": {
       "AutoRemove": false,
       "NetworkMode": "bridge",
+      "LogConfig": { "Type": "json-file", "Config": { "max-file": "3", "max-size": "1m" } },
       "RestartPolicy": { "Name": "on-failure", "MaximumRetryCount": 5 },
       "Privileged": false,
       "ReadonlyRootfs": true,
@@ -1238,4 +1259,102 @@ fn the_network_namespace_records_whichever_of_the_four_things_it_can_be() {
         text(&field(&field(&plain, "namespaces"), "network")),
         "fixture-net"
     );
+}
+
+#[test]
+fn a_healthcheck_records_its_command_and_its_timings() {
+    // Arrange: nanoseconds, because that is docker's own unit and the document admits no
+    // floating point, so `--health-interval 30s` is carried exactly.
+    let healthcheck = field(&container_of("healthcheck", "limited"), "healthcheck");
+
+    // Act & Assert
+    assert_eq!(
+        items_of(&field(&healthcheck, "test"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["CMD-SHELL".to_owned(), "true".to_owned()]
+    );
+    assert_eq!(
+        integer(&field(&healthcheck, "interval_nanoseconds")),
+        30_000_000_000
+    );
+    assert_eq!(
+        integer(&field(&healthcheck, "timeout_nanoseconds")),
+        5_000_000_000
+    );
+    assert_eq!(
+        integer(&field(&healthcheck, "start_period_nanoseconds")),
+        10_000_000_000
+    );
+    assert_eq!(integer(&field(&healthcheck, "retries")), 3);
+}
+
+#[test]
+fn a_container_with_no_healthcheck_records_none() {
+    // Arrange: docker writes null for a container whose image declares none and which asked
+    // for none, and an empty healthcheck object would claim one that never runs.
+    let container = container_of("no-healthcheck", "web");
+
+    // Act & Assert
+    assert!(is_null(&field(&container, "healthcheck")));
+}
+
+#[test]
+fn the_configured_healthcheck_is_stable_while_the_health_it_observes_is_volatile() {
+    // Arrange: the check is configuration and does not move; whether it is currently passing
+    // moves on its own, which is the definition of volatile, and a flapping check would
+    // otherwise break byte-identity on a box nobody touched.
+    let container = container_of("health-volatility", "limited");
+    let health = field(&field(&container, "state"), "health");
+
+    // Act & Assert
+    assert_eq!(
+        field(&container, "healthcheck").volatility(),
+        Volatility::Stable
+    );
+    assert_eq!(health.volatility(), Volatility::Volatile);
+    assert_eq!(text(&field(&health, "status")), "unhealthy");
+    assert_eq!(integer(&field(&health, "failing_streak")), 2);
+}
+
+#[test]
+fn the_health_log_is_not_recorded_at_all() {
+    // Arrange: the log is the output of the check's own command, and a failing database
+    // check prints its connection error, credentials and all. It is also a rolling window
+    // that changes on every run. There is no reading of it that belongs in a fingerprint,
+    // so it is the one field here that is dropped rather than annotated.
+    let health = field(
+        &field(&container_of("health-log", "limited"), "state"),
+        "health",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&health),
+        vec!["failing_streak".to_owned(), "status".to_owned()]
+    );
+}
+
+#[test]
+fn the_log_driver_and_its_options_are_recorded() {
+    // Arrange: where a container's output goes, and whether it is bounded. An unbounded
+    // json-file driver is how a box fills its disk, so the options are as much state as the
+    // driver.
+    let logging = field(&container_of("logging", "limited"), "logging");
+
+    // Act & Assert
+    assert_eq!(text(&field(&logging, "driver")), "json-file");
+    assert_eq!(text(&field(&field(&logging, "options"), "max-size")), "1m");
+    assert_eq!(text(&field(&field(&logging, "options"), "max-file")), "3");
+}
+
+#[test]
+fn a_container_on_the_engines_default_logging_records_no_options() {
+    // Arrange
+    let logging = field(&container_of("default-logging", "web"), "logging");
+
+    // Act & Assert
+    assert_eq!(text(&field(&logging, "driver")), "json-file");
+    assert!(keys_of(&field(&logging, "options")).is_empty());
 }

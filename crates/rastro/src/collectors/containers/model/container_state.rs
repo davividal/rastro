@@ -2,6 +2,7 @@
 
 use rastro_collector::{NonEmptyText, Observation};
 
+use crate::collectors::containers::model::ObservedHealth;
 use crate::collectors::containers::value_objects::{ContainerStatus, EngineInstant};
 
 /// The stable half and the moving half of a container's state, in one type.
@@ -34,6 +35,9 @@ pub struct ContainerState {
     /// happens where that spelling is known, in the source.
     pub finished_at: Option<EngineInstant>,
     pub restart_count: i64,
+    /// Absent for a container with no healthcheck at all, which is a different fact from a
+    /// check that has not run yet.
+    pub health: Option<ObservedHealth>,
 }
 
 impl From<&ContainerState> for Observation {
@@ -47,6 +51,13 @@ impl From<&ContainerState> for Observation {
                 },
             ),
             ("exit_code", Observation::integer(state.exit_code)),
+            (
+                "health",
+                match &state.health {
+                    Some(health) => Observation::from(health),
+                    None => Observation::null(),
+                },
+            ),
             ("finished_at", stamp(state.finished_at.as_ref()).volatile()),
             ("oom_killed", Observation::boolean(state.oom_killed)),
             (
