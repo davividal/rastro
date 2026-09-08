@@ -808,9 +808,24 @@ fn loaded_modules() -> std::collections::BTreeSet<String> {
 /// earlier `ss` already loaded the diag modules the delta is empty whatever rastro does, so
 /// a green result here is evidence only when the box is cold. A fresh container is.
 ///
+/// The firewall backends are the one path a cold box cannot vouch for either way, and not by
+/// oversight: `FirewallSource::detect_all` will not even locate `iptables-nft-save` unless
+/// `/proc/modules` already shows the subsystem, so cold means the program never runs and warm
+/// means the module was loaded before rastro started. The residency gate and `purity.rs` are
+/// what hold that line; this test cannot.
+///
 /// The companion to this is `no_collector_runs_a_program_that_makes_the_kernel_load_a
 /// _module` in `purity.rs`, which holds on any host because it reads the source rather than
 /// the kernel.
+///
+/// **The seal narrows the walk and excludes no collector.** What could load a module is a
+/// subprocess, and the run still spawns every one it did before: `ip`, `lsblk`, `systemctl`,
+/// `nginx -V`, `dpkg-query`, `sshd -T` and the rest. That is the net this test casts, and it
+/// is wider than `purity.rs`, which can only forbid the three program names already known to
+/// misbehave. Walking the whole host to reach those subprocesses cost 111s and 145s on CI
+/// runners and twice ran past nextest's 360s terminate-after on unchanged code, which made
+/// this the test that timed the suite out rather than the one that caught a module load.
+/// Sealed, on the same runners, it is five seconds and the whole suite is under a minute.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_run_leaves_the_kernel_module_list_untouched() {
@@ -818,7 +833,7 @@ fn a_run_leaves_the_kernel_module_list_untouched() {
     let before = loaded_modules();
 
     // Act
-    let output = run(&[]);
+    let output = run(&["--config", sealing_the_shipped_trees()]);
     assert!(output.status.success(), "rastro should have succeeded");
 
     // Assert
