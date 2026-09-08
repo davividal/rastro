@@ -3080,3 +3080,26 @@ Labels are the asymmetry, and deliberately: a label is metadata somebody attache
 describe the container, and for a container nobody named by hand it is the only durable
 link back to the definition it came from, since compose writes its project, its service
 and a hash of the config it rendered. Those are recorded as they stand.
+
+## A tmpfs mount is in neither list the others are in
+
+Measured on docker 26.1.5. A container started with `--tmpfs /scratch:rw,size=64m`
+reports **no `Mounts` entry at all** for it. The only place it appears is
+`HostConfig.Tmpfs`, as a destination mapped to its raw option string.
+
+So the mounts are read from both accounts and merged on the destination. A facet
+reading the mount list alone would have lost every tmpfs on the box and said nothing
+about it, which is the silent-omission failure this project exists to avoid: a tmpfs
+appearing at `/run` or over `/tmp` is exactly the kind of change an operator takes a
+fingerprint to catch.
+
+**Keyed by destination rather than listed in the engine's order**, which the merge
+needs and the contract wants anyway: on the same measurement two mounts came back in
+the opposite order from the one they were declared in, so the order is docker's own
+and nobody promised it. A destination is unique per container, and one arriving from
+both accounts is docker contradicting itself, so it is refused rather than resolved.
+
+The tmpfs option string is kept whole rather than split into pairs, for the same
+reason `/proc/mounts` options are: splitting on every comma corrupts any value that
+holds one. Whether the mount is read-only is read from that string, because for a
+tmpfs docker keeps it there rather than in a flag of its own.

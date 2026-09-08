@@ -7,12 +7,12 @@ use std::collections::BTreeMap;
 use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
-    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerState,
-    DockerContainer,
+    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerMount,
+    ContainerMounts, ContainerState, DockerContainer,
 };
 use crate::collectors::containers::value_objects::{
     ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ImageDigest,
-    ImageReference, LabelName, VariableName,
+    ImageReference, LabelName, MountKind, VariableName,
 };
 
 /// Go's zero time, which is what docker prints for a stamp that has not happened.
@@ -53,6 +53,9 @@ pub struct DockerContainerDocument {
     arguments: Vec<String>,
     #[serde(rename = "State")]
     state: StateHalf,
+    /// Volume and bind mounts. **Not tmpfs**, which docker reports nowhere near here.
+    #[serde(rename = "Mounts", default)]
+    mounts: Vec<MountEntry>,
     #[serde(rename = "Config")]
     config: ConfigHalf,
     #[serde(rename = "HostConfig")]
@@ -105,6 +108,32 @@ struct ConfigHalf {
 struct HostConfigHalf {
     #[serde(rename = "AutoRemove", default)]
     auto_remove: bool,
+    /// Destination to option string, and the only place a `--tmpfs` mount appears at all.
+    /// Null on a container with none, which `default` covers either way.
+    #[serde(rename = "Tmpfs", default)]
+    tmpfs: BTreeMap<String, String>,
+}
+
+/// One entry of docker's own mount list.
+#[derive(Debug, Clone, Deserialize)]
+struct MountEntry {
+    #[serde(rename = "Type")]
+    kind: String,
+    /// Only a volume has one.
+    #[serde(rename = "Name", default)]
+    name: String,
+    /// A bind's host path, or the directory the engine keeps a volume in.
+    #[serde(rename = "Source", default)]
+    source: String,
+    #[serde(rename = "Destination")]
+    destination: String,
+    /// Only a volume has one.
+    #[serde(rename = "Driver", default)]
+    driver: String,
+    #[serde(rename = "RW", default)]
+    writable: bool,
+    #[serde(rename = "Propagation", default)]
+    propagation: String,
 }
 
 impl DockerContainerDocument {
@@ -142,6 +171,7 @@ impl DockerContainerDocument {
             .ok(),
             environment: self.environment()?,
             labels: self.labels()?,
+            mounts: self.mounts()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -176,6 +206,50 @@ impl DockerContainerDocument {
         Ok(ContainerEnvironment::new(variables))
     }
 
+    /// Both of docker's accounts of what is mounted, merged on the destination.
+    ///
+    /// **Two sources rather than one, because a tmpfs is in neither list the other is in.**
+    /// Measured on docker 26.1.5: `--tmpfs /scratch` produces no `Mounts` entry at all and
+    /// appears only as `HostConfig.Tmpfs`, so reading the mount list alone would lose every
+    /// tmpfs on the box without saying so.
+    fn mounts(&self) -> Result<ContainerMounts, CollectionError> {
+        let mut mounts = Vec::new();
+
+        for entry in &self.mounts {
+            mounts.push((
+                AbsolutePath::new(entry.destination.clone(), "mount destination")?,
+                ContainerMount {
+                    kind: MountKind::new(entry.kind.clone())?,
+                    name: NonEmptyText::new(entry.name.clone(), "volume name").ok(),
+                    source: AbsolutePath::new(entry.source.clone(), "mount source").ok(),
+                    driver: NonEmptyText::new(entry.driver.clone(), "volume driver").ok(),
+                    writable: entry.writable,
+                    propagation: NonEmptyText::new(entry.propagation.clone(), "propagation").ok(),
+                    options: None,
+                },
+            ));
+        }
+
+        for (destination, options) in &self.host_config.tmpfs {
+            mounts.push((
+                AbsolutePath::new(destination.clone(), "tmpfs destination")?,
+                ContainerMount {
+                    kind: MountKind::tmpfs(),
+                    name: None,
+                    source: None,
+                    driver: None,
+                    // A tmpfs is writable unless its own options say `ro`, which is where
+                    // docker keeps that fact rather than in a flag of its own.
+                    writable: !is_read_only(options),
+                    propagation: None,
+                    options: NonEmptyText::new(options.clone(), "tmpfs options").ok(),
+                },
+            ));
+        }
+
+        ContainerMounts::new(mounts)
+    }
+
     fn labels(&self) -> Result<ContainerLabels, CollectionError> {
         let mut labels = Vec::new();
 
@@ -185,6 +259,14 @@ impl DockerContainerDocument {
 
         Ok(ContainerLabels::new(labels))
     }
+}
+
+/// Whether a tmpfs option string asks for a read-only mount.
+///
+/// Split on commas, which is safe here and would not be for a bind: these are tmpfs mount
+/// options, where no value holds a comma, and only whole-token equality is asked.
+fn is_read_only(options: &str) -> bool {
+    options.split(',').any(|option| option == "ro")
 }
 
 /// A stamp docker filled in, or absent for one that has not happened.

@@ -135,7 +135,31 @@ const INSPECT_WEB: &str = r#"[
         "org.opencontainers.image.title": "fixture"
       }
     },
-    "HostConfig": { "AutoRemove": false, "NetworkMode": "fixture-net" }
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/etc/hostname",
+        "Destination": "/host-name",
+        "Mode": "ro",
+        "RW": false,
+        "Propagation": "rprivate"
+      },
+      {
+        "Type": "volume",
+        "Name": "fixture-vol",
+        "Source": "/var/lib/docker/volumes/fixture-vol/_data",
+        "Destination": "/data",
+        "Driver": "local",
+        "Mode": "ro",
+        "RW": false,
+        "Propagation": ""
+      }
+    ],
+    "HostConfig": {
+      "AutoRemove": false,
+      "NetworkMode": "fixture-net",
+      "Tmpfs": { "/scratch": "rw,size=64m" }
+    }
   }
 ]"#;
 
@@ -732,4 +756,74 @@ fn an_account_or_directory_the_image_decides_is_absent_rather_than_empty() {
     // Act & Assert
     assert!(is_null(&field(&container, "user")));
     assert!(is_null(&field(&container, "working_directory")));
+}
+
+#[test]
+fn the_mounts_are_keyed_by_the_path_inside_the_container() {
+    // Arrange: docker returned these two in the opposite order from the one they were
+    // declared in, measured on 26.1.5, so its order is docker's own and not something to
+    // put in a document that has to be byte-identical. A destination is unique per
+    // container, which makes it the key.
+    let mounts = field(&container_of("mounts", "web"), "mounts");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&mounts),
+        vec![
+            "/data".to_owned(),
+            "/host-name".to_owned(),
+            "/scratch".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn a_volume_mount_records_the_volume_and_where_the_engine_keeps_it() {
+    // Arrange
+    let mount = field(
+        &field(&container_of("volume-mount", "web"), "mounts"),
+        "/data",
+    );
+
+    // Act & Assert
+    assert_eq!(text(&field(&mount, "kind")), "volume");
+    assert_eq!(text(&field(&mount, "name")), "fixture-vol");
+    assert_eq!(
+        text(&field(&mount, "source")),
+        "/var/lib/docker/volumes/fixture-vol/_data"
+    );
+    assert_eq!(text(&field(&mount, "driver")), "local");
+    assert!(!boolean(&field(&mount, "writable")));
+}
+
+#[test]
+fn a_bind_mount_records_the_host_path_and_its_propagation() {
+    // Arrange: a bind is the mount that reaches out of the container, so the host path is
+    // the value that matters, and the propagation says whether a mount made on the host
+    // afterwards appears inside it.
+    let mount = field(
+        &field(&container_of("bind-mount", "web"), "mounts"),
+        "/host-name",
+    );
+
+    // Act & Assert
+    assert_eq!(text(&field(&mount, "kind")), "bind");
+    assert_eq!(text(&field(&mount, "source")), "/etc/hostname");
+    assert_eq!(text(&field(&mount, "propagation")), "rprivate");
+    assert!(is_null(&field(&mount, "name")));
+}
+
+#[test]
+fn a_tmpfs_mount_is_read_from_the_only_place_docker_reports_it() {
+    // Arrange: **measured, and it decides the shape of this read.** A `--tmpfs` mount does
+    // not appear in `Mounts` at all. It is only in `HostConfig.Tmpfs`, as a destination
+    // mapped to its options, so a facet reading `Mounts` alone would silently lose every
+    // tmpfs on the box.
+    let mount = field(&field(&container_of("tmpfs", "web"), "mounts"), "/scratch");
+
+    // Act & Assert
+    assert_eq!(text(&field(&mount, "kind")), "tmpfs");
+    assert_eq!(text(&field(&mount, "options")), "rw,size=64m");
+    assert!(is_null(&field(&mount, "source")));
+    assert!(boolean(&field(&mount, "writable")));
 }
