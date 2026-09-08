@@ -2973,7 +2973,8 @@ that could be relied on, and two of the five would have been got wrong by infere
   run with". That gap is real and is the reason the file paths are worth collecting next.
 
 **This is not the opposite of the `ExecStart` decision, and the difference is the point.**
-[The argument vector is kept whole](#) because systemd loses the quoting in `argv[]`, so
+[The argument vector is kept whole](../crates/rastro/src/collectors/systemd/exec_start.rs)
+because systemd loses the quoting in `argv[]`, so
 splitting it would claim a structure the source cannot support. `Environment=` keeps its
 quoting, so the entries are recoverable exactly, and the honest record is the split one. A
 reader who knows the first entry would otherwise assume the same limitation applies here.
