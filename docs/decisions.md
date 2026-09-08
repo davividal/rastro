@@ -3279,3 +3279,22 @@ old one.
 
 The size is required rather than optional, unlike a limit: an image always has one, so a
 negative or unreadable figure is a misread and fails, where an absent limit is a fact.
+
+## A volume's driver options are read, because the mountpoint can be a lie
+
+A `local` volume created with `--opt type=tmpfs --opt device=tmpfs --opt o=size=32m`
+still reports a mountpoint under `/var/lib/docker/volumes/`, and the data is not durably
+there at all. An NFS volume is the same shape: the mountpoint is local and the options
+name the server the data actually lives on. Measured on docker 26.1.5.
+
+A facet that recorded the mountpoint alone would describe the wrong place with
+confidence, which is worse than describing nothing. So the driver, the options, the
+labels and the scope are all read, and the mountpoint is one value among them rather
+than the answer.
+
+**Volumes are read in their own right rather than only as a container's mounts.** They
+outlive the containers that used them: a volume left behind by a container that has been
+deleted is invisible from every other part of this facet, and it is simultaneously where
+a box's data is and where its wasted disk is. An anonymous volume, which a container gets
+when an image declares `VOLUME` and nobody named one, is recorded like any other under
+its 64-character hex name, for the same reason a dangling image is.

@@ -51,14 +51,16 @@ pub use model::{
     ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels, ContainerLimits,
     ContainerLogging, ContainerMount, ContainerMounts, ContainerNamespaces, ContainerNetwork,
     ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState, DockerContainer,
-    DockerContainers, DockerEngine, DockerImage, DockerImages, DockerServer, ImagePlatform,
-    ObservedHealth, PublishedBinding, RestartPolicy, UnreadableObject,
+    DockerContainers, DockerEngine, DockerImage, DockerImages, DockerServer, DockerVolume,
+    DockerVolumes, ImagePlatform, ObservedHealth, PublishedBinding, RestartPolicy,
+    UnreadableObject,
 };
 pub use source::{Docker, EngineSource};
 pub use value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus,
     EngineFlavour, EngineInstant, EngineVersion, ExposedPort, ImageDigest, ImageReference,
-    LabelName, MountKind, NetworkId, NetworkName, StorageDriver, SwarmState, VariableName,
+    LabelName, MountKind, NetworkId, NetworkName, StorageDriver, SwarmState, TransportProtocol,
+    VariableName, VolumeName,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs. A collector written

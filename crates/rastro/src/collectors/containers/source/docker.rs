@@ -6,11 +6,15 @@ use super::docker_container_document::DockerContainerDocument;
 use super::docker_image_document::DockerImageDocument;
 use super::docker_info::DockerInfoDocument;
 use super::docker_version::DockerVersionDocument;
+use super::docker_volume_document::DockerVolumeDocument;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::containers::model::{
-    DockerContainer, DockerContainers, DockerEngine, DockerImage, DockerImages, UnreadableObject,
+    DockerContainer, DockerContainers, DockerEngine, DockerImage, DockerImages, DockerVolume,
+    DockerVolumes, UnreadableObject,
 };
-use crate::collectors::containers::value_objects::{ContainerId, ContainerName, ImageDigest};
+use crate::collectors::containers::value_objects::{
+    ContainerId, ContainerName, ImageDigest, VolumeName,
+};
 
 /// docker's client, which is the only interface the engine documents as stable.
 const PROGRAM: &str = "docker";
@@ -47,6 +51,12 @@ const QUIET: &str = "--quiet";
 
 /// One image.
 const INSPECT_IMAGE: [&str; 2] = ["image", "inspect"];
+
+/// Every volume's name, the anonymous ones included.
+const LIST_VOLUMES: [&str; 2] = ["volume", "ls"];
+
+/// One volume.
+const INSPECT_VOLUME: [&str; 2] = ["volume", "inspect"];
 
 /// A docker client found on this host, ready to be asked.
 ///
@@ -96,10 +106,17 @@ impl Docker {
         let reported = decode::<DockerInfoDocument>(&self.tool.run(&INFO)?, "info")?;
         let containers = self.containers()?;
         let images = self.images()?;
+        let volumes = self.volumes()?;
 
         Ok(DockerEngine::answering(
             versions.client,
-            reported.to_server(server.version, server.components, containers, images)?,
+            reported.to_server(
+                server.version,
+                server.components,
+                containers,
+                images,
+                volumes,
+            )?,
         ))
     }
 
@@ -134,6 +151,55 @@ impl Docker {
         }
 
         DockerContainers::new(read, unreadable)
+    }
+
+    /// The volumes, read one at a time, and the ones that could not be read.
+    fn volumes(&self) -> Result<DockerVolumes, CollectionError> {
+        let mut read: Vec<(VolumeName, DockerVolume)> = Vec::new();
+        let mut unreadable: Vec<UnreadableObject> = Vec::new();
+
+        let mut listed = LIST_VOLUMES.to_vec();
+        listed.push(QUIET);
+
+        for line in self.tool.run(&listed)?.lines() {
+            let name = line.trim();
+            if name.is_empty() {
+                continue;
+            }
+
+            let name = VolumeName::new(name)?;
+            match self.inspect_volume(&name) {
+                Ok(volume) => read.push(volume),
+                Err(failure) => {
+                    unreadable.push(UnreadableObject::new(name.as_str(), &failure.to_string())?)
+                }
+            }
+        }
+
+        DockerVolumes::new(read, unreadable)
+    }
+
+    /// One volume as docker describes it.
+    fn inspect_volume(
+        &self,
+        name: &VolumeName,
+    ) -> Result<(VolumeName, DockerVolume), CollectionError> {
+        let mut arguments = INSPECT_VOLUME.to_vec();
+        arguments.push(name.as_str());
+
+        let documents =
+            decode::<Vec<DockerVolumeDocument>>(&self.tool.run(&arguments)?, "volume inspect")?;
+
+        documents
+            .first()
+            .ok_or_else(|| {
+                CollectionError::new(format!(
+                    "`{PROGRAM} volume inspect` described no volume for the name {:?} it had \
+                     just listed",
+                    name.as_str()
+                ))
+            })?
+            .to_volume()
     }
 
     /// The images, read one at a time, and the ones that could not be read.

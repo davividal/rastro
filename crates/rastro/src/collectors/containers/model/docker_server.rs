@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
-use crate::collectors::containers::model::{CgroupControl, DockerContainers, DockerImages};
+use crate::collectors::containers::model::{
+    CgroupControl, DockerContainers, DockerImages, DockerVolumes,
+};
 use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver, SwarmState};
 
 /// The daemon's own account of itself, which only exists when a daemon answered.
@@ -60,6 +62,8 @@ pub struct DockerServer {
     pub containers: DockerContainers,
     /// What the engine holds, whether or not anything is running it.
     pub images: DockerImages,
+    /// The volumes, which outlive the containers that used them.
+    pub volumes: DockerVolumes,
 }
 
 impl From<&DockerServer> for Observation {
@@ -113,6 +117,12 @@ impl From<&DockerServer> for Observation {
             ),
             ("storage_driver", Observation::from(&server.storage_driver)),
             ("swarm", Observation::from(&server.swarm)),
+            (
+                "unreadable_volumes",
+                Observation::list(server.volumes.unreadable().iter().map(Observation::from))
+                    .volatile(),
+            ),
+            ("volumes", Observation::from(&server.volumes)),
             (
                 "unreadable_images",
                 Observation::list(server.images.unreadable().iter().map(Observation::from))

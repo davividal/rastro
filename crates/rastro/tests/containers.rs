@@ -92,6 +92,36 @@ const TAGGED_IMAGE: &str =
 const DANGLING_IMAGE: &str =
     "sha256:f736818d54f4f842deb3c37920abf0baf54c6f95d5be6d61fd6c20d84c15f47b";
 
+/// A volume created with driver options, from `docker volume inspect`.
+///
+/// The options are the reason this is read at all: a `local` volume with
+/// `type=tmpfs`/`device=`/`o=` is not on the disk its mountpoint suggests, and for an NFS
+/// volume they name the server the data actually lives on.
+const INSPECT_VOLUME_WITH_OPTIONS: &str = r#"[
+  {
+    "CreatedAt": "2026-09-08T12:28:00Z",
+    "Driver": "local",
+    "Labels": { "com.example.owner": "platform" },
+    "Mountpoint": "/var/lib/docker/volumes/fixture-opts/_data",
+    "Name": "fixture-opts",
+    "Options": { "device": "tmpfs", "o": "size=32m", "type": "tmpfs" },
+    "Scope": "local"
+  }
+]"#;
+
+/// A volume created with nothing but a name, where docker writes null for both maps.
+const INSPECT_PLAIN_VOLUME: &str = r#"[
+  {
+    "CreatedAt": "2026-09-08T11:45:17Z",
+    "Driver": "local",
+    "Labels": null,
+    "Mountpoint": "/var/lib/docker/volumes/fixture-vol/_data",
+    "Name": "fixture-vol",
+    "Options": null,
+    "Scope": "local"
+  }
+]"#;
+
 /// A tagged image built on this box, from `docker image inspect`.
 ///
 /// `RepoDigests` is empty because the box built it and never pushed it, and `Parent` is set
@@ -449,6 +479,8 @@ struct DockerFixtures<'a> {
     containers: &'a [(&'a str, Option<&'a str>)],
     /// The images `docker image ls` lists, on the same terms.
     images: &'a [(&'a str, Option<&'a str>)],
+    /// The volumes `docker volume ls` lists, on the same terms.
+    volumes: &'a [(&'a str, Option<&'a str>)],
 }
 
 impl DockerFixtures<'_> {
@@ -467,6 +499,10 @@ impl DockerFixtures<'_> {
             images: &[
                 (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
                 (DANGLING_IMAGE, Some(INSPECT_DANGLING_IMAGE)),
+            ],
+            volumes: &[
+                ("fixture-opts", Some(INSPECT_VOLUME_WITH_OPTIONS)),
+                ("fixture-vol", Some(INSPECT_PLAIN_VOLUME)),
             ],
         }
     }
@@ -500,6 +536,17 @@ fn fake_docker(name: &str, fixtures: DockerFixtures) -> Docker {
     }
     fs::write(root.join("image-ids"), &image_ids).expect("a writable fixture");
 
+    let mut volume_names = String::new();
+    for (name, document) in fixtures.volumes {
+        volume_names.push_str(name);
+        volume_names.push('\n');
+        if let Some(document) = document {
+            fs::write(root.join(format!("volume-{name}.json")), document)
+                .expect("a writable fixture");
+        }
+    }
+    fs::write(root.join("volume-names"), &volume_names).expect("a writable fixture");
+
     let directory = root.to_str().expect("a UTF-8 scratch path");
     let path = root.join("docker");
     fs::write(
@@ -520,6 +567,26 @@ STDOUT
 ;;
 ps)
 cat '{directory}/ids'
+;;
+volume)
+case "$2" in
+ls)
+cat '{directory}/volume-names'
+;;
+inspect)
+document='{directory}/volume-'"$3"'.json'
+if [ -f "$document" ]; then
+cat "$document"
+else
+printf 'Error response from daemon: get %s: no such volume\n' "$3" >&2
+exit 1
+fi
+;;
+*)
+printf 'unexpected volume invocation: %s\n' "$*" >&2
+exit 1
+;;
+esac
 ;;
 image)
 case "$2" in
@@ -687,6 +754,7 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
             info: "",
             containers: &[],
             images: &[],
+            volumes: &[],
         },
     );
 
@@ -723,6 +791,7 @@ fn output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engin
             info: INFO_ANSWERING,
             containers: &[],
             images: &[],
+            volumes: &[],
         },
     ))]);
 
@@ -865,6 +934,7 @@ fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() 
                     info: INFO_ANSWERING,
                     containers: &[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)],
                     images: &[],
+                    volumes: &[],
                 },
             ),
             "docker",
@@ -899,6 +969,7 @@ fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
                     info: INFO_ANSWERING,
                     containers: &[],
                     images: &[],
+                    volumes: &[],
                 },
             ),
             "docker",
@@ -1556,6 +1627,7 @@ fn an_image_that_vanished_while_being_read_is_recorded_too() {
                         (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
                         (DANGLING_IMAGE, None),
                     ],
+                    volumes: &[],
                 },
             ),
             "docker",
@@ -1574,4 +1646,65 @@ fn an_image_that_vanished_while_being_read_is_recorded_too() {
     assert_eq!(entries.len(), 1);
     assert_eq!(text(&field(&entries[0], "id")), DANGLING_IMAGE);
     assert!(text(&field(&entries[0], "reason")).contains("No such image"));
+}
+
+fn volume_of(name: &str, volume: &str) -> Observation {
+    field(&field(&answering_server(name), "volumes"), volume)
+}
+
+#[test]
+fn the_volumes_are_keyed_by_name() {
+    // Arrange: a volume's name is its identity to the engine and to every container that
+    // mounts it, and unlike a container it is never minted afresh.
+    let volumes = field(&answering_server("volumes"), "volumes");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&volumes),
+        vec!["fixture-opts".to_owned(), "fixture-vol".to_owned()]
+    );
+}
+
+#[test]
+fn a_volume_records_its_driver_and_where_the_engine_keeps_it() {
+    // Arrange
+    let volume = volume_of("volume-driver", "fixture-vol");
+
+    // Act & Assert
+    assert_eq!(text(&field(&volume, "driver")), "local");
+    assert_eq!(
+        text(&field(&volume, "mountpoint")),
+        "/var/lib/docker/volumes/fixture-vol/_data"
+    );
+    assert_eq!(text(&field(&volume, "scope")), "local");
+    assert_eq!(text(&field(&volume, "created")), "2026-09-08T11:45:17Z");
+}
+
+#[test]
+fn a_volumes_driver_options_are_recorded_because_they_say_where_the_data_is() {
+    // Arrange: the mountpoint of a `local` volume with `type=tmpfs` is a path the data is
+    // not durably at, and for an NFS volume the options name the server holding it. Reading
+    // the mountpoint alone would describe the wrong place with confidence.
+    let volume = volume_of("volume-options", "fixture-opts");
+    let options = field(&volume, "options");
+
+    // Act & Assert
+    assert_eq!(text(&field(&options, "type")), "tmpfs");
+    assert_eq!(text(&field(&options, "device")), "tmpfs");
+    assert_eq!(text(&field(&options, "o")), "size=32m");
+    assert_eq!(
+        text(&field(&field(&volume, "labels"), "com.example.owner")),
+        "platform"
+    );
+}
+
+#[test]
+fn a_volume_created_with_nothing_but_a_name_records_neither_map() {
+    // Arrange: docker writes null for both `Labels` and `Options`, and an empty map says
+    // the same thing without claiming either was set to nothing.
+    let volume = volume_of("volume-plain", "fixture-vol");
+
+    // Act & Assert
+    assert!(keys_of(&field(&volume, "options")).is_empty());
+    assert!(keys_of(&field(&volume, "labels")).is_empty());
 }
