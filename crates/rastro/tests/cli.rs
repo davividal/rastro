@@ -820,7 +820,7 @@ fn loaded_modules() -> std::collections::BTreeSet<String> {
 ///
 /// **The seal narrows the walk and excludes no collector.** What could load a module is a
 /// subprocess, and the run still spawns every one it did before: `ip`, `lsblk`, `systemctl`,
-/// `nginx -T`, `dpkg-query`, `sshd -T` and the rest. That is the net this test casts, and it
+/// `nginx -V`, `dpkg-query`, `sshd -T` and the rest. That is the net this test casts, and it
 /// is wider than `purity.rs`, which can only forbid the three program names already known to
 /// misbehave. Walking the whole host to reach those subprocesses cost 111s and 145s on CI
 /// runners and twice ran past nextest's 360s terminate-after on unchanged code, which made
