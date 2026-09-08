@@ -2899,12 +2899,10 @@ that forgot `--raw` entirely still produces the safe document.
 comment that names the fix as widening the port. `View` was already re-exported for the
 same reason, so this is the established shape and not a new hole in it.
 
-**The `invocation` collector's version stays at `1`, deliberately.** The rule that took
-`postgresql` to `3` is about a *state* collector, whose shape evolves independently of the
-document's. A metadata collector describes the envelope, and the envelope's shape is the
-format contract: it moves with `schema_version` at a release, not per collector. rastro is
-at `0.0.0` and has not had one, so both metadata collectors are still `1` and stay there
-until it does.
+**The `invocation` collector's version stays at `1`.** Not a special case for metadata: no
+collector moves before the first release, which
+[a later entry](#every-collector-is-version-1-until-rastro-has-a-release) makes the general
+rule and applies to the six that had already moved.
 
 **Cost, and it is the real one:** a fingerprint taken before this change and one taken
 after differ in the `invocation` facet on an unchanged host, and nothing in either document
@@ -2986,3 +2984,43 @@ reader who knows the first entry would otherwise assume the same limitation appl
 lives in an `EnvironmentFile=` reports an empty `environment` object, which is
 indistinguishable from one that genuinely sets nothing until the file paths land beside it.
 Named in the field's own documentation so it is not discovered from a diff.
+
+# Every collector is version `1` until rastro has a release
+
+Dated 2026-09-08. rastro is at `0.0.0` and has never been released. Six collectors had
+nonetheless moved past `1` — `firewall`, `network`, `processes`, `sockets` and `time` to
+`2`, `postgresql` to `3` — each for a reason that was locally sound and collectively wrong.
+
+**A collector version is a promise to somebody holding an older document.** Its whole job
+is to let a consumer diffing two fingerprints tell "the collector's output shape moved"
+apart from "the box changed". Before a release there is nobody in that position: no
+document exists that was produced by a published rastro, so there is no archive for a bump
+to protect. Each bump was priced as though the format were already published, and what it
+bought instead was a version field whose meaning depended on when a collector happened to
+last be touched.
+
+**So the rule is flat: every collector reports `1` until the first release**, and the six
+are reset to it. What a bump would have recorded is not lost — it is in this log, which is
+where a pre-release format change belongs.
+
+**After the first release the ordinary rule resumes**, and a facet that changes its key set
+on identical host state bumps as those six entries described.
+
+**Supersedes the version paragraph, and only that paragraph, in five entries.** The
+decisions themselves stand entirely; each still describes a real change to what its facet
+reports, and only the bump it prescribed is withdrawn:
+
+- [The time collector reads files, because `timedatectl` starts a unit](#the-time-collector-reads-files-because-timedatectl-starts-a-unit)
+- [`ip` is asked for details, because it hides a route's defaults](#ip-is-asked-for-details-because-it-hides-a-routes-defaults)
+- [The sockets facet is read from `/proc`, and loses the interface scope](#the-sockets-facet-is-read-from-proc-and-loses-the-interface-scope)
+- [A firewall backend is read only where its subsystem is already resident](#a-firewall-backend-is-read-only-where-its-subsystem-is-already-resident)
+- [A role password change is visible, and is hashed twice to get there](#a-role-password-change-is-visible-and-is-hashed-twice-to-get-there)
+
+**Cost:** a fingerprint taken from a build of rastro before this change compares against one
+taken after with six facets whose version went *backwards*. That is only meaningful to
+somebody holding a document from an unreleased build, which is the population this entry
+argues does not need protecting, and it is the last moment at which the reset is free.
+
+**Consistency check for a reviewer:** `grep -c 'CollectorVersion::new("1")'` over
+`crates/rastro/src/collectors/` should equal the number of collectors, and nothing should
+match `"2"` or `"3"`.

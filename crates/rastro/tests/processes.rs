@@ -415,13 +415,13 @@ fn the_complete_view_keeps_every_field() {
 }
 
 #[test]
-fn the_collector_reports_its_second_version() {
-    // Act: the data is unchanged and its visibility is not, so a consumer that saw processes
-    // in a default run and now sees none must be able to tell the collector moved.
+fn the_collector_reports_its_pre_release_version() {
+    // Act: every collector is `1` until rastro has a release. The visibility of this facet
+    // changed and its version deliberately did not — see the decision log.
     let collector = ProcessesCollector::reading(ProcProcesses::new());
 
     // Assert
-    assert_eq!(collector.identity().version.as_str(), "2");
+    assert_eq!(collector.identity().version.as_str(), "1");
 }
 
 #[test]

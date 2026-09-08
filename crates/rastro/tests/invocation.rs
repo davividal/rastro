@@ -196,4 +196,3 @@ fn the_effective_config_still_names_the_view_beside_the_disclosure() {
     assert_eq!(text(&field(&complete, "view")), "complete");
     assert_eq!(text(&field(&complete, "disclosure")), "redacted");
 }
-
