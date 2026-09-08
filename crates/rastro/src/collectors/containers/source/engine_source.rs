@@ -2,6 +2,7 @@
 
 use rastro_collector::{CollectionError, WalkedTree};
 
+use super::containerd::Containerd;
 use super::docker::Docker;
 use crate::collectors::containers::model::ContainerEngine;
 use crate::collectors::containers::value_objects::EngineFlavour;
@@ -14,6 +15,7 @@ use crate::collectors::containers::value_objects::EngineFlavour;
 /// detection below says what to look for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineSource {
+    Containerd(Containerd),
     Docker(Docker),
 }
 
@@ -28,19 +30,25 @@ impl EngineSource {
 
     fn detect(flavour: EngineFlavour) -> Option<Self> {
         match flavour {
+            EngineFlavour::Containerd => Containerd::detect().map(Self::Containerd),
             EngineFlavour::Docker => Docker::detect().map(Self::Docker),
         }
     }
 
     pub fn read(&self) -> Result<ContainerEngine, CollectionError> {
         match self {
-            Self::Docker(docker) => Ok(ContainerEngine::Docker(docker.read()?)),
+            Self::Containerd(containerd) => Ok(ContainerEngine::Containerd(containerd.read()?)),
+            Self::Docker(docker) => Ok(ContainerEngine::Docker(Box::new(docker.read()?))),
         }
     }
 
     /// The trees this engine keeps to itself.
     pub fn private_trees(&self) -> Vec<WalkedTree> {
         match self {
+            // containerd's own store is not claimed yet: on a docker box its layers are
+            // inside the tree docker's root already seals, and a standalone containerd
+            // wants its own measurement first.
+            Self::Containerd(_) => Vec::new(),
             Self::Docker(docker) => docker.private_trees(),
         }
     }

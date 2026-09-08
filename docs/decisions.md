@@ -3407,3 +3407,44 @@ A configuration rastro cannot read — which an unprivileged run makes ordinary 
 to the documented default rather than giving up: the engine is plainly running, and `ctr`
 says so loudly if the address is wrong. A box with no containerd process gets no address at
 all, because the default is not worth guessing when nothing is behind it.
+
+## containerd is a second dialect, not the same engine spelled differently
+
+The facet's three-part shape is shared with docker — the client that is installed,
+whether anything answered, and what it said — because those are the three states a
+reader has to tell apart whichever engine it is. Almost nothing inside is shared, and
+that is the point of keying the facet by flavour rather than flattening both into one
+container type.
+
+**`ctr --version` is the read for the client, and `ctr version` for the server.**
+Measured on containerd 2.3.4: the `version` subcommand has to reach the socket to answer
+and, against an address with nothing behind it, exits non-zero printing *nothing at all* —
+not even the client's own half. `ctr --version` never connects and answers regardless. So
+the client's version is readable on exactly the box whose state is hardest to describe:
+containerd installed and stopped.
+
+**A successful `ctr version` with no server block is a failure, not an absence.** Since a
+`ctr` that cannot reach containerd exits non-zero, and the execution seam turns that into
+a recorded failure, output that *did* succeed and carries no server block means the format
+is not the one rastro reads. That is precisely the day this has to be loud rather than
+report an engine with no version.
+
+**Everything else avoids `ctr`'s tables.** `ctr` calls itself a debug tool and promises
+nothing about its output, so every other read uses `--quiet`, which prints one identifier
+per line, or the JSON of `containers info`. The version is the one place with neither.
+
+**The revision is recorded beside the version, and it earns its place here more than it
+would for docker**: containerd's version moves slowly and a distribution's rebuild changes
+only the revision, so the version alone would call two different builds the same engine.
+Debian 13's containerd reports `1.7.24~ds1` with revision `1.7.24~ds1-6+deb13u1`, which is
+a package version rather than a commit, and is recorded as reported.
+
+**Detection is the client, as it is for docker.** `ctr` ships with containerd, so a box
+that has it has had containerd installed, and whether anything answers is then state.
+**Cost, accepted knowingly:** a containerd running with no `ctr` installed is not reported
+at all. That is a limit of rastro rather than a fact about the box, and the same one docker
+has if its client is missing.
+
+**containerd's own store is not claimed yet.** On a docker box its layers are inside the
+tree docker's root already seals, and a standalone containerd wants its own measurement
+before a claim is made against it.

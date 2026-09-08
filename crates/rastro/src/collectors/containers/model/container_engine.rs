@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::containers::model::DockerEngine;
+use crate::collectors::containers::model::{ContainerdEngine, DockerEngine};
 use crate::collectors::containers::value_objects::EngineFlavour;
 
 /// An engine rastro found, in the shape its own concepts have.
@@ -18,12 +18,17 @@ use crate::collectors::containers::value_objects::EngineFlavour;
 /// is the mechanism that makes the compiler name every site when a third engine arrives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerEngine {
-    Docker(DockerEngine),
+    Containerd(ContainerdEngine),
+    /// Boxed because the two dialects are nowhere near the same size: docker's entry carries
+    /// every container, image, volume and network on the box, and without the indirection
+    /// every value of this enum would be as large as the largest of them.
+    Docker(Box<DockerEngine>),
 }
 
 impl ContainerEngine {
     pub fn flavour(&self) -> EngineFlavour {
         match self {
+            Self::Containerd(_) => EngineFlavour::Containerd,
             Self::Docker(_) => EngineFlavour::Docker,
         }
     }
@@ -32,7 +37,8 @@ impl ContainerEngine {
 impl From<&ContainerEngine> for Observation {
     fn from(engine: &ContainerEngine) -> Self {
         match engine {
-            ContainerEngine::Docker(docker) => Observation::from(docker),
+            ContainerEngine::Containerd(containerd) => Observation::from(containerd),
+            ContainerEngine::Docker(docker) => Observation::from(docker.as_ref()),
         }
     }
 }

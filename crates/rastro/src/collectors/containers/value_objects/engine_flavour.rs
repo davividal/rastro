@@ -10,6 +10,7 @@ use rastro_collector::Observation;
 /// two different levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EngineFlavour {
+    Containerd,
     Docker,
 }
 
@@ -20,10 +21,11 @@ impl EngineFlavour {
     /// flavour added here and nowhere else is an engine rastro claims to know and never
     /// looks for. The exhaustive match in `EngineSource::detect` is what stops that
     /// compiling.
-    pub const ALL: [Self; 1] = [Self::Docker];
+    pub const ALL: [Self; 2] = [Self::Containerd, Self::Docker];
 
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Containerd => "containerd",
             Self::Docker => "docker",
         }
     }
