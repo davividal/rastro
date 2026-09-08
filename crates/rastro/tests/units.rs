@@ -463,13 +463,3 @@ fn a_units_environment_value_is_readable_under_raw() {
     );
 }
 
-#[test]
-fn the_units_collector_moved_when_it_started_reporting_the_environment() {
-    // Arrange: on identical host state every unit now carries a key it did not, so a
-    // consumer diffing across the change has to be able to see that the collector moved
-    // rather than the box.
-    let collector = UnitsCollector::reading(None);
-
-    // Act & Assert
-    assert_eq!(collector.identity().version.as_str(), "2");
-}

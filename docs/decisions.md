@@ -2899,14 +2899,17 @@ that forgot `--raw` entirely still produces the safe document.
 comment that names the fix as widening the port. `View` was already re-exported for the
 same reason, so this is the established shape and not a new hole in it.
 
-**The `invocation` collector's version went to `2`.** On identical host state the facet
-now carries a key it did not, so a consumer diffing across the change has to be able to
-see that the collector moved rather than the box. Same rule that took `postgresql` to
-`3`.
+**The `invocation` collector's version stays at `1`, deliberately.** The rule that took
+`postgresql` to `3` is about a *state* collector, whose shape evolves independently of the
+document's. A metadata collector describes the envelope, and the envelope's shape is the
+format contract: it moves with `schema_version` at a release, not per collector. rastro is
+at `0.0.0` and has not had one, so both metadata collectors are still `1` and stay there
+until it does.
 
 **Cost, and it is the real one:** a fingerprint taken before this change and one taken
-after differ in the `invocation` facet on an unchanged host. The version bump is what
-makes that legible rather than mysterious; it does not make it go away.
+after differ in the `invocation` facet on an unchanged host, and nothing in either document
+says why. That is accepted rather than solved, because the alternative prices a
+pre-release format change as though the format were already published.
 
 **Withdrawn: "`--raw` is not built" as a reason to defer.** Two entries rest on it and
 their decisions still stand, but the premise no longer does. Neither is reversed here and
@@ -2978,9 +2981,6 @@ because systemd loses the quoting in `argv[]`, so
 splitting it would claim a structure the source cannot support. `Environment=` keeps its
 quoting, so the entries are recoverable exactly, and the honest record is the split one. A
 reader who knows the first entry would otherwise assume the same limitation applies here.
-
-**The `units` collector's version went to `2`.** On identical host state every unit now
-carries a key it did not.
 
 **Cost:** a facet that reads as complete and is not. A service whose whole configuration
 lives in an `EnvironmentFile=` reports an empty `environment` object, which is

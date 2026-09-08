@@ -197,19 +197,3 @@ fn the_effective_config_still_names_the_view_beside_the_disclosure() {
     assert_eq!(text(&field(&complete, "disclosure")), "redacted");
 }
 
-#[test]
-fn the_invocation_collector_moved_when_it_started_reporting_the_disclosure() {
-    // Arrange: on identical host state the facet now carries a key it did not, so a
-    // consumer diffing across the change has to be able to see that the collector moved
-    // rather than the box. Same rule that took the postgresql collector to `3`.
-    let collector = InvocationCollector::new(
-        Observation::null(),
-        Observation::null(),
-        None,
-        Ok(1_786_632_455),
-        None,
-    );
-
-    // Act & Assert
-    assert_eq!(collector.identity().version.as_str(), "2");
-}

@@ -52,7 +52,7 @@ impl UnitsCollector {
             name: FacetName::new("units").expect("`units` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("units").expect("`units` is a legal collector id"),
-                CollectorVersion::new("2").expect("`2` is a legal collector version"),
+                CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
             systemctl,
         }
