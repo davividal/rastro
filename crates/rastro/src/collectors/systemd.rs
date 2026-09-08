@@ -20,9 +20,11 @@
 
 mod exec_start;
 mod executable_path;
+mod shown_unit;
 pub mod systemctl_show;
 mod unit_name;
 
 pub use exec_start::ExecStart;
 pub use executable_path::ExecutablePath;
+pub use shown_unit::ShownUnit;
 pub use unit_name::UnitName;

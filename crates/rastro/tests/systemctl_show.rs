@@ -6,7 +6,7 @@
 //! `ExecStart=` lines or an argument containing a space, and both shapes decide how this
 //! parser has to work.
 
-use rastro::collectors::systemd::{ExecStart, UnitName, systemctl_show};
+use rastro::collectors::systemd::{ExecStart, ShownUnit, UnitName, systemctl_show};
 use rastro_collector::{Content, Observation, Scalar};
 
 /// Four units as `systemctl show <units> -p Id -p ExecStartEx --no-pager` prints them.
@@ -33,7 +33,7 @@ start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
 Id=rastro-probe.service
 ";
 
-fn shown() -> std::collections::BTreeMap<UnitName, Vec<ExecStart>> {
+fn shown() -> std::collections::BTreeMap<UnitName, ShownUnit> {
     systemctl_show::parse(SHOWN).expect("these fixtures are well formed")
 }
 
@@ -43,6 +43,7 @@ fn starts_of(name: &str) -> Vec<ExecStart> {
     shown()
         .get(&unit)
         .unwrap_or_else(|| panic!("expected {name:?} in the output"))
+        .exec_start
         .clone()
 }
 
@@ -183,5 +184,121 @@ fn an_exec_start_renders_as_its_executable_and_its_argument_vector() {
     assert_eq!(
         text(&field(&observation, "argv")),
         "/usr/local/bin/cadvisor --listen_ip=0.0.0.0 --port=8080"
+    );
+}
+
+/// Three units as systemd 257 on Debian 13 really printed them, asked for `Id`,
+/// `ExecStartEx` and `Environment`.
+///
+/// **Measured, not composed.** Two throwaway units were written, shown and removed
+/// without being started, because nothing on an ordinary box carries a value with a
+/// space, a quote or a control character in it, and each of those decides how this
+/// parser has to work.
+///
+/// What the fixture pins, in the order the entries appear:
+///
+/// - **`Environment=` is one line**, whatever the unit file spread over several lines,
+///   and the entries on it are separated by spaces.
+/// - **An entry is quoted only when it needs to be.** `SIMPLE=plain` is bare;
+///   `"SPACED=two words"` is not, and the quotes wrap the whole `NAME=VALUE`, not the
+///   value.
+/// - **The value is split on the first `=` only**, which `EQUALS=a=b=c` is here to hold.
+/// - **An empty value is legal** and is not the same as an absent variable.
+/// - **A unit with no `Environment=` prints the key with nothing after it**, which is
+///   how absence arrives, whereas a unit with no `EnvironmentFile=` prints no
+///   `EnvironmentFiles=` line at all.
+/// - **systemd C-escapes what it shows.** `NEWLINE=a\nb` is a real line feed on the
+///   process, measured by reading `/usr/bin/env` out of the started unit, and
+///   `BACKSLASH=a\\b` is one backslash. Recording the escaped spelling would put a value
+///   in the document that was never in the process.
+const SHOWN_WITH_ENVIRONMENT: &str = "\
+ExecStartEx={ path=/bin/true ; argv[]=/bin/true ; flags= ; start_time=[n/a] ; \
+stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+Environment=SIMPLE=plain \"SPACED=two words\" \"QUOTED=has\\\"quote\" EMPTY= EQUALS=a=b=c
+EnvironmentFiles=/etc/envtest.env (ignore_errors=no)
+Id=envtest.service
+
+Environment=\"NEWLINE=a\\nb\" \"TAB=a\\tb\" \"BACKSLASH=a\\\\b\" \"SINGLE=it's\" \
+\"DOLLAR=\\$\\$HOME\" UNICODE=héllo
+Id=edge.service
+
+Environment=
+Id=systemd-journald.service
+";
+
+fn environment_of(name: &str) -> Vec<(String, String)> {
+    let unit = UnitName::new(name).expect("a legal unit name");
+
+    systemctl_show::parse(SHOWN_WITH_ENVIRONMENT)
+        .expect("these fixtures are well formed")
+        .get(&unit)
+        .unwrap_or_else(|| panic!("expected {name:?} in the output"))
+        .environment
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+        .collect()
+}
+
+#[test]
+fn an_environment_entry_is_split_on_its_first_equals() {
+    // Act
+    let environment = environment_of("envtest.service");
+
+    // Assert: sorted, because the model keys them by name and a diff needs one order.
+    assert_eq!(
+        environment,
+        vec![
+            ("EMPTY".to_owned(), String::new()),
+            ("EQUALS".to_owned(), "a=b=c".to_owned()),
+            ("QUOTED".to_owned(), "has\"quote".to_owned()),
+            ("SIMPLE".to_owned(), "plain".to_owned()),
+            ("SPACED".to_owned(), "two words".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_shown_value_is_unescaped_to_what_the_process_actually_gets() {
+    // Act
+    let environment = environment_of("edge.service");
+
+    // Assert: the escaped spelling is systemd's wire form, not the value. `a\nb` on the
+    // wire is three characters on the process, and a fingerprint recording the wire form
+    // would name a value that was never in anything's environment.
+    assert_eq!(
+        environment,
+        vec![
+            ("BACKSLASH".to_owned(), "a\\b".to_owned()),
+            ("DOLLAR".to_owned(), "$$HOME".to_owned()),
+            ("NEWLINE".to_owned(), "a\nb".to_owned()),
+            ("SINGLE".to_owned(), "it's".to_owned()),
+            ("TAB".to_owned(), "a\tb".to_owned()),
+            ("UNICODE".to_owned(), "héllo".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_unit_that_sets_no_environment_reports_an_empty_one() {
+    // Act & Assert: systemd prints the key with nothing after it, which is absence and
+    // not a parse failure.
+    assert!(environment_of("systemd-journald.service").is_empty());
+}
+
+#[test]
+fn an_environment_entry_with_no_equals_is_refused() {
+    // Arrange: not a shape systemd produces, which is exactly why it is refused rather
+    // than skipped — reaching it means this parser has misread the line, and a silently
+    // dropped variable is a variable the diff will never mention.
+    let malformed = "Environment=NAMEONLY\nId=broken.service\n";
+
+    // Act
+    let result = systemctl_show::parse(malformed);
+
+    // Assert
+    let failure = result.expect_err("an entry with no `=` cannot be a variable");
+    assert!(
+        failure.to_string().contains("NAMEONLY"),
+        "the operator needs to know which entry, got: {failure}"
     );
 }

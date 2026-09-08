@@ -1,6 +1,8 @@
 //! One unit, from both sides at once.
 
-use rastro_collector::Observation;
+use std::collections::BTreeMap;
+
+use rastro_collector::{EnvironmentVariableName, Observation};
 
 use super::unit_file::UnitFile;
 use super::unit_runtime::UnitRuntime;
@@ -39,11 +41,33 @@ pub struct Unit {
     /// for a unit file systemd has not loaded, since an unresolved file is not a claim
     /// rastro can make about what would run.
     pub exec_start: Vec<ExecStart>,
+    /// What the unit sets for the process it starts, resolved through every drop-in.
+    ///
+    /// **Names are recorded in the clear and values are marked sensitive.** A name says
+    /// which variable a service depends on, which is the thing an operator moving a box
+    /// needs to know and is not itself a secret; a value is where the database password
+    /// actually lives on most boxes that have one. Redaction still diffs, so a rotated
+    /// credential shows as a changed digest without the document carrying it.
+    ///
+    /// **Empty is not the same as unset elsewhere.** systemd reads an `EnvironmentFile=`
+    /// at exec time, so a unit whose whole environment comes from a file reports nothing
+    /// here. What that file is called is a separate property and is not yet collected,
+    /// which makes this field an incomplete answer to "what does this service run with"
+    /// and a complete answer to "what does its unit declare".
+    pub environment: BTreeMap<EnvironmentVariableName, String>,
 }
 
 impl From<&Unit> for Observation {
     fn from(unit: &Unit) -> Self {
         Observation::object([
+            (
+                "environment",
+                Observation::object(
+                    unit.environment
+                        .iter()
+                        .map(|(name, value)| (name.as_str(), Observation::text(value).sensitive())),
+                ),
+            ),
             (
                 "exec_start",
                 Observation::list(unit.exec_start.iter().map(Observation::from)),

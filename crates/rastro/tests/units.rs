@@ -10,8 +10,8 @@ mod support;
 use rastro::collectors::units::{
     LoadState, Systemctl, Unit, UnitFileState, UnitName, UnitRegistry, UnitsCollector,
 };
-use rastro_collector::{Collector, Presence};
-use rastro_fingerprint::{Content, Observation, Scalar, View};
+use rastro_collector::{Collector, EnvironmentVariableName, Presence};
+use rastro_fingerprint::{Content, Observation, Presentation, Scalar, View};
 use support::observation::{field, keys_of};
 
 /// Real rows, covering an enabled service, a masked one, an alias, a template, a
@@ -300,7 +300,10 @@ fn a_unit_renders_both_sides_with_a_null_for_the_missing_one() {
 
     // Assert: a key that is sometimes present and sometimes missing is awkward for
     // every consumer, so both sides are always there and one is null.
-    assert_eq!(keys_of(&template), ["exec_start", "file", "runtime"]);
+    assert_eq!(
+        keys_of(&template),
+        ["environment", "exec_start", "file", "runtime"]
+    );
     assert_eq!(
         field(&template, "runtime").content(),
         &Content::Scalar(Scalar::Null)
@@ -393,4 +396,80 @@ fn what_a_unit_starts_survives_into_the_diffable_view() {
         other => panic!("expected a list, got {other:?}"),
     };
     assert_eq!(text(&field(&started[0], "executable")), "/usr/sbin/sshd");
+}
+
+#[test]
+fn a_units_environment_values_are_withheld_and_its_names_are_not() {
+    // Arrange: a unit carrying the shape a real deployment has, one credential and one
+    // setting that is not.
+    let mut environment = std::collections::BTreeMap::new();
+    environment.insert(
+        EnvironmentVariableName::new("DATABASE_URL").expect("a legal name"),
+        "postgres://app:hunter2@localhost/app".to_owned(),
+    );
+    environment.insert(
+        EnvironmentVariableName::new("RUST_LOG").expect("a legal name"),
+        "info".to_owned(),
+    );
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment,
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+    let shown = field(&rendered, "environment");
+
+    // Assert: the name is the migration finding and is not a secret, so it stays legible.
+    // The value is where the password is, so it does not.
+    assert_eq!(keys_of(&shown), ["DATABASE_URL", "RUST_LOG"]);
+    for name in ["DATABASE_URL", "RUST_LOG"] {
+        assert!(
+            text(&field(&shown, name)).starts_with("redacted:sha256+xxh3:"),
+            "{name} reached the document as it stands"
+        );
+    }
+}
+
+#[test]
+fn a_units_environment_value_is_readable_under_raw() {
+    // Arrange
+    let mut environment = std::collections::BTreeMap::new();
+    environment.insert(
+        EnvironmentVariableName::new("RUST_LOG").expect("a legal name"),
+        "info".to_owned(),
+    );
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment,
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete().raw())
+        .expect("nothing here is volatile");
+
+    // Assert: the annotation is a classification, and what to do about it is decided at
+    // render time. An operator who opted out reads the value.
+    assert_eq!(
+        text(&field(&field(&rendered, "environment"), "RUST_LOG")),
+        "info"
+    );
+}
+
+#[test]
+fn the_units_collector_moved_when_it_started_reporting_the_environment() {
+    // Arrange: on identical host state every unit now carries a key it did not, so a
+    // consumer diffing across the change has to be able to see that the collector moved
+    // rather than the box.
+    let collector = UnitsCollector::reading(None);
+
+    // Act & Assert
+    assert_eq!(collector.identity().version.as_str(), "2");
 }

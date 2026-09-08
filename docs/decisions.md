@@ -2921,3 +2921,67 @@ both are now revisitable on their merits:
   server a different question. That is a query change, not a render-time decision, and
   `--raw` still does not cover this facet. Recorded here so the gap is not read as an
   oversight now that the flag exists.
+
+# The `units` facet reports what a unit sets in the environment
+
+Dated 2026-09-08. Driven by a question a file-copy migration raises: an application that
+needs a variable keeps working only if whatever sets it came across too, and a walk of the
+filesystem shows that `~/.bashrc` moved without saying what it set.
+
+**Environment belongs to whatever carries it, not to a facet of its own.** `cron` already
+reports the variables a crontab sets, for reasons its own model states. A unit's
+`Environment=` is the same concept on the other carrier, so it is reported by `units` and
+not by a new collector that would have to know how both work. The alternative considered
+and rejected was an `environment` collector with hooks the other collectors call, which
+inverts the dependency direction this repo keeps one-way — a collector never knows another
+exists, and the one cross-collector mechanism that does exist works the other way round:
+collectors *declare* filesystem claims and the composition root gathers them.
+
+`EnvironmentVariableName` moved out of `cron` and into `rastro-collector`, which is what the
+port's own rule asks for — a value earns its place there by having consumers in more than
+one collector. It is the only shared machinery the idea needed.
+
+**Names in the clear, values `sensitive`.** A name says which variable a service depends on,
+which is exactly the migration finding and is not itself a secret. A value is where a
+database password lives on most boxes that have one. Redaction still diffs, so a rotated
+credential shows as a changed digest without the document carrying it. This is the first
+facet where the annotation is doing the job it was built for on a value an operator would
+actually want back, which is why `--raw` landed first.
+
+## What `systemctl show -p Environment` actually prints, measured
+
+Against systemd 257 on Debian 13, in a container running real systemd, with throwaway
+units written and shown but never started. None of this is in the documentation in a form
+that could be relied on, and two of the five would have been got wrong by inference.
+
+- **One line**, however many the unit file spread the setting over. Entries are separated
+  by spaces and quoted only where they need to be: `SIMPLE=plain "SPACED=two words"`. The
+  quotes wrap the whole `NAME=VALUE`, not the value.
+- **Split on the first `=` only.** `EQUALS=a=b=c` is one variable.
+- **An empty value is legal**, and a unit that sets nothing prints `Environment=` with
+  nothing after it. A unit with no `EnvironmentFile=` prints no `EnvironmentFiles=` line at
+  all, so absence arrives differently on the two properties.
+- **systemd C-escapes what it shows, and the escaped spelling is not the value.**
+  `NEWLINE=a\nb` on the wire is a real line feed in the process, and `BACKSLASH=a\\b` is one
+  backslash. Measured by starting a unit with `ExecStart=/usr/bin/env` and reading the
+  bytes, rather than by reasoning about the format. Recording the wire spelling would have
+  put a value in the document that was never in anything's environment, so the line is
+  unescaped, and an escape outside systemd's table is refused rather than guessed at.
+- **`EnvironmentFile=` contributes nothing to this property.** A variable set only in the
+  file did not appear on the line, because systemd reads those at exec time and not at load
+  time. So this field answers "what does the unit declare", and *not* "what does the service
+  run with". That gap is real and is the reason the file paths are worth collecting next.
+
+**This is not the opposite of the `ExecStart` decision, and the difference is the point.**
+[The argument vector is kept whole](#) because systemd loses the quoting in `argv[]`, so
+splitting it would claim a structure the source cannot support. `Environment=` keeps its
+quoting, so the entries are recoverable exactly, and the honest record is the split one. A
+reader who knows the first entry would otherwise assume the same limitation applies here.
+
+**The `units` collector's version went to `2`.** On identical host state every unit now
+carries a key it did not.
+
+**Cost:** a facet that reads as complete and is not. A service whose whole configuration
+lives in an `EnvironmentFile=` reports an empty `environment` object, which is
+indistinguishable from one that genuinely sets nothing until the file paths land beside it.
+Named in the field's own documentation so it is not discovered from a diff.
