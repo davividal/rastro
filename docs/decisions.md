@@ -2863,3 +2863,133 @@ CI, for no reason at all.
 The guard now names both errnos, and the distinction is reachable from a test,
 because neither can be provoked from a fixture and the alternative is a rule
 nothing checks.
+
+---
+
+# Containers: one facet, several engines
+
+Dated 2026-09-08. The third Layer 3 collector, and the first for a subsystem that
+comes in more than one implementation of the same idea.
+
+## docker and containerd report themselves without changing the host
+
+The nginx gate above says a service's configuration may be parsed only where the
+service offers no non-mutating account of its own effective state, **with the
+measurement attached**. It names docker as one of the three that had to be measured
+before coming through. Here is that measurement.
+
+On a quiet Linux running docker 29.8.0 with containerd 2.3.4 underneath it, a full
+`stat` inventory of `/var/lib/docker`, `/var/lib/containerd`, `/run/docker`,
+`/run/containerd` and root's home was taken, then the reads were run, then the
+inventory was taken again:
+
+`docker ps`, `docker inspect`, `docker info`, `docker image inspect`,
+`docker volume inspect`, `docker network inspect`, `ctr containers info`.
+
+**Zero changed entries**, against a control interval that proved the box was
+otherwise still. Nothing was created in the working directory either. So there is no
+configuration for rastro to parse here: the engines answer for their own effective
+state, which is what the design prefers wherever it is available.
+
+**A second property comes free from the execution seam.** It clears the environment,
+so no `DOCKER_HOST` and no client context can point the read at a daemon on another
+box. The facet is about the box rastro is running on, structurally rather than by
+convention.
+
+**What is still owed:** podman. It is daemonless, and a read command initialises a
+store rather than asking one, which is exactly the shape of the nginx defect. It does
+not come through this gate until it has its own measurement on a quiet box.
+
+## One `containers` facet, keyed by engine flavour
+
+Not one facet per engine. `packages` already covers dpkg and apk together, for the
+reason that also applies here: two collectors claiming one facet name would fail the
+run, and an operator asking about containers is asking one question.
+
+**Two engines legitimately sit side by side, and both are reported.** docker runs
+containerd underneath itself, so a docker box has both, describing the same
+containers at two different levels. Suppressing containerd's `moby` namespace because
+docker is present would be rastro deciding which of two true accounts an operator is
+allowed to see. Keeping them apart is what lets them disagree, the same reasoning
+that keeps an exporter's configured endpoint separate from what `sockets` observed
+bound.
+
+**A shared identity core, per-engine detail.** containerd's container is not docker's
+spelled differently: it has no published ports and no restart policy, because those
+are docker's abstractions above it. A single container type would either lie by
+omission or grow an optional field for every concept any one engine has. So the value
+objects are shared — the id, the name, the image reference, the digest — and each
+engine contributes the detail its own concepts support.
+
+**This corrects the wording of an earlier entry.** "v1 collectors: Layers 1 and 2,
+plus three Layer 3 starters" names the third starter `docker`. The facet is
+`containers`, and docker is the first engine in it.
+
+## `docker version` is the probe, because it is the only read that survives a dead daemon
+
+Measured, and it decides the whole detection ladder. On a box where docker is
+installed and nothing is answering on the socket, docker 29.8.0 answers:
+
+| read | exit | stdout |
+| --- | --- | --- |
+| `docker version --format '{{json .}}'` | **0** | the client half, with `"Server": null` |
+| `docker info --format '{{json .}}'` | 1 | a skeleton of empty fields |
+| `docker ps` | 1 | nothing |
+
+All three write the connection failure to stderr. The execution seam refuses a
+non-zero exit's output entirely, so `info` and `ps` cannot tell "no daemon" from "a
+broken read" — both arrive as the same failure. `version` can, and it is one of the
+tools that answers on the wrong stream, which is what `run_capturing_stderr` exists
+for.
+
+**The exit code is not a contract across versions, and that was measured too.**
+Debian 13's docker, 26.1.5, exits **1** for the same read against a socket that is
+not there, printing the same `"Server": null` document to stdout it will not be
+credited for. So on that client an engine whose daemon is down reaches the document
+as a facet `error` carrying docker's own complaint, rather than as the observed state
+of an installed engine with nothing answering.
+
+**Accepted rather than worked around.** The alternatives are worse: reading stdout
+from a non-zero exit means the seam no longer refuses partial output, which is a
+hardening rule that exists because a truncated answer treated as an answer is the bug
+that disqualified configsnap. Matching docker's error text for "permission denied"
+against "is the daemon running" is a version-dependent guess dressed as a fact. And
+inferring "not running" from a missing socket at the default path is wrong for any
+dockerd started with `-H`.
+
+An `error` naming the reason is not a lie about the box — it says rastro could not
+establish the state, and why. The distinction is kept where the client offers it, and
+the same shape serves podman, which is daemonless and answers for itself.
+
+**One case is a failure on every version, and should be:** an unprivileged run. The
+socket is there, the daemon is answering, and the caller may not use it. Measured on
+26.1.5 as a non-root user, `version` exits 1 with `permission denied while trying to
+connect`, and the facet is an `error`. Recording that as "unreachable" would be a
+false statement about a daemon that is running perfectly well.
+
+It pays for itself twice over: the same document carries the client version beside
+the server's, which differ on a box whose package update has restarted neither, and
+the components — which containerd, which runc, which init the engine actually runs. A
+runc replaced under a running docker is exactly the change a fingerprint is taken
+around, and it is invisible in the engine's own version.
+
+## An engine installed with nothing answering is state
+
+Three facts, kept apart:
+
+- no engine rastro can read: the facet is `absent`;
+- an engine installed with nothing answering: `ok`, with `daemon` `unreachable`, the
+  reason the client gave, and **no server node at all**;
+- rastro unable to look: an `error`, loudly.
+
+The server node's absence is structural rather than a convention. A box whose daemon
+did not answer has nothing to say about its storage driver or its containers, so
+there is no field for a reader to mistake for "asked and told nothing" — the same
+reason the postgresql facet keeps a cluster's configured half apart from its observed
+one.
+
+**Cost, accepted knowingly:** `absent` means "no engine rastro knows of". A box
+running LXC or incus reads as absent, which is a limit of rastro rather than a fact
+about the box. The alternative, an unconditional `present`, would put an
+engine-shaped empty answer into every fingerprint of every box that has never run a
+container.

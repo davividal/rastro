@@ -21,6 +21,7 @@ exclude = ["mounts"]
 | `invocation`   | metadata | no         |
 | `accounts`     | state    | yes        |
 | `block_devices`| state    | yes        |
+| `containers`   | state    | yes        |
 | `cron`         | state    | yes        |
 | `exporters`    | state    | yes        |
 | `filesystem`   | state    | yes        |

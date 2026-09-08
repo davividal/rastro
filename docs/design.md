@@ -107,8 +107,7 @@ collector over trees the operator names. See
 
 **Layer 2, the fixed runtime list.** Processes, listening sockets, established
 connections, systemd units and timers, kernel modules, runtime sysctl, the
-nftables/iptables ruleset, mounts, the package list, users and groups, container
-state. A unit carries its effective `ExecStart=`, resolved by systemd rather than
+nftables/iptables ruleset, mounts, the package list, users and groups. A unit carries its effective `ExecStart=`, resolved by systemd rather than
 read from the unit file, because "enabled and active" does not say which binary
 that amounts to. Read from `/proc` or netlink where cheap, shell out to the canonical tool
 where parsing its output is more honest than reimplementing it, and read a
@@ -125,10 +124,24 @@ stdout, or both streams for the tools that answer on the wrong one — two of th
 telemetry agents print `--version` to stderr and exit zero.
 
 **Layer 3 starters:** nginx, read from its own configuration files and its
-running master; `pg_dumpall --globals-only` plus `SHOW ALL`; `docker inspect`
-plus volumes and networks. Enough to prove the detect-and-dispatch pattern
-exec-contract authors will copy, and between them the two shapes it comes in: a
-service that will report its effective state, and a service that will not.
+running master; `pg_dumpall --globals-only` plus `SHOW ALL`; and the container
+engines. Enough to prove the detect-and-dispatch pattern exec-contract authors
+will copy, and between them the two shapes it comes in: a service that will
+report its effective state, and a service that will not.
+
+**Layer 3, containers.** One `containers` facet covering every engine on the box,
+keyed by flavour — the way `packages` covers dpkg and apk — because an operator
+asking about containers is asking one question. Container state is Layer 3 rather
+than Layer 2 despite being a fixed surface: it is reached only through an
+engine-specific tool, dispatched from that engine's presence, which is what makes a
+surface Layer 3. Two engines legitimately sit side by side, since docker runs
+containerd underneath itself, and both are reported: they describe the same
+containers at different levels, and keeping them apart is what lets them disagree.
+What they share is identity — the id, the name, the image reference and the digest —
+and each contributes the detail its own concepts support, because containerd has no
+published ports or restart policy to report. An engine installed with nothing
+answering is state, not a failed read. See
+[decisions.md](decisions.md#containers-one-facet-several-engines).
 
 **Layer 3, telemetry.** The agents watching the box — Prometheus-style exporters,
 cAdvisor, collectd — as one `exporters` facet, keyed by the unit that starts each.
