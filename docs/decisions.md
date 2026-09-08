@@ -3374,3 +3374,36 @@ the walk's table is built before any collector runs and a claim cannot wait for 
 facet's own read. That is the arrangement the postgresql collector already uses for its
 cluster list. An engine whose daemon did not answer names no root, and then no claim is
 made at all, because the walk's own reading is the safe direction to be wrong in.
+
+## containerd is asked where it is listening, because `ctr`'s default is wrong on a docker box
+
+Measured on docker 29.8.0 with containerd 2.3.4 underneath it: containerd runs as
+`containerd --config /var/run/docker/containerd/containerd.toml`, its socket is
+`/var/run/docker/containerd/containerd.sock`, and `/run/containerd/containerd.sock` — where
+`ctr` looks when nobody tells it otherwise — **does not exist**. A bare `ctr` there fails
+outright with `cannot access socket`.
+
+So the running process is asked, in the order it can answer:
+
+1. its own `--address`, in either spelling, which is the whole answer when it is there;
+2. the `[grpc] address` of the file its `--config` names;
+3. containerd's documented default, for a containerd started with neither.
+
+The process is identified by the binary behind it rather than by a name, the same way the
+`exporters` facet identifies an agent: a unit may be called anything, and the executable
+is the fact.
+
+**The configuration is parsed by naming the two lines that matter, and that is not
+fastidiousness.** The first `address =` in the file docker's containerd is given belongs
+to `[debug]`, and the debug endpoint answers a different API. Anything taking the first
+match would talk to the wrong socket and report the failure as though containerd were
+broken.
+
+**This is a discovery read, not a state read**, which is why parsing a configuration here
+does not need the licence the nginx entry grants. It establishes how to reach the service;
+what the service then says about itself is asked of the service.
+
+A configuration rastro cannot read — which an unprivileged run makes ordinary — falls back
+to the documented default rather than giving up: the engine is plainly running, and `ctr`
+says so loudly if the address is wrong. A box with no containerd process gets no address at
+all, because the default is not worth guessing when nothing is behind it.

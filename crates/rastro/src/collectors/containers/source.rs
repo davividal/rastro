@@ -1,5 +1,6 @@
 //! The engines' own interfaces, one module per engine.
 
+mod containerd_address;
 mod docker;
 mod docker_container_document;
 mod docker_image_document;
@@ -9,5 +10,6 @@ mod docker_version;
 mod docker_volume_document;
 mod engine_source;
 
+pub use containerd_address::ContainerdAddress;
 pub use docker::Docker;
 pub use engine_source::EngineSource;
