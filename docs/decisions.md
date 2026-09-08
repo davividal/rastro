@@ -3549,3 +3549,51 @@ directory: docker's managed containerd keeps its store at
 `/var/lib/docker/containerd/daemon`, inside docker's own root. Two dialects saying the same
 thing about one tree is not a disagreement, so the collector folds it rather than reporting
 it.
+
+## podman does not come through the gate, and its CLI never will
+
+The nginx entry says a service's own account of itself may be read only where asking does
+not change the host, **with the measurement attached**. It named podman as one that had to
+be measured before its dialect was written. Here is that measurement, and podman fails it
+twice over.
+
+**A read initialises a store.** `podman ps --all` against an empty store, under a cleared
+environment, created **22 filesystem entries**: `db.sql`, five lock files
+(`storage.lock`, `userns.lock`, `layers.lock`, `containers.lock`, `images.lock`), the
+`overlay`, `overlay-layers`, `overlay-containers`, `overlay-images`, `volumes` and `libpod`
+directories, and `overlay/.has-mount-program`. On a box where podman is installed and has
+never been used, a fingerprint run would create a container store and then report the box
+it had just changed.
+
+**And a read on an initialised store still writes.** Five reads — `ps`, `images`,
+`volume ls`, `network ls`, `info` — against the store the first read had made, with a
+zero-change control interval either side, moved `storage.lock`'s mtime and ctime, moved the
+`overlay` directory's stamps, and created two new files in the runroot:
+`overlay/volatile-true` and `overlay/idmapped-lower-dir-true`, which are probes podman
+writes to test what the filesystem underneath supports.
+
+So it is worse than the nginx case rather than comparable to it. `nginx -t` created log
+files the configuration named; podman writes a database, takes locks by writing to them,
+and leaves capability probes behind on every read. There is no flag that turns that off,
+because it is not a side effect of a read: it is how a daemonless engine reaches the state
+a daemon would have been holding.
+
+**The consequence, and it is a design position rather than a delay.** There is no podman
+dialect in this facet, and there will not be one built on `podman`. A box running podman
+reads as `absent`, which is a limit of rastro rather than a fact about the box, and this
+entry is what an operator gets pointed at.
+
+**Two routes are open and neither is the CLI.**
+
+- **Its API socket.** podman ships a `podman.socket` unit that serves docker's own API, and
+  on the machine this was measured on it is *enabled and listening* at
+  `/run/podman/podman.sock`. Where the operator runs it, the store is already initialised by
+  the service and asking it is the same kind of read the docker socket is. That needs its own
+  measurement, and an HTTP client, which the docker dialect never needed because it went
+  through the client.
+- **Its store, read as files.** The design already grants this shape for apk: read a
+  manager's own database where the tool offers no format rastro controls. podman's is
+  SQLite with no schema contract, so it is the weaker of the two.
+
+Reversing this means a new entry with a measurement showing a read that leaves the box as it
+was found.

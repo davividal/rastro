@@ -23,7 +23,11 @@
 //! - rastro unable to look: an `error`, loudly.
 //!
 //! **Cost, accepted knowingly:** `absent` means "no engine rastro knows of". A box running
-//! LXC or incus reads as absent, which is a limit of rastro rather than a fact about the box.
+//! LXC or incus reads as absent, and so does one running **podman**, which is a limit of
+//! rastro rather than a fact about the box. podman is not an oversight: it fails the gate a
+//! fingerprint tool has to hold to, because a read initialises its store and every read
+//! afterwards writes to a lock and leaves capability probes behind. The measurement, and the
+//! two routes that are still open, are in `docs/decisions.md`.
 //! The alternative, an unconditional `present`, would put an engine-shaped empty answer into
 //! every fingerprint of every box that has never run a container.
 //!
