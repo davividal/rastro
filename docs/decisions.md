@@ -3630,3 +3630,33 @@ spellings.
 reaches a container, and there is no GPU on any box this collector was built against. A
 shape written from the API reference rather than from a run is precisely the mistake the
 fixtures here exist to avoid, so the field waits for a box that has one.
+
+## One test asks docker, and it found something on its first run
+
+Every other test of this facet asserts what rastro does with output captured once, which
+pins the code against the author's own reading of that output and cannot catch a fixture
+captured wrong. `tests/containers_conformance.rs` asks docker instead: the container names
+against `docker ps --all`, the image ids against `docker image ls --all --no-trunc
+--quiet`, the volume names against `docker volume ls`, and the sealed trees against the
+directories under the root `docker info` names.
+
+It needs a live engine with something on it, and **fails rather than skipping** when there
+is none — a check that quietly passes on a box with no docker is how a whole dialect could
+rot unnoticed. `.github/workflows/live-engine.yml` provides both, in the
+`extended-verification` tier. The container suite cannot: it runs *inside* a container, and
+a dockerd in there needs privilege the other legs deliberately do not have.
+
+**It earned its place immediately**, the way the nginx conformance check did. Three of its
+four comparisons passed and the fourth caught a rule that could never apply: on a docker
+box the managed containerd keeps its store at `/var/lib/docker/containerd/daemon`, inside
+docker's own sealed root, so that claim sat in the effective table matching nothing the
+walk could ever visit. The collector now folds a claim contained by another, and the
+containerd facet reports its root and state as values so nothing is lost by the folding.
+
+**The oracle for the claim is the root, not `GraphDriver`.** The obvious check was to
+assert the sealed tree holds the layer path `docker image inspect` reports in
+`GraphDriver.Data` — but measured, that field is `{"Data":null,"Name":"vfs"}` on docker
+26.1.5 and `null` outright on 29.8.0, so on both engines available there is nothing to
+compare. Listing the root's children needs neither an image nor a driver-specific field,
+and it checks what the claim actually promises: every directory the engine keeps to itself
+is sealed, and the one holding the operator's volumes never is.
