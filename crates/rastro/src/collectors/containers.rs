@@ -26,6 +26,22 @@
 //! LXC or incus reads as absent, which is a limit of rastro rather than a fact about the box.
 //! The alternative, an unconditional `present`, would put an engine-shaped empty answer into
 //! every fingerprint of every box that has never run a container.
+//!
+//! # What this facet does not model
+//!
+//! **Owed, and each would be a change an operator cares about**: devices passed in
+//! (`--device`), per-container ulimits and sysctls, the DNS configuration (`--dns`,
+//! `--dns-search`, `--add-host`), the shared-memory size, and device requests, which is how
+//! a GPU reaches a container. Also the box-level objects: images, volumes and networks in
+//! their own right rather than as seen from a container.
+//!
+//! **Not owed, because the document already answers it elsewhere.** `Config.ExposedPorts`
+//! and `HostConfig.PortBindings` are the request behind the effective port table.
+//! `Config.Entrypoint` and `Config.Cmd` are the inputs the recorded command resolves from.
+//! `Config.Hostname` is the container's own short id. `State.Pid` and the endpoint id are
+//! handles that move on their own, and the link from a process to its container is already
+//! readable the other way round, from the control group the `processes` facet records.
+//! `GraphDriver` names the layer directories, which the filesystem claim covers as a tree.
 pub mod model;
 pub mod source;
 pub mod value_objects;
