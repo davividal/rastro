@@ -4,7 +4,7 @@ use rastro_collector::{AbsolutePath, Observation};
 
 use crate::collectors::containers::model::{
     ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerMounts,
-    ContainerPorts, ContainerState,
+    ContainerNetworks, ContainerPorts, ContainerState,
 };
 use crate::collectors::containers::value_objects::{ContainerAccount, ContainerId, EngineInstant};
 
@@ -23,6 +23,7 @@ pub struct DockerContainer {
     pub environment: ContainerEnvironment,
     pub labels: ContainerLabels,
     pub mounts: ContainerMounts,
+    pub networks: ContainerNetworks,
     pub ports: ContainerPorts,
     /// Whether the engine will delete this container the moment it stops.
     pub auto_remove: bool,
@@ -50,6 +51,7 @@ impl From<&DockerContainer> for Observation {
             ("image", Observation::from(&container.image)),
             ("labels", Observation::from(&container.labels)),
             ("mounts", Observation::from(&container.mounts)),
+            ("networks", Observation::from(&container.networks)),
             ("ports", Observation::from(&container.ports)),
             ("state", Observation::from(&container.state)),
             (

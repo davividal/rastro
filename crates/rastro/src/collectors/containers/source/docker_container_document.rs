@@ -8,13 +8,14 @@ use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
     ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerMount,
-    ContainerMounts, ContainerPorts, ContainerState, DockerContainer, PublishedBinding,
+    ContainerMounts, ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerState,
+    DockerContainer, PublishedBinding,
 };
 use crate::collectors::containers::value_objects::{
     ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ExposedPort,
-    ImageDigest, ImageReference, LabelName, MountKind, VariableName,
+    ImageDigest, ImageReference, LabelName, MountKind, NetworkId, NetworkName, VariableName,
 };
-use crate::collectors::inet::{InetHost, PortNumber};
+use crate::collectors::inet::{HardwareAddress, InetHost, IpAddress, PortNumber};
 
 /// Go's zero time, which is what docker prints for a stamp that has not happened.
 ///
@@ -124,6 +125,37 @@ struct NetworkSettingsHalf {
     /// with a null value rather than absent.
     #[serde(rename = "Ports", default)]
     ports: BTreeMap<String, Option<Vec<BindingEntry>>>,
+    #[serde(rename = "Networks", default)]
+    networks: BTreeMap<String, NetworkEntry>,
+}
+
+/// One network as docker describes the container's end of it.
+///
+/// docker writes `null` for what was not asked for and empty strings for what does not
+/// exist, so almost everything here is optional in one of those two ways.
+#[derive(Debug, Clone, Deserialize)]
+struct NetworkEntry {
+    /// What the container asked IPAM for, absent where it asked for nothing.
+    #[serde(rename = "IPAMConfig", default)]
+    requested: Option<RequestedAddresses>,
+    #[serde(rename = "Aliases", default)]
+    aliases: Option<Vec<String>>,
+    #[serde(rename = "MacAddress", default)]
+    hardware_address: String,
+    #[serde(rename = "NetworkID", default)]
+    network_id: String,
+    #[serde(rename = "IPAddress", default)]
+    address: String,
+    #[serde(rename = "GlobalIPv6Address", default)]
+    ipv6_address: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RequestedAddresses {
+    #[serde(rename = "IPv4Address", default)]
+    address: String,
+    #[serde(rename = "IPv6Address", default)]
+    ipv6_address: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,6 +224,7 @@ impl DockerContainerDocument {
             environment: self.environment()?,
             labels: self.labels()?,
             mounts: self.mounts()?,
+            networks: self.networks()?,
             ports: self.ports()?,
             auto_remove: self.host_config.auto_remove,
         };
@@ -271,6 +304,38 @@ impl DockerContainerDocument {
         ContainerMounts::new(mounts)
     }
 
+    /// The networks, with each end's requested addresses kept apart from its assigned ones.
+    fn networks(&self) -> Result<ContainerNetworks, CollectionError> {
+        let mut networks = Vec::new();
+
+        for (name, entry) in &self.network_settings.networks {
+            let mut aliases = Vec::new();
+            for alias in entry.aliases.iter().flatten() {
+                aliases.push(NonEmptyText::new(alias.clone(), "network alias")?);
+            }
+            // Sorted, because they arrive in the order they were declared, which is the
+            // operator's order rather than anything the engine promises.
+            aliases.sort();
+
+            let requested = entry.requested.as_ref();
+            networks.push((
+                NetworkName::new(name.clone())?,
+                ContainerNetwork {
+                    aliases,
+                    address: address(&entry.address),
+                    ipv6_address: address(&entry.ipv6_address),
+                    hardware_address: HardwareAddress::new(entry.hardware_address.clone()).ok(),
+                    network_id: NetworkId::new(entry.network_id.clone()).ok(),
+                    requested_address: requested.and_then(|asked| address(&asked.address)),
+                    requested_ipv6_address: requested
+                        .and_then(|asked| address(&asked.ipv6_address)),
+                },
+            ));
+        }
+
+        ContainerNetworks::new(networks)
+    }
+
     /// The port table, with an unpublished port kept and given no bindings.
     fn ports(&self) -> Result<ContainerPorts, CollectionError> {
         let mut ports = Vec::new();
@@ -300,6 +365,11 @@ impl DockerContainerDocument {
 
         Ok(ContainerLabels::new(labels))
     }
+}
+
+/// An address docker filled in, or absent for the empty string it writes when there is none.
+fn address(reported: &str) -> Option<IpAddress> {
+    IpAddress::new(reported).ok()
 }
 
 /// Whether a tmpfs option string asks for a read-only mount.

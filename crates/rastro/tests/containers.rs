@@ -136,6 +136,40 @@ const INSPECT_WEB: &str = r#"[
       }
     },
     "NetworkSettings": {
+      "Networks": {
+        "fixture-net": {
+          "IPAMConfig": { "IPv4Address": "172.30.0.9" },
+          "Links": null,
+          "Aliases": ["shop", "api"],
+          "MacAddress": "02:42:ac:1e:00:09",
+          "NetworkID": "1d51e8c10dda55fd904537227940fe186820f04574b31a6a924f628f8f7dcb13",
+          "EndpointID": "17b6e00f880af56b51bca33aee9b0a78cdbd9f16c4bbaff974173950e4f04332",
+          "Gateway": "172.30.0.1",
+          "IPAddress": "172.30.0.9",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DriverOpts": null,
+          "DNSNames": ["networked", "shop", "api", "9087f0af664b"]
+        },
+        "bridge": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": null,
+          "MacAddress": "02:42:ac:11:00:02",
+          "NetworkID": "8b3b9259bbae317187e2614a3462e8471c41cf54acf1b739a0386756457a24e8",
+          "EndpointID": "23520eff950676fb3663cde0228300bda92e406f828a325835d3ebf56a042c86",
+          "Gateway": "172.17.0.1",
+          "IPAddress": "172.17.0.2",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DriverOpts": null,
+          "DNSNames": null
+        }
+      },
       "Ports": {
         "7777/tcp": null,
         "80/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "8080" }],
@@ -904,4 +938,85 @@ fn the_bindings_of_one_port_are_sorted_rather_than_left_in_the_engines_order() {
     let mut sorted = addresses.clone();
     sorted.sort();
     assert_eq!(addresses, sorted);
+}
+
+#[test]
+fn the_networks_are_keyed_by_name_with_their_aliases_sorted() {
+    // Arrange: a container on two networks is on two networks, and the name is what both
+    // the operator and the other containers know it by. The aliases arrive in the order
+    // they were declared, which is the operator's order and not something to depend on.
+    let networks = field(&container_of("networks", "web"), "networks");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&networks),
+        vec!["bridge".to_owned(), "fixture-net".to_owned()]
+    );
+    assert_eq!(
+        items_of(&field(&field(&networks, "fixture-net"), "aliases"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["api".to_owned(), "shop".to_owned()]
+    );
+}
+
+#[test]
+fn a_networks_entry_records_the_address_and_the_network_it_is_on() {
+    // Arrange: the network id is kept because a network destroyed and recreated under the
+    // same name is a different network, and the id is the only witness to that.
+    let network = field(
+        &field(&container_of("addressed", "web"), "networks"),
+        "fixture-net",
+    );
+
+    // Act & Assert
+    assert_eq!(text(&field(&network, "address")), "172.30.0.9");
+    assert_eq!(
+        text(&field(&network, "hardware_address")),
+        "02:42:ac:1e:00:09"
+    );
+    assert_eq!(
+        text(&field(&network, "network_id")),
+        "1d51e8c10dda55fd904537227940fe186820f04574b31a6a924f628f8f7dcb13"
+    );
+}
+
+#[test]
+fn a_static_address_that_was_asked_for_is_recorded_beside_the_one_assigned() {
+    // Arrange: the pair is the point. A compose file naming a fixed address is a
+    // declaration, and an engine that assigned something else is exactly the disagreement
+    // a fingerprint is taken to surface.
+    let network = field(
+        &field(&container_of("static", "web"), "networks"),
+        "fixture-net",
+    );
+
+    // Act & Assert
+    assert_eq!(text(&field(&network, "requested_address")), "172.30.0.9");
+}
+
+#[test]
+fn a_network_that_was_asked_for_nothing_records_no_request() {
+    // Arrange: on the default bridge docker leaves `IPAMConfig` and `Aliases` null, and an
+    // address nobody asked for must not read as one that was requested and honoured.
+    let bridge = field(&field(&container_of("bridge", "web"), "networks"), "bridge");
+
+    // Act & Assert
+    assert_eq!(text(&field(&bridge, "address")), "172.17.0.2");
+    assert!(is_null(&field(&bridge, "requested_address")));
+    assert!(items_of(&field(&bridge, "aliases")).is_empty());
+}
+
+#[test]
+fn a_container_with_no_ipv6_address_records_none_rather_than_empty_text() {
+    // Arrange: docker writes `"GlobalIPv6Address": ""` on a network with no IPv6 at all,
+    // and empty text would claim an address that is nothing.
+    let bridge = field(
+        &field(&container_of("no-ipv6", "web"), "networks"),
+        "bridge",
+    );
+
+    // Act & Assert
+    assert!(is_null(&field(&bridge, "ipv6_address")));
 }

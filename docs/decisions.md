@@ -3131,3 +3131,33 @@ family and the engine promises no order. The host address is the shared `InetHos
 same leaf `sockets` reports a listener bound to, so the two facets can be read
 together: a port published on `0.0.0.0` with no listener to match is a different box
 from one where they agree.
+
+## A container's requested address is kept beside the one it was given
+
+Every network entry carries both, and the pair is the point. A compose file naming a
+fixed address is a declaration; what the engine's IPAM did about it is an observation.
+They agree almost always, and the almost is the whole reason a fingerprint exists. The
+same shape as the postgresql facet's configured port beside the port its running
+postmaster reports.
+
+Measured on docker 26.1.5: on a network the container asked nothing of, `IPAMConfig`
+and `Aliases` are both `null`, while `GlobalIPv6Address` is `""` on a network with no
+IPv6 at all. So an address nobody asked for is recorded as absent rather than as a
+request that happened to be honoured, and an empty string never becomes an address that
+is nothing.
+
+Aliases are sorted, because they arrive in the order they were declared and that is the
+operator's order rather than anything the engine promises.
+
+**Three of docker's fields are deliberately not recorded**, and the reasons differ:
+
+- `EndpointID` is a per-connection handle with no meaning to an operator, and it moves
+  whenever a container is reattached.
+- `Gateway` and `IPPrefixLen` are properties of the *network*, not of this container's
+  end of it, so they belong to the network list rather than to every container on it.
+- `DNSNames` is the container's name, its aliases and its own short id, all three
+  already in the document under names that say what they are.
+
+The network's id *is* recorded, even though the name is the key: a network destroyed
+and recreated under the same name is a different network with a different subnet, and
+the id is the only witness to that.
