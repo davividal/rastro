@@ -3161,3 +3161,27 @@ operator's order rather than anything the engine promises.
 The network's id *is* recorded, even though the name is the key: a network destroyed
 and recreated under the same name is a different network with a different subnet, and
 the id is the only witness to that.
+
+## Unlimited is absent, in all three of docker's spellings for it
+
+Measured on docker 26.1.5, a container given no limits at all reports `Memory: 0`,
+`NanoCpus: 0`, `CpuShares: 0`, `PidsLimit: null` and `CpusetCpus: ""`. Three spellings
+of one fact, and all three reach the document as absent.
+
+Recording the zero would be a false statement rather than a clumsy one: a memory limit
+of `0` reads as a container confined to no memory at all, which is the opposite of
+unconfined. The same for the restart policy's `MaximumRetryCount: 0`, which docker
+writes both for the policies that have no retry count and for an `on-failure` with
+none given, where it means "as often as it takes". Recorded as `0` it would read as
+"never retry".
+
+**The limits are kept in the engine's own units, and that is what makes them
+recordable at all.** The document admits no floating point, so `--cpus 1.5` could not
+be written as a number of CPUs. docker's unit for a fractional CPU is a whole number of
+billionths, `1500000000`, so the fraction is carried exactly instead of being
+approximated or dropped. Memory is bytes, through the shared `ByteSize`, which refuses
+a figure too large to record faithfully at the point it is read rather than letting it
+wrap three layers later.
+
+A negative figure is read as no limit too: docker uses `-1` for unlimited swap, and a
+negative byte count is not a size.

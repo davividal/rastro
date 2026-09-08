@@ -4,12 +4,12 @@ use serde::Deserialize;
 
 use std::collections::BTreeMap;
 
-use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
+use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
-    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerMount,
-    ContainerMounts, ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerState,
-    DockerContainer, PublishedBinding,
+    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerLimits,
+    ContainerMount, ContainerMounts, ContainerNetwork, ContainerNetworks, ContainerPorts,
+    ContainerState, DockerContainer, PublishedBinding, RestartPolicy,
 };
 use crate::collectors::containers::value_objects::{
     ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ExposedPort,
@@ -112,10 +112,37 @@ struct ConfigHalf {
 struct HostConfigHalf {
     #[serde(rename = "AutoRemove", default)]
     auto_remove: bool,
+    #[serde(rename = "RestartPolicy", default)]
+    restart_policy: Option<RestartPolicyHalf>,
+    /// Zero where there is no limit, which is docker's spelling for two of the three ways
+    /// it says the same thing.
+    #[serde(rename = "Memory", default)]
+    memory: i64,
+    #[serde(rename = "MemorySwap", default)]
+    memory_swap: i64,
+    #[serde(rename = "MemoryReservation", default)]
+    memory_reservation: i64,
+    #[serde(rename = "NanoCpus", default)]
+    nano_cpus: i64,
+    #[serde(rename = "CpuShares", default)]
+    cpu_shares: i64,
+    #[serde(rename = "CpusetCpus", default)]
+    cpu_set: String,
+    /// Null rather than zero where there is none, which is the third spelling.
+    #[serde(rename = "PidsLimit", default)]
+    process_limit: Option<i64>,
     /// Destination to option string, and the only place a `--tmpfs` mount appears at all.
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Tmpfs", default)]
     tmpfs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RestartPolicyHalf {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "MaximumRetryCount", default)]
+    maximum_retries: i64,
 }
 
 /// What the engine did about the ports, as opposed to what was asked of it.
@@ -226,6 +253,8 @@ impl DockerContainerDocument {
             mounts: self.mounts()?,
             networks: self.networks()?,
             ports: self.ports()?,
+            restart_policy: self.restart_policy()?,
+            limits: self.limits()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -304,6 +333,40 @@ impl DockerContainerDocument {
         ContainerMounts::new(mounts)
     }
 
+    /// The restart policy, with docker's not-applicable zero read as no limit at all.
+    ///
+    /// A container whose policy docker did not report is `no`, which is the policy a
+    /// container has when nobody asked for one: docker omits the section on older API
+    /// versions rather than reporting the default it applied.
+    fn restart_policy(&self) -> Result<RestartPolicy, CollectionError> {
+        let reported = self.host_config.restart_policy.as_ref();
+
+        Ok(RestartPolicy {
+            name: NonEmptyText::new(
+                reported.map_or(NO_RESTART, |policy| policy.name.as_str()),
+                "restart policy",
+            )?,
+            maximum_retries: reported
+                .map(|policy| policy.maximum_retries)
+                .filter(|retries| *retries > 0),
+        })
+    }
+
+    /// The limits, with every one of docker's three spellings of "no limit" read as absent.
+    fn limits(&self) -> Result<ContainerLimits, CollectionError> {
+        let reported = &self.host_config;
+
+        Ok(ContainerLimits {
+            memory: bytes(reported.memory, "memory limit")?,
+            memory_swap: bytes(reported.memory_swap, "memory and swap limit")?,
+            memory_reservation: bytes(reported.memory_reservation, "memory reservation")?,
+            nano_cpus: positive(reported.nano_cpus),
+            cpu_shares: positive(reported.cpu_shares),
+            cpu_set: NonEmptyText::new(reported.cpu_set.clone(), "cpu set").ok(),
+            process_limit: reported.process_limit.filter(|limit| *limit > 0),
+        })
+    }
+
     /// The networks, with each end's requested addresses kept apart from its assigned ones.
     fn networks(&self) -> Result<ContainerNetworks, CollectionError> {
         let mut networks = Vec::new();
@@ -364,6 +427,29 @@ impl DockerContainerDocument {
         }
 
         Ok(ContainerLabels::new(labels))
+    }
+}
+
+/// The policy a container has when nobody asked for one.
+const NO_RESTART: &str = "no";
+
+/// A size docker reported, or absent for the zero it writes when there is no limit.
+///
+/// A negative figure is refused rather than recorded: docker uses `-1` for an unlimited
+/// swap, and a negative byte count is not a size. It reaches the document as no limit,
+/// which is what it means.
+fn bytes(reported: i64, kind: &str) -> Result<Option<ByteSize>, CollectionError> {
+    match u64::try_from(reported) {
+        Ok(0) | Err(_) => Ok(None),
+        Ok(bytes) => Ok(Some(ByteSize::new(bytes, kind)?)),
+    }
+}
+
+/// A figure docker reported, or absent for the zero that means no limit.
+fn positive(reported: i64) -> Option<i64> {
+    match reported > 0 {
+        true => Some(reported),
+        false => None,
     }
 }
 

@@ -86,6 +86,7 @@ const INFO_ANSWERING: &str = r#"{
 const WEB_ID: &str = "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e";
 const STOPPED_ID: &str = "551e41b5515383f95ae02559fc0a1cd7500d88be62c2add2d7a2cfdc3746ac5a";
 const EPHEMERAL_ID: &str = "1db8c55268930421b2a804afd47b84b7ff88c7ee942242c529431fef314c5ea6";
+const LIMITED_ID: &str = "3c1f6c1f9f5f4a1d8e2b7c6d5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b";
 
 /// A running container, from `docker inspect --type container`.
 ///
@@ -202,7 +203,15 @@ const INSPECT_WEB: &str = r#"[
     "HostConfig": {
       "AutoRemove": false,
       "NetworkMode": "fixture-net",
-      "Tmpfs": { "/scratch": "rw,size=64m" }
+      "Tmpfs": { "/scratch": "rw,size=64m" },
+      "RestartPolicy": { "Name": "unless-stopped", "MaximumRetryCount": 0 },
+      "Memory": 0,
+      "MemorySwap": 0,
+      "MemoryReservation": 0,
+      "NanoCpus": 0,
+      "CpuShares": 0,
+      "CpusetCpus": "",
+      "PidsLimit": null
     }
   }
 ]"#;
@@ -244,6 +253,55 @@ const INSPECT_STOPPED: &str = r#"[
       "Labels": {}
     },
     "HostConfig": { "AutoRemove": false, "NetworkMode": "bridge" }
+  }
+]"#;
+
+/// A container carrying every limit docker can be given, with the values it reported for
+/// `--memory 64m --memory-reservation 32m --cpus 1.5 --cpu-shares 512 --pids-limit 100
+/// --cpuset-cpus 0-1 --restart on-failure:5`.
+const INSPECT_LIMITED: &str = r#"[
+  {
+    "Id": "3c1f6c1f9f5f4a1d8e2b7c6d5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b",
+    "Created": "2026-09-08T11:40:02.000000000Z",
+    "Path": "sleep",
+    "Args": ["3600"],
+    "State": {
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 2211,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-08T11:40:02.100000000Z",
+      "FinishedAt": "0001-01-01T00:00:00Z"
+    },
+    "Image": "sha256:1991bd789d7184290c3cce84fd6af068b8b745e9bddf178661ce7f5ecf68135c",
+    "Name": "/limited",
+    "RestartCount": 0,
+    "Driver": "overlayfs",
+    "Config": {
+      "Image": "alpine",
+      "Hostname": "3c1f6c1f9f5f",
+      "User": "",
+      "WorkingDir": "",
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Labels": {}
+    },
+    "HostConfig": {
+      "AutoRemove": false,
+      "NetworkMode": "bridge",
+      "RestartPolicy": { "Name": "on-failure", "MaximumRetryCount": 5 },
+      "Memory": 67108864,
+      "MemorySwap": 134217728,
+      "MemoryReservation": 33554432,
+      "NanoCpus": 1500000000,
+      "CpuShares": 512,
+      "CpusetCpus": "0-1",
+      "PidsLimit": 100
+    }
   }
 ]"#;
 
@@ -312,6 +370,7 @@ impl DockerFixtures<'_> {
                 (WEB_ID, Some(INSPECT_WEB)),
                 (STOPPED_ID, Some(INSPECT_STOPPED)),
                 (EPHEMERAL_ID, Some(INSPECT_EPHEMERAL)),
+                (LIMITED_ID, Some(INSPECT_LIMITED)),
             ],
         }
     }
@@ -560,6 +619,7 @@ fn the_containers_are_keyed_by_name_without_dockers_leading_slash() {
         keys_of(&containers),
         vec![
             "ephemeral".to_owned(),
+            "limited".to_owned(),
             "stopped".to_owned(),
             "web".to_owned()
         ]
@@ -1019,4 +1079,62 @@ fn a_container_with_no_ipv6_address_records_none_rather_than_empty_text() {
 
     // Act & Assert
     assert!(is_null(&field(&bridge, "ipv6_address")));
+}
+
+#[test]
+fn a_restart_policy_with_a_retry_limit_records_both_halves() {
+    // Arrange: whether a crashed container comes back, and how many times, is the
+    // difference between a service that heals and one that flaps.
+    let policy = field(&container_of("policy", "limited"), "restart_policy");
+
+    // Act & Assert
+    assert_eq!(text(&field(&policy, "name")), "on-failure");
+    assert_eq!(integer(&field(&policy, "maximum_retries")), 5);
+}
+
+#[test]
+fn a_restart_policy_that_names_no_retry_limit_records_none() {
+    // Arrange: docker writes `MaximumRetryCount: 0` for every policy that does not use it,
+    // and recording that as zero would read as "never retry", which is the opposite of what
+    // `unless-stopped` does.
+    let policy = field(&container_of("no-retries", "web"), "restart_policy");
+
+    // Act & Assert
+    assert_eq!(text(&field(&policy, "name")), "unless-stopped");
+    assert!(is_null(&field(&policy, "maximum_retries")));
+}
+
+#[test]
+fn the_limits_are_recorded_in_the_units_the_engine_reports_them_in() {
+    // Arrange: bytes and nanocpus, both integers, which is why `--cpus 1.5` can be recorded
+    // at all: the document admits no floating point, and docker's own unit for a fractional
+    // CPU is a whole number of billionths.
+    let limits = field(&container_of("limits", "limited"), "limits");
+
+    // Act & Assert
+    assert_eq!(integer(&field(&limits, "memory_bytes")), 67_108_864);
+    assert_eq!(integer(&field(&limits, "memory_swap_bytes")), 134_217_728);
+    assert_eq!(
+        integer(&field(&limits, "memory_reservation_bytes")),
+        33_554_432
+    );
+    assert_eq!(integer(&field(&limits, "nano_cpus")), 1_500_000_000);
+    assert_eq!(integer(&field(&limits, "cpu_shares")), 512);
+    assert_eq!(integer(&field(&limits, "process_limit")), 100);
+    assert_eq!(text(&field(&limits, "cpu_set")), "0-1");
+}
+
+#[test]
+fn a_limit_the_container_does_not_have_is_absent_rather_than_zero() {
+    // Arrange: docker writes 0 for an unset memory or cpu limit, null for an unset pids
+    // limit and an empty string for an unset cpu set. A memory limit recorded as 0 would
+    // read as a container confined to no memory at all, which is the opposite of the truth.
+    let limits = field(&container_of("unlimited", "web"), "limits");
+
+    // Act & Assert
+    assert!(is_null(&field(&limits, "memory_bytes")));
+    assert!(is_null(&field(&limits, "nano_cpus")));
+    assert!(is_null(&field(&limits, "cpu_shares")));
+    assert!(is_null(&field(&limits, "process_limit")));
+    assert!(is_null(&field(&limits, "cpu_set")));
 }
