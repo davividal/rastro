@@ -15,7 +15,7 @@ use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{Docker, EngineSource};
 use rastro_collector::{Collector, Presence};
-use rastro_fingerprint::{Observation, Volatility};
+use rastro_fingerprint::{Observation, Sensitivity, Volatility};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
@@ -118,7 +118,23 @@ const INSPECT_WEB: &str = r#"[
     "Name": "/web",
     "RestartCount": 0,
     "Driver": "overlayfs",
-    "Config": { "Image": "alpine", "Hostname": "webby" },
+    "Config": {
+      "Image": "alpine",
+      "Hostname": "webby",
+      "User": "1000:1000",
+      "WorkingDir": "/app",
+      "Env": [
+        "PGPASSWORD=hunter2",
+        "PLAIN=visible",
+        "DSN=postgres://app:s3cret@db:5432/app?sslmode=require",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      ],
+      "Labels": {
+        "com.example.role": "frontend",
+        "com.docker.compose.project": "shop",
+        "org.opencontainers.image.title": "fixture"
+      }
+    },
     "HostConfig": { "AutoRemove": false, "NetworkMode": "fixture-net" }
   }
 ]"#;
@@ -151,7 +167,14 @@ const INSPECT_STOPPED: &str = r#"[
     "Name": "/stopped",
     "RestartCount": 0,
     "Driver": "overlayfs",
-    "Config": { "Image": "alpine", "Hostname": "551e41b55153" },
+    "Config": {
+      "Image": "alpine",
+      "Hostname": "551e41b55153",
+      "User": "",
+      "WorkingDir": "",
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Labels": {}
+    },
     "HostConfig": { "AutoRemove": false, "NetworkMode": "bridge" }
   }
 ]"#;
@@ -183,7 +206,14 @@ const INSPECT_EPHEMERAL: &str = r#"[
     "Name": "/ephemeral",
     "RestartCount": 0,
     "Driver": "overlayfs",
-    "Config": { "Image": "alpine", "Hostname": "1db8c5526893" },
+    "Config": {
+      "Image": "alpine",
+      "Hostname": "1db8c5526893",
+      "User": "",
+      "WorkingDir": "",
+      "Env": ["EMPTY=", "EQUALS=a=b=c"],
+      "Labels": {}
+    },
     "HostConfig": { "AutoRemove": true, "NetworkMode": "bridge" }
   }
 ]"#;
@@ -621,4 +651,85 @@ fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
     // Act & Assert
     assert!(keys_of(&field(&server, "containers")).is_empty());
     assert!(items_of(&field(&server, "unreadable_containers")).is_empty());
+}
+
+#[test]
+fn the_environment_is_keyed_by_variable_and_every_value_is_sensitive() {
+    // Arrange: not a judgement about which variables hold secrets, because the name cannot
+    // tell. `DSN=postgres://app:s3cret@db/app` carries a credential and matches no keyword a
+    // rule could look for, and a rule that guesses fails in the direction that leaks.
+    let environment = field(&container_of("environment", "web"), "environment");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&environment),
+        vec![
+            "DSN".to_owned(),
+            "PATH".to_owned(),
+            "PGPASSWORD".to_owned(),
+            "PLAIN".to_owned()
+        ]
+    );
+    for variable in keys_of(&environment) {
+        assert_eq!(
+            field(&environment, &variable).sensitivity(),
+            Sensitivity::Sensitive,
+            "{variable} should be sensitive whatever it is called"
+        );
+    }
+}
+
+#[test]
+fn an_environment_value_holding_an_equals_sign_keeps_all_of_it() {
+    // Arrange: the entry is `NAME=value` and the value may hold as many `=` as it likes, so
+    // the split is on the first one only. Splitting on every one would corrupt a DSN.
+    let environment = field(&container_of("equals", "ephemeral"), "environment");
+
+    // Act & Assert
+    assert_eq!(text(&field(&environment, "EQUALS")), "a=b=c");
+}
+
+#[test]
+fn a_variable_set_to_nothing_is_recorded_as_empty_rather_than_dropped() {
+    // Arrange: `--env EMPTY=` is a variable the container has, set to nothing, and that is a
+    // different fact from the variable not being there at all.
+    let environment = field(&container_of("empty-variable", "ephemeral"), "environment");
+
+    // Act & Assert
+    assert_eq!(text(&field(&environment, "EMPTY")), "");
+}
+
+#[test]
+fn the_labels_are_recorded_as_the_engine_holds_them() {
+    // Arrange: compose writes its project and service into labels, which makes them the
+    // anchor a diff needs for a container it did not name itself.
+    let labels = field(&container_of("labels", "web"), "labels");
+
+    // Act & Assert
+    assert_eq!(text(&field(&labels, "com.docker.compose.project")), "shop");
+    assert_eq!(text(&field(&labels, "com.example.role")), "frontend");
+}
+
+#[test]
+fn a_container_records_the_account_and_the_directory_it_runs_in() {
+    // Arrange: recorded as docker spells it. A `uid:gid` pair is not resolved to names,
+    // because the passwd file that would resolve it is the container's own and this
+    // collector does not open files inside a container.
+    let container = container_of("account", "web");
+
+    // Act & Assert
+    assert_eq!(text(&field(&container, "user")), "1000:1000");
+    assert_eq!(text(&field(&container, "working_directory")), "/app");
+}
+
+#[test]
+fn an_account_or_directory_the_image_decides_is_absent_rather_than_empty() {
+    // Arrange: docker reports an empty string when the container overrode neither, and
+    // recording that as text would claim the container runs as a nameless account in a
+    // directory with no path.
+    let container = container_of("image-default", "stopped");
+
+    // Act & Assert
+    assert!(is_null(&field(&container, "user")));
+    assert!(is_null(&field(&container, "working_directory")));
 }

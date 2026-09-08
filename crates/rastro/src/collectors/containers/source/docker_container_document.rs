@@ -2,13 +2,17 @@
 
 use serde::Deserialize;
 
-use rastro_collector::{CollectionError, NonEmptyText};
+use std::collections::BTreeMap;
+
+use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
-    ContainerCommand, ContainerImage, ContainerState, DockerContainer,
+    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerState,
+    DockerContainer,
 };
 use crate::collectors::containers::value_objects::{
-    ContainerId, ContainerName, ContainerStatus, EngineInstant, ImageDigest, ImageReference,
+    ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ImageDigest,
+    ImageReference, LabelName, VariableName,
 };
 
 /// Go's zero time, which is what docker prints for a stamp that has not happened.
@@ -83,6 +87,18 @@ struct ConfigHalf {
     /// digest above and is why both are read.
     #[serde(rename = "Image")]
     image: String,
+    /// Empty where the image decides, rather than absent.
+    #[serde(rename = "User", default)]
+    user: String,
+    #[serde(rename = "WorkingDir", default)]
+    working_directory: String,
+    /// `NAME=value` entries, the image's own environment included, which is honest: it is
+    /// the environment the process has.
+    #[serde(rename = "Env", default)]
+    environment: Vec<String>,
+    /// Null on a container with none, which `default` covers either way.
+    #[serde(rename = "Labels", default)]
+    labels: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -118,6 +134,14 @@ impl DockerContainerDocument {
                 finished_at: instant(&self.state.finished_at)?,
                 restart_count: self.restart_count,
             },
+            user: ContainerAccount::new(self.config.user.clone()).ok(),
+            working_directory: AbsolutePath::new(
+                self.config.working_directory.clone(),
+                "container working directory",
+            )
+            .ok(),
+            environment: self.environment()?,
+            labels: self.labels()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -125,6 +149,41 @@ impl DockerContainerDocument {
             ContainerName::new(self.name.trim_start_matches('/'))?,
             container,
         ))
+    }
+}
+
+impl DockerContainerDocument {
+    /// The environment, split on the first `=` of each entry.
+    ///
+    /// **The first, and only the first.** A value is free to hold as many as it likes, and
+    /// `DSN=postgres://app:pw@db/app?a=b` would be corrupted by any other reading. An entry
+    /// with no `=` at all is refused rather than guessed at: docker writes `NAME=value`, so
+    /// its absence means this is not the list rastro thinks it is.
+    fn environment(&self) -> Result<ContainerEnvironment, CollectionError> {
+        let mut variables = Vec::new();
+
+        for entry in &self.config.environment {
+            let Some((name, value)) = entry.split_once('=') else {
+                return Err(CollectionError::new(format!(
+                    "docker reported the environment entry {entry:?}, which names no value, \
+                     so the environment was misread"
+                )));
+            };
+
+            variables.push((VariableName::new(name)?, value.to_owned()));
+        }
+
+        Ok(ContainerEnvironment::new(variables))
+    }
+
+    fn labels(&self) -> Result<ContainerLabels, CollectionError> {
+        let mut labels = Vec::new();
+
+        for (name, value) in &self.config.labels {
+            labels.push((LabelName::new(name.clone())?, value.clone()));
+        }
+
+        Ok(ContainerLabels::new(labels))
     }
 }
 

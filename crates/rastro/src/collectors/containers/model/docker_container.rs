@@ -1,9 +1,11 @@
 //! One container docker knows about.
 
-use rastro_collector::Observation;
+use rastro_collector::{AbsolutePath, Observation};
 
-use crate::collectors::containers::model::{ContainerCommand, ContainerImage, ContainerState};
-use crate::collectors::containers::value_objects::{ContainerId, EngineInstant};
+use crate::collectors::containers::model::{
+    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerState,
+};
+use crate::collectors::containers::value_objects::{ContainerAccount, ContainerId, EngineInstant};
 
 /// A container as rastro means it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +15,12 @@ pub struct DockerContainer {
     pub image: ContainerImage,
     pub command: ContainerCommand,
     pub state: ContainerState,
+    /// Absent where the image decides, which docker reports as an empty string.
+    pub user: Option<ContainerAccount>,
+    /// Absent where the image decides, for the same reason.
+    pub working_directory: Option<AbsolutePath>,
+    pub environment: ContainerEnvironment,
+    pub labels: ContainerLabels,
     /// Whether the engine will delete this container the moment it stops.
     pub auto_remove: bool,
 }
@@ -34,9 +42,25 @@ impl From<&DockerContainer> for Observation {
             ("auto_remove", Observation::boolean(container.auto_remove)),
             ("command", Observation::from(&container.command)),
             ("created", Observation::from(&container.created)),
+            ("environment", Observation::from(&container.environment)),
             ("id", Observation::from(&container.id)),
             ("image", Observation::from(&container.image)),
+            ("labels", Observation::from(&container.labels)),
             ("state", Observation::from(&container.state)),
+            (
+                "user",
+                match &container.user {
+                    Some(account) => Observation::from(account),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "working_directory",
+                match &container.working_directory {
+                    Some(directory) => Observation::text(directory.as_str()),
+                    None => Observation::null(),
+                },
+            ),
         ]);
 
         match container.auto_remove {

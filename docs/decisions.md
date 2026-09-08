@@ -3055,3 +3055,28 @@ the operator wrote, the id docker resolved it to, and the manifest digest **wher
 engine offers it**. The id is the strongest of the three anyway, being a digest over
 the image's configuration, and the repo digest reaches the document through the image
 list rather than through every container that runs it.
+
+## Every environment value is sensitive, and none of them is judged by name
+
+The `sysctl` facet decides sensitivity from the key, because the parameters holding
+a secret are a closed set somebody can enumerate. A container's environment is the
+opposite kind of thing: it is whatever the operator put there, and the name is a poor
+witness in both directions.
+
+`DSN=postgres://app:s3cret@db:5432/app` carries a credential and matches no keyword a
+rule could look for. `MYSQL_ROOT_PASSWORD` announces itself. A rule that guesses fails
+in the direction that leaks, so there is no rule: every value is withheld and reaches
+the document as a digest, in both views.
+
+The names stay public, which is what makes the facet useful. A diff says `PGPASSWORD`
+changed, and the value that says so is not the password — the same shape the postgresql
+facet uses to make a role's password rotation visible without holding the password.
+
+**Cost, accepted knowingly:** `PATH` and the rest of an image's benign environment are
+digested too, so the complete view reads less well than it could. `--raw` is where that
+is paid back, once it exists.
+
+Labels are the asymmetry, and deliberately: a label is metadata somebody attached to
+describe the container, and for a container nobody named by hand it is the only durable
+link back to the definition it came from, since compose writes its project, its service
+and a hash of the config it rendered. Those are recorded as they stand.
