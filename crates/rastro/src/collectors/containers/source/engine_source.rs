@@ -45,10 +45,7 @@ impl EngineSource {
     /// The trees this engine keeps to itself.
     pub fn private_trees(&self) -> Vec<WalkedTree> {
         match self {
-            // containerd's own store is not claimed yet: on a docker box its layers are
-            // inside the tree docker's root already seals, and a standalone containerd
-            // wants its own measurement first.
-            Self::Containerd(_) => Vec::new(),
+            Self::Containerd(containerd) => containerd.private_trees(),
             Self::Docker(docker) => docker.private_trees(),
         }
     }

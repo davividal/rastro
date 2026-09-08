@@ -1,8 +1,8 @@
 //! Asking containerd what it is, through `ctr`.
 
-use rastro_collector::{AbsolutePath, CollectionError};
+use rastro_collector::{AbsolutePath, CollectionError, WalkedTree};
 
-use super::containerd_address::ContainerdAddress;
+use super::containerd_layout::ContainerdLayout;
 use super::ctr_container_document::CtrContainerDocument;
 use super::ctr_images::CtrImages;
 use super::ctr_tasks::CtrTasks;
@@ -54,15 +54,26 @@ const NOTHING_RUNNING: &str = "no containerd is running on this box, so there is
 pub struct Containerd {
     tool: CanonicalTool,
     address: Option<AbsolutePath>,
+    /// The store and the runtime state, resolved when this was constructed for the reason
+    /// docker's root is: the walk's table is built before any collector runs.
+    own_trees: Vec<WalkedTree>,
 }
 
 impl Containerd {
     /// Locates the client and discovers where containerd is listening.
     pub fn detect() -> Option<Self> {
         let tool = CanonicalTool::located(PROGRAM)?;
-        let address = ContainerdAddress::discover();
+        let layout = ContainerdLayout::discover();
 
-        Some(Self { tool, address })
+        Some(Self {
+            tool,
+            address: layout.address,
+            own_trees: [layout.root, layout.state]
+                .into_iter()
+                .flatten()
+                .filter_map(|tree| WalkedTree::new(tree.as_str()).ok())
+                .collect(),
+        })
     }
 
     /// The same source over a tool and an address the caller chose.
@@ -70,11 +81,31 @@ impl Containerd {
     /// The address is text rather than an [`AbsolutePath`] so a test can hand over what a
     /// host would report, including nothing at all.
     pub fn using(tool: CanonicalTool, address: Option<String>) -> Self {
+        Self::holding(tool, address, Vec::new())
+    }
+
+    /// The same, with the trees this containerd keeps its own state in.
+    pub fn holding(tool: CanonicalTool, address: Option<String>, own_trees: Vec<String>) -> Self {
         Self {
             tool,
             address: address
                 .and_then(|address| AbsolutePath::new(address, "containerd address").ok()),
+            own_trees: own_trees
+                .into_iter()
+                .filter_map(|tree| WalkedTree::new(tree).ok())
+                .collect(),
         }
+    }
+
+    /// The store and the runtime state, both sealed.
+    ///
+    /// **Two claims rather than a listing, which is where this differs from docker.** docker
+    /// keeps the operator's volumes inside its own root, so its children have to be claimed
+    /// one at a time to spare that one. Nothing under containerd's root or its state belongs
+    /// to the operator: it is the content store, the snapshots, and the shims and sockets of
+    /// running tasks. So the trees themselves are sealed, and the walk stops at each.
+    pub fn private_trees(&self) -> Vec<WalkedTree> {
+        self.own_trees.clone()
     }
 
     /// containerd as this box has it: the client, and the engine if one answered.

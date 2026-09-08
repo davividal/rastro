@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{Containerd, EngineSource};
-use rastro_collector::{Collector, Presence};
+use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Observation, Volatility};
 use support::fs_tree::scratch_tree;
 use support::observation::{field, integer, is_null, items_of, keys_of, text};
@@ -690,4 +690,73 @@ fn a_namespace_holding_no_images_records_an_empty_map() {
 
     // Act & Assert
     assert!(keys_of(&field(&namespace, "images")).is_empty());
+}
+
+/// A containerd whose store and runtime state are two trees the test named.
+fn containerd_holding(name: &str, trees: &[&str]) -> Containerd {
+    let root = scratch_tree(&format!("containerd-trees-{name}"), &[]);
+    let path = root.join("ctr");
+    fs::write(
+        &path,
+        format!("#!/bin/sh\ncase \"$1\" in\n--version) printf '%s\\n' '{CLIENT_VERSION}';;\n*) exit 1;;\nesac\n"),
+    )
+    .expect("a writable script");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).expect("an executable script");
+    let tool = CanonicalTool::located_in("ctr", &[root.to_str().expect("utf-8")])
+        .expect("the fake tool is locatable");
+
+    Containerd::holding(
+        tool,
+        None,
+        trees.iter().map(|tree| (*tree).to_owned()).collect(),
+    )
+}
+
+fn claimed(collector: &ContainersCollector) -> Vec<(String, ClaimedReading)> {
+    let mut claims: Vec<(String, ClaimedReading)> = collector
+        .filesystem_claims()
+        .iter()
+        .map(|claim| (claim.tree().as_str().to_owned(), claim.reading()))
+        .collect();
+    claims.sort_by(|left, right| left.0.cmp(&right.0));
+    claims
+}
+
+#[test]
+fn containerd_seals_its_store_and_its_runtime_state() {
+    // Arrange: two claims rather than a listing, which is where this differs from docker.
+    // Nothing under either tree belongs to the operator: one is the content store and the
+    // snapshots, the other the shims and sockets of running tasks.
+    let collector = ContainersCollector::reading(vec![EngineSource::Containerd(
+        containerd_holding("sealed", &["/var/lib/containerd", "/run/containerd"]),
+    )]);
+
+    // Act & Assert
+    assert_eq!(
+        claimed(&collector),
+        vec![
+            ("/run/containerd".to_owned(), ClaimedReading::Sealed),
+            ("/var/lib/containerd".to_owned(), ClaimedReading::Sealed)
+        ]
+    );
+}
+
+#[test]
+fn one_tree_two_engines_resolved_to_is_claimed_once() {
+    // Arrange: **the guard exists because a repeat fails the walk rather than a facet.** On
+    // a docker box the managed containerd keeps its store inside docker's own root, so two
+    // dialects legitimately resolving to one directory is a real arrangement, and saying the
+    // same thing about it twice is not a disagreement.
+    let collector = ContainersCollector::reading(vec![
+        EngineSource::Containerd(containerd_holding("first", &["/var/lib/containerd"])),
+        EngineSource::Containerd(containerd_holding("second", &["/var/lib/containerd"])),
+    ]);
+
+    // Act & Assert
+    assert_eq!(
+        claimed(&collector),
+        vec![("/var/lib/containerd".to_owned(), ClaimedReading::Sealed)]
+    );
 }

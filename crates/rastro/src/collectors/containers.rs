@@ -61,7 +61,7 @@ pub use model::{
     DockerVolume, DockerVolumes, ImagePlatform, NetworkAddressing, ObservedHealth,
     PublishedBinding, RestartPolicy, UnreadableObject,
 };
-pub use source::{Containerd, ContainerdAddress, Docker, EngineSource};
+pub use source::{Containerd, ContainerdLayout, Docker, EngineSource};
 pub use value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus,
     EngineFlavour, EngineInstant, EngineVersion, ExposedPort, ImageDigest, ImageReference,
@@ -154,10 +154,21 @@ impl Collector for ContainersCollector {
     /// The one tree deliberately left to the walk is the operator's own data. See
     /// [`Docker::private_trees`].
     fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
-        self.engines
-            .iter()
-            .flat_map(EngineSource::private_trees)
-            .map(FilesystemClaim::sealed)
-            .collect()
+        let mut claimed: Vec<FilesystemClaim> = Vec::new();
+
+        for tree in self.engines.iter().flat_map(EngineSource::private_trees) {
+            // **One tree is claimed once, whichever dialect resolved it.** Two claims on one
+            // path fail the *walk*, not a facet, and two engines on a box can legitimately
+            // resolve to the same directory: docker's managed containerd keeps its store
+            // inside docker's own root. Saying the same thing twice is not a disagreement,
+            // so it is folded rather than reported.
+            if claimed.iter().any(|claim| claim.tree() == &tree) {
+                continue;
+            }
+
+            claimed.push(FilesystemClaim::sealed(tree));
+        }
+
+        claimed
     }
 }

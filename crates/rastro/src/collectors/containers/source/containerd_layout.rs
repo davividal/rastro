@@ -7,9 +7,11 @@ use serde::Deserialize;
 
 use rastro_collector::AbsolutePath;
 
-/// The socket containerd documents as its default, and the only value here that is not read
-/// from the box.
+/// The three places containerd documents as its defaults, and the only values here that are
+/// not read from the box.
 const DEFAULT_ADDRESS: &str = "/run/containerd/containerd.sock";
+const DEFAULT_ROOT: &str = "/var/lib/containerd";
+const DEFAULT_STATE: &str = "/run/containerd";
 
 /// What the binary is called, which is how its process is picked out of `/proc`.
 const PROGRAM: &str = "containerd";
@@ -20,7 +22,7 @@ const ADDRESS_FLAG: &str = "--address";
 /// The flag naming the file the socket is otherwise in.
 const CONFIG_FLAG: &str = "--config";
 
-/// Finding the address of the containerd this box is running.
+/// Where the containerd this box is running lives.
 ///
 /// **`ctr`'s own default is wrong on any box that has docker**, which is what makes this
 /// worth a type. Measured on docker 29.8.0: containerd is started as
@@ -44,26 +46,67 @@ const CONFIG_FLAG: &str = "--config";
 /// does not need the licence the nginx entry in `docs/decisions.md` grants: it establishes
 /// how to reach the service, and what the service then says about itself is asked of the
 /// service.
-pub struct ContainerdAddress;
+/// Everything about a containerd that has to be known before it is asked anything: the
+/// socket to ask at, and the two directories it keeps what it holds in.
+///
+/// Every field is absent on a box with no containerd running, and all three come from one
+/// read of the process and its configuration rather than three.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContainerdLayout {
+    pub address: Option<AbsolutePath>,
+    /// Where the content store and the snapshots are.
+    pub root: Option<AbsolutePath>,
+    /// Where the shims, sockets and task directories are, which is runtime state.
+    pub state: Option<AbsolutePath>,
+}
 
-impl ContainerdAddress {
-    /// The address on this host, or nothing if no containerd is running.
-    pub fn discover() -> Option<AbsolutePath> {
+impl ContainerdLayout {
+    /// The layout on this host, empty if no containerd is running.
+    pub fn discover() -> Self {
         Self::under("/proc")
     }
 
     /// The same over a `/proc` the caller chose, which is what the tests hand it.
-    pub fn under(proc: impl AsRef<Path>) -> Option<AbsolutePath> {
-        let arguments = command_line_of(proc.as_ref())?;
+    pub fn under(proc: impl AsRef<Path>) -> Self {
+        let Some(arguments) = command_line_of(proc.as_ref()) else {
+            return Self::default();
+        };
+
+        let configured = flag_value(&arguments, CONFIG_FLAG).map(Configuration::read);
+        let configured = configured.unwrap_or_default();
 
         let address = flag_value(&arguments, ADDRESS_FLAG)
-            .or_else(|| {
-                flag_value(&arguments, CONFIG_FLAG).and_then(|config| serving_address(&config))
-            })
+            .or(configured.address)
             .unwrap_or_else(|| DEFAULT_ADDRESS.to_owned());
 
-        AbsolutePath::new(address, "containerd address").ok()
+        Self {
+            address: as_walked(address, "containerd address"),
+            root: as_walked(
+                configured.root.unwrap_or_else(|| DEFAULT_ROOT.to_owned()),
+                "containerd root",
+            ),
+            state: as_walked(
+                configured.state.unwrap_or_else(|| DEFAULT_STATE.to_owned()),
+                "containerd state",
+            ),
+        }
     }
+}
+
+/// A path as the filesystem walk would see it.
+///
+/// **Resolved through its symlinks, because otherwise a claim over it is a rule about a tree
+/// nothing visits.** docker gives its containerd `state = "/var/run/docker/containerd/daemon"`,
+/// and on Debian `/var/run` is a symlink to `/run`; the walk never follows a symlink, so it
+/// only ever records the real path. A path that cannot be resolved is kept as reported, since
+/// a declared rule that matches nothing is still better than a silent omission.
+fn as_walked(path: String, kind: &str) -> Option<AbsolutePath> {
+    let resolved = fs::canonicalize(&path)
+        .ok()
+        .and_then(|resolved| resolved.to_str().map(str::to_owned))
+        .unwrap_or(path);
+
+    AbsolutePath::new(resolved, kind).ok()
 }
 
 /// The command line of the containerd running here, if one is.
@@ -122,15 +165,17 @@ fn flag_value(arguments: &[String], flag: &str) -> Option<String> {
     None
 }
 
-/// The two lines of a containerd configuration this read is about.
+/// The four lines of a containerd configuration this read is about.
 ///
 /// **Named sections rather than a search through the document**, which is the whole point:
 /// the first `address =` in the file docker's containerd is given belongs to `[debug]`, and
 /// the debug endpoint answers a different API. Everything else in the file is ignored by
 /// serde, which is what makes this a two-line reader of a large configuration rather than a
 /// parser of one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ContainerdConfiguration {
+    root: Option<String>,
+    state: Option<String>,
     grpc: Option<ServingSection>,
 }
 
@@ -139,14 +184,32 @@ struct ServingSection {
     address: Option<String>,
 }
 
-/// The serving address inside a containerd configuration.
-///
-/// A file rastro cannot read or cannot parse yields nothing, and the caller falls back to
-/// the documented default: the engine is plainly running, so the default is a better answer
-/// than none, and `ctr` says so loudly if it is the wrong one.
-fn serving_address(config: &str) -> Option<String> {
-    let text = fs::read_to_string(config).ok()?;
-    let parsed: ContainerdConfiguration = toml::from_str(&text).ok()?;
+/// What one configuration file said, with everything it did not say left absent.
+#[derive(Debug, Default)]
+struct Configuration {
+    address: Option<String>,
+    root: Option<String>,
+    state: Option<String>,
+}
 
-    parsed.grpc?.address
+impl Configuration {
+    /// Reads the file, or nothing from it.
+    ///
+    /// A file rastro cannot read or cannot parse yields nothing at all, and the caller falls
+    /// back to the documented defaults: the engine is plainly running, so the defaults are a
+    /// better answer than none, and `ctr` says so loudly if the address is wrong.
+    fn read(path: String) -> Self {
+        let Some(parsed) = fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| toml::from_str::<ContainerdConfiguration>(&text).ok())
+        else {
+            return Self::default();
+        };
+
+        Self {
+            address: parsed.grpc.and_then(|grpc| grpc.address),
+            root: parsed.root,
+            state: parsed.state,
+        }
+    }
 }

@@ -1,7 +1,7 @@
 //! The engines' own interfaces, one module per engine.
 
 mod containerd;
-mod containerd_address;
+mod containerd_layout;
 mod ctr_container_document;
 mod ctr_images;
 mod ctr_table;
@@ -17,6 +17,6 @@ mod docker_volume_document;
 mod engine_source;
 
 pub use containerd::Containerd;
-pub use containerd_address::ContainerdAddress;
+pub use containerd_layout::ContainerdLayout;
 pub use docker::Docker;
 pub use engine_source::EngineSource;

@@ -1,7 +1,7 @@
-//! Where a containerd on this box is listening.
+//! Where a containerd on this box is listening, and where it keeps what it holds.
 //!
-//! Its own test file, because the discovery has four paths and one trap, and none of them
-//! needs a facet or an engine to exercise.
+//! Its own test file, because the discovery has several paths and two traps, and none of
+//! them needs a facet or an engine to exercise.
 
 mod support;
 
@@ -9,7 +9,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use rastro::collectors::containers::ContainerdAddress;
+use rastro::collectors::containers::ContainerdLayout;
 use support::fs_tree::scratch_tree;
 
 /// A `/proc` holding one process, with the executable and command line given.
@@ -29,19 +29,32 @@ fn proc_with(name: &str, executable: &str, arguments: &[&str]) -> std::path::Pat
     root
 }
 
-/// A containerd configuration holding both addresses it can hold.
+/// A containerd configuration holding both addresses it can hold, and its two directories.
 ///
 /// **The trap this file exists for.** The first `address =` in a real containerd config is
 /// the *debug* socket, and the one `ctr` needs is under `[grpc]` further down. Measured on
 /// containerd 2.3.4 as docker 29 ships it. Anything that took the first match would talk to
 /// the debug endpoint, which answers a different API.
 fn config_naming(root: &Path, grpc: &str) -> String {
+    config_holding(root, grpc, "", "")
+}
+
+/// The same, naming the two directories containerd keeps its own state in.
+///
+/// The spellings are docker's own, measured on 26.1.5 and 29.8.0 alike: its managed
+/// containerd is given `root = "/var/lib/docker/containerd/daemon"` and
+/// `state = "/var/run/docker/containerd/daemon"`.
+fn config_holding(root: &Path, grpc: &str, own_root: &str, own_state: &str) -> String {
     let path = root.join("containerd.toml");
+    let directories = match (own_root.is_empty(), own_state.is_empty()) {
+        (true, true) => String::new(),
+        _ => format!("root = '{own_root}'\nstate = '{own_state}'\n"),
+    };
     fs::write(
         &path,
         format!(
-            "version = 3\n\n[debug]\n  address = '/run/containerd/debug.sock'\n  level = ''\n\n\
-             [cgroup]\n  path = ''\n\n[grpc]\n  address = '{grpc}'\n  \
+            "version = 3\n{directories}\n[debug]\n  address = '/run/containerd/debug.sock'\n  \
+             level = ''\n\n[cgroup]\n  path = ''\n\n[grpc]\n  address = '{grpc}'\n  \
              max_recv_message_size = 16777216\n"
         ),
     )
@@ -64,7 +77,7 @@ fn the_address_comes_from_the_running_containerds_own_flag() {
     );
 
     // Act
-    let address = ContainerdAddress::under(&proc);
+    let address = ContainerdLayout::under(&proc).address;
 
     // Assert
     assert_eq!(
@@ -85,7 +98,9 @@ fn the_flag_is_read_when_it_is_written_with_an_equals_sign() {
 
     // Act & Assert
     assert_eq!(
-        ContainerdAddress::under(&proc).map(|address| address.as_str().to_owned()),
+        ContainerdLayout::under(&proc)
+            .address
+            .map(|address| address.as_str().to_owned()),
         Some("/run/mine/containerd.sock".to_owned())
     );
 }
@@ -105,7 +120,9 @@ fn the_address_comes_from_the_configuration_the_process_names() {
 
     // Act & Assert
     assert_eq!(
-        ContainerdAddress::under(&proc).map(|address| address.as_str().to_owned()),
+        ContainerdLayout::under(&proc)
+            .address
+            .map(|address| address.as_str().to_owned()),
         Some("/var/run/docker/containerd/containerd.sock".to_owned())
     );
 }
@@ -123,7 +140,7 @@ fn the_debug_socket_is_not_mistaken_for_the_one_that_answers() {
     );
 
     // Act
-    let address = ContainerdAddress::under(&proc).expect("an address");
+    let address = ContainerdLayout::under(&proc).address.expect("an address");
 
     // Assert
     assert_eq!(address.as_str(), "/run/real/containerd.sock");
@@ -138,7 +155,9 @@ fn a_containerd_that_names_nothing_is_at_the_documented_default() {
 
     // Act & Assert
     assert_eq!(
-        ContainerdAddress::under(&proc).map(|address| address.as_str().to_owned()),
+        ContainerdLayout::under(&proc)
+            .address
+            .map(|address| address.as_str().to_owned()),
         Some("/run/containerd/containerd.sock".to_owned())
     );
 }
@@ -150,7 +169,7 @@ fn a_box_with_no_containerd_running_has_no_address() {
     let proc = proc_with("absent", "/usr/sbin/nginx", &["nginx", "-g", "daemon off;"]);
 
     // Act & Assert
-    assert!(ContainerdAddress::under(&proc).is_none());
+    assert!(ContainerdLayout::under(&proc).address.is_none());
 }
 
 #[test]
@@ -170,7 +189,100 @@ fn a_configuration_that_cannot_be_read_falls_back_to_the_default() {
 
     // Act & Assert
     assert_eq!(
-        ContainerdAddress::under(&proc).map(|address| address.as_str().to_owned()),
+        ContainerdLayout::under(&proc)
+            .address
+            .map(|address| address.as_str().to_owned()),
         Some("/run/containerd/containerd.sock".to_owned())
     );
+}
+
+#[test]
+fn the_directories_come_from_the_configuration_too() {
+    // Arrange: measured on docker 26.1.5 and 29.8.0 alike, its managed containerd is given
+    // both, and neither is where a standalone containerd would keep them.
+    let root = scratch_tree("containerd-directories", &["store", "runtime"]);
+    let store = root.join("store");
+    let runtime = root.join("runtime");
+    let config = config_holding(
+        &root,
+        "/run/mine/containerd.sock",
+        store.to_str().expect("utf-8"),
+        runtime.to_str().expect("utf-8"),
+    );
+    let proc = proc_with(
+        "directories",
+        "/usr/bin/containerd",
+        &["/usr/bin/containerd", "--config", &config],
+    );
+
+    // Act
+    let layout = ContainerdLayout::under(&proc);
+
+    // Assert
+    assert_eq!(
+        layout.root.map(|root| root.as_str().to_owned()),
+        Some(store.to_str().expect("utf-8").to_owned())
+    );
+    assert_eq!(
+        layout.state.map(|state| state.as_str().to_owned()),
+        Some(runtime.to_str().expect("utf-8").to_owned())
+    );
+}
+
+#[test]
+fn a_containerd_naming_no_directories_is_at_the_documented_defaults() {
+    // Arrange: a containerd started with nothing keeps its store and its runtime state
+    // where containerd documents, and those are the trees worth claiming on such a box.
+    let proc = proc_with(
+        "default-dirs",
+        "/usr/bin/containerd",
+        &["/usr/bin/containerd"],
+    );
+
+    // Act
+    let layout = ContainerdLayout::under(&proc);
+
+    // Assert
+    assert_eq!(
+        layout.root.map(|root| root.as_str().to_owned()),
+        Some("/var/lib/containerd".to_owned())
+    );
+    assert_eq!(
+        layout.state.map(|state| state.as_str().to_owned()),
+        Some("/run/containerd".to_owned())
+    );
+}
+
+#[test]
+fn a_directory_reached_through_a_symlink_is_recorded_as_the_walk_would_see_it() {
+    // Arrange: **the second trap, and it would have made the claim do nothing.** docker's
+    // containerd is given `state = "/var/run/docker/containerd/daemon"`, and on Debian
+    // `/var/run` is a symlink to `/run`. The filesystem walk never follows a symlink, so it
+    // only ever sees the real path; a claim naming the symlinked one is a rule about a tree
+    // nothing visits.
+    let root = scratch_tree("containerd-symlink", &["run/containerd"]);
+    symlink("run", root.join("var-run")).expect("a writable scratch link");
+    let through_the_link = root.join("var-run/containerd");
+    let config = config_holding(
+        &root,
+        "/run/mine/containerd.sock",
+        through_the_link.to_str().expect("utf-8"),
+        "",
+    );
+    let proc = proc_with(
+        "symlink",
+        "/usr/bin/containerd",
+        &["/usr/bin/containerd", "--config", &config],
+    );
+
+    // Act
+    let layout = ContainerdLayout::under(&proc);
+
+    // Assert
+    let recorded = layout.root.expect("a root").as_str().to_owned();
+    assert!(
+        recorded.ends_with("/run/containerd"),
+        "the symlink should be resolved to what the walk sees, got {recorded:?}"
+    );
+    assert!(!recorded.contains("var-run"));
 }

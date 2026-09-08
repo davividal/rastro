@@ -3518,3 +3518,34 @@ on both: docker 26.1.5 keeps its own image store and uses its containerd only as
 so its `moby` namespace holds containers and **no** images; docker 29.8.0, whose snapshotter
 *is* containerd's, holds both. An empty image map beside a populated container map is
 therefore a real reading of a real box rather than a failed one.
+
+## containerd's own trees are sealed as two claims, and the paths are resolved first
+
+containerd keeps what it holds in two places, both named in its configuration and both
+read in the same pass that finds its socket: `root`, the content store and the snapshots,
+and `state`, the shims, sockets and task directories of what is running. A containerd that
+names neither is at the documented defaults, `/var/lib/containerd` and `/run/containerd`.
+
+**Two claims rather than a listing, which is where this differs from docker.** docker keeps
+the operator's volumes inside its own root, so its children have to be claimed one at a
+time to spare that one. Nothing under containerd's root or its state belongs to the
+operator, so the trees themselves are sealed and the walk stops at each. The docker
+arrangement is the pattern for an engine that mixes its own store with the operator's
+data, not a rule that generalises: podman keeps `graphroot`, `runroot` and `volume_path`
+as three independently relocatable roots, and will need its own reading of the same
+question.
+
+**Every claimed path is resolved through its symlinks first, and that was a trap worth
+measuring.** docker gives its managed containerd
+`state = "/var/run/docker/containerd/daemon"`, and on Debian `/var/run` is a symlink to
+`/run`. The filesystem walk never follows a symlink, so it only ever records the real
+path: a claim naming the symlinked one is a rule about a tree nothing visits, and it would
+have failed silently. On the reference box the claim is now recorded as
+`/run/docker/containerd/daemon`, which is where the walk goes.
+
+**One tree is claimed once, whichever dialect resolved it.** Two claims on one path fail
+the *walk* rather than one facet, and two engines legitimately resolve to the same
+directory: docker's managed containerd keeps its store at
+`/var/lib/docker/containerd/daemon`, inside docker's own root. Two dialects saying the same
+thing about one tree is not a disagreement, so the collector folds it rather than reporting
+it.
