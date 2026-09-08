@@ -76,9 +76,21 @@ pub use value_objects::{
 // One import, because `rastro-collector` re-exports what an author needs. A collector written
 // outside this repo looks exactly like this.
 use rastro_collector::{
-    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence,
+    AbsolutePath, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
+
+/// Whether one claimed tree holds another.
+///
+/// Compared as trees rather than through [`WalkedTree::contains`], which answers about a
+/// path inside a tree: the question here is whether a *rule* is redundant, and
+/// `/var/lib/dockerx` must not read as being inside `/var/lib/docker`.
+fn contains_tree(parent: &WalkedTree, child: &WalkedTree) -> bool {
+    match AbsolutePath::new(child.as_str(), "claimed tree") {
+        Ok(path) => parent.contains(&path),
+        Err(_) => false,
+    }
+}
 
 pub struct ContainersCollector {
     name: FacetName,
@@ -158,15 +170,37 @@ impl Collector for ContainersCollector {
     /// The one tree deliberately left to the walk is the operator's own data. See
     /// [`Docker::private_trees`].
     fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        let mut trees: Vec<WalkedTree> = self
+            .engines
+            .iter()
+            .flat_map(EngineSource::private_trees)
+            .collect();
+        // Shallowest first, so a tree is only ever folded into a parent that has already
+        // been kept rather than into a child that happened to be seen first.
+        trees.sort_by_key(|tree| tree.as_str().len());
+
         let mut claimed: Vec<FilesystemClaim> = Vec::new();
 
-        for tree in self.engines.iter().flat_map(EngineSource::private_trees) {
+        for tree in trees {
             // **One tree is claimed once, whichever dialect resolved it.** Two claims on one
             // path fail the *walk*, not a facet, and two engines on a box can legitimately
             // resolve to the same directory: docker's managed containerd keeps its store
             // inside docker's own root. Saying the same thing twice is not a disagreement,
             // so it is folded rather than reported.
-            if claimed.iter().any(|claim| claim.tree() == &tree) {
+            // **A tree inside a tree already sealed can never apply**, because the walk
+            // prunes at the parent and never asks about anything below it. Keeping the
+            // deeper rule would put a line in the effective table that no path can ever
+            // match: on a docker box the managed containerd keeps its store at
+            // `/var/lib/docker/containerd/daemon`, inside docker's own root. Where those
+            // directories are is reported as state by the containerd facet instead, so
+            // folding the rule loses nothing.
+            //
+            // Two claims on one path would fail the *walk* rather than one facet, which is
+            // the sharper reason this loop exists at all.
+            if claimed
+                .iter()
+                .any(|claim| claim.tree() == &tree || contains_tree(claim.tree(), &tree))
+            {
                 continue;
             }
 

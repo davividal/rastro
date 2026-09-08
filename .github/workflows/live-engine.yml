@@ -1,0 +1,81 @@
+name: live engine
+
+# rastro's account of a box's containers against docker's own, on a runner with a real
+# daemon. One tenant of the `extended-verification` tier, which every deep workflow enters
+# through that one label. When to apply it: CONTRIBUTING.md.
+#
+# Why it cannot live in the suite the other legs run in: `scripts/container-suite.sh` runs
+# *inside* a container, and a dockerd in there needs privilege the other legs deliberately
+# do not have. A GitHub runner already has a daemon, so the engine is free here and
+# nowhere else.
+#
+# What this catches that the fixture tests cannot: a fixture captured wrong. Every other
+# test of the `containers` facet asserts what rastro does with output somebody captured
+# once, which pins the code against the author's own reading of it. This one asks docker.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    # Nightly, so a docker release changing an answer underneath rastro is found by a run
+    # naming the day it broke rather than by the next unrelated pull request.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  conformance:
+    name: containers against a live docker
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'extended-verification')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Report which engine answered
+        run: |
+          docker version --format 'client {{.Client.Version}}, server {{.Server.Version}}'
+          docker info --format 'driver {{.Driver}}, root {{.DockerRootDir}}'
+
+      # The conformance test compares two lists and fails when either is empty, so the box
+      # has to hold something before it runs. One of each kind, and one of them stopped:
+      # `docker ps` alone hides a stopped container, and the two lists have to agree about
+      # it.
+      - name: Give the box something to describe
+        run: |
+          docker pull -q alpine
+          docker volume create conformance-volume
+          docker network create conformance-network
+          docker run -d --name conformance-running \
+            -e PGPASSWORD=hunter2 \
+            -p 127.0.0.1:18080:80 \
+            -v conformance-volume:/data:ro \
+            --network conformance-network \
+            --restart unless-stopped \
+            --memory 64m --pids-limit 100 \
+            --cap-drop CHOWN --read-only \
+            --health-cmd true --health-interval 30s \
+            alpine sleep 3600
+          docker run --name conformance-stopped alpine sh -c 'exit 3' || true
+
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+
+      - name: Compare rastro's answer with the engine's
+        run: cargo test --locked --test containers_conformance
+
+      # The facet's own tests too, on a box that has an engine: they are fixture-driven and
+      # pass anywhere, but a run here proves the detection finds a real docker rather than
+      # only a shim a test wrote.
+      - name: Run the facet's own tests where an engine exists
+        run: cargo test --locked --test containers --test containerd --test containerd_layout

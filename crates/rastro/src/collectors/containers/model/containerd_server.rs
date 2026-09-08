@@ -19,7 +19,23 @@ pub struct ContainerdServer {
     /// docker's own runtime directory rather than at containerd's default, so the address
     /// tells a containerd docker manages apart from one the operator runs.
     pub address: AbsolutePath,
+    /// Where the content store and the snapshots are, and where the running tasks' shims
+    /// and sockets are.
+    ///
+    /// **Reported as values, not only claimed.** The filesystem claim over them can be
+    /// folded away when a docker root already seals the tree they sit in, and then the
+    /// effective table would be the only place they had ever appeared. They are state in
+    /// their own right: a containerd moved to another disk is a change to the box.
+    pub root: Option<AbsolutePath>,
+    pub state: Option<AbsolutePath>,
     pub namespaces: ContainerdNamespaces,
+}
+
+fn directory(path: Option<&AbsolutePath>) -> Observation {
+    match path {
+        Some(path) => Observation::text(path.as_str()),
+        None => Observation::null(),
+    }
 }
 
 impl From<&ContainerdServer> for Observation {
@@ -28,6 +44,8 @@ impl From<&ContainerdServer> for Observation {
             ("address", Observation::text(server.address.as_str())),
             ("namespaces", Observation::from(&server.namespaces)),
             ("revision", Observation::text(server.revision.as_str())),
+            ("root", directory(server.root.as_ref())),
+            ("state", directory(server.state.as_ref())),
             ("version", Observation::from(&server.version)),
         ])
     }

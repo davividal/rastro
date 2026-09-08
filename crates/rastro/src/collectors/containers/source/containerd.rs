@@ -53,26 +53,18 @@ const NOTHING_RUNNING: &str = "no containerd is running on this box, so there is
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Containerd {
     tool: CanonicalTool,
-    address: Option<AbsolutePath>,
-    /// The store and the runtime state, resolved when this was constructed for the reason
-    /// docker's root is: the walk's table is built before any collector runs.
-    own_trees: Vec<WalkedTree>,
+    /// The socket, the store and the runtime state, resolved when this was constructed for
+    /// the reason docker's root is: the walk's table is built before any collector runs.
+    layout: ContainerdLayout,
 }
 
 impl Containerd {
     /// Locates the client and discovers where containerd is listening.
     pub fn detect() -> Option<Self> {
         let tool = CanonicalTool::located(PROGRAM)?;
-        let layout = ContainerdLayout::discover();
-
         Some(Self {
             tool,
-            address: layout.address,
-            own_trees: [layout.root, layout.state]
-                .into_iter()
-                .flatten()
-                .filter_map(|tree| WalkedTree::new(tree.as_str()).ok())
-                .collect(),
+            layout: ContainerdLayout::discover(),
         })
     }
 
@@ -81,19 +73,27 @@ impl Containerd {
     /// The address is text rather than an [`AbsolutePath`] so a test can hand over what a
     /// host would report, including nothing at all.
     pub fn using(tool: CanonicalTool, address: Option<String>) -> Self {
-        Self::holding(tool, address, Vec::new())
+        Self::holding(tool, address, None, None)
     }
 
-    /// The same, with the trees this containerd keeps its own state in.
-    pub fn holding(tool: CanonicalTool, address: Option<String>, own_trees: Vec<String>) -> Self {
+    /// The same, with the two directories this containerd keeps its own state in.
+    pub fn holding(
+        tool: CanonicalTool,
+        address: Option<String>,
+        root: Option<String>,
+        state: Option<String>,
+    ) -> Self {
+        let path = |value: Option<String>, kind: &str| {
+            value.and_then(|value| AbsolutePath::new(value, kind).ok())
+        };
+
         Self {
             tool,
-            address: address
-                .and_then(|address| AbsolutePath::new(address, "containerd address").ok()),
-            own_trees: own_trees
-                .into_iter()
-                .filter_map(|tree| WalkedTree::new(tree).ok())
-                .collect(),
+            layout: ContainerdLayout {
+                address: path(address, "containerd address"),
+                root: path(root, "containerd root"),
+                state: path(state, "containerd state"),
+            },
         }
     }
 
@@ -105,14 +105,18 @@ impl Containerd {
     /// to the operator: it is the content store, the snapshots, and the shims and sockets of
     /// running tasks. So the trees themselves are sealed, and the walk stops at each.
     pub fn private_trees(&self) -> Vec<WalkedTree> {
-        self.own_trees.clone()
+        [&self.layout.root, &self.layout.state]
+            .into_iter()
+            .flatten()
+            .filter_map(|tree| WalkedTree::new(tree.as_str()).ok())
+            .collect()
     }
 
     /// containerd as this box has it: the client, and the engine if one answered.
     pub fn read(&self) -> Result<ContainerdEngine, CollectionError> {
         let client = self.client_version()?;
 
-        let Some(address) = &self.address else {
+        let Some(address) = &self.layout.address else {
             return Ok(ContainerdEngine::unreachable(client, NOTHING_RUNNING));
         };
 
@@ -124,6 +128,8 @@ impl Containerd {
                 version: server.version,
                 revision: server.revision,
                 address: address.clone(),
+                root: self.layout.root.clone(),
+                state: self.layout.state.clone(),
                 namespaces: self.namespaces(address)?,
             },
         ))

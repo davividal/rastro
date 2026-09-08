@@ -283,6 +283,9 @@ Crate boundaries need no test: cargo will not compile a cycle.
 
 - Integration runs on Debian and Ubuntu containers: mutate one thing, re-run,
   assert the mutation and *only* the mutation appears in the diff.
+- A live-engine run for podman, once a read of it leaves the box as it was found.
+  Neither route that is still open has been measured; see
+  [decisions.md](decisions.md#podman-does-not-come-through-the-gate-and-its-cli-never-will).
 - The two field-research changes, a permissions-only change and an enablement
   symlink, once the Layer 1 walker exists.
 - Noise-floor calibration as a documented first-run ritual.

@@ -692,10 +692,12 @@ fn a_namespace_holding_no_images_records_an_empty_map() {
     assert!(keys_of(&field(&namespace, "images")).is_empty());
 }
 
-/// A containerd whose store and runtime state are two trees the test named.
-fn containerd_holding(name: &str, trees: &[&str]) -> Containerd {
-    let root = scratch_tree(&format!("containerd-trees-{name}"), &[]);
-    let path = root.join("ctr");
+/// A containerd whose store and runtime state are the two directories the test named.
+fn containerd_holding(name: &str, root: Option<&str>, state: Option<&str>) -> Containerd {
+    // Named `scratch` rather than `root`, which is the parameter naming containerd's own
+    // store: two different roots in one function is exactly how a shadowed name misleads.
+    let scratch = scratch_tree(&format!("containerd-trees-{name}"), &[]);
+    let path = scratch.join("ctr");
     fs::write(
         &path,
         format!("#!/bin/sh\ncase \"$1\" in\n--version) printf '%s\\n' '{CLIENT_VERSION}';;\n*) exit 1;;\nesac\n"),
@@ -704,13 +706,14 @@ fn containerd_holding(name: &str, trees: &[&str]) -> Containerd {
     let mut permissions = fs::metadata(&path).expect("metadata").permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).expect("an executable script");
-    let tool = CanonicalTool::located_in("ctr", &[root.to_str().expect("utf-8")])
+    let tool = CanonicalTool::located_in("ctr", &[scratch.to_str().expect("utf-8")])
         .expect("the fake tool is locatable");
 
     Containerd::holding(
         tool,
         None,
-        trees.iter().map(|tree| (*tree).to_owned()).collect(),
+        root.map(str::to_owned),
+        state.map(str::to_owned),
     )
 }
 
@@ -729,9 +732,12 @@ fn containerd_seals_its_store_and_its_runtime_state() {
     // Arrange: two claims rather than a listing, which is where this differs from docker.
     // Nothing under either tree belongs to the operator: one is the content store and the
     // snapshots, the other the shims and sockets of running tasks.
-    let collector = ContainersCollector::reading(vec![EngineSource::Containerd(
-        containerd_holding("sealed", &["/var/lib/containerd", "/run/containerd"]),
-    )]);
+    let collector =
+        ContainersCollector::reading(vec![EngineSource::Containerd(containerd_holding(
+            "sealed",
+            Some("/var/lib/containerd"),
+            Some("/run/containerd"),
+        ))]);
 
     // Act & Assert
     assert_eq!(
@@ -750,13 +756,140 @@ fn one_tree_two_engines_resolved_to_is_claimed_once() {
     // dialects legitimately resolving to one directory is a real arrangement, and saying the
     // same thing about it twice is not a disagreement.
     let collector = ContainersCollector::reading(vec![
-        EngineSource::Containerd(containerd_holding("first", &["/var/lib/containerd"])),
-        EngineSource::Containerd(containerd_holding("second", &["/var/lib/containerd"])),
+        EngineSource::Containerd(containerd_holding(
+            "first",
+            Some("/var/lib/containerd"),
+            None,
+        )),
+        EngineSource::Containerd(containerd_holding(
+            "second",
+            Some("/var/lib/containerd"),
+            None,
+        )),
     ]);
 
     // Act & Assert
     assert_eq!(
         claimed(&collector),
         vec![("/var/lib/containerd".to_owned(), ClaimedReading::Sealed)]
+    );
+}
+
+#[test]
+fn a_tree_inside_one_already_sealed_is_not_claimed_again() {
+    // Arrange: **on a docker box this is the ordinary case.** docker's managed containerd
+    // keeps its store at `/var/lib/docker/containerd/daemon`, inside docker's own root, and
+    // the walk prunes at the parent — so the deeper rule could never be consulted and would
+    // sit in the effective table matching nothing. Where those directories are is reported
+    // as state by this facet instead, so folding the rule loses nothing.
+    let collector = ContainersCollector::reading(vec![
+        EngineSource::Containerd(containerd_holding(
+            "outer",
+            Some("/var/lib/docker/containerd"),
+            None,
+        )),
+        EngineSource::Containerd(containerd_holding(
+            "inner",
+            Some("/var/lib/docker/containerd/daemon"),
+            None,
+        )),
+    ]);
+
+    // Act & Assert
+    assert_eq!(
+        claimed(&collector),
+        vec![(
+            "/var/lib/docker/containerd".to_owned(),
+            ClaimedReading::Sealed
+        )]
+    );
+}
+
+#[test]
+fn a_neighbour_with_a_longer_name_is_not_mistaken_for_a_child() {
+    // Arrange: `/var/lib/containerdx` is not inside `/var/lib/containerd`, and a prefix
+    // comparison would fold away a real claim over somebody else's tree.
+    let collector = ContainersCollector::reading(vec![
+        EngineSource::Containerd(containerd_holding(
+            "short",
+            Some("/var/lib/containerd"),
+            None,
+        )),
+        EngineSource::Containerd(containerd_holding(
+            "long",
+            Some("/var/lib/containerdx"),
+            None,
+        )),
+    ]);
+
+    // Act & Assert
+    assert_eq!(
+        claimed(&collector)
+            .iter()
+            .map(|(tree, _)| tree.clone())
+            .collect::<Vec<String>>(),
+        vec![
+            "/var/lib/containerd".to_owned(),
+            "/var/lib/containerdx".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn containerd_reports_where_it_keeps_what_it_holds() {
+    // Arrange: reported as state and not only claimed, because the claim over them can be
+    // folded away when a docker root already seals the tree they sit in.
+    let root = scratch_tree("containerd-reported-dirs", &[]);
+    let path = root.join("ctr");
+    fs::write(
+        &path,
+        format!(
+            r#"#!/bin/sh
+for argument in "$@"; do
+case "$argument" in
+--version) printf '%s\n' '{CLIENT_VERSION}'; exit 0;;
+version)
+cat <<'STDOUT'
+{VERSION}
+STDOUT
+exit 0
+;;
+namespaces) printf 'moby\n'; exit 0;;
+containers) printf ''; exit 0;;
+tasks) printf '%s\n' 'TASK    PID    STATUS'; exit 0;;
+images) printf '%s\n' 'REF    TYPE    DIGEST    SIZE    PLATFORMS    LABELS'; exit 0;;
+esac
+done
+exit 1
+"#
+        ),
+    )
+    .expect("a writable script");
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).expect("an executable script");
+    let tool = CanonicalTool::located_in("ctr", &[root.to_str().expect("utf-8")])
+        .expect("the fake tool is locatable");
+    let containerd = Containerd::holding(
+        tool,
+        Some(ADDRESS.to_owned()),
+        Some("/var/lib/docker/containerd/daemon".to_owned()),
+        Some("/run/docker/containerd/daemon".to_owned()),
+    );
+
+    // Act
+    let observed = ContainersCollector::reading(vec![EngineSource::Containerd(containerd)])
+        .collect()
+        .expect("the fixtures are well formed");
+    let server = field(&field(&observed, "containerd"), "server");
+
+    // Assert
+    assert_eq!(
+        text(&field(&server, "root")),
+        "/var/lib/docker/containerd/daemon"
+    );
+    assert_eq!(
+        text(&field(&server, "state")),
+        "/run/docker/containerd/daemon"
     );
 }
