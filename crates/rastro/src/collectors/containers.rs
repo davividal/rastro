@@ -32,8 +32,7 @@
 //! **Owed, and each would be a change an operator cares about**: devices passed in
 //! (`--device`), per-container ulimits and sysctls, the DNS configuration (`--dns`,
 //! `--dns-search`, `--add-host`), the shared-memory size, and device requests, which is how
-//! a GPU reaches a container. Also the box-level objects: images, volumes and networks in
-//! their own right rather than as seen from a container.
+//! a GPU reaches a container.
 //!
 //! **Not owed, because the document already answers it elsewhere.** `Config.ExposedPorts`
 //! and `HostConfig.PortBindings` are the request behind the effective port table.
@@ -42,6 +41,11 @@
 //! handles that move on their own, and the link from a process to its container is already
 //! readable the other way round, from the control group the `processes` facet records.
 //! `GraphDriver` names the layer directories, which the filesystem claim covers as a tree.
+//!
+//! **Not available rather than not modelled**, per dialect: a containerd image has no size,
+//! because the only figure `ctr` prints is a rounded human string, and no labels, because
+//! the only form is one comma-joined cell whose values may themselves hold commas. docker's
+//! own image entry carries both properly.
 pub mod model;
 pub mod source;
 pub mod value_objects;
@@ -51,7 +55,8 @@ pub use model::{
     ContainerEngines, ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels,
     ContainerLimits, ContainerLogging, ContainerMount, ContainerMounts, ContainerNamespaces,
     ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState,
-    ContainerdEngine, ContainerdNamespaces, ContainerdServer, DockerContainer, DockerContainers,
+    ContainerdContainer, ContainerdEngine, ContainerdImage, ContainerdNamespace,
+    ContainerdNamespaces, ContainerdServer, ContainerdTask, DockerContainer, DockerContainers,
     DockerEngine, DockerImage, DockerImages, DockerNetwork, DockerNetworks, DockerServer,
     DockerVolume, DockerVolumes, ImagePlatform, NetworkAddressing, ObservedHealth,
     PublishedBinding, RestartPolicy, UnreadableObject,

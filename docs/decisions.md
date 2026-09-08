@@ -3489,3 +3489,32 @@ any other number of columns is refused rather than guessed at.
 **A container with no task is defined and not running**, which is the state docker spells
 as a status on the container itself. Here the absence of the task *is* the status, which is
 why the task is optional rather than a status word that is sometimes empty.
+
+## `ctr`'s one table is sliced by its header, because a column holds two words
+
+`ctr images ls` is the only read in this collector with neither a `--quiet` form nor JSON,
+and its columns cannot be split on whitespace: the size prints as `3.9 MiB`, two tokens in
+one column, so a positional split puts the platforms where the labels belong and shifts
+every field after the size.
+
+The header is padded to the width of the widest cell in each column, which makes its own
+column offsets the authority on where each field starts. So the table is *sliced* by the
+header rather than split, read by column name, and a column containerd adds later shifts
+nothing.
+
+**Two of its columns are read and two are not, each for its own reason.**
+
+- The size is not recorded: `3.9 MiB` is a rounding, and there is no `images info` to ask
+  for bytes. A rounding in a diffable document changes when the formatting does and not
+  when the image does.
+- The labels are not recorded: the only form is one comma-joined cell, and a label's value
+  may itself hold a comma, so splitting would corrupt values rather than read them.
+
+docker's own image entry carries real bytes and structured labels, which is the point of
+keeping the two dialects apart rather than pretending to one shape.
+
+**And whether containerd holds any images at all depends on what is driving it**, measured
+on both: docker 26.1.5 keeps its own image store and uses its containerd only as a runtime,
+so its `moby` namespace holds containers and **no** images; docker 29.8.0, whose snapshotter
+*is* containerd's, holds both. An empty image map beside a populated container map is
+therefore a real reading of a real box rather than a failed one.

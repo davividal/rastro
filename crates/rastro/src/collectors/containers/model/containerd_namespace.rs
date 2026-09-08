@@ -4,8 +4,10 @@ use std::collections::BTreeMap;
 
 use rastro_collector::{CollectionError, Observation};
 
-use crate::collectors::containers::model::{ContainerdContainer, UnreadableObject};
-use crate::collectors::containers::value_objects::ContainerId;
+use crate::collectors::containers::model::{
+    ContainerdContainer, ContainerdImage, UnreadableObject,
+};
+use crate::collectors::containers::value_objects::{ContainerId, ImageReference};
 
 /// The containers of one namespace, keyed by id.
 ///
@@ -19,12 +21,14 @@ use crate::collectors::containers::value_objects::ContainerId;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ContainerdNamespace {
     containers: BTreeMap<ContainerId, ContainerdContainer>,
+    images: BTreeMap<ImageReference, ContainerdImage>,
     unreadable: Vec<UnreadableObject>,
 }
 
 impl ContainerdNamespace {
     pub fn new(
         read: impl IntoIterator<Item = (ContainerId, ContainerdContainer)>,
+        images: BTreeMap<ImageReference, ContainerdImage>,
         unreadable: impl IntoIterator<Item = UnreadableObject>,
     ) -> Result<Self, CollectionError> {
         let mut containers = BTreeMap::new();
@@ -44,12 +48,17 @@ impl ContainerdNamespace {
 
         Ok(Self {
             containers,
+            images,
             unreadable,
         })
     }
 
     pub fn containers(&self) -> &BTreeMap<ContainerId, ContainerdContainer> {
         &self.containers
+    }
+
+    pub fn images(&self) -> &BTreeMap<ImageReference, ContainerdImage> {
+        &self.images
     }
 
     pub fn unreadable(&self) -> &[UnreadableObject] {
@@ -67,6 +76,15 @@ impl From<&ContainerdNamespace> for Observation {
                         .containers()
                         .iter()
                         .map(|(id, container)| (id.as_str(), Observation::from(container))),
+                ),
+            ),
+            (
+                "images",
+                Observation::object(
+                    namespace
+                        .images()
+                        .iter()
+                        .map(|(reference, image)| (reference.as_str(), Observation::from(image))),
                 ),
             ),
             (

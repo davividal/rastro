@@ -79,6 +79,16 @@ const NERDCTL_CONTAINER_INFO: &str = r#"{
     "SandboxID": "e2f1a0b9c8d7"
 }"#;
 
+/// `ctr -n moby images ls`, verbatim, padding included.
+///
+/// **The one read here whose columns cannot be split on whitespace.** `SIZE` is two tokens,
+/// `3.9 MiB`, so a positional split puts the platforms where the labels should be. The
+/// header's own column offsets are what the rows are sliced by instead.
+const IMAGES: &str = "REF                             TYPE                                    DIGEST                                                                  SIZE    PLATFORMS                                                                                              LABELS \ndocker.io/library/alpine:3.22   application/vnd.oci.image.index.v1+json sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce 3.9 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/riscv64,linux/s390x -      \ndocker.io/library/alpine:latest application/vnd.oci.image.index.v1+json sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b 4.0 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/riscv64,linux/s390x -      \n";
+
+/// The same for a namespace holding none, which is the header alone.
+const NO_IMAGES: &str = "REF    TYPE    DIGEST    SIZE    PLATFORMS    LABELS \n";
+
 /// `ctr -n moby tasks ls`, which has no `--quiet` worth using: the pid and the status are
 /// the reason to read it, and only the table carries them.
 const TASKS: &str =
@@ -110,6 +120,8 @@ struct NamespaceFixtures<'a> {
     containers: &'a [(&'a str, Option<&'a str>)],
     /// What `tasks ls` prints for the namespace.
     tasks: &'a str,
+    /// What `images ls` prints for it.
+    images: &'a str,
 }
 
 /// A containerd whose namespaces are all empty, for the tests about the engine itself.
@@ -126,6 +138,7 @@ fn fake_containerd(name: &str, version: &str, namespaces: &str) -> Containerd {
             name: namespace,
             containers: &[],
             tasks: NO_TASKS,
+            images: NO_IMAGES,
         })
         .collect();
 
@@ -171,7 +184,7 @@ cat <<'STDOUT'
 STDOUT
 exit 0
 ;;
-containers|tasks)
+containers|tasks|images)
 subcommand="$1"
 action="$2"
 target="$3"
@@ -196,6 +209,9 @@ fi
 ;;
 tasks:ls)
 cat '{directory}/tasks-'"$namespace"
+;;
+images:ls)
+cat '{directory}/images-'"$namespace"
 ;;
 *)
 printf 'unexpected invocation: %s\n' "$*" >&2
@@ -227,6 +243,11 @@ esac
         fs::write(
             root.join(format!("tasks-{}", namespace.name)),
             namespace.tasks,
+        )
+        .expect("a writable fixture");
+        fs::write(
+            root.join(format!("images-{}", namespace.name)),
+            namespace.images,
         )
         .expect("a writable fixture");
     }
@@ -406,11 +427,13 @@ fn both_namespaces() -> Vec<NamespaceFixtures<'static>> {
                 Some(CONTAINER_INFO),
             )],
             tasks: TASKS,
+            images: IMAGES,
         },
         NamespaceFixtures {
             name: "k8s.io",
             containers: &[("web-1", Some(NERDCTL_CONTAINER_INFO))],
             tasks: NO_TASKS,
+            images: NO_IMAGES,
         },
     ]
 }
@@ -545,6 +568,7 @@ fn a_container_that_vanished_while_being_read_is_recorded_per_namespace() {
                 ("gone-1", None),
             ],
             tasks: TASKS,
+            images: IMAGES,
         },
         // Empty, and listed all the same: the fixture's namespace list names it, so the
         // shim has to answer for it.
@@ -552,6 +576,7 @@ fn a_container_that_vanished_while_being_read_is_recorded_per_namespace() {
             name: "k8s.io",
             containers: &[],
             tasks: NO_TASKS,
+            images: NO_IMAGES,
         },
     ];
 
@@ -565,4 +590,104 @@ fn a_container_that_vanished_while_being_read_is_recorded_per_namespace() {
     let entries = items_of(&unreadable);
     assert_eq!(text(&field(&entries[0], "id")), "gone-1");
     assert!(text(&field(&entries[0], "reason")).contains("not found"));
+}
+
+#[test]
+fn a_namespaces_images_are_keyed_by_reference() {
+    // Arrange: containerd's images are named by reference and nothing else, so the
+    // reference is the key. Unlike docker there is no separate image id to prefer.
+    let images = field(
+        &namespace_of("images", &both_namespaces(), "moby"),
+        "images",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&images),
+        vec![
+            "docker.io/library/alpine:3.22".to_owned(),
+            "docker.io/library/alpine:latest".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn the_columns_are_sliced_by_the_headers_offsets_so_a_two_word_size_shifts_nothing() {
+    // Arrange: **the test this parser exists for.** `SIZE` prints as `3.9 MiB`, two
+    // whitespace-separated tokens in one column, so splitting the row on whitespace puts the
+    // platforms where the labels belong and the digest is the value that proves it did not.
+    let image = field(
+        &field(
+            &namespace_of("offsets", &both_namespaces(), "moby"),
+            "images",
+        ),
+        "docker.io/library/alpine:latest",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        text(&field(&image, "digest")),
+        "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+    );
+    assert_eq!(
+        text(&field(&image, "media_type")),
+        "application/vnd.oci.image.index.v1+json"
+    );
+}
+
+#[test]
+fn an_images_platforms_are_recorded_sorted() {
+    // Arrange: a manifest index carries one per architecture, and which ones an image has
+    // decides whether it can run on this box at all. The engine prints them in the index's
+    // order, which is not one it promises.
+    let image = field(
+        &field(
+            &namespace_of("platforms", &both_namespaces(), "moby"),
+            "images",
+        ),
+        "docker.io/library/alpine:3.22",
+    );
+
+    // Act & Assert
+    let platforms: Vec<String> = items_of(&field(&image, "platforms"))
+        .iter()
+        .map(text)
+        .collect();
+    assert!(platforms.contains(&"linux/arm64/v8".to_owned()));
+    let mut sorted = platforms.clone();
+    sorted.sort();
+    assert_eq!(platforms, sorted);
+}
+
+#[test]
+fn a_containerd_image_records_no_size_because_the_only_figure_is_rounded() {
+    // Arrange: `ctr` prints `3.9 MiB`, a rounded human string, and there is no `images info`
+    // to ask for bytes. Recording the rounding would put a number in a diffable document
+    // that changes when the formatting does and not when the image does.
+    let image = field(
+        &field(
+            &namespace_of("no-size", &both_namespaces(), "moby"),
+            "images",
+        ),
+        "docker.io/library/alpine:3.22",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&image),
+        vec![
+            "digest".to_owned(),
+            "media_type".to_owned(),
+            "platforms".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn a_namespace_holding_no_images_records_an_empty_map() {
+    // Arrange: the header alone, which is what `ctr` prints for an empty namespace.
+    let namespace = namespace_of("no-images", &both_namespaces(), "k8s.io");
+
+    // Act & Assert
+    assert!(keys_of(&field(&namespace, "images")).is_empty());
 }

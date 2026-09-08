@@ -4,6 +4,7 @@ use rastro_collector::{AbsolutePath, CollectionError};
 
 use super::containerd_address::ContainerdAddress;
 use super::ctr_container_document::CtrContainerDocument;
+use super::ctr_images::CtrImages;
 use super::ctr_tasks::CtrTasks;
 use super::ctr_version::{CtrClientVersion, CtrServerVersions};
 use crate::collectors::canonical_tool::CanonicalTool;
@@ -158,7 +159,10 @@ impl Containerd {
             }
         }
 
-        ContainerdNamespace::new(read, unreadable)
+        let images =
+            CtrImages::parse(&self.in_namespace(address, namespace, &["images", "ls"])?)?;
+
+        ContainerdNamespace::new(read, images, unreadable)
     }
 
     /// One container as containerd describes it.
