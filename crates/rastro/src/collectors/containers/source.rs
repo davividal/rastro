@@ -2,6 +2,8 @@
 
 mod containerd;
 mod containerd_address;
+mod ctr_container_document;
+mod ctr_tasks;
 mod ctr_version;
 mod docker;
 mod docker_container_document;

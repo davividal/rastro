@@ -3448,3 +3448,44 @@ has if its client is missing.
 **containerd's own store is not claimed yet.** On a docker box its layers are inside the
 tree docker's root already seals, and a standalone containerd wants its own measurement
 before a claim is made against it.
+
+## The two engines' container lists differ in population, and that is the evidence for keeping them apart
+
+Measured on one box, docker 26.1.5 with its managed containerd 1.7.24, at one moment:
+
+| view | containers |
+| --- | --- |
+| the `docker` entry | 7, running and stopped alike |
+| the `containerd` entry, namespace `moby` | 2, both running |
+
+docker deletes the containerd record when a container stops and keeps its own metadata,
+so containerd's list holds only what is running. Neither view is wrong and neither is a
+subset worth suppressing: "docker has forgotten a container containerd still holds" and
+"docker holds a container containerd has never heard of" are both real states, and only
+two entries side by side can show either.
+
+**The namespace is the outer key**, not a field on each container, because it is
+containerd's tenancy boundary: two namespaces may hold the same id and nothing in one is
+visible from the other. Which namespaces exist is itself a fact about who is using the
+engine, so an empty namespace keeps its key.
+
+**Containers are keyed by id here and by name in the docker entry**, and the asymmetry is
+containerd's: it has no names. A container's id is whatever created it chose — docker and
+a kubelet use a hex string, `nerdctl` uses the name the operator typed — so there is no
+second identifier to prefer.
+
+**A container's image is optional, and both shapes were measured.** On docker 26.1.5 the
+containerd record's `Image` is empty, because docker keeps its own snapshots and hands
+containerd a prepared rootfs; on docker 29.8.0, whose snapshotter *is* containerd's, it
+holds `docker.io/library/alpine:latest`. The same goes for the snapshotter and its key,
+empty on the first and set on anything created through containerd itself.
+
+**`tasks ls` is the one `ctr` table this collector parses, and it is read once per
+namespace.** containerd offers no `tasks info`, so the pid and the status exist nowhere
+else, and the table answers for every container in the namespace at once. Its three
+columns are an id, a number and a single word, none of which can hold a space; a row with
+any other number of columns is refused rather than guessed at.
+
+**A container with no task is defined and not running**, which is the state docker spells
+as a status on the container itself. Here the absence of the task *is* the status, which is
+why the task is optional rather than a status word that is sometimes empty.
