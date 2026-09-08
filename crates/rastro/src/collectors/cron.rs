@@ -26,8 +26,9 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{CronJob, CronState, CronTable};
+pub use rastro_collector::EnvironmentVariableName;
 pub use source::{CronFiles, OwnerColumn, crontab};
-pub use value_objects::{CronCommand, JobOwner, Schedule, ScriptName, VariableName};
+pub use value_objects::{CronCommand, JobOwner, Schedule, ScriptName};
 
 // One import, because `rastro-collector` re-exports what an author needs. A
 // collector written outside this repo looks exactly like this.
