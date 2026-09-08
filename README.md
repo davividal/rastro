@@ -48,6 +48,10 @@ This is the whole output:
        "name": "mounts",
 ```
 
+The example names both files because a before-and-after pair needs stable names;
+a bare `rastro` writes `./rastro-<host>-<UTC>.json` instead, and `-o -` writes it
+to stdout.
+
 ## Why
 
 What a change _actually_ did to a live server, not what the tool that made it
