@@ -67,7 +67,7 @@ pub use value_objects::{
 // outside this repo looks exactly like this.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence,
 };
 
 pub struct ContainersCollector {
@@ -139,5 +139,19 @@ impl Collector for ContainersCollector {
             .collect::<Result<Vec<ContainerEngine>, CollectionError>>()?;
 
         Ok(Observation::from(&ContainerEngines::new(found)?))
+    }
+
+    /// Every tree an engine on this box keeps to itself, sealed.
+    ///
+    /// The trees are resolved from each engine's own root rather than named, and what is in
+    /// them is either the engine's private bookkeeping or state this facet reports properly.
+    /// The one tree deliberately left to the walk is the operator's own data. See
+    /// [`Docker::private_trees`].
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        self.engines
+            .iter()
+            .flat_map(EngineSource::private_trees)
+            .map(FilesystemClaim::sealed)
+            .collect()
     }
 }

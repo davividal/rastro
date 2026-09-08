@@ -99,6 +99,11 @@ impl DockerInfoDocument {
         })
     }
 
+    /// Where the daemon keeps its store, for the claim that is made before the facet runs.
+    pub fn root_directory(&self) -> Option<AbsolutePath> {
+        AbsolutePath::new(self.root_directory.clone(), "docker root").ok()
+    }
+
     /// The swarm word, with a daemon that reports no swarm section named as such.
     ///
     /// A daemon built without swarm support omits the section, and recording that as absent

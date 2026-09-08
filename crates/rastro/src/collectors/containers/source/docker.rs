@@ -1,6 +1,9 @@
 //! Asking docker what it is, through its own client.
 
-use rastro_collector::CollectionError;
+use std::fs;
+use std::path::Path;
+
+use rastro_collector::{AbsolutePath, CollectionError, WalkedTree};
 
 use super::docker_container_document::DockerContainerDocument;
 use super::docker_image_document::DockerImageDocument;
@@ -83,9 +86,25 @@ const INSPECT_NETWORK: [&str; 2] = ["network", "inspect"];
 /// A last property comes free from the execution seam: it clears the environment, so no
 /// `DOCKER_HOST` and no client context can point this at a daemon on another box. The facet is
 /// about the box rastro is running on, structurally.
+/// The one tree under the engine's root that is not the engine's own bookkeeping.
+///
+/// Named rather than resolved, and it is the only name in this read. It is the inverse of a
+/// guess: everything else under the root is sealed *because* it was listed, and this is the
+/// one directory that must survive that. If a future docker renames it the effect is a loss
+/// of detail the effective table still declares, not a wrong reading.
+const OPERATOR_DATA: &str = "volumes";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Docker {
     tool: CanonicalTool,
+    /// Where the daemon said it keeps everything, resolved once when this was constructed.
+    ///
+    /// **Held rather than read again, because the claim cannot wait for the facet.** The
+    /// walk's table is built before any collector runs, so the trees this engine owns have
+    /// to be known before [`Self::read`] has said anything. Resolving it at construction is
+    /// also what the postgresql collector does with its cluster list, and for the same
+    /// reason: what was found is the very thing that will be claimed.
+    root_directory: Option<AbsolutePath>,
 }
 
 impl Docker {
@@ -95,8 +114,60 @@ impl Docker {
     }
 
     /// The same source over a tool the caller located, which is what the tests hand it.
+    ///
+    /// Resolves the root directory here rather than in [`Self::detect`], so a test drives
+    /// exactly the code a real run does.
     pub fn using(tool: CanonicalTool) -> Self {
-        Self { tool }
+        let root_directory = resolve_root(&tool);
+
+        Self {
+            tool,
+            root_directory,
+        }
+    }
+
+    /// The trees this engine keeps to itself, which the walk should stop at.
+    ///
+    /// **Every child of the root except the operator's data**, listed rather than named.
+    /// The layer store is `overlay2` under one driver, `vfs` under another and `rootfs` on
+    /// docker 29 whose driver is called `overlayfs`, so neither a fixed list nor a mapping
+    /// from the driver name covers every engine. Listing the root covers all of them, and
+    /// covers a directory a later docker adds without rastro being told about it.
+    ///
+    /// Sealed rather than merely unhashed, on the same reasoning as a database's data
+    /// directory: on a real box this is most of the entries — 294,525 of one machine's
+    /// 376,948 under the container store were layer entries — every attribute that survives
+    /// moves on the next pull, and what is actually in there is reported properly by this
+    /// facet, the images by digest and the containers by name.
+    ///
+    /// Empty when the root is unknown, since a claim rastro cannot resolve is better left
+    /// unmade.
+    pub fn private_trees(&self) -> Vec<WalkedTree> {
+        let Some(root) = &self.root_directory else {
+            return Vec::new();
+        };
+
+        let Ok(children) = fs::read_dir(Path::new(root.as_str())) else {
+            return Vec::new();
+        };
+
+        let mut trees = Vec::new();
+        for child in children.flatten() {
+            if !child.path().is_dir() || child.file_name() == OPERATOR_DATA {
+                continue;
+            }
+
+            if let Some(tree) = child
+                .path()
+                .to_str()
+                .and_then(|path| WalkedTree::new(path).ok())
+            {
+                trees.push(tree);
+            }
+        }
+
+        trees.sort();
+        trees
     }
 
     /// docker as this box has it: the client, and the daemon if one answered.
@@ -339,6 +410,17 @@ impl Docker {
             })?
             .to_container()
     }
+}
+
+/// Where the daemon keeps its store, or nothing if it would not say.
+///
+/// A failure here is not reported: this runs at construction, before the facet exists to
+/// carry an error, and every reason it can fail — no daemon, no permission — is a reason
+/// [`Docker::read`] will fail loudly a moment later with the same message.
+fn resolve_root(tool: &CanonicalTool) -> Option<AbsolutePath> {
+    let reported = decode::<DockerInfoDocument>(&tool.run(&INFO).ok()?, "info").ok()?;
+
+    reported.root_directory()
 }
 
 /// Reads one of docker's JSON documents, naming the subcommand if it will not parse.

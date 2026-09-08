@@ -1,6 +1,6 @@
 //! An engine rastro found, and the way it has to be read.
 
-use rastro_collector::CollectionError;
+use rastro_collector::{CollectionError, WalkedTree};
 
 use super::docker::Docker;
 use crate::collectors::containers::model::ContainerEngine;
@@ -35,6 +35,13 @@ impl EngineSource {
     pub fn read(&self) -> Result<ContainerEngine, CollectionError> {
         match self {
             Self::Docker(docker) => Ok(ContainerEngine::Docker(docker.read()?)),
+        }
+    }
+
+    /// The trees this engine keeps to itself.
+    pub fn private_trees(&self) -> Vec<WalkedTree> {
+        match self {
+            Self::Docker(docker) => docker.private_trees(),
         }
     }
 }

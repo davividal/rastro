@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{Docker, EngineSource};
-use rastro_collector::{Collector, Presence};
+use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Observation, Sensitivity, Volatility};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
@@ -1914,4 +1914,155 @@ fn the_containers_attached_to_a_network_are_not_recorded_twice() {
 
     // Act & Assert
     assert!(!keys_of(&network).contains(&"containers".to_owned()));
+}
+
+/// A docker whose `info` names a root directory the test built, with the children a real
+/// engine keeps under it.
+///
+/// The children are the ones docker 26.1.5 and 29.8.0 actually have between them, including
+/// the difference that matters: 26 keeps its layers in `vfs` (or `overlay2`) and 29 keeps
+/// them in `rootfs`, so no list of names and no mapping from the driver would have covered
+/// both.
+fn docker_rooted_at(name: &str) -> (ContainersCollector, std::path::PathBuf) {
+    let root = scratch_tree(
+        &format!("containers-root-{name}"),
+        &[
+            "buildkit",
+            "containerd",
+            "containers",
+            "image",
+            "network",
+            "plugins",
+            "rootfs",
+            "runtimes",
+            "swarm",
+            "tmp",
+            "vfs",
+            "volumes",
+        ],
+    );
+    fs::write(root.join("engine-id"), "d94030bd-2938\n").expect("a writable fixture");
+
+    let info = INFO_ANSWERING.replace(
+        "\"DockerRootDir\": \"/var/lib/docker\"",
+        &format!(
+            "\"DockerRootDir\": \"{}\"",
+            root.to_str().expect("a UTF-8 scratch path")
+        ),
+    );
+    // A different scratch name from the root above, because `scratch_tree` recreates the
+    // directory it is given and would otherwise delete the children this test just made.
+    let docker = fake_docker(
+        &format!("root-shim-{name}"),
+        DockerFixtures {
+            version: VERSION_ANSWERING,
+            version_stderr: "",
+            info: &info,
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
+    );
+
+    (
+        ContainersCollector::reading(vec![EngineSource::Docker(docker)]),
+        root,
+    )
+}
+
+fn claimed(collector: &ContainersCollector) -> Vec<(String, ClaimedReading)> {
+    let mut claims: Vec<(String, ClaimedReading)> = collector
+        .filesystem_claims()
+        .iter()
+        .map(|claim| (claim.tree().as_str().to_owned(), claim.reading()))
+        .collect();
+    claims.sort_by(|left, right| left.0.cmp(&right.0));
+    claims
+}
+
+#[test]
+fn every_tree_the_engine_keeps_to_itself_is_sealed() {
+    // Arrange: **resolved from the host, not named.** The layer store's directory is `vfs`
+    // under one driver, `overlay2` under another and `rootfs` on docker 29, so listing the
+    // root's own children is the only reading that covers every engine. What is inside is
+    // either reported properly by this facet — the images by digest, the containers by
+    // name — or is the engine's private bookkeeping.
+    let (collector, root) = docker_rooted_at("sealed");
+    let root = root.to_str().expect("a UTF-8 scratch path");
+
+    // Act
+    let claims = claimed(&collector);
+
+    // Assert
+    assert!(
+        claims.contains(&(format!("{root}/rootfs"), ClaimedReading::Sealed)),
+        "the layer store docker 29 keeps in `rootfs` should be sealed: {claims:?}"
+    );
+    assert!(claims.contains(&(format!("{root}/vfs"), ClaimedReading::Sealed)));
+    assert!(claims.contains(&(format!("{root}/image"), ClaimedReading::Sealed)));
+    assert!(claims.contains(&(format!("{root}/containers"), ClaimedReading::Sealed)));
+    assert!(claims.contains(&(format!("{root}/buildkit"), ClaimedReading::Sealed)));
+}
+
+#[test]
+fn the_tree_holding_the_operators_own_data_is_left_to_the_walk() {
+    // Arrange: `volumes` is where a box's databases, uploads and certificates live, and it
+    // is the one tree under the engine's root that is not the engine's own bookkeeping.
+    // Sealing the root would have taken it away with no way for a config to ask for it
+    // back, because a config can only narrow.
+    let (collector, root) = docker_rooted_at("volumes");
+    let root = root.to_str().expect("a UTF-8 scratch path");
+
+    // Act
+    let claims = claimed(&collector);
+
+    // Assert
+    assert!(
+        !claims
+            .iter()
+            .any(|(tree, _)| tree == &format!("{root}/volumes")),
+        "the volume tree should carry no claim at all: {claims:?}"
+    );
+    assert!(
+        !claims.iter().any(|(tree, _)| tree == root),
+        "the root itself should not be sealed, or nothing under it could be spared: {claims:?}"
+    );
+}
+
+#[test]
+fn a_file_under_the_root_is_not_claimed_as_a_tree() {
+    // Arrange: docker keeps `engine-id` as a file beside the directories, and a claim over
+    // a file would be a rule about a tree that does not exist.
+    let (collector, root) = docker_rooted_at("file");
+    let root = root.to_str().expect("a UTF-8 scratch path");
+
+    // Act & Assert
+    assert!(
+        !claimed(&collector)
+            .iter()
+            .any(|(tree, _)| tree == &format!("{root}/engine-id"))
+    );
+}
+
+#[test]
+fn an_engine_whose_root_is_not_known_claims_nothing() {
+    // Arrange: a daemon that did not answer names no root directory, and a claim rastro
+    // cannot resolve is better left unmade than made against a distribution default the box
+    // may not use. The walk's own reading is the safe direction to be wrong in.
+    let collector = ContainersCollector::reading(vec![EngineSource::Docker(fake_docker(
+        "no-root",
+        DockerFixtures {
+            version: VERSION_UNREACHABLE,
+            version_stderr: UNREACHABLE_STDERR,
+            info: "",
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
+    ))]);
+
+    // Act & Assert
+    assert!(claimed(&collector).is_empty());
 }

@@ -3331,3 +3331,46 @@ creation, and reported `172.30.0.1` in it after the daemon restarted. Same docke
 network. So the gateway is optional because the engine is inconsistent about echoing it,
 and an absent one means unreported rather than none. The code said the first thing as if
 it were the whole rule, and now says both.
+
+## The engine's private trees are sealed by listing them, not by naming them
+
+On a box running containers this is where the filesystem walk spends itself. Measured
+twice:
+
+- a development machine: **376,948** of its **834,466** entries were under the container
+  store, and **294,525** of those were layer entries;
+- the reference container, after the claim: **6,942** entries on disk under the engine's
+  root against **20** recorded, the layer store reduced from 6,761 entries to the one
+  entry for its own directory, and all 8 entries of the volume tree intact.
+
+**The trees are resolved by listing the root's children rather than by naming them, and
+that is not tidiness.** The layer store's directory is `overlay2` under one driver and
+`vfs` under another, and on docker 29 — whose driver reports itself as `overlayfs` —
+there is no `overlay2` directory at all: the layers are under `rootfs` and inside
+containerd's own store. So a fixed list of names would have been wrong on docker 29, and
+a mapping from the driver name would have been wrong in a different way. Listing what
+the engine actually keeps covers every driver, every version, and a directory a later
+docker adds without rastro being told.
+
+**Sealed rather than merely unhashed**, on the reasoning the postgresql data directory
+established: it is most of the entries, every attribute that survives moves on the next
+pull, and what is genuinely in there this facet reports properly — the images by digest,
+the containers by name, the volumes by name and driver.
+
+**One directory is named, and it is the one that must survive**: `volumes`. That is where
+a box's databases, uploads and certificates live, and it is the only tree under the
+engine's root that is not the engine's own bookkeeping. It carries no claim at all, so it
+is read exactly as the walk reads anything else.
+
+**Sealing the root and sparing volumes underneath it is not available**, and it was
+checked rather than assumed: the walk prunes at a sealed directory, so a rule for a
+subtree of one is never consulted. That is why the claim is one per child rather than one
+for the root, and it is also why the choice matters — a config can only narrow, so a
+sealed root would have removed the operator's data from the document with no way to ask
+for it back.
+
+**The root is resolved when the collector is constructed**, from `docker info`, because
+the walk's table is built before any collector runs and a claim cannot wait for the
+facet's own read. That is the arrangement the postgresql collector already uses for its
+cluster list. An engine whose daemon did not answer names no root, and then no claim is
+made at all, because the walk's own reading is the safe direction to be wrong in.
