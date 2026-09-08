@@ -251,3 +251,21 @@ fn no_collector_runs_a_program_that_makes_the_kernel_load_a_module() {
          subsystem-specific tool will do",
     );
 }
+
+#[test]
+fn the_nginx_collector_never_asks_nginx_to_load_its_configuration() {
+    // Act & Assert: the same defect class as the module autoload above, and it had only a
+    // doc comment holding it. Testing a configuration loads it, and loading it opens every
+    // log file it names, creating the ones that are not there — measured on nginx 1.30, where
+    // a plain `nginx -t` over a config naming a missing `/tmp/logs/*.log` left a root-owned
+    // empty file behind. `-T` is `-t` plus a dump, so it does the same.
+    //
+    // Scoped to the nginx module because the flags are innocent elsewhere: `sshd -T` reports
+    // the running server's effective config and touches nothing, and this must not forbid it.
+    assert_module_never_mentions(
+        "collectors/nginx",
+        &["\"-t\"", "\"-T\""],
+        "ask `nginx -V`, which opens no configuration, and resolve the includes here; \
+         `docs/decisions.md` carries the measurement",
+    );
+}
