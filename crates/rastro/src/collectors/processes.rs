@@ -50,7 +50,7 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{Process, ProcessTable};
-pub use source::{ProcProcesses, proc_cmdline, proc_status};
+pub use source::{ProcProcesses, proc_cmdline, proc_processes, proc_status};
 pub use value_objects::{CommandLine, ControlGroup, ProcessId, ProcessName, ProcessState};
 
 // One import, because `rastro-collector` re-exports what an author needs. A

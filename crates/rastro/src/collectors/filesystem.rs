@@ -25,6 +25,7 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
+pub use crate::collectors::file_metadata::FileMode;
 pub use model::{
     FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, UnspellablePath,
     WalkPolicy, is_absence,
@@ -35,7 +36,7 @@ pub use source::{
 };
 pub use value_objects::{
     CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
-    FileMode, NanosecondsSinceEpoch,
+    NanosecondsSinceEpoch,
 };
 
 use std::path::{Path, PathBuf};

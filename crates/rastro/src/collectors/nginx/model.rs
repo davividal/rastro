@@ -1,0 +1,47 @@
+//! What an nginx configuration is, in rastro's terms rather than in nginx's spelling.
+
+mod access_rule;
+mod authentication;
+mod authorised_user;
+mod binary;
+mod certificate;
+mod certificate_details;
+mod configuration;
+mod configuration_file;
+mod directive;
+mod http_service;
+mod key_file;
+mod listen;
+mod location;
+mod log_destination;
+mod master;
+mod pass_target;
+mod stream_server;
+mod stream_service;
+mod upstream;
+mod upstream_server;
+mod virtual_host;
+mod web_server;
+
+pub use access_rule::AccessRule;
+pub use authentication::Authentication;
+pub use authorised_user::AuthorisedUser;
+pub use binary::Binary;
+pub use certificate::{Certificate, CertificateReading};
+pub use certificate_details::CertificateDetails;
+pub use configuration::Configuration;
+pub use configuration_file::ConfigurationFile;
+pub use directive::Directive;
+pub use http_service::HttpService;
+pub use key_file::{KeyFile, KeyReading};
+pub use listen::Listen;
+pub use location::Location;
+pub use log_destination::LogDestination;
+pub use master::Master;
+pub use pass_target::PassTarget;
+pub use stream_server::StreamServer;
+pub use stream_service::StreamService;
+pub use upstream::Upstream;
+pub use upstream_server::UpstreamServer;
+pub use virtual_host::VirtualHost;
+pub use web_server::WebServer;

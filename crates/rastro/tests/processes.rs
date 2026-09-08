@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 mod support;
 
 use rastro::collectors::processes::{
-    ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline, proc_status,
+    ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline, proc_processes,
+    proc_status,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Observation, View};
@@ -421,4 +422,21 @@ fn the_collector_reports_its_second_version() {
 
     // Assert
     assert_eq!(collector.identity().version.as_str(), "2");
+}
+
+#[test]
+fn a_process_that_left_is_told_from_a_read_that_failed() {
+    // Arrange: measured rather than assumed, and the assumption it replaces was wrong. A
+    // container run with a busy process table failed the whole facet with `could not read
+    // /proc/9214/status: No such process (os error 3)` — ESRCH, which Rust does not map to
+    // NotFound, from a process reaped while its status file was being read.
+    let gone = std::io::Error::from_raw_os_error(libc::ESRCH);
+    let never_there = std::io::Error::from_raw_os_error(libc::ENOENT);
+    let refused = std::io::Error::from_raw_os_error(libc::EACCES);
+
+    // Act & Assert: a departure is not a failure to collect; anything else still is, because
+    // a /proc that will not answer is the interface not being what rastro believes.
+    assert!(proc_processes::departed(&gone));
+    assert!(proc_processes::departed(&never_there));
+    assert!(!proc_processes::departed(&refused));
 }
