@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
-use crate::collectors::containers::model::{CgroupControl, DockerServer};
+use crate::collectors::containers::model::{CgroupControl, DockerContainers, DockerServer};
 use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver, SwarmState};
 
 /// docker's own field names, which are neither consistently cased nor stable enough to
@@ -55,6 +55,7 @@ impl DockerInfoDocument {
         &self,
         version: EngineVersion,
         components: Vec<(String, EngineVersion)>,
+        containers: DockerContainers,
     ) -> Result<DockerServer, CollectionError> {
         let mut security_options: Vec<NonEmptyText> = self
             .security_options
@@ -86,6 +87,7 @@ impl DockerInfoDocument {
             swarm: SwarmState::new(self.swarm_membership())?,
             security_options,
             components: named_components,
+            containers,
         })
     }
 

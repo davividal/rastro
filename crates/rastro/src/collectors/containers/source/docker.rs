@@ -2,10 +2,14 @@
 
 use rastro_collector::CollectionError;
 
+use super::docker_container_document::DockerContainerDocument;
 use super::docker_info::DockerInfoDocument;
 use super::docker_version::DockerVersionDocument;
 use crate::collectors::canonical_tool::CanonicalTool;
-use crate::collectors::containers::model::DockerEngine;
+use crate::collectors::containers::model::{
+    DockerContainer, DockerContainers, DockerEngine, UnreadableContainer,
+};
+use crate::collectors::containers::value_objects::{ContainerId, ContainerName};
 
 /// docker's client, which is the only interface the engine documents as stable.
 const PROGRAM: &str = "docker";
@@ -15,6 +19,20 @@ const VERSION: [&str; 3] = ["version", "--format", "{{json .}}"];
 
 /// What the answering daemon runs with.
 const INFO: [&str; 3] = ["info", "--format", "{{json .}}"];
+
+/// Every container's id, stopped ones included, untruncated.
+///
+/// **`--all`, because a container that has exited is exactly what a fingerprint is taken to
+/// find.** `docker ps` alone hides it, and "the box that used to run this" is the state an
+/// operator is looking for when they diff.
+const LIST: [&str; 4] = ["ps", "--all", "--no-trunc", "--quiet"];
+
+/// One container, pinned to a container.
+///
+/// `--type container` because `docker inspect` will otherwise answer about an image or a
+/// volume of the same name, and a document of the wrong kind would fail to parse in a way
+/// that reads like a broken container.
+const INSPECT: [&str; 3] = ["inspect", "--type", "container"];
 
 /// A docker client found on this host, ready to be asked.
 ///
@@ -62,11 +80,67 @@ impl Docker {
         };
 
         let reported = decode::<DockerInfoDocument>(&self.tool.run(&INFO)?, "info")?;
+        let containers = self.containers()?;
 
         Ok(DockerEngine::answering(
             versions.client,
-            reported.to_server(server.version, server.components)?,
+            reported.to_server(server.version, server.components, containers)?,
         ))
+    }
+
+    /// The containers, read one at a time, and the ones that could not be read.
+    ///
+    /// **One read per container rather than one read for all of them, and the reason is the
+    /// race.** `docker inspect` given several ids exits non-zero if any one of them has gone,
+    /// and the execution seam refuses a non-zero exit's output entirely, so a single
+    /// `--rm` container ending mid-run would cost the whole facet every other container on
+    /// the box. Read one at a time, that loss is one entry in `unreadable`, named and
+    /// recorded.
+    ///
+    /// The cost is one subprocess per container, which is what the concurrency the collectors
+    /// run under is for.
+    fn containers(&self) -> Result<DockerContainers, CollectionError> {
+        let mut read: Vec<(ContainerName, DockerContainer)> = Vec::new();
+        let mut unreadable: Vec<UnreadableContainer> = Vec::new();
+
+        for line in self.tool.run(&LIST)?.lines() {
+            let listed = line.trim();
+            if listed.is_empty() {
+                continue;
+            }
+
+            let id = ContainerId::new(listed)?;
+            match self.inspect(&id) {
+                Ok(container) => read.push(container),
+                Err(failure) => {
+                    unreadable.push(UnreadableContainer::new(id, &failure.to_string())?)
+                }
+            }
+        }
+
+        DockerContainers::new(read, unreadable)
+    }
+
+    /// One container as docker describes it.
+    fn inspect(
+        &self,
+        id: &ContainerId,
+    ) -> Result<(ContainerName, DockerContainer), CollectionError> {
+        let mut arguments = INSPECT.to_vec();
+        arguments.push(id.as_str());
+
+        let documents =
+            decode::<Vec<DockerContainerDocument>>(&self.tool.run(&arguments)?, "inspect")?;
+
+        documents
+            .first()
+            .ok_or_else(|| {
+                CollectionError::new(format!(
+                    "`{PROGRAM} inspect` described no container for the id {:?} it had just                      listed",
+                    id.as_str()
+                ))
+            })?
+            .to_container()
     }
 }
 

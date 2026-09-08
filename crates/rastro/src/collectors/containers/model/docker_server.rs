@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
-use crate::collectors::containers::model::CgroupControl;
+use crate::collectors::containers::model::{CgroupControl, DockerContainers};
 use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver, SwarmState};
 
 /// The daemon's own account of itself, which only exists when a daemon answered.
@@ -16,8 +16,9 @@ use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver,
 /// its observed one.
 ///
 /// **Counts are deliberately absent.** `docker info` reports how many containers and images
-/// there are, and a count is not state worth diffing: it moves whenever a short-lived
-/// container comes and goes, and it says nothing about which one changed.
+/// there are, and this facet reports the containers and the images themselves, so a count
+/// would be a second, worse account of the same fact, and one that changes whenever a
+/// short-lived container comes and goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerServer {
     pub version: EngineVersion,
@@ -51,12 +52,28 @@ pub struct DockerServer {
     /// a runc replaced under a running docker is exactly the change a fingerprint is taken
     /// around, and it is invisible in the engine's own version.
     pub components: BTreeMap<NonEmptyText, EngineVersion>,
+    /// What is on the box, and what could not be read while looking.
+    ///
+    /// Held by the server rather than by the engine, for the same reason the rest of this
+    /// type is: a daemon that did not answer has no container list, and there is a difference
+    /// between an empty list and no list at all.
+    pub containers: DockerContainers,
 }
 
 impl From<&DockerServer> for Observation {
     fn from(server: &DockerServer) -> Self {
         Observation::object([
             ("cgroup", Observation::from(&server.cgroup)),
+            (
+                "containers",
+                Observation::object(
+                    server
+                        .containers
+                        .named()
+                        .iter()
+                        .map(|(name, container)| (name.as_str(), Observation::from(container))),
+                ),
+            ),
             (
                 "components",
                 Observation::object(
@@ -93,6 +110,13 @@ impl From<&DockerServer> for Observation {
             ),
             ("storage_driver", Observation::from(&server.storage_driver)),
             ("swarm", Observation::from(&server.swarm)),
+            (
+                // Volatile, because a container that came and went between the id list and
+                // the read of it is the host changing on its own. See `UnreadableContainer`.
+                "unreadable_containers",
+                Observation::list(server.containers.unreadable().iter().map(Observation::from))
+                    .volatile(),
+            ),
             ("version", Observation::from(&server.version)),
         ])
     }

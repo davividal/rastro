@@ -2993,3 +2993,65 @@ running LXC or incus reads as absent, which is a limit of rastro rather than a f
 about the box. The alternative, an unconditional `present`, would put an
 engine-shaped empty answer into every fingerprint of every box that has never run a
 container.
+## Keyed by container name, not by container id
+
+An id is minted afresh every time a container is created. Keyed by id, a
+`docker compose up` on an unchanged definition would report every container as
+removed and a new one added, which is a diff that says nothing.
+
+A name survives recreation: compose derives it from the project and the service, and
+an operator who names nothing still gets a name that is stable until they recreate
+the container themselves. The id is recorded as a value, where a reader sees it
+change and knows the container was rebuilt.
+
+## A container that will delete itself is volatile whole
+
+`--rm` declares a job rather than a tenant. A cron-driven `docker run --rm` exists
+for a few seconds, so two runs of a box nobody touched legitimately disagree about
+whether it is there.
+
+The `processes` facet met the general form of this and had to annotate its whole
+table volatile, because a process table cannot be byte-identical on a machine that is
+doing anything. A container list is not like that: a container is declared, it
+outlives the run, and whether it is up is the first line an operator reads. So the
+entries stay and the exceptions are annotated — which is what `Volatility` is for,
+rather than something the byte-identity contract had to be weakened to accommodate.
+
+**Keyed on the engine's own record of the intent**, `HostConfig.AutoRemove`, and not
+guessed from a name or an uptime. The container is still reported in full in the
+complete view, where somebody standing in front of the box can see what ran.
+
+The moving values inside a container that stays get the same treatment one at a time:
+both stamps and the restart count are volatile, because a container restarting under
+its policy moves all three with nobody having touched the box. The status is not, and
+deliberately: `running` becoming `exited` is the single most useful line in a diff of
+a container host.
+
+## A container that vanished while being read is recorded, not dropped
+
+Reading a box's containers takes two steps, the id list and then one read per
+container, and a `docker run --rm` from cron can end between them.
+
+**One read per container rather than one read for all of them**, which is the
+decision the race forces. `docker inspect` given several ids exits non-zero if any
+one of them has gone, and the seam refuses a non-zero exit's output entirely, so a
+single ephemeral container ending mid-run would cost the whole facet every other
+container on the box. Read one at a time, that loss is one entry in
+`unreadable_containers`, carrying the id and the engine's own complaint.
+
+The list is volatile, for the same reason the ephemeral container itself is: a
+container that comes and goes on its own is the host changing on its own. The cost is
+one subprocess per container, which is what running the collectors concurrently is
+for.
+
+## The manifest digest is not there below docker 29
+
+`docker inspect` on 29.8.0 carries an `ImageManifestDescriptor`, whose digest is what
+a registry would serve for the container's image. Debian 13's docker, 26.1.5, does
+not have the field at all — measured on both.
+
+So the container's image is recorded as three values rather than one: the reference
+the operator wrote, the id docker resolved it to, and the manifest digest **where the
+engine offers it**. The id is the strongest of the three anyway, being a digest over
+the image's configuration, and the repo digest reaches the document through the image
+list rather than through every container that runs it.

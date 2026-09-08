@@ -15,9 +15,9 @@ use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{Docker, EngineSource};
 use rastro_collector::{Collector, Presence};
-use rastro_fingerprint::Observation;
+use rastro_fingerprint::{Observation, Volatility};
 use support::fs_tree::scratch_tree;
-use support::observation::{boolean, field, is_null, items_of, keys_of, text};
+use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
 /// `docker version --format '{{json .}}'` on a box whose daemon answers.
 ///
@@ -63,9 +63,9 @@ dial unix /var/run/docker.sock: connect: no such file or directory";
 /// `docker info --format '{{json .}}'`, trimmed.
 ///
 /// `Containers`, `Images` and `NCPU` are kept deliberately: they are counts this facet does
-/// not read, because a count says nothing about which container changed and the CPU count is
-/// the host's business, and a fixture that dropped them could not catch a reader that started
-/// using them.
+/// not read, because the container list is the answer and the CPU count is the host's
+/// business, and a fixture that dropped them could not catch a reader that started using
+/// them.
 const INFO_ANSWERING: &str = r#"{
   "ID": "d94030bd-2938-4d0a-9d0e-000000000000",
   "Containers": 1,
@@ -83,13 +83,160 @@ const INFO_ANSWERING: &str = r#"{
   "ServerVersion": "29.8.0"
 }"#;
 
-/// A `docker` that answers the two probes from fixtures, and refuses anything else loudly.
+const WEB_ID: &str = "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e";
+const STOPPED_ID: &str = "551e41b5515383f95ae02559fc0a1cd7500d88be62c2add2d7a2cfdc3746ac5a";
+const EPHEMERAL_ID: &str = "1db8c55268930421b2a804afd47b84b7ff88c7ee942242c529431fef314c5ea6";
+
+/// A running container, from `docker inspect --type container`.
+///
+/// `Config.Hostname` and `HostConfig.NetworkMode` are kept and deliberately unread: the
+/// hostname docker generates is the container's own short id, so recording it would put the
+/// id in the document twice under a name that suggests it is something else.
+const INSPECT_WEB: &str = r#"[
+  {
+    "Id": "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e",
+    "Created": "2026-09-08T11:00:21.648460605Z",
+    "Path": "sh",
+    "Args": ["-c", "sleep 3600"],
+    "State": {
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 358,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-08T11:00:21.680061071Z",
+      "FinishedAt": "0001-01-01T00:00:00Z"
+    },
+    "Image": "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+    "ImageManifestDescriptor": {
+      "digest": "sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
+    },
+    "Name": "/web",
+    "RestartCount": 0,
+    "Driver": "overlayfs",
+    "Config": { "Image": "alpine", "Hostname": "webby" },
+    "HostConfig": { "AutoRemove": false, "NetworkMode": "fixture-net" }
+  }
+]"#;
+
+/// A container that ran and exited non-zero, which is the state a fingerprint is taken to
+/// find: `docker ps` alone would not have shown it at all.
+const INSPECT_STOPPED: &str = r#"[
+  {
+    "Id": "551e41b5515383f95ae02559fc0a1cd7500d88be62c2add2d7a2cfdc3746ac5a",
+    "Created": "2026-09-08T11:14:12.238184894Z",
+    "Path": "sh",
+    "Args": ["-c", "exit 3"],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 3,
+      "Error": "",
+      "StartedAt": "2026-09-08T11:14:12.261190594Z",
+      "FinishedAt": "2026-09-08T11:14:12.30762137Z"
+    },
+    "Image": "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+    "ImageManifestDescriptor": {
+      "digest": "sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
+    },
+    "Name": "/stopped",
+    "RestartCount": 0,
+    "Driver": "overlayfs",
+    "Config": { "Image": "alpine", "Hostname": "551e41b55153" },
+    "HostConfig": { "AutoRemove": false, "NetworkMode": "bridge" }
+  }
+]"#;
+
+/// A container started with `--rm`, which will delete itself the moment it stops.
+const INSPECT_EPHEMERAL: &str = r#"[
+  {
+    "Id": "1db8c55268930421b2a804afd47b84b7ff88c7ee942242c529431fef314c5ea6",
+    "Created": "2026-09-08T11:14:12.054894501Z",
+    "Path": "sleep",
+    "Args": ["3600"],
+    "State": {
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 1309,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-08T11:14:12.080057163Z",
+      "FinishedAt": "0001-01-01T00:00:00Z"
+    },
+    "Image": "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+    "ImageManifestDescriptor": {
+      "digest": "sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
+    },
+    "Name": "/ephemeral",
+    "RestartCount": 0,
+    "Driver": "overlayfs",
+    "Config": { "Image": "alpine", "Hostname": "1db8c5526893" },
+    "HostConfig": { "AutoRemove": true, "NetworkMode": "bridge" }
+  }
+]"#;
+
+/// What one fake docker answers with.
+///
+/// A named type rather than five positional arguments: every one of these is a fixture a
+/// test chose, and at a call site `containers: &[]` says something a bare `&[]` would not.
+struct DockerFixtures<'a> {
+    version: &'a str,
+    /// What the client writes to stderr while exiting zero, which is where an unreachable
+    /// daemon reports itself.
+    version_stderr: &'a str,
+    info: &'a str,
+    /// The containers `docker ps` lists, each with the `inspect` document for it. An id
+    /// listed with no document is how a test drives the container that vanished mid-read.
+    containers: &'a [(&'a str, Option<&'a str>)],
+}
+
+impl DockerFixtures<'_> {
+    /// A box whose daemon answers, running the three fixture containers.
+    fn answering() -> Self {
+        Self {
+            version: VERSION_ANSWERING,
+            version_stderr: "",
+            info: INFO_ANSWERING,
+            containers: &[
+                (WEB_ID, Some(INSPECT_WEB)),
+                (STOPPED_ID, Some(INSPECT_STOPPED)),
+                (EPHEMERAL_ID, Some(INSPECT_EPHEMERAL)),
+            ],
+        }
+    }
+}
+
+/// A `docker` that answers from fixtures, and refuses anything else loudly.
 ///
 /// Refusing the unexpected is what makes the shim a test rather than a mock that agrees with
 /// whatever it is asked: a source that started calling a subcommand nobody wrote a fixture
 /// for fails here instead of quietly reading an empty answer.
-fn fake_docker(name: &str, version: &str, version_stderr: &str, info: &str) -> Docker {
+fn fake_docker(name: &str, fixtures: DockerFixtures) -> Docker {
     let root = scratch_tree(&format!("containers-{name}"), &[]);
+
+    let mut ids = String::new();
+    for (id, document) in fixtures.containers {
+        ids.push_str(id);
+        ids.push('\n');
+        if let Some(document) = document {
+            fs::write(root.join(format!("{id}.json")), document).expect("a writable fixture");
+        }
+    }
+    fs::write(root.join("ids"), &ids).expect("a writable fixture");
+
     let directory = root.to_str().expect("a UTF-8 scratch path");
     let path = root.join("docker");
     fs::write(
@@ -108,12 +255,28 @@ cat <<'STDOUT'
 {info}
 STDOUT
 ;;
+ps)
+cat '{directory}/ids'
+;;
+inspect)
+document='{directory}/'"$4"'.json'
+if [ -f "$document" ]; then
+cat "$document"
+else
+printf 'Error response from daemon: No such container: %s\n' "$4" >&2
+exit 1
+fi
+;;
 *)
 printf 'unexpected invocation: %s\n' "$*" >&2
 exit 1
 ;;
 esac
-"#
+"#,
+            version = fixtures.version,
+            version_stderr = fixtures.version_stderr,
+            info = fixtures.info,
+            directory = directory,
         ),
     )
     .expect("a writable script");
@@ -126,26 +289,21 @@ esac
     )
 }
 
-fn docker_facet(name: &str, version: &str, version_stderr: &str, info: &str) -> Observation {
-    ContainersCollector::reading(vec![EngineSource::Docker(fake_docker(
-        name,
-        version,
-        version_stderr,
-        info,
-    ))])
-    .collect()
-    .expect("the fixtures are well formed")
-}
-
-fn answering_docker(name: &str) -> Observation {
-    field(
-        &docker_facet(name, VERSION_ANSWERING, "", INFO_ANSWERING),
-        "docker",
-    )
+fn docker_facet(name: &str, fixtures: DockerFixtures) -> Observation {
+    ContainersCollector::reading(vec![EngineSource::Docker(fake_docker(name, fixtures))])
+        .collect()
+        .expect("the fixtures are well formed")
 }
 
 fn answering_server(name: &str) -> Observation {
-    field(&answering_docker(name), "server")
+    field(
+        &field(&docker_facet(name, DockerFixtures::answering()), "docker"),
+        "server",
+    )
+}
+
+fn container_of(name: &str, container: &str) -> Observation {
+    field(&field(&answering_server(name), "containers"), container)
 }
 
 #[test]
@@ -162,9 +320,7 @@ fn presence_is_present_when_docker_is_on_the_host() {
     // Arrange
     let collector = ContainersCollector::reading(vec![EngineSource::Docker(fake_docker(
         "present",
-        VERSION_ANSWERING,
-        "",
-        INFO_ANSWERING,
+        DockerFixtures::answering(),
     ))]);
 
     // Act & Assert
@@ -174,7 +330,7 @@ fn presence_is_present_when_docker_is_on_the_host() {
 #[test]
 fn the_facet_is_keyed_by_the_engine() {
     // Act
-    let observed = docker_facet("keyed", VERSION_ANSWERING, "", INFO_ANSWERING);
+    let observed = docker_facet("keyed", DockerFixtures::answering());
 
     // Assert
     assert_eq!(keys_of(&observed), vec!["docker".to_owned()]);
@@ -183,7 +339,8 @@ fn the_facet_is_keyed_by_the_engine() {
 #[test]
 fn an_answering_docker_reports_what_its_daemon_is_running_with() {
     // Act
-    let docker = answering_docker("answering");
+    let observed = docker_facet("answering", DockerFixtures::answering());
+    let docker = field(&observed, "docker");
     let server = field(&docker, "server");
 
     // Assert
@@ -239,7 +396,15 @@ fn the_components_report_which_containerd_and_runc_the_engine_runs() {
 fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
     // Arrange: the box has docker and no running daemon, which is state rather than a
     // failure to read, and is a different fact from having no docker at all.
-    let observed = docker_facet("unreachable", VERSION_UNREACHABLE, UNREACHABLE_STDERR, "");
+    let observed = docker_facet(
+        "unreachable",
+        DockerFixtures {
+            version: VERSION_UNREACHABLE,
+            version_stderr: UNREACHABLE_STDERR,
+            info: "",
+            containers: &[],
+        },
+    );
 
     // Act
     let docker = field(&observed, "docker");
@@ -254,7 +419,10 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
 #[test]
 fn an_answering_daemon_records_no_reason_to_be_unreachable() {
     // Arrange
-    let docker = answering_docker("no-reason");
+    let docker = field(
+        &docker_facet("no-reason", DockerFixtures::answering()),
+        "docker",
+    );
 
     // Act & Assert
     assert!(is_null(&field(&docker, "daemon_reason")));
@@ -265,9 +433,12 @@ fn output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engin
     // Arrange
     let collector = ContainersCollector::reading(vec![EngineSource::Docker(fake_docker(
         "garbage",
-        "not json at all",
-        "",
-        INFO_ANSWERING,
+        DockerFixtures {
+            version: "not json at all",
+            version_stderr: "",
+            info: INFO_ANSWERING,
+            containers: &[],
+        },
     ))]);
 
     // Act
@@ -278,4 +449,176 @@ fn output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engin
         failure.to_string().contains("docker version"),
         "the failure should name the probe that produced it: {failure}"
     );
+}
+
+#[test]
+fn the_containers_are_keyed_by_name_without_dockers_leading_slash() {
+    // Arrange: docker reports a container's name as `/web`, a leftover from the days when
+    // links made a namespace of it. The name an operator uses is what the document keys on.
+    let containers = field(&answering_server("names"), "containers");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&containers),
+        vec![
+            "ephemeral".to_owned(),
+            "stopped".to_owned(),
+            "web".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn a_container_records_the_image_it_asked_for_beside_the_one_it_got() {
+    // Arrange: the whole reason this facet exists. `alpine` is what the operator wrote and
+    // what a config file would show; the digest is what is actually running, and a tag
+    // repointed at a new build changes the second while the first stands still.
+    let image = field(&container_of("image", "web"), "image");
+
+    // Act & Assert
+    assert_eq!(text(&field(&image, "reference")), "alpine");
+    assert_eq!(
+        text(&field(&image, "id")),
+        "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+    );
+    assert_eq!(
+        text(&field(&image, "manifest_digest")),
+        "sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
+    );
+}
+
+#[test]
+fn a_container_records_the_command_the_engine_resolved_rather_than_the_one_configured() {
+    // Arrange: `Path` and `Args` are what the container actually runs, after docker has
+    // resolved the image's entrypoint against the command it was given.
+    let command = field(&container_of("command", "web"), "command");
+
+    // Act & Assert
+    assert_eq!(text(&field(&command, "path")), "sh");
+    assert_eq!(
+        items_of(&field(&command, "arguments"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["-c".to_owned(), "sleep 3600".to_owned()]
+    );
+}
+
+#[test]
+fn a_running_container_records_no_finish_stamp() {
+    // Arrange: docker fills the field with Go's zero time, `0001-01-01T00:00:00Z`, which is
+    // not a date the container finished at and must not read as one.
+    let state = field(&container_of("running", "web"), "state");
+
+    // Act & Assert
+    assert_eq!(text(&field(&state, "status")), "running");
+    assert!(is_null(&field(&state, "finished_at")));
+}
+
+#[test]
+fn an_exited_container_records_its_exit_code_and_when_it_finished() {
+    // Arrange
+    let state = field(&container_of("exited", "stopped"), "state");
+
+    // Act & Assert
+    assert_eq!(text(&field(&state, "status")), "exited");
+    assert_eq!(integer(&field(&state, "exit_code")), 3);
+    assert_eq!(
+        text(&field(&state, "finished_at")),
+        "2026-09-08T11:14:12.30762137Z"
+    );
+}
+
+#[test]
+fn the_stamps_and_the_restart_count_are_volatile_while_the_status_is_not() {
+    // Arrange: a container restarting on its own moves both stamps and the count without
+    // anybody changing the box, and byte-identity is what every other facet rests on. The
+    // status is the opposite: `running` becoming `exited` is the change worth diffing.
+    let state = field(&container_of("volatility", "web"), "state");
+
+    // Act & Assert
+    assert_eq!(
+        field(&state, "started_at").volatility(),
+        Volatility::Volatile
+    );
+    assert_eq!(
+        field(&state, "restart_count").volatility(),
+        Volatility::Volatile
+    );
+    assert_eq!(field(&state, "status").volatility(), Volatility::Stable);
+}
+
+#[test]
+fn a_container_that_will_delete_itself_is_volatile_whole() {
+    // Arrange: `--rm` says the container is a job rather than a tenant, and a cron-driven
+    // one appears and vanishes between two runs of a box nobody touched. Keyed on
+    // `AutoRemove` rather than guessed from a name, because that is the engine's own record
+    // of the intent.
+    let ephemeral = container_of("ephemeral", "ephemeral");
+
+    // Act & Assert
+    assert_eq!(ephemeral.volatility(), Volatility::Volatile);
+    assert_eq!(
+        container_of("ephemeral", "web").volatility(),
+        Volatility::Stable
+    );
+}
+
+#[test]
+fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() {
+    // Arrange: a `docker run --rm` from cron can end between the id list and the inspect of
+    // it. Recording the loss keeps the omission visible, and the entry is volatile because a
+    // container that comes and goes on its own is the host changing on its own.
+    let server = field(
+        &field(
+            &docker_facet(
+                "vanished",
+                DockerFixtures {
+                    version: VERSION_ANSWERING,
+                    version_stderr: "",
+                    info: INFO_ANSWERING,
+                    containers: &[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)],
+                },
+            ),
+            "docker",
+        ),
+        "server",
+    );
+    let unreadable = field(&server, "unreadable_containers");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&field(&server, "containers")),
+        vec!["web".to_owned()]
+    );
+    assert_eq!(unreadable.volatility(), Volatility::Volatile);
+    let entries = items_of(&unreadable);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(text(&field(&entries[0], "id")), EPHEMERAL_ID);
+    assert!(text(&field(&entries[0], "reason")).contains("No such container"));
+}
+
+#[test]
+fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
+    // Arrange: an engine installed and running with nothing on it is a real state, and a
+    // different one from an engine that could not be asked.
+    let server = field(
+        &field(
+            &docker_facet(
+                "empty",
+                DockerFixtures {
+                    version: VERSION_ANSWERING,
+                    version_stderr: "",
+                    info: INFO_ANSWERING,
+                    containers: &[],
+                },
+            ),
+            "docker",
+        ),
+        "server",
+    );
+
+    // Act & Assert
+    assert!(keys_of(&field(&server, "containers")).is_empty());
+    assert!(items_of(&field(&server, "unreadable_containers")).is_empty());
 }
