@@ -3,9 +3,8 @@
 use rastro_collector::Observation;
 
 use super::interface_address::InterfaceAddress;
-use crate::collectors::network::value_objects::{
-    HardwareAddress, InterfaceFlags, LinkType, OperationalState,
-};
+use crate::collectors::inet::HardwareAddress;
+use crate::collectors::network::value_objects::{InterfaceFlags, LinkType, OperationalState};
 
 /// An interface as rastro means it.
 ///

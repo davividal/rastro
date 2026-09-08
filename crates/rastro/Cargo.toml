@@ -41,3 +41,19 @@ x509-parser = { workspace = true }
 rastro-fingerprint = { workspace = true }
 # `serde_json` is deliberately not repeated here. Tests read the rendered document
 # back to assert on its shape, and a normal dependency is already visible to them.
+
+# Excluded from `cargo test`, and run only by the job that provides an engine.
+#
+# It compares rastro's answer with docker's own, so it needs a live daemon with containers
+# on it and **fails rather than skipping** when there is none: a check that quietly passes
+# on a box with no engine is how a whole dialect rots unnoticed. That makes it wrong to run
+# by default, because most boxes the suite runs on have no docker — the distributions legs
+# are containers, and a dockerd inside one needs privilege the other legs deliberately do
+# not have.
+#
+# `cargo test --test containers_conformance` still runs it, which is what
+# `.github/workflows/live-engine.yml` does. Unlike `nginx_conformance`, which the suite can
+# satisfy by installing nginx unprivileged, this one cannot be satisfied in a container.
+[[test]]
+name = "containers_conformance"
+test = false

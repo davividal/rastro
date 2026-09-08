@@ -14,12 +14,12 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
+pub use crate::collectors::inet::{HardwareAddress, IpAddress};
 pub use model::{InterfaceAddress, NetworkInterface, NetworkState, Route};
 pub use source::{AddressObject, InterfaceObject, Ip, RouteObject};
 pub use value_objects::{
-    AddressFamily, AddressLifetime, AddressScope, HardwareAddress, InterfaceFlag, InterfaceFlags,
-    InterfaceName, IpAddress, LinkType, OperationalState, PrefixLength, RouteDestination,
-    RoutePreference, RouteProtocol,
+    AddressFamily, AddressLifetime, AddressScope, InterfaceFlag, InterfaceFlags, InterfaceName,
+    LinkType, OperationalState, PrefixLength, RouteDestination, RoutePreference, RouteProtocol,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs. A

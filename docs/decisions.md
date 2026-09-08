@@ -2863,3 +2863,800 @@ CI, for no reason at all.
 The guard now names both errnos, and the distinction is reachable from a test,
 because neither can be provoked from a fixture and the alternative is a rule
 nothing checks.
+
+---
+
+# Containers: one facet, several engines
+
+Dated 2026-09-08. The third Layer 3 collector, and the first for a subsystem that
+comes in more than one implementation of the same idea.
+
+## docker and containerd report themselves without changing the host
+
+The nginx gate above says a service's configuration may be parsed only where the
+service offers no non-mutating account of its own effective state, **with the
+measurement attached**. It names docker as one of the three that had to be measured
+before coming through. Here is that measurement.
+
+On a quiet Linux running docker 29.8.0 with containerd 2.3.4 underneath it, a full
+`stat` inventory of `/var/lib/docker`, `/var/lib/containerd`, `/run/docker`,
+`/run/containerd` and root's home was taken, then the reads were run, then the
+inventory was taken again:
+
+`docker ps`, `docker inspect`, `docker info`, `docker image inspect`,
+`docker volume inspect`, `docker network inspect`, `ctr containers info`.
+
+**Zero changed entries**, against a control interval that proved the box was
+otherwise still. Nothing was created in the working directory either. So there is no
+configuration for rastro to parse here: the engines answer for their own effective
+state, which is what the design prefers wherever it is available.
+
+**A second property comes free from the execution seam.** It clears the environment,
+so no `DOCKER_HOST` and no client context can point the read at a daemon on another
+box. The facet is about the box rastro is running on, structurally rather than by
+convention.
+
+**What is still owed:** podman. It is daemonless, and a read command initialises a
+store rather than asking one, which is exactly the shape of the nginx defect. It does
+not come through this gate until it has its own measurement on a quiet box.
+
+## One `containers` facet, keyed by engine flavour
+
+Not one facet per engine. `packages` already covers dpkg and apk together, for the
+reason that also applies here: two collectors claiming one facet name would fail the
+run, and an operator asking about containers is asking one question.
+
+**Two engines legitimately sit side by side, and both are reported.** docker runs
+containerd underneath itself, so a docker box has both, describing the same
+containers at two different levels. Suppressing containerd's `moby` namespace because
+docker is present would be rastro deciding which of two true accounts an operator is
+allowed to see. Keeping them apart is what lets them disagree, the same reasoning
+that keeps an exporter's configured endpoint separate from what `sockets` observed
+bound.
+
+**A shared identity core, per-engine detail.** containerd's container is not docker's
+spelled differently: it has no published ports and no restart policy, because those
+are docker's abstractions above it. A single container type would either lie by
+omission or grow an optional field for every concept any one engine has. So the value
+objects are shared — the id, the name, the image reference, the digest — and each
+engine contributes the detail its own concepts support.
+
+**This corrects the wording of an earlier entry.** "v1 collectors: Layers 1 and 2,
+plus three Layer 3 starters" names the third starter `docker`. The facet is
+`containers`, and docker is the first engine in it.
+
+## `docker version` is the probe, because it is the only read that survives a dead daemon
+
+Measured, and it decides the whole detection ladder. On a box where docker is
+installed and nothing is answering on the socket, docker 29.8.0 answers:
+
+| read | exit | stdout |
+| --- | --- | --- |
+| `docker version --format '{{json .}}'` | **0** | the client half, with `"Server": null` |
+| `docker info --format '{{json .}}'` | 1 | a skeleton of empty fields |
+| `docker ps` | 1 | nothing |
+
+All three write the connection failure to stderr. The execution seam refuses a
+non-zero exit's output entirely, so `info` and `ps` cannot tell "no daemon" from "a
+broken read" — both arrive as the same failure. `version` can, and it is one of the
+tools that answers on the wrong stream, which is what `run_capturing_stderr` exists
+for.
+
+**The exit code is not a contract across versions, and that was measured too.**
+Debian 13's docker, 26.1.5, exits **1** for the same read against a socket that is
+not there, printing the same `"Server": null` document to stdout it will not be
+credited for. So on that client an engine whose daemon is down reaches the document
+as a facet `error` carrying docker's own complaint, rather than as the observed state
+of an installed engine with nothing answering.
+
+**Accepted rather than worked around.** The alternatives are worse: reading stdout
+from a non-zero exit means the seam no longer refuses partial output, which is a
+hardening rule that exists because a truncated answer treated as an answer is the bug
+that disqualified configsnap. Matching docker's error text for "permission denied"
+against "is the daemon running" is a version-dependent guess dressed as a fact. And
+inferring "not running" from a missing socket at the default path is wrong for any
+dockerd started with `-H`.
+
+An `error` naming the reason is not a lie about the box — it says rastro could not
+establish the state, and why. The distinction is kept where the client offers it, and
+the same shape serves podman, which is daemonless and answers for itself.
+
+**One case is a failure on every version, and should be:** an unprivileged run. The
+socket is there, the daemon is answering, and the caller may not use it. Measured on
+26.1.5 as a non-root user, `version` exits 1 with `permission denied while trying to
+connect`, and the facet is an `error`. Recording that as "unreachable" would be a
+false statement about a daemon that is running perfectly well.
+
+It pays for itself twice over: the same document carries the client version beside
+the server's, which differ on a box whose package update has restarted neither, and
+the components — which containerd, which runc, which init the engine actually runs. A
+runc replaced under a running docker is exactly the change a fingerprint is taken
+around, and it is invisible in the engine's own version.
+
+## An engine installed with nothing answering is state
+
+Three facts, kept apart:
+
+- no engine rastro can read: the facet is `absent`;
+- an engine installed with nothing answering: `ok`, with `daemon` `unreachable`, the
+  reason the client gave, and **no server node at all**;
+- rastro unable to look: an `error`, loudly.
+
+The server node's absence is structural rather than a convention. A box whose daemon
+did not answer has nothing to say about its storage driver or its containers, so
+there is no field for a reader to mistake for "asked and told nothing" — the same
+reason the postgresql facet keeps a cluster's configured half apart from its observed
+one.
+
+**Cost, accepted knowingly:** `absent` means "no engine rastro knows of". A box
+running LXC or incus reads as absent, which is a limit of rastro rather than a fact
+about the box. The alternative, an unconditional `present`, would put an
+engine-shaped empty answer into every fingerprint of every box that has never run a
+container.
+## Keyed by container name, not by container id
+
+An id is minted afresh every time a container is created. Keyed by id, a
+`docker compose up` on an unchanged definition would report every container as
+removed and a new one added, which is a diff that says nothing.
+
+A name survives recreation: compose derives it from the project and the service, and
+an operator who names nothing still gets a name that is stable until they recreate
+the container themselves. The id is recorded as a value, where a reader sees it
+change and knows the container was rebuilt.
+
+## A container that will delete itself is volatile whole
+
+`--rm` declares a job rather than a tenant. A cron-driven `docker run --rm` exists
+for a few seconds, so two runs of a box nobody touched legitimately disagree about
+whether it is there.
+
+The `processes` facet met the general form of this and had to annotate its whole
+table volatile, because a process table cannot be byte-identical on a machine that is
+doing anything. A container list is not like that: a container is declared, it
+outlives the run, and whether it is up is the first line an operator reads. So the
+entries stay and the exceptions are annotated — which is what `Volatility` is for,
+rather than something the byte-identity contract had to be weakened to accommodate.
+
+**Keyed on the engine's own record of the intent**, `HostConfig.AutoRemove`, and not
+guessed from a name or an uptime. The container is still reported in full in the
+complete view, where somebody standing in front of the box can see what ran.
+
+The moving values inside a container that stays get the same treatment one at a time:
+both stamps and the restart count are volatile, because a container restarting under
+its policy moves all three with nobody having touched the box. The status is not, and
+deliberately: `running` becoming `exited` is the single most useful line in a diff of
+a container host.
+
+## A container that vanished while being read is recorded, not dropped
+
+Reading a box's containers takes two steps, the id list and then one read per
+container, and a `docker run --rm` from cron can end between them.
+
+**One read per container rather than one read for all of them**, which is the
+decision the race forces. `docker inspect` given several ids exits non-zero if any
+one of them has gone, and the seam refuses a non-zero exit's output entirely, so a
+single ephemeral container ending mid-run would cost the whole facet every other
+container on the box. Read one at a time, that loss is one entry in
+`unreadable_containers`, carrying the id and the engine's own complaint.
+
+The list is volatile, for the same reason the ephemeral container itself is: a
+container that comes and goes on its own is the host changing on its own. The cost is
+one subprocess per container, which is what running the collectors concurrently is
+for.
+
+## The manifest digest is not there below docker 29
+
+`docker inspect` on 29.8.0 carries an `ImageManifestDescriptor`, whose digest is what
+a registry would serve for the container's image. Debian 13's docker, 26.1.5, does
+not have the field at all — measured on both.
+
+So the container's image is recorded as three values rather than one: the reference
+the operator wrote, the id docker resolved it to, and the manifest digest **where the
+engine offers it**. The id is the strongest of the three anyway, being a digest over
+the image's configuration, and the repo digest reaches the document through the image
+list rather than through every container that runs it.
+
+## Every environment value is sensitive, and none of them is judged by name
+
+The `sysctl` facet decides sensitivity from the key, because the parameters holding
+a secret are a closed set somebody can enumerate. A container's environment is the
+opposite kind of thing: it is whatever the operator put there, and the name is a poor
+witness in both directions.
+
+`DSN=postgres://app:s3cret@db:5432/app` carries a credential and matches no keyword a
+rule could look for. `MYSQL_ROOT_PASSWORD` announces itself. A rule that guesses fails
+in the direction that leaks, so there is no rule: every value is withheld and reaches
+the document as a digest, in both views.
+
+The names stay public, which is what makes the facet useful. A diff says `PGPASSWORD`
+changed, and the value that says so is not the password — the same shape the postgresql
+facet uses to make a role's password rotation visible without holding the password.
+
+**Cost, accepted knowingly:** `PATH` and the rest of an image's benign environment are
+digested too, so the complete view reads less well than it could. `--raw` is where that
+is paid back, once it exists.
+
+Labels are the asymmetry, and deliberately: a label is metadata somebody attached to
+describe the container, and for a container nobody named by hand it is the only durable
+link back to the definition it came from, since compose writes its project, its service
+and a hash of the config it rendered. Those are recorded as they stand.
+
+## A tmpfs mount is in neither list the others are in
+
+Measured on docker 26.1.5. A container started with `--tmpfs /scratch:rw,size=64m`
+reports **no `Mounts` entry at all** for it. The only place it appears is
+`HostConfig.Tmpfs`, as a destination mapped to its raw option string.
+
+So the mounts are read from both accounts and merged on the destination. A facet
+reading the mount list alone would have lost every tmpfs on the box and said nothing
+about it, which is the silent-omission failure this project exists to avoid: a tmpfs
+appearing at `/run` or over `/tmp` is exactly the kind of change an operator takes a
+fingerprint to catch.
+
+**Keyed by destination rather than listed in the engine's order**, which the merge
+needs and the contract wants anyway: on the same measurement two mounts came back in
+the opposite order from the one they were declared in, so the order is docker's own
+and nobody promised it. A destination is unique per container, and one arriving from
+both accounts is docker contradicting itself, so it is refused rather than resolved.
+
+The tmpfs option string is kept whole rather than split into pairs, for the same
+reason `/proc/mounts` options are: splitting on every comma corrupts any value that
+holds one. Whether the mount is read-only is read from that string, because for a
+tmpfs docker keeps it there rather than in a flag of its own.
+
+## A port's bindings are read from what the engine did, not what was asked of it
+
+Measured on docker 26.1.5, publishing one port two ways:
+
+| asked | `HostConfig.PortBindings` | `NetworkSettings.Ports` |
+| --- | --- | --- |
+| `-p 127.0.0.1:8080:80/tcp` | `HostIp: "127.0.0.1"` | `127.0.0.1:8080` |
+| `-p 9000:9000/udp` | `HostIp: ""` | `0.0.0.0:9000` **and** `[::]:9000` |
+| `--expose 7777` | absent | `"7777/tcp": null` |
+
+The request understates the reach of the second port in the way that matters most: an
+empty host address is not a wildcard until the engine decides it is one, and whether a
+port is reachable from the network or only from the box is the line an operator reads
+first. So the effective table is what the document carries, keyed by the engine's own
+`80/tcp` spelling.
+
+**A port with no bindings is kept, and that is the type's whole reason.** `"7777/tcp":
+null` says the container listens on a port nobody published: real state, and a
+different fact both from the port being unpublished-and-absent and from the container
+not listening at all. Dropping it would lose the difference between an internal
+service and no service.
+
+The bindings of one port are sorted, since publishing without an address gives one per
+family and the engine promises no order. The host address is the shared `InetHost`, the
+same leaf `sockets` reports a listener bound to, so the two facets can be read
+together: a port published on `0.0.0.0` with no listener to match is a different box
+from one where they agree.
+
+## A container's requested address is kept beside the one it was given
+
+Every network entry carries both, and the pair is the point. A compose file naming a
+fixed address is a declaration; what the engine's IPAM did about it is an observation.
+They agree almost always, and the almost is the whole reason a fingerprint exists. The
+same shape as the postgresql facet's configured port beside the port its running
+postmaster reports.
+
+Measured on docker 26.1.5: on a network the container asked nothing of, `IPAMConfig`
+and `Aliases` are both `null`, while `GlobalIPv6Address` is `""` on a network with no
+IPv6 at all. So an address nobody asked for is recorded as absent rather than as a
+request that happened to be honoured, and an empty string never becomes an address that
+is nothing.
+
+Aliases are sorted, because they arrive in the order they were declared and that is the
+operator's order rather than anything the engine promises.
+
+**Three of docker's fields are deliberately not recorded**, and the reasons differ:
+
+- `EndpointID` is a per-connection handle with no meaning to an operator, and it moves
+  whenever a container is reattached.
+- `Gateway` and `IPPrefixLen` are properties of the *network*, not of this container's
+  end of it, so they belong to the network list rather than to every container on it.
+- `DNSNames` is the container's name, its aliases and its own short id, all three
+  already in the document under names that say what they are.
+
+The network's id *is* recorded, even though the name is the key: a network destroyed
+and recreated under the same name is a different network with a different subnet, and
+the id is the only witness to that.
+
+## Unlimited is absent, in all three of docker's spellings for it
+
+Measured on docker 26.1.5, a container given no limits at all reports `Memory: 0`,
+`NanoCpus: 0`, `CpuShares: 0`, `PidsLimit: null` and `CpusetCpus: ""`. Three spellings
+of one fact, and all three reach the document as absent.
+
+Recording the zero would be a false statement rather than a clumsy one: a memory limit
+of `0` reads as a container confined to no memory at all, which is the opposite of
+unconfined. The same for the restart policy's `MaximumRetryCount: 0`, which docker
+writes both for the policies that have no retry count and for an `on-failure` with
+none given, where it means "as often as it takes". Recorded as `0` it would read as
+"never retry".
+
+**The limits are kept in the engine's own units, and that is what makes them
+recordable at all.** The document admits no floating point, so `--cpus 1.5` could not
+be written as a number of CPUs. docker's unit for a fractional CPU is a whole number of
+billionths, `1500000000`, so the fraction is carried exactly instead of being
+approximated or dropped. Memory is bytes, through the shared `ByteSize`, which refuses
+a figure too large to record faithfully at the point it is read rather than letting it
+wrap three layers later.
+
+A negative figure is read as no limit too: docker uses `-1` for unlimited swap, and a
+negative byte count is not a size.
+
+## The confinement is one node, and it is the effective one
+
+The privileged flag, the capability delta, the confinement options and the shared
+namespaces sit together under `security` rather than scattered through the container.
+That is the group somebody reads together: an auditor asking what a container can do to
+the host wants all four at once, and a diff of that one node answers "did this get
+worse".
+
+**The effective options, not the requested ones, and the difference is measurable.** A
+container given `--security-opt no-new-privileges` together with `--pid host` comes back
+from docker 26.1.5 carrying `label=disable` as well, which docker added itself because
+sharing the host's pid namespace makes SELinux labelling impossible. The option nobody
+asked for is the interesting one, and only the effective list has it.
+
+**Capabilities are recorded as the delta, not as the resolved set.** The effective set is
+the engine's default plus the additions minus the drops, and that default belongs to the
+engine's version rather than to the container. Resolving it would mix a decision somebody
+made with a default that moves under them, so a docker upgrade would read as every
+container on the box having changed. Both lists are sorted, since the engine keeps them
+in flag order and swapping two `--cap-add` flags changes nothing about the box.
+
+**The namespace modes are five one-word fields that decide most of what a container can
+reach.** `--pid host` lets it see and signal every process on the machine, `--userns host`
+makes root inside it root outside it, `--net host` puts it on the box's own stack where
+every port it binds is a port on the host. None of that shows in a process table.
+
+Absent where docker writes an empty string, which is a container that chose nothing.
+`NetworkMode` keeps whichever of two kinds of thing docker put in it — a namespace choice
+like `host` or `none`, or the name of a network — because it is one field in the engine and
+splitting it would mean rastro guessing which kind a value is, while a network is allowed
+to be called `host`.
+
+`privileged` is recorded even when false. It is the field an auditor reads first, and an
+absent false would be indistinguishable from a facet that does not report it at all.
+
+## The healthcheck is configuration, its verdict is an observation, and its log is neither
+
+Three things with the same name, and the facet separates them.
+
+**The check as configured is stable state.** Its command and its four timings do not
+move, and a changed interval is a change somebody made. The timings are nanoseconds,
+docker's own unit, which is what lets `--health-interval 30s` be recorded exactly in a
+document that admits no floating point.
+
+**Its verdict is volatile.** `healthy` becoming `unhealthy`, and the failing streak
+counting up, happen on their own on a box nobody touched, so both are annotated and sit
+in `state` beside the container's status. That pairing is the useful one: a container
+that is `running` and `unhealthy` is the case an operator is looking for, and one word
+without the other does not say it.
+
+**Its log is dropped, and it is the only field here that is dropped rather than
+annotated.** docker keeps the last few runs of the check together with their output, and
+the output of a failing database check is its connection error, credentials and all. It
+is also a rolling window that changes on every run. There is no reading of it that
+belongs in a fingerprint, so the deserializer does not declare the field at all: not
+asking is how it stays out.
+
+The log *driver* is recorded, with its options, because an unbounded `json-file` is how a
+box fills its disk and the difference between that and the same driver with `max-size`
+set is invisible unless both are there. A container docker reports no driver for is on
+`json-file`, which is the engine's own default rather than a guess.
+
+## Images are keyed by id, which is the opposite of how containers are keyed
+
+Containers are keyed by name because a name outlives the id it is minted with. Images
+are keyed by id for the mirror-image reason: **a tag is not identity, and moving one is
+the event worth catching.** `nginx:1.29` repointed at a rebuilt image leaves the old
+image on the box with no tags and gives the new one the tag, and only an id-keyed table
+shows both halves of that at once. Keyed by tag, the same event would read as one entry
+whose contents changed, which says less.
+
+**A dangling image is kept.** `docker image ls --all` includes the images a rebuild
+displaced, and they are state: they hold disk, they are usually an accident, and
+`<none>:<none>` is the only place an operator ever meets them. An entry with an empty
+tag list says exactly that.
+
+**The labels are read for the provenance.** `org.opencontainers.image.revision` names
+the commit an image was built from, which on a box running images nobody can rebuild
+from memory is the only link back to the source. Measured on two builds of the same
+Dockerfile: the tag moved, the revision label changed, and the displaced image kept the
+old one.
+
+**What is deliberately left out of an image**, each for its own reason:
+
+- the image's own `Config`: those are container defaults, and every container running
+  the image already reports them resolved, environment included;
+- `RootFS.Layers`: content the id already addresses, and a list per image on a box with
+  eighty of them;
+- `Metadata.LastTagTime`: it moves when somebody re-tags rather than when anything about
+  the image changes.
+
+The size is required rather than optional, unlike a limit: an image always has one, so a
+negative or unreadable figure is a misread and fails, where an absent limit is a fact.
+
+## A volume's driver options are read, because the mountpoint can be a lie
+
+A `local` volume created with `--opt type=tmpfs --opt device=tmpfs --opt o=size=32m`
+still reports a mountpoint under `/var/lib/docker/volumes/`, and the data is not durably
+there at all. An NFS volume is the same shape: the mountpoint is local and the options
+name the server the data actually lives on. Measured on docker 26.1.5.
+
+A facet that recorded the mountpoint alone would describe the wrong place with
+confidence, which is worse than describing nothing. So the driver, the options, the
+labels and the scope are all read, and the mountpoint is one value among them rather
+than the answer.
+
+**Volumes are read in their own right rather than only as a container's mounts.** They
+outlive the containers that used them: a volume left behind by a container that has been
+deleted is invisible from every other part of this facet, and it is simultaneously where
+a box's data is and where its wasted disk is. An anonymous volume, which a container gets
+when an image declares `VOLUME` and nobody named one, is recorded like any other under
+its 64-character hex name, for the same reason a dangling image is.
+
+## A network's own record is read, and the containers on it are not read twice
+
+`docker network inspect` lists every container attached to the network, and every one of
+those containers already reports the network from its own end, with more: its aliases and
+the address it asked for. Recording the same edge from both ends would give a reader two
+places to disagree about one fact, so the network's entry holds no container list. The
+same reasoning that keeps a container's `DNSNames` out: it is the name and the aliases
+already recorded, spelled again.
+
+What the network's own entry carries instead is what only it knows:
+
+- **the addressing**, because the subnet is what every container's address on it has to
+  fall inside, and a network recreated with a different subnet moves every container at
+  once;
+- **the driver options**, because for a bridge they decide what is permitted:
+  `enable_icc` whether containers on it can reach each other at all,
+  `host_binding_ipv4` which host address an unqualified `-p` publishes to, and `name` the
+  host interface the network actually is;
+- **`internal`, `attachable` and `ingress`**, one word each, deciding whether there is a
+  route off the box, whether a standalone container may join, and whether this is the
+  network a swarm publishes services through.
+
+The engine's own three — `bridge`, `host` and `none` — are included rather than filtered
+as built-ins. The default bridge's `enable_icc` governs every container that chose no
+network, and nothing else in the document says so.
+
+**One measurement corrects a claim made earlier in this work.** A network created with a
+subnet and nothing else reported *no* gateway in the IPAM config immediately after
+creation, and reported `172.30.0.1` in it after the daemon restarted. Same docker, same
+network. So the gateway is optional because the engine is inconsistent about echoing it,
+and an absent one means unreported rather than none. The code said the first thing as if
+it were the whole rule, and now says both.
+
+## The engine's private trees are sealed by listing them, not by naming them
+
+On a box running containers this is where the filesystem walk spends itself. Measured
+twice:
+
+- a development machine: **376,948** of its **834,466** entries were under the container
+  store, and **294,525** of those were layer entries;
+- the reference container, after the claim: **6,942** entries on disk under the engine's
+  root against **20** recorded, the layer store reduced from 6,761 entries to the one
+  entry for its own directory, and all 8 entries of the volume tree intact.
+
+**The trees are resolved by listing the root's children rather than by naming them, and
+that is not tidiness.** The layer store's directory is `overlay2` under one driver and
+`vfs` under another, and on docker 29 — whose driver reports itself as `overlayfs` —
+there is no `overlay2` directory at all: the layers are under `rootfs` and inside
+containerd's own store. So a fixed list of names would have been wrong on docker 29, and
+a mapping from the driver name would have been wrong in a different way. Listing what
+the engine actually keeps covers every driver, every version, and a directory a later
+docker adds without rastro being told.
+
+**Sealed rather than merely unhashed**, on the reasoning the postgresql data directory
+established: it is most of the entries, every attribute that survives moves on the next
+pull, and what is genuinely in there this facet reports properly — the images by digest,
+the containers by name, the volumes by name and driver.
+
+**One directory is named, and it is the one that must survive**: `volumes`. That is where
+a box's databases, uploads and certificates live, and it is the only tree under the
+engine's root that is not the engine's own bookkeeping. It carries no claim at all, so it
+is read exactly as the walk reads anything else.
+
+**Sealing the root and sparing volumes underneath it is not available**, and it was
+checked rather than assumed: the walk prunes at a sealed directory, so a rule for a
+subtree of one is never consulted. That is why the claim is one per child rather than one
+for the root, and it is also why the choice matters — a config can only narrow, so a
+sealed root would have removed the operator's data from the document with no way to ask
+for it back.
+
+**The root is resolved when the collector is constructed**, from `docker info`, because
+the walk's table is built before any collector runs and a claim cannot wait for the
+facet's own read. That is the arrangement the postgresql collector already uses for its
+cluster list. An engine whose daemon did not answer names no root, and then no claim is
+made at all, because the walk's own reading is the safe direction to be wrong in.
+
+## containerd is asked where it is listening, because `ctr`'s default is wrong on a docker box
+
+Measured on docker 29.8.0 with containerd 2.3.4 underneath it: containerd runs as
+`containerd --config /var/run/docker/containerd/containerd.toml`, its socket is
+`/var/run/docker/containerd/containerd.sock`, and `/run/containerd/containerd.sock` — where
+`ctr` looks when nobody tells it otherwise — **does not exist**. A bare `ctr` there fails
+outright with `cannot access socket`.
+
+So the running process is asked, in the order it can answer:
+
+1. its own `--address`, in either spelling, which is the whole answer when it is there;
+2. the `[grpc] address` of the file its `--config` names;
+3. containerd's documented default, for a containerd started with neither.
+
+The process is identified by the binary behind it rather than by a name, the same way the
+`exporters` facet identifies an agent: a unit may be called anything, and the executable
+is the fact.
+
+**The configuration is parsed by naming the two lines that matter, and that is not
+fastidiousness.** The first `address =` in the file docker's containerd is given belongs
+to `[debug]`, and the debug endpoint answers a different API. Anything taking the first
+match would talk to the wrong socket and report the failure as though containerd were
+broken.
+
+**This is a discovery read, not a state read**, which is why parsing a configuration here
+does not need the licence the nginx entry grants. It establishes how to reach the service;
+what the service then says about itself is asked of the service.
+
+A configuration rastro cannot read — which an unprivileged run makes ordinary — falls back
+to the documented default rather than giving up: the engine is plainly running, and `ctr`
+says so loudly if the address is wrong. A box with no containerd process gets no address at
+all, because the default is not worth guessing when nothing is behind it.
+
+## containerd is a second dialect, not the same engine spelled differently
+
+The facet's three-part shape is shared with docker — the client that is installed,
+whether anything answered, and what it said — because those are the three states a
+reader has to tell apart whichever engine it is. Almost nothing inside is shared, and
+that is the point of keying the facet by flavour rather than flattening both into one
+container type.
+
+**`ctr --version` is the read for the client, and `ctr version` for the server.**
+Measured on containerd 2.3.4: the `version` subcommand has to reach the socket to answer
+and, against an address with nothing behind it, exits non-zero printing *nothing at all* —
+not even the client's own half. `ctr --version` never connects and answers regardless. So
+the client's version is readable on exactly the box whose state is hardest to describe:
+containerd installed and stopped.
+
+**A successful `ctr version` with no server block is a failure, not an absence.** Since a
+`ctr` that cannot reach containerd exits non-zero, and the execution seam turns that into
+a recorded failure, output that *did* succeed and carries no server block means the format
+is not the one rastro reads. That is precisely the day this has to be loud rather than
+report an engine with no version.
+
+**Everything else avoids `ctr`'s tables.** `ctr` calls itself a debug tool and promises
+nothing about its output, so every other read uses `--quiet`, which prints one identifier
+per line, or the JSON of `containers info`. The version is the one place with neither.
+
+**The revision is recorded beside the version, and it earns its place here more than it
+would for docker**: containerd's version moves slowly and a distribution's rebuild changes
+only the revision, so the version alone would call two different builds the same engine.
+Debian 13's containerd reports `1.7.24~ds1` with revision `1.7.24~ds1-6+deb13u1`, which is
+a package version rather than a commit, and is recorded as reported.
+
+**Detection is the client, as it is for docker.** `ctr` ships with containerd, so a box
+that has it has had containerd installed, and whether anything answers is then state.
+**Cost, accepted knowingly:** a containerd running with no `ctr` installed is not reported
+at all. That is a limit of rastro rather than a fact about the box, and the same one docker
+has if its client is missing.
+
+**containerd's own store is not claimed yet.** On a docker box its layers are inside the
+tree docker's root already seals, and a standalone containerd wants its own measurement
+before a claim is made against it.
+
+## The two engines' container lists differ in population, and that is the evidence for keeping them apart
+
+Measured on one box, docker 26.1.5 with its managed containerd 1.7.24, at one moment:
+
+| view | containers |
+| --- | --- |
+| the `docker` entry | 7, running and stopped alike |
+| the `containerd` entry, namespace `moby` | 2, both running |
+
+docker deletes the containerd record when a container stops and keeps its own metadata,
+so containerd's list holds only what is running. Neither view is wrong and neither is a
+subset worth suppressing: "docker has forgotten a container containerd still holds" and
+"docker holds a container containerd has never heard of" are both real states, and only
+two entries side by side can show either.
+
+**The namespace is the outer key**, not a field on each container, because it is
+containerd's tenancy boundary: two namespaces may hold the same id and nothing in one is
+visible from the other. Which namespaces exist is itself a fact about who is using the
+engine, so an empty namespace keeps its key.
+
+**Containers are keyed by id here and by name in the docker entry**, and the asymmetry is
+containerd's: it has no names. A container's id is whatever created it chose — docker and
+a kubelet use a hex string, `nerdctl` uses the name the operator typed — so there is no
+second identifier to prefer.
+
+**A container's image is optional, and both shapes were measured.** On docker 26.1.5 the
+containerd record's `Image` is empty, because docker keeps its own snapshots and hands
+containerd a prepared rootfs; on docker 29.8.0, whose snapshotter *is* containerd's, it
+holds `docker.io/library/alpine:latest`. The same goes for the snapshotter and its key,
+empty on the first and set on anything created through containerd itself.
+
+**`tasks ls` is the one `ctr` table this collector parses, and it is read once per
+namespace.** containerd offers no `tasks info`, so the pid and the status exist nowhere
+else, and the table answers for every container in the namespace at once. Its three
+columns are an id, a number and a single word, none of which can hold a space; a row with
+any other number of columns is refused rather than guessed at.
+
+**A container with no task is defined and not running**, which is the state docker spells
+as a status on the container itself. Here the absence of the task *is* the status, which is
+why the task is optional rather than a status word that is sometimes empty.
+
+## `ctr`'s one table is sliced by its header, because a column holds two words
+
+`ctr images ls` is the only read in this collector with neither a `--quiet` form nor JSON,
+and its columns cannot be split on whitespace: the size prints as `3.9 MiB`, two tokens in
+one column, so a positional split puts the platforms where the labels belong and shifts
+every field after the size.
+
+The header is padded to the width of the widest cell in each column, which makes its own
+column offsets the authority on where each field starts. So the table is *sliced* by the
+header rather than split, read by column name, and a column containerd adds later shifts
+nothing.
+
+**Two of its columns are read and two are not, each for its own reason.**
+
+- The size is not recorded: `3.9 MiB` is a rounding, and there is no `images info` to ask
+  for bytes. A rounding in a diffable document changes when the formatting does and not
+  when the image does.
+- The labels are not recorded: the only form is one comma-joined cell, and a label's value
+  may itself hold a comma, so splitting would corrupt values rather than read them.
+
+docker's own image entry carries real bytes and structured labels, which is the point of
+keeping the two dialects apart rather than pretending to one shape.
+
+**And whether containerd holds any images at all depends on what is driving it**, measured
+on both: docker 26.1.5 keeps its own image store and uses its containerd only as a runtime,
+so its `moby` namespace holds containers and **no** images; docker 29.8.0, whose snapshotter
+*is* containerd's, holds both. An empty image map beside a populated container map is
+therefore a real reading of a real box rather than a failed one.
+
+## containerd's own trees are sealed as two claims, and the paths are resolved first
+
+containerd keeps what it holds in two places, both named in its configuration and both
+read in the same pass that finds its socket: `root`, the content store and the snapshots,
+and `state`, the shims, sockets and task directories of what is running. A containerd that
+names neither is at the documented defaults, `/var/lib/containerd` and `/run/containerd`.
+
+**Two claims rather than a listing, which is where this differs from docker.** docker keeps
+the operator's volumes inside its own root, so its children have to be claimed one at a
+time to spare that one. Nothing under containerd's root or its state belongs to the
+operator, so the trees themselves are sealed and the walk stops at each. The docker
+arrangement is the pattern for an engine that mixes its own store with the operator's
+data, not a rule that generalises: podman keeps `graphroot`, `runroot` and `volume_path`
+as three independently relocatable roots, and will need its own reading of the same
+question.
+
+**Every claimed path is resolved through its symlinks first, and that was a trap worth
+measuring.** docker gives its managed containerd
+`state = "/var/run/docker/containerd/daemon"`, and on Debian `/var/run` is a symlink to
+`/run`. The filesystem walk never follows a symlink, so it only ever records the real
+path: a claim naming the symlinked one is a rule about a tree nothing visits, and it would
+have failed silently. On the reference box the claim is now recorded as
+`/run/docker/containerd/daemon`, which is where the walk goes.
+
+**One tree is claimed once, whichever dialect resolved it.** Two claims on one path fail
+the *walk* rather than one facet, and two engines legitimately resolve to the same
+directory: docker's managed containerd keeps its store at
+`/var/lib/docker/containerd/daemon`, inside docker's own root. Two dialects saying the same
+thing about one tree is not a disagreement, so the collector folds it rather than reporting
+it.
+
+## podman does not come through the gate, and its CLI never will
+
+The nginx entry says a service's own account of itself may be read only where asking does
+not change the host, **with the measurement attached**. It named podman as one that had to
+be measured before its dialect was written. Here is that measurement, and podman fails it
+twice over.
+
+**A read initialises a store.** `podman ps --all` against an empty store, under a cleared
+environment, created **22 filesystem entries**: `db.sql`, five lock files
+(`storage.lock`, `userns.lock`, `layers.lock`, `containers.lock`, `images.lock`), the
+`overlay`, `overlay-layers`, `overlay-containers`, `overlay-images`, `volumes` and `libpod`
+directories, and `overlay/.has-mount-program`. On a box where podman is installed and has
+never been used, a fingerprint run would create a container store and then report the box
+it had just changed.
+
+**And a read on an initialised store still writes.** Five reads — `ps`, `images`,
+`volume ls`, `network ls`, `info` — against the store the first read had made, with a
+zero-change control interval either side, moved `storage.lock`'s mtime and ctime, moved the
+`overlay` directory's stamps, and created two new files in the runroot:
+`overlay/volatile-true` and `overlay/idmapped-lower-dir-true`, which are probes podman
+writes to test what the filesystem underneath supports.
+
+So it is worse than the nginx case rather than comparable to it. `nginx -t` created log
+files the configuration named; podman writes a database, takes locks by writing to them,
+and leaves capability probes behind on every read. There is no flag that turns that off,
+because it is not a side effect of a read: it is how a daemonless engine reaches the state
+a daemon would have been holding.
+
+**The consequence, and it is a design position rather than a delay.** There is no podman
+dialect in this facet, and there will not be one built on `podman`. A box running podman
+reads as `absent`, which is a limit of rastro rather than a fact about the box, and this
+entry is what an operator gets pointed at.
+
+**Two routes are open and neither is the CLI.**
+
+- **Its API socket.** podman ships a `podman.socket` unit that serves docker's own API, and
+  on the machine this was measured on it is *enabled and listening* at
+  `/run/podman/podman.sock`. Where the operator runs it, the store is already initialised by
+  the service and asking it is the same kind of read the docker socket is. That needs its own
+  measurement, and an HTTP client, which the docker dialect never needed because it went
+  through the client.
+- **Its store, read as files.** The design already grants this shape for apk: read a
+  manager's own database where the tool offers no format rastro controls. podman's is
+  SQLite with no schema contract, so it is the weaker of the two.
+
+Reversing this means a new entry with a measurement showing a read that leaves the box as it
+was found.
+
+## The rest of a container's definition, and the three ways docker spells "none"
+
+Devices, ulimits, kernel parameters, name resolution and the shared-memory size complete
+what a container was defined with. Each earns its place by being invisible everywhere else:
+
+- **a device** is the sharpest thing a container can be handed short of privilege.
+  `--device /dev/sda:/dev/sda:rwm` gives it the disk the host boots from, and the mount
+  table does not show it. Keyed by the path inside the container, which is unique there;
+- **a ulimit** is recorded as both halves, because the soft limit is what a process starts
+  with and may raise, and the hard one it cannot;
+- **the kernel parameters are the container's own**, which is a different fact from the
+  `sysctl` facet's reading of the running kernel: one is a request in a definition, the
+  other is what the box is currently set to. That is also why they are not the `sysctl`
+  facet's value objects, whose volatility and secrecy rules are about a runtime reading;
+- **name resolution** decides what a container can reach, and an `--add-host` entry is a
+  name that resolves nowhere else on the box. The lists keep the engine's order, because a
+  resolver list is ordered and sorting it would change what the container does. An added
+  host is split on its *first* colon only: an IPv6 address is full of them, so
+  `db:2001:db8::1` is one name and one address rather than four fields;
+- **the shared-memory size** is recorded even at docker's default of 64 MiB, because a
+  container given `--shm-size 1g` differs from one that was not.
+
+**One `HostConfig` spells "none" three different ways, measured on 26.1.5**: an empty array
+for `Devices`, `Ulimits` and the three DNS lists, `null` for `Sysctls` and `ExtraHosts`,
+and `0` for a limit. All of them read as nothing here, and the tests hold a container with
+none of them beside one with all of them so a future change cannot quietly conflate the
+spellings.
+
+**Device requests are still owed, and deliberately not guessed.** They are how a GPU
+reaches a container, and there is no GPU on any box this collector was built against. A
+shape written from the API reference rather than from a run is precisely the mistake the
+fixtures here exist to avoid, so the field waits for a box that has one.
+
+## One test asks docker, and it found something on its first run
+
+Every other test of this facet asserts what rastro does with output captured once, which
+pins the code against the author's own reading of that output and cannot catch a fixture
+captured wrong. `tests/containers_conformance.rs` asks docker instead: the container names
+against `docker ps --all`, the image ids against `docker image ls --all --no-trunc
+--quiet`, the volume names against `docker volume ls`, and the sealed trees against the
+directories under the root `docker info` names.
+
+It needs a live engine with something on it, and **fails rather than skipping** when there
+is none — a check that quietly passes on a box with no docker is how a whole dialect could
+rot unnoticed. `.github/workflows/live-engine.yml` provides both, in the
+`extended-verification` tier. The container suite cannot: it runs *inside* a container, and
+a dockerd in there needs privilege the other legs deliberately do not have.
+
+**It earned its place immediately**, the way the nginx conformance check did. Three of its
+four comparisons passed and the fourth caught a rule that could never apply: on a docker
+box the managed containerd keeps its store at `/var/lib/docker/containerd/daemon`, inside
+docker's own sealed root, so that claim sat in the effective table matching nothing the
+walk could ever visit. The collector now folds a claim contained by another, and the
+containerd facet reports its root and state as values so nothing is lost by the folding.
+
+**The oracle for the claim is the root, not `GraphDriver`.** The obvious check was to
+assert the sealed tree holds the layer path `docker image inspect` reports in
+`GraphDriver.Data` — but measured, that field is `{"Data":null,"Name":"vfs"}` on docker
+26.1.5 and `null` outright on 29.8.0, so on both engines available there is nothing to
+compare. Listing the root's children needs neither an image nor a driver-specific field,
+and it checks what the claim actually promises: every directory the engine keeps to itself
+is sealed, and the one holding the operator's volumes never is.

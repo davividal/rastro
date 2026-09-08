@@ -21,6 +21,7 @@ exclude = ["mounts"]
 | `invocation`   | metadata | no         |
 | `accounts`     | state    | yes        |
 | `block_devices`| state    | yes        |
+| `containers`   | state    | yes        |
 | `cron`         | state    | yes        |
 | `exporters`    | state    | yes        |
 | `filesystem`   | state    | yes        |
@@ -101,7 +102,8 @@ unknown key is an error, so an attempt at one fails rather than quietly doing no
 
 **The operator's rule beats a collector's claim.** A collector that owns a tree claims it from
 the host — `postgresql` seals each cluster's data directory, `nginx` seals the caches and
-temp trees it writes into, `packages` churns the package database. That is rastro's reckoning about a tree from the outside; the operator knows their
+temp trees it writes into, `packages` churns the package database, `containers` seals every
+tree a container engine keeps under its own root except the one holding your volumes. That is rastro's reckoning about a tree from the outside; the operator knows their
 box, so naming the same tree in a config replaces the claim rather than conflicting with it.
 Naming one tree twice *in the config* is still an error: the operator meant one of them and
 rastro cannot know which.
