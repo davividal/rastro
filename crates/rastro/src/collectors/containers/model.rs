@@ -26,7 +26,7 @@ mod docker_server;
 mod observed_health;
 mod published_binding;
 mod restart_policy;
-mod unreadable_container;
+mod unreadable_object;
 
 pub use cgroup_control::CgroupControl;
 pub use container_capabilities::ContainerCapabilities;
@@ -54,4 +54,4 @@ pub use docker_server::DockerServer;
 pub use observed_health::ObservedHealth;
 pub use published_binding::PublishedBinding;
 pub use restart_policy::RestartPolicy;
-pub use unreadable_container::UnreadableContainer;
+pub use unreadable_object::UnreadableObject;

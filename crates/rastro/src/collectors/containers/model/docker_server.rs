@@ -112,7 +112,7 @@ impl From<&DockerServer> for Observation {
             ("swarm", Observation::from(&server.swarm)),
             (
                 // Volatile, because a container that came and went between the id list and
-                // the read of it is the host changing on its own. See `UnreadableContainer`.
+                // the read of it is the host changing on its own. See `UnreadableObject`.
                 "unreadable_containers",
                 Observation::list(server.containers.unreadable().iter().map(Observation::from))
                     .volatile(),

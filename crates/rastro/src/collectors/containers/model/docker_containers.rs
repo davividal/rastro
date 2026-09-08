@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use rastro_collector::CollectionError;
 
-use crate::collectors::containers::model::{DockerContainer, UnreadableContainer};
+use crate::collectors::containers::model::{DockerContainer, UnreadableObject};
 use crate::collectors::containers::value_objects::ContainerName;
 
 /// The containers, keyed by name, beside the losses from reading them.
@@ -19,13 +19,13 @@ use crate::collectors::containers::value_objects::ContainerName;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DockerContainers {
     named: BTreeMap<ContainerName, DockerContainer>,
-    unreadable: Vec<UnreadableContainer>,
+    unreadable: Vec<UnreadableObject>,
 }
 
 impl DockerContainers {
     pub fn new(
         read: impl IntoIterator<Item = (ContainerName, DockerContainer)>,
-        unreadable: impl IntoIterator<Item = UnreadableContainer>,
+        unreadable: impl IntoIterator<Item = UnreadableObject>,
     ) -> Result<Self, CollectionError> {
         let mut named = BTreeMap::new();
 
@@ -38,7 +38,7 @@ impl DockerContainers {
             }
         }
 
-        let mut unreadable: Vec<UnreadableContainer> = unreadable.into_iter().collect();
+        let mut unreadable: Vec<UnreadableObject> = unreadable.into_iter().collect();
         // Sorted, because the id list arrives newest-first and a container created between
         // two runs would otherwise reorder the ones already in the document.
         unreadable.sort();
@@ -50,7 +50,7 @@ impl DockerContainers {
         &self.named
     }
 
-    pub fn unreadable(&self) -> &[UnreadableContainer] {
+    pub fn unreadable(&self) -> &[UnreadableObject] {
         &self.unreadable
     }
 }

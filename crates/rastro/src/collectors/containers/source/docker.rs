@@ -7,7 +7,7 @@ use super::docker_info::DockerInfoDocument;
 use super::docker_version::DockerVersionDocument;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::containers::model::{
-    DockerContainer, DockerContainers, DockerEngine, UnreadableContainer,
+    DockerContainer, DockerContainers, DockerEngine, UnreadableObject,
 };
 use crate::collectors::containers::value_objects::{ContainerId, ContainerName};
 
@@ -101,7 +101,7 @@ impl Docker {
     /// run under is for.
     fn containers(&self) -> Result<DockerContainers, CollectionError> {
         let mut read: Vec<(ContainerName, DockerContainer)> = Vec::new();
-        let mut unreadable: Vec<UnreadableContainer> = Vec::new();
+        let mut unreadable: Vec<UnreadableObject> = Vec::new();
 
         for line in self.tool.run(&LIST)?.lines() {
             let listed = line.trim();
@@ -113,7 +113,7 @@ impl Docker {
             match self.inspect(&id) {
                 Ok(container) => read.push(container),
                 Err(failure) => {
-                    unreadable.push(UnreadableContainer::new(id, &failure.to_string())?)
+                    unreadable.push(UnreadableObject::new(id.as_str(), &failure.to_string())?)
                 }
             }
         }

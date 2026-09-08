@@ -51,7 +51,7 @@ pub use model::{
     ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels, ContainerLimits,
     ContainerLogging, ContainerMount, ContainerMounts, ContainerNetwork, ContainerNetworks,
     ContainerPorts, ContainerState, DockerContainer, DockerContainers, DockerEngine, DockerServer,
-    PublishedBinding, RestartPolicy, UnreadableContainer,
+    PublishedBinding, RestartPolicy, UnreadableObject,
 };
 pub use source::{Docker, EngineSource};
 pub use value_objects::{
