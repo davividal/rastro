@@ -94,7 +94,11 @@ Violating one is a plan change, not a detail.
   per-value annotations; what to do about them is decided at render time.
 - **Three layers:** L1 filesystem walker, L2 fixed OS-runtime list, L3
   service-internal state discovered from L2 signals, never guessed. Prefer
-  effective state over config files (`nginx -T`, not nginx conf).
+  effective state over config files (`sshd -T` and `systemctl show`, not the
+  files they read), and parse a config only where the service offers no
+  non-mutating way to report its own. nginx is that exception and reads as the
+  counter-example it is: `nginx -T` creates every log file the config names, so
+  rastro resolves the includes itself. `docs/decisions.md` has the measurement.
 - **Exclusions, never inclusions.** Config is optional and can only narrow.
 - **Absence is state.** Statuses are `ok|absent|error`; excluded collectors are
   omitted with a WARN. Failures are loud in the output, never silent.
