@@ -1,6 +1,7 @@
 //! What rastro means by a container engine, independent of any engine's spelling.
 
 mod cgroup_control;
+mod container_capabilities;
 mod container_command;
 mod container_engine;
 mod container_engines;
@@ -10,9 +11,11 @@ mod container_labels;
 mod container_limits;
 mod container_mount;
 mod container_mounts;
+mod container_namespaces;
 mod container_network;
 mod container_networks;
 mod container_ports;
+mod container_security;
 mod container_state;
 mod docker_container;
 mod docker_containers;
@@ -23,6 +26,7 @@ mod restart_policy;
 mod unreadable_container;
 
 pub use cgroup_control::CgroupControl;
+pub use container_capabilities::ContainerCapabilities;
 pub use container_command::ContainerCommand;
 pub use container_engine::ContainerEngine;
 pub use container_engines::ContainerEngines;
@@ -32,9 +36,11 @@ pub use container_labels::ContainerLabels;
 pub use container_limits::ContainerLimits;
 pub use container_mount::ContainerMount;
 pub use container_mounts::ContainerMounts;
+pub use container_namespaces::ContainerNamespaces;
 pub use container_network::ContainerNetwork;
 pub use container_networks::ContainerNetworks;
 pub use container_ports::ContainerPorts;
+pub use container_security::ContainerSecurity;
 pub use container_state::ContainerState;
 pub use docker_container::DockerContainer;
 pub use docker_containers::DockerContainers;

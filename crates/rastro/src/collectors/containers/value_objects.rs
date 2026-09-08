@@ -1,5 +1,6 @@
 //! The leaves of the `containers` facet.
 
+mod capability;
 mod container_account;
 mod container_id;
 mod container_name;
@@ -20,6 +21,7 @@ mod swarm_state;
 mod transport_protocol;
 mod variable_name;
 
+pub use capability::Capability;
 pub use container_account::ContainerAccount;
 pub use container_id::ContainerId;
 pub use container_name::ContainerName;

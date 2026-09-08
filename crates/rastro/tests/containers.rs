@@ -205,6 +205,15 @@ const INSPECT_WEB: &str = r#"[
       "NetworkMode": "fixture-net",
       "Tmpfs": { "/scratch": "rw,size=64m" },
       "RestartPolicy": { "Name": "unless-stopped", "MaximumRetryCount": 0 },
+      "Privileged": false,
+      "ReadonlyRootfs": false,
+      "CapAdd": null,
+      "CapDrop": null,
+      "SecurityOpt": null,
+      "UsernsMode": "",
+      "PidMode": "",
+      "IpcMode": "private",
+      "CgroupnsMode": "private",
       "Memory": 0,
       "MemorySwap": 0,
       "MemoryReservation": 0,
@@ -294,6 +303,15 @@ const INSPECT_LIMITED: &str = r#"[
       "AutoRemove": false,
       "NetworkMode": "bridge",
       "RestartPolicy": { "Name": "on-failure", "MaximumRetryCount": 5 },
+      "Privileged": false,
+      "ReadonlyRootfs": true,
+      "CapAdd": ["NET_ADMIN", "SYS_TIME"],
+      "CapDrop": ["CHOWN"],
+      "SecurityOpt": ["no-new-privileges", "label=disable"],
+      "UsernsMode": "host",
+      "PidMode": "host",
+      "IpcMode": "none",
+      "CgroupnsMode": "private",
       "Memory": 67108864,
       "MemorySwap": 134217728,
       "MemoryReservation": 33554432,
@@ -1137,4 +1155,87 @@ fn a_limit_the_container_does_not_have_is_absent_rather_than_zero() {
     assert!(is_null(&field(&limits, "cpu_shares")));
     assert!(is_null(&field(&limits, "process_limit")));
     assert!(is_null(&field(&limits, "cpu_set")));
+}
+
+#[test]
+fn a_hardened_container_records_what_it_added_dropped_and_forbade() {
+    // Arrange: sorted, because the engine keeps them in the order they were given and an
+    // operator reordering two `--cap-add` flags has not changed the box.
+    //
+    // `label=disable` was not asked for: docker added it because `--pid host` makes SELinux
+    // labelling impossible, which is why the effective list is the one worth recording.
+    let security = field(&container_of("hardened", "limited"), "security");
+    let capabilities = field(&security, "capabilities");
+
+    // Act & Assert
+    assert!(boolean(&field(&security, "read_only_root_filesystem")));
+    assert_eq!(
+        items_of(&field(&capabilities, "added"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["NET_ADMIN".to_owned(), "SYS_TIME".to_owned()]
+    );
+    assert_eq!(
+        items_of(&field(&capabilities, "dropped"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["CHOWN".to_owned()]
+    );
+    assert_eq!(
+        items_of(&field(&security, "options"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["label=disable".to_owned(), "no-new-privileges".to_owned()]
+    );
+}
+
+#[test]
+fn the_namespaces_record_which_of_them_the_container_shares_with_the_host() {
+    // Arrange: `--pid host` is the flag that makes a container able to see and signal every
+    // process on the box, and `--userns host` is the one that makes root inside it root
+    // outside it. Both are one word in a document nobody would otherwise diff.
+    let namespaces = field(
+        &field(&container_of("namespaces", "limited"), "security"),
+        "namespaces",
+    );
+
+    // Act & Assert
+    assert_eq!(text(&field(&namespaces, "process")), "host");
+    assert_eq!(text(&field(&namespaces, "user")), "host");
+    assert_eq!(text(&field(&namespaces, "interprocess")), "none");
+    assert_eq!(text(&field(&namespaces, "control_group")), "private");
+}
+
+#[test]
+fn a_container_that_changed_nothing_records_no_capability_changes() {
+    // Arrange: docker writes null for the lists and an empty string for a mode the
+    // container did not choose, and neither is a change the container made.
+    let security = field(&container_of("plain", "web"), "security");
+    let namespaces = field(&security, "namespaces");
+
+    // Act & Assert
+    assert!(!boolean(&field(&security, "privileged")));
+    assert!(!boolean(&field(&security, "read_only_root_filesystem")));
+    assert!(items_of(&field(&field(&security, "capabilities"), "added")).is_empty());
+    assert!(items_of(&field(&security, "options")).is_empty());
+    assert!(is_null(&field(&namespaces, "process")));
+    assert!(is_null(&field(&namespaces, "user")));
+}
+
+#[test]
+fn the_network_namespace_records_whichever_of_the_four_things_it_can_be() {
+    // Arrange: `NetworkMode` is a network's name on one container and a namespace choice on
+    // another, `host` being the one that puts the container on the box's own stack. It is
+    // recorded as the engine spells it rather than sorted into two fields, because the
+    // engine keeps one field and the reader needs to see which of the two it holds.
+    let plain = field(&container_of("network-mode", "web"), "security");
+
+    // Act & Assert
+    assert_eq!(
+        text(&field(&field(&plain, "namespaces"), "network")),
+        "fixture-net"
+    );
 }

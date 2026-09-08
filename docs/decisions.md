@@ -3185,3 +3185,38 @@ wrap three layers later.
 
 A negative figure is read as no limit too: docker uses `-1` for unlimited swap, and a
 negative byte count is not a size.
+
+## The confinement is one node, and it is the effective one
+
+The privileged flag, the capability delta, the confinement options and the shared
+namespaces sit together under `security` rather than scattered through the container.
+That is the group somebody reads together: an auditor asking what a container can do to
+the host wants all four at once, and a diff of that one node answers "did this get
+worse".
+
+**The effective options, not the requested ones, and the difference is measurable.** A
+container given `--security-opt no-new-privileges` together with `--pid host` comes back
+from docker 26.1.5 carrying `label=disable` as well, which docker added itself because
+sharing the host's pid namespace makes SELinux labelling impossible. The option nobody
+asked for is the interesting one, and only the effective list has it.
+
+**Capabilities are recorded as the delta, not as the resolved set.** The effective set is
+the engine's default plus the additions minus the drops, and that default belongs to the
+engine's version rather than to the container. Resolving it would mix a decision somebody
+made with a default that moves under them, so a docker upgrade would read as every
+container on the box having changed. Both lists are sorted, since the engine keeps them
+in flag order and swapping two `--cap-add` flags changes nothing about the box.
+
+**The namespace modes are five one-word fields that decide most of what a container can
+reach.** `--pid host` lets it see and signal every process on the machine, `--userns host`
+makes root inside it root outside it, `--net host` puts it on the box's own stack where
+every port it binds is a port on the host. None of that shows in a process table.
+
+Absent where docker writes an empty string, which is a container that chose nothing.
+`NetworkMode` keeps whichever of two kinds of thing docker put in it — a namespace choice
+like `host` or `none`, or the name of a network — because it is one field in the engine and
+splitting it would mean rastro guessing which kind a value is, while a network is allowed
+to be called `host`.
+
+`privileged` is recorded even when false. It is the field an auditor reads first, and an
+absent false would be indistinguishable from a facet that does not report it at all.

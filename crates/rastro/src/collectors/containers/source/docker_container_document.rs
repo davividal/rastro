@@ -7,13 +7,15 @@ use std::collections::BTreeMap;
 use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
 
 use crate::collectors::containers::model::{
-    ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels, ContainerLimits,
-    ContainerMount, ContainerMounts, ContainerNetwork, ContainerNetworks, ContainerPorts,
-    ContainerState, DockerContainer, PublishedBinding, RestartPolicy,
+    ContainerCapabilities, ContainerCommand, ContainerEnvironment, ContainerImage, ContainerLabels,
+    ContainerLimits, ContainerMount, ContainerMounts, ContainerNamespaces, ContainerNetwork,
+    ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState, DockerContainer,
+    PublishedBinding, RestartPolicy,
 };
 use crate::collectors::containers::value_objects::{
-    ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant, ExposedPort,
-    ImageDigest, ImageReference, LabelName, MountKind, NetworkId, NetworkName, VariableName,
+    Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant,
+    ExposedPort, ImageDigest, ImageReference, LabelName, MountKind, NetworkId, NetworkName,
+    VariableName,
 };
 use crate::collectors::inet::{HardwareAddress, InetHost, IpAddress, PortNumber};
 
@@ -131,6 +133,28 @@ struct HostConfigHalf {
     /// Null rather than zero where there is none, which is the third spelling.
     #[serde(rename = "PidsLimit", default)]
     process_limit: Option<i64>,
+    #[serde(rename = "Privileged", default)]
+    privileged: bool,
+    #[serde(rename = "ReadonlyRootfs", default)]
+    read_only_root_filesystem: bool,
+    /// Null on a container that changed nothing, which `default` covers either way.
+    #[serde(rename = "CapAdd", default)]
+    capabilities_added: Option<Vec<String>>,
+    #[serde(rename = "CapDrop", default)]
+    capabilities_dropped: Option<Vec<String>>,
+    #[serde(rename = "SecurityOpt", default)]
+    security_options: Option<Vec<String>>,
+    /// Empty where the container chose nothing and took the engine's default.
+    #[serde(rename = "CgroupnsMode", default)]
+    cgroup_namespace: String,
+    #[serde(rename = "IpcMode", default)]
+    interprocess_namespace: String,
+    #[serde(rename = "NetworkMode", default)]
+    network_namespace: String,
+    #[serde(rename = "PidMode", default)]
+    process_namespace: String,
+    #[serde(rename = "UsernsMode", default)]
+    user_namespace: String,
     /// Destination to option string, and the only place a `--tmpfs` mount appears at all.
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Tmpfs", default)]
@@ -255,6 +279,7 @@ impl DockerContainerDocument {
             ports: self.ports()?,
             restart_policy: self.restart_policy()?,
             limits: self.limits()?,
+            security: self.security()?,
             auto_remove: self.host_config.auto_remove,
         };
 
@@ -331,6 +356,33 @@ impl DockerContainerDocument {
         }
 
         ContainerMounts::new(mounts)
+    }
+
+    /// The confinement, from the engine's effective account of it.
+    fn security(&self) -> Result<ContainerSecurity, CollectionError> {
+        let reported = &self.host_config;
+        let mut options = Vec::new();
+        for option in reported.security_options.iter().flatten() {
+            options.push(NonEmptyText::new(option.clone(), "security option")?);
+        }
+        options.sort();
+
+        Ok(ContainerSecurity {
+            privileged: reported.privileged,
+            read_only_root_filesystem: reported.read_only_root_filesystem,
+            capabilities: ContainerCapabilities {
+                added: capabilities(reported.capabilities_added.as_deref())?,
+                dropped: capabilities(reported.capabilities_dropped.as_deref())?,
+            },
+            options,
+            namespaces: ContainerNamespaces {
+                control_group: mode(&reported.cgroup_namespace),
+                interprocess: mode(&reported.interprocess_namespace),
+                network: mode(&reported.network_namespace),
+                process: mode(&reported.process_namespace),
+                user: mode(&reported.user_namespace),
+            },
+        })
     }
 
     /// The restart policy, with docker's not-applicable zero read as no limit at all.
@@ -428,6 +480,27 @@ impl DockerContainerDocument {
 
         Ok(ContainerLabels::new(labels))
     }
+}
+
+/// One of docker's capability lists, sorted.
+///
+/// Sorted because the engine keeps them in the order the flags were given, and an operator
+/// swapping two `--cap-add` flags has not changed the box.
+fn capabilities(reported: Option<&[String]>) -> Result<Vec<Capability>, CollectionError> {
+    let mut capabilities = Vec::new();
+
+    for name in reported.unwrap_or_default() {
+        capabilities.push(Capability::new(name.clone())?);
+    }
+    capabilities.sort();
+
+    Ok(capabilities)
+}
+
+/// A namespace mode docker reported, or absent for the empty string it writes when the
+/// container chose nothing.
+fn mode(reported: &str) -> Option<NonEmptyText> {
+    NonEmptyText::new(reported, "namespace mode").ok()
 }
 
 /// The policy a container has when nobody asked for one.
