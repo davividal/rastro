@@ -87,10 +87,82 @@ const WEB_ID: &str = "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283
 const STOPPED_ID: &str = "551e41b5515383f95ae02559fc0a1cd7500d88be62c2add2d7a2cfdc3746ac5a";
 const EPHEMERAL_ID: &str = "1db8c55268930421b2a804afd47b84b7ff88c7ee942242c529431fef314c5ea6";
 const LIMITED_ID: &str = "3c1f6c1f9f5f4a1d8e2b7c6d5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b";
+const BRIDGE_NETWORK_ID: &str = "f6267b7bcdf233149bcaccaeb877e708696b17af2347660ce623c8397e4bd1fd";
+const FIXTURE_NETWORK_ID: &str = "1d51e8c10dda55fd904537227940fe186820f04574b31a6a924f628f8f7dcb13";
 const TAGGED_IMAGE: &str =
     "sha256:fa10ef3b6224d65632b644294314ddefb5b9185fb87ba29e9bd8d8c2ba86dc02";
 const DANGLING_IMAGE: &str =
     "sha256:f736818d54f4f842deb3c37920abf0baf54c6f95d5be6d61fd6c20d84c15f47b";
+
+/// The default bridge, from `docker network inspect`, with its attached containers elided.
+///
+/// Its options are the interesting half: `enable_icc` says whether containers on it can
+/// reach each other, `host_binding_ipv4` is the address an unqualified `-p` publishes to,
+/// and `name` is the host interface it actually is.
+const INSPECT_BRIDGE_NETWORK: &str = r#"[
+  {
+    "Name": "bridge",
+    "Id": "f6267b7bcdf233149bcaccaeb877e708696b17af2347660ce623c8397e4bd1fd",
+    "Created": "2026-09-08T12:24:15.457196986Z",
+    "Scope": "local",
+    "Driver": "bridge",
+    "EnableIPv6": false,
+    "IPAM": {
+      "Driver": "default",
+      "Options": null,
+      "Config": [{ "Subnet": "172.17.0.0/16", "Gateway": "172.17.0.1" }]
+    },
+    "Internal": false,
+    "Attachable": false,
+    "Ingress": false,
+    "ConfigFrom": { "Network": "" },
+    "ConfigOnly": false,
+    "Options": {
+      "com.docker.network.bridge.default_bridge": "true",
+      "com.docker.network.bridge.enable_icc": "true",
+      "com.docker.network.bridge.enable_ip_masquerade": "true",
+      "com.docker.network.bridge.host_binding_ipv4": "0.0.0.0",
+      "com.docker.network.bridge.name": "docker0",
+      "com.docker.network.driver.mtu": "1500"
+    },
+    "Labels": {},
+    "Containers": {}
+  }
+]"#;
+
+/// A network created with a subnet and nothing else, where docker writes no gateway of its
+/// own into the IPAM config and no options at all.
+const INSPECT_FIXTURE_NETWORK: &str = r#"[
+  {
+    "Name": "fixture-net",
+    "Id": "1d51e8c10dda55fd904537227940fe186820f04574b31a6a924f628f8f7dcb13",
+    "Created": "2026-09-08T11:47:56.095996437Z",
+    "Scope": "local",
+    "Driver": "bridge",
+    "EnableIPv6": false,
+    "IPAM": {
+      "Driver": "default",
+      "Options": {},
+      "Config": [{ "Subnet": "172.30.0.0/16" }]
+    },
+    "Internal": false,
+    "Attachable": false,
+    "Ingress": false,
+    "ConfigFrom": { "Network": "" },
+    "ConfigOnly": false,
+    "Options": {},
+    "Labels": {},
+    "Containers": {
+      "9087f0af664b107224309443c211e04cda23f03006f76dabea7f72e997d491a3": {
+        "Name": "networked",
+        "EndpointID": "17b6e00f880af56b51bca33aee9b0a78cdbd9f16c4bbaff974173950e4f04332",
+        "MacAddress": "02:42:ac:1e:00:09",
+        "IPv4Address": "172.30.0.9/16",
+        "IPv6Address": ""
+      }
+    }
+  }
+]"#;
 
 /// A volume created with driver options, from `docker volume inspect`.
 ///
@@ -481,6 +553,8 @@ struct DockerFixtures<'a> {
     images: &'a [(&'a str, Option<&'a str>)],
     /// The volumes `docker volume ls` lists, on the same terms.
     volumes: &'a [(&'a str, Option<&'a str>)],
+    /// The networks `docker network ls` lists, on the same terms.
+    networks: &'a [(&'a str, Option<&'a str>)],
 }
 
 impl DockerFixtures<'_> {
@@ -503,6 +577,10 @@ impl DockerFixtures<'_> {
             volumes: &[
                 ("fixture-opts", Some(INSPECT_VOLUME_WITH_OPTIONS)),
                 ("fixture-vol", Some(INSPECT_PLAIN_VOLUME)),
+            ],
+            networks: &[
+                (BRIDGE_NETWORK_ID, Some(INSPECT_BRIDGE_NETWORK)),
+                (FIXTURE_NETWORK_ID, Some(INSPECT_FIXTURE_NETWORK)),
             ],
         }
     }
@@ -547,6 +625,17 @@ fn fake_docker(name: &str, fixtures: DockerFixtures) -> Docker {
     }
     fs::write(root.join("volume-names"), &volume_names).expect("a writable fixture");
 
+    let mut network_ids = String::new();
+    for (id, document) in fixtures.networks {
+        network_ids.push_str(id);
+        network_ids.push('\n');
+        if let Some(document) = document {
+            fs::write(root.join(format!("network-{id}.json")), document)
+                .expect("a writable fixture");
+        }
+    }
+    fs::write(root.join("network-ids"), &network_ids).expect("a writable fixture");
+
     let directory = root.to_str().expect("a UTF-8 scratch path");
     let path = root.join("docker");
     fs::write(
@@ -567,6 +656,26 @@ STDOUT
 ;;
 ps)
 cat '{directory}/ids'
+;;
+network)
+case "$2" in
+ls)
+cat '{directory}/network-ids'
+;;
+inspect)
+document='{directory}/network-'"$3"'.json'
+if [ -f "$document" ]; then
+cat "$document"
+else
+printf 'Error response from daemon: network %s not found\n' "$3" >&2
+exit 1
+fi
+;;
+*)
+printf 'unexpected network invocation: %s\n' "$*" >&2
+exit 1
+;;
+esac
 ;;
 volume)
 case "$2" in
@@ -755,6 +864,7 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
             containers: &[],
             images: &[],
             volumes: &[],
+            networks: &[],
         },
     );
 
@@ -792,6 +902,7 @@ fn output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engin
             containers: &[],
             images: &[],
             volumes: &[],
+            networks: &[],
         },
     ))]);
 
@@ -935,6 +1046,7 @@ fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() 
                     containers: &[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)],
                     images: &[],
                     volumes: &[],
+                    networks: &[],
                 },
             ),
             "docker",
@@ -970,6 +1082,7 @@ fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
                     containers: &[],
                     images: &[],
                     volumes: &[],
+                    networks: &[],
                 },
             ),
             "docker",
@@ -1628,6 +1741,7 @@ fn an_image_that_vanished_while_being_read_is_recorded_too() {
                         (DANGLING_IMAGE, None),
                     ],
                     volumes: &[],
+                    networks: &[],
                 },
             ),
             "docker",
@@ -1707,4 +1821,97 @@ fn a_volume_created_with_nothing_but_a_name_records_neither_map() {
     // Act & Assert
     assert!(keys_of(&field(&volume, "options")).is_empty());
     assert!(keys_of(&field(&volume, "labels")).is_empty());
+}
+
+fn network_of(name: &str, network: &str) -> Observation {
+    field(&field(&answering_server(name), "networks"), network)
+}
+
+#[test]
+fn the_networks_of_the_box_are_keyed_by_name() {
+    // Arrange: keyed by name, like a container's own view of them, so the two ends of one
+    // network are read under the same word.
+    let networks = field(&answering_server("box-networks"), "networks");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&networks),
+        vec!["bridge".to_owned(), "fixture-net".to_owned()]
+    );
+}
+
+#[test]
+fn a_networks_addressing_is_recorded_as_the_engine_resolved_it() {
+    // Arrange: the subnet is what a container's address has to fall inside, and the gateway
+    // is the route out. Both shapes are real on one docker: a network created with a subnet
+    // alone reported no gateway here immediately after creation and did report one after the
+    // daemon restarted, so an absent gateway means unreported rather than none.
+    let bridge = network_of("network-ipam", "bridge");
+    let ipam = field(&bridge, "ipam");
+    let configured = items_of(&field(&ipam, "configured"));
+
+    // Act & Assert
+    assert_eq!(text(&field(&ipam, "driver")), "default");
+    assert_eq!(text(&field(&configured[0], "subnet")), "172.17.0.0/16");
+    assert_eq!(text(&field(&configured[0], "gateway")), "172.17.0.1");
+    assert!(is_null(&field(
+        &items_of(&field(
+            &field(&network_of("network-ipam", "fixture-net"), "ipam"),
+            "configured"
+        ))[0],
+        "gateway"
+    )));
+}
+
+#[test]
+fn a_networks_driver_options_are_recorded_because_they_decide_what_it_permits() {
+    // Arrange: `enable_icc` says whether containers on this network can reach each other,
+    // `host_binding_ipv4` is the address an unqualified `-p` publishes to, and `name` is the
+    // host interface the network actually is. All three are one line each and invisible
+    // anywhere else in the document.
+    let options = field(&network_of("network-options", "bridge"), "options");
+
+    // Act & Assert
+    assert_eq!(
+        text(&field(&options, "com.docker.network.bridge.enable_icc")),
+        "true"
+    );
+    assert_eq!(
+        text(&field(
+            &options,
+            "com.docker.network.bridge.host_binding_ipv4"
+        )),
+        "0.0.0.0"
+    );
+    assert_eq!(
+        text(&field(&options, "com.docker.network.bridge.name")),
+        "docker0"
+    );
+}
+
+#[test]
+fn a_network_records_what_it_permits_beyond_its_addressing() {
+    // Arrange: an `internal` network has no route off the box, and an `attachable` swarm
+    // network lets a standalone container join it. Both are one word that changes what can
+    // reach what.
+    let network = network_of("network-flags", "fixture-net");
+
+    // Act & Assert
+    assert_eq!(text(&field(&network, "driver")), "bridge");
+    assert_eq!(text(&field(&network, "scope")), "local");
+    assert!(!boolean(&field(&network, "internal")));
+    assert!(!boolean(&field(&network, "attachable")));
+    assert!(!boolean(&field(&network, "ipv6_enabled")));
+    assert_eq!(text(&field(&network, "id")), FIXTURE_NETWORK_ID);
+}
+
+#[test]
+fn the_containers_attached_to_a_network_are_not_recorded_twice() {
+    // Arrange: `docker network inspect` lists them, and every one of those containers
+    // already records the network from its own end. Recording the same edge twice would
+    // give a reader two places to disagree, and the container's end carries more.
+    let network = network_of("network-edges", "fixture-net");
+
+    // Act & Assert
+    assert!(!keys_of(&network).contains(&"containers".to_owned()));
 }

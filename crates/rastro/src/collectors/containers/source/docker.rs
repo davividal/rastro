@@ -5,15 +5,16 @@ use rastro_collector::CollectionError;
 use super::docker_container_document::DockerContainerDocument;
 use super::docker_image_document::DockerImageDocument;
 use super::docker_info::DockerInfoDocument;
+use super::docker_network_document::DockerNetworkDocument;
 use super::docker_version::DockerVersionDocument;
 use super::docker_volume_document::DockerVolumeDocument;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::containers::model::{
-    DockerContainer, DockerContainers, DockerEngine, DockerImage, DockerImages, DockerVolume,
-    DockerVolumes, UnreadableObject,
+    DockerContainer, DockerContainers, DockerEngine, DockerImage, DockerImages, DockerNetwork,
+    DockerNetworks, DockerVolume, DockerVolumes, UnreadableObject,
 };
 use crate::collectors::containers::value_objects::{
-    ContainerId, ContainerName, ImageDigest, VolumeName,
+    ContainerId, ContainerName, ImageDigest, NetworkId, NetworkName, VolumeName,
 };
 
 /// docker's client, which is the only interface the engine documents as stable.
@@ -57,6 +58,12 @@ const LIST_VOLUMES: [&str; 2] = ["volume", "ls"];
 
 /// One volume.
 const INSPECT_VOLUME: [&str; 2] = ["volume", "inspect"];
+
+/// Every network's id, the engine's own three included, untruncated.
+const LIST_NETWORKS: [&str; 3] = ["network", "ls", "--no-trunc"];
+
+/// One network.
+const INSPECT_NETWORK: [&str; 2] = ["network", "inspect"];
 
 /// A docker client found on this host, ready to be asked.
 ///
@@ -107,6 +114,7 @@ impl Docker {
         let containers = self.containers()?;
         let images = self.images()?;
         let volumes = self.volumes()?;
+        let networks = self.networks()?;
 
         Ok(DockerEngine::answering(
             versions.client,
@@ -116,6 +124,7 @@ impl Docker {
                 containers,
                 images,
                 volumes,
+                networks,
             )?,
         ))
     }
@@ -151,6 +160,59 @@ impl Docker {
         }
 
         DockerContainers::new(read, unreadable)
+    }
+
+    /// The networks, read one at a time, and the ones that could not be read.
+    ///
+    /// **Listed by id and read by id**, unlike the volumes: two networks may not share a
+    /// name, but the list prints ids untruncated and the id is what unambiguously names one
+    /// to `inspect`, which also accepts a name and would then have to guess.
+    fn networks(&self) -> Result<DockerNetworks, CollectionError> {
+        let mut read: Vec<(NetworkName, DockerNetwork)> = Vec::new();
+        let mut unreadable: Vec<UnreadableObject> = Vec::new();
+
+        let mut listed = LIST_NETWORKS.to_vec();
+        listed.push(QUIET);
+
+        for line in self.tool.run(&listed)?.lines() {
+            let id = line.trim();
+            if id.is_empty() {
+                continue;
+            }
+
+            let id = NetworkId::new(id)?;
+            match self.inspect_network(&id) {
+                Ok(network) => read.push(network),
+                Err(failure) => {
+                    unreadable.push(UnreadableObject::new(id.as_str(), &failure.to_string())?)
+                }
+            }
+        }
+
+        DockerNetworks::new(read, unreadable)
+    }
+
+    /// One network as docker describes it.
+    fn inspect_network(
+        &self,
+        id: &NetworkId,
+    ) -> Result<(NetworkName, DockerNetwork), CollectionError> {
+        let mut arguments = INSPECT_NETWORK.to_vec();
+        arguments.push(id.as_str());
+
+        let documents =
+            decode::<Vec<DockerNetworkDocument>>(&self.tool.run(&arguments)?, "network inspect")?;
+
+        documents
+            .first()
+            .ok_or_else(|| {
+                CollectionError::new(format!(
+                    "`{PROGRAM} network inspect` described no network for the id {:?} it had \
+                     just listed",
+                    id.as_str()
+                ))
+            })?
+            .to_network()
     }
 
     /// The volumes, read one at a time, and the ones that could not be read.

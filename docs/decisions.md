@@ -3298,3 +3298,36 @@ deleted is invisible from every other part of this facet, and it is simultaneous
 a box's data is and where its wasted disk is. An anonymous volume, which a container gets
 when an image declares `VOLUME` and nobody named one, is recorded like any other under
 its 64-character hex name, for the same reason a dangling image is.
+
+## A network's own record is read, and the containers on it are not read twice
+
+`docker network inspect` lists every container attached to the network, and every one of
+those containers already reports the network from its own end, with more: its aliases and
+the address it asked for. Recording the same edge from both ends would give a reader two
+places to disagree about one fact, so the network's entry holds no container list. The
+same reasoning that keeps a container's `DNSNames` out: it is the name and the aliases
+already recorded, spelled again.
+
+What the network's own entry carries instead is what only it knows:
+
+- **the addressing**, because the subnet is what every container's address on it has to
+  fall inside, and a network recreated with a different subnet moves every container at
+  once;
+- **the driver options**, because for a bridge they decide what is permitted:
+  `enable_icc` whether containers on it can reach each other at all,
+  `host_binding_ipv4` which host address an unqualified `-p` publishes to, and `name` the
+  host interface the network actually is;
+- **`internal`, `attachable` and `ingress`**, one word each, deciding whether there is a
+  route off the box, whether a standalone container may join, and whether this is the
+  network a swarm publishes services through.
+
+The engine's own three — `bridge`, `host` and `none` — are included rather than filtered
+as built-ins. The default bridge's `enable_icc` governs every container that chose no
+network, and nothing else in the document says so.
+
+**One measurement corrects a claim made earlier in this work.** A network created with a
+subnet and nothing else reported *no* gateway in the IPAM config immediately after
+creation, and reported `172.30.0.1` in it after the daemon restarted. Same docker, same
+network. So the gateway is optional because the engine is inconsistent about echoing it,
+and an absent one means unreported rather than none. The code said the first thing as if
+it were the whole rule, and now says both.

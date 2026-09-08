@@ -1,5 +1,6 @@
 //! What rastro means by a container engine, independent of any engine's spelling.
 
+mod address_pool;
 mod cgroup_control;
 mod container_capabilities;
 mod container_command;
@@ -24,15 +25,19 @@ mod docker_containers;
 mod docker_engine;
 mod docker_image;
 mod docker_images;
+mod docker_network;
+mod docker_networks;
 mod docker_server;
 mod docker_volume;
 mod docker_volumes;
 mod image_platform;
+mod network_addressing;
 mod observed_health;
 mod published_binding;
 mod restart_policy;
 mod unreadable_object;
 
+pub use address_pool::AddressPool;
 pub use cgroup_control::CgroupControl;
 pub use container_capabilities::ContainerCapabilities;
 pub use container_command::ContainerCommand;
@@ -57,10 +62,13 @@ pub use docker_containers::DockerContainers;
 pub use docker_engine::DockerEngine;
 pub use docker_image::DockerImage;
 pub use docker_images::DockerImages;
+pub use docker_network::DockerNetwork;
+pub use docker_networks::DockerNetworks;
 pub use docker_server::DockerServer;
 pub use docker_volume::DockerVolume;
 pub use docker_volumes::DockerVolumes;
 pub use image_platform::ImagePlatform;
+pub use network_addressing::NetworkAddressing;
 pub use observed_health::ObservedHealth;
 pub use published_binding::PublishedBinding;
 pub use restart_policy::RestartPolicy;

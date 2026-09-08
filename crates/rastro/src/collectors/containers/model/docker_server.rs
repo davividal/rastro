@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
 use crate::collectors::containers::model::{
-    CgroupControl, DockerContainers, DockerImages, DockerVolumes,
+    CgroupControl, DockerContainers, DockerImages, DockerNetworks, DockerVolumes,
 };
 use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver, SwarmState};
 
@@ -64,6 +64,8 @@ pub struct DockerServer {
     pub images: DockerImages,
     /// The volumes, which outlive the containers that used them.
     pub volumes: DockerVolumes,
+    /// The networks, the engine's own three included.
+    pub networks: DockerNetworks,
 }
 
 impl From<&DockerServer> for Observation {
@@ -117,6 +119,12 @@ impl From<&DockerServer> for Observation {
             ),
             ("storage_driver", Observation::from(&server.storage_driver)),
             ("swarm", Observation::from(&server.swarm)),
+            ("networks", Observation::from(&server.networks)),
+            (
+                "unreadable_networks",
+                Observation::list(server.networks.unreadable().iter().map(Observation::from))
+                    .volatile(),
+            ),
             (
                 "unreadable_volumes",
                 Observation::list(server.volumes.unreadable().iter().map(Observation::from))
