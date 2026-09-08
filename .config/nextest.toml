@@ -9,9 +9,12 @@
 # Measured on the reference container, whole suite: `cargo test` 64 s, `cargo nextest run` 43 s.
 
 [profile.default]
-# A test that runs the real binary over a whole host takes about ten seconds by nature, so the
-# default 60-second warning would fire on a healthy run and teach everyone to ignore it. The
-# terminate-after is a hang guard, not a budget.
+# Nothing walks the whole host any more, so the slowest test that invokes the real binary takes
+# about five seconds and a 60-second warning means a hang rather than a healthy run. Keeping the
+# period there rather than tightening it to fit leaves room for a slow runner without turning the
+# warning into noise. The terminate-after is a hang guard, not a budget, and it earned that: it is
+# what caught the last whole-host walk when a runner's disk pushed it from 111 seconds past six
+# minutes, twice, on unchanged code.
 slow-timeout = { period = "60s", terminate-after = 6 }
 
 # The suite is over 900 tests, so a failure reported where it happens scrolls away behind

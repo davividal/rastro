@@ -825,6 +825,7 @@ fn loaded_modules() -> std::collections::BTreeSet<String> {
 /// misbehave. Walking the whole host to reach those subprocesses cost 111s and 145s on CI
 /// runners and twice ran past nextest's 360s terminate-after on unchanged code, which made
 /// this the test that timed the suite out rather than the one that caught a module load.
+/// Sealed, on the same runners, it is five seconds and the whole suite is under a minute.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_run_leaves_the_kernel_module_list_untouched() {
