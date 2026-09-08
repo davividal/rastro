@@ -49,9 +49,10 @@ pub mod value_objects;
 pub use model::{
     CgroupControl, ContainerCapabilities, ContainerCommand, ContainerEngine, ContainerEngines,
     ContainerEnvironment, ContainerHealthcheck, ContainerImage, ContainerLabels, ContainerLimits,
-    ContainerLogging, ContainerMount, ContainerMounts, ContainerNetwork, ContainerNetworks,
-    ContainerPorts, ContainerState, DockerContainer, DockerContainers, DockerEngine, DockerServer,
-    PublishedBinding, RestartPolicy, UnreadableObject,
+    ContainerLogging, ContainerMount, ContainerMounts, ContainerNamespaces, ContainerNetwork,
+    ContainerNetworks, ContainerPorts, ContainerSecurity, ContainerState, DockerContainer,
+    DockerContainers, DockerEngine, DockerImage, DockerImages, DockerServer, ImagePlatform,
+    ObservedHealth, PublishedBinding, RestartPolicy, UnreadableObject,
 };
 pub use source::{Docker, EngineSource};
 pub use value_objects::{

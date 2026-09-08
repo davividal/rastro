@@ -87,6 +87,57 @@ const WEB_ID: &str = "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283
 const STOPPED_ID: &str = "551e41b5515383f95ae02559fc0a1cd7500d88be62c2add2d7a2cfdc3746ac5a";
 const EPHEMERAL_ID: &str = "1db8c55268930421b2a804afd47b84b7ff88c7ee942242c529431fef314c5ea6";
 const LIMITED_ID: &str = "3c1f6c1f9f5f4a1d8e2b7c6d5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b";
+const TAGGED_IMAGE: &str =
+    "sha256:fa10ef3b6224d65632b644294314ddefb5b9185fb87ba29e9bd8d8c2ba86dc02";
+const DANGLING_IMAGE: &str =
+    "sha256:f736818d54f4f842deb3c37920abf0baf54c6f95d5be6d61fd6c20d84c15f47b";
+
+/// A tagged image built on this box, from `docker image inspect`.
+///
+/// `RepoDigests` is empty because the box built it and never pushed it, and `Parent` is set
+/// because the classic builder records a chain where buildkit records none. Both are real
+/// states this facet has to carry.
+const INSPECT_TAGGED_IMAGE: &str = r#"[
+  {
+    "Id": "sha256:fa10ef3b6224d65632b644294314ddefb5b9185fb87ba29e9bd8d8c2ba86dc02",
+    "RepoTags": ["fixture-app:1", "fixture-app:latest"],
+    "RepoDigests": [],
+    "Parent": "sha256:d0e93b62e38199f58d210648e86e485c13900f798f372a2cf31032a904c6f232",
+    "Comment": "buildkit.dockerfile.v0",
+    "Created": "2026-09-08T12:24:37.169201826Z",
+    "Size": 8652792,
+    "Architecture": "arm64",
+    "Variant": "v8",
+    "Os": "linux",
+    "RootFS": { "Type": "layers", "Layers": ["sha256:b2848c02ac6ff5"] },
+    "Metadata": { "LastTagTime": "0001-01-01T00:00:00Z" },
+    "Config": {
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin"],
+      "Labels": { "org.opencontainers.image.revision": "aaaaaaa" }
+    }
+  }
+]"#;
+
+/// The image the second build displaced, which now has no tags at all.
+const INSPECT_DANGLING_IMAGE: &str = r#"[
+  {
+    "Id": "sha256:f736818d54f4f842deb3c37920abf0baf54c6f95d5be6d61fd6c20d84c15f47b",
+    "RepoTags": [],
+    "RepoDigests": [],
+    "Parent": "sha256:5cd319e9e6b9b915c3cf96dca4bc047438afc07bbd7f8bfe2b9effaf39c1bdb8",
+    "Created": "2026-09-08T12:24:34.174181513Z",
+    "Size": 8652792,
+    "Architecture": "arm64",
+    "Variant": "v8",
+    "Os": "linux",
+    "Config": {
+      "Labels": {
+        "org.opencontainers.image.revision": "9f8e7d6",
+        "org.opencontainers.image.title": "fixture"
+      }
+    }
+  }
+]"#;
 
 /// A running container, from `docker inspect --type container`.
 ///
@@ -396,6 +447,8 @@ struct DockerFixtures<'a> {
     /// The containers `docker ps` lists, each with the `inspect` document for it. An id
     /// listed with no document is how a test drives the container that vanished mid-read.
     containers: &'a [(&'a str, Option<&'a str>)],
+    /// The images `docker image ls` lists, on the same terms.
+    images: &'a [(&'a str, Option<&'a str>)],
 }
 
 impl DockerFixtures<'_> {
@@ -410,6 +463,10 @@ impl DockerFixtures<'_> {
                 (STOPPED_ID, Some(INSPECT_STOPPED)),
                 (EPHEMERAL_ID, Some(INSPECT_EPHEMERAL)),
                 (LIMITED_ID, Some(INSPECT_LIMITED)),
+            ],
+            images: &[
+                (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
+                (DANGLING_IMAGE, Some(INSPECT_DANGLING_IMAGE)),
             ],
         }
     }
@@ -433,6 +490,16 @@ fn fake_docker(name: &str, fixtures: DockerFixtures) -> Docker {
     }
     fs::write(root.join("ids"), &ids).expect("a writable fixture");
 
+    let mut image_ids = String::new();
+    for (id, document) in fixtures.images {
+        image_ids.push_str(id);
+        image_ids.push('\n');
+        if let Some(document) = document {
+            fs::write(root.join(format!("{id}.json")), document).expect("a writable fixture");
+        }
+    }
+    fs::write(root.join("image-ids"), &image_ids).expect("a writable fixture");
+
     let directory = root.to_str().expect("a UTF-8 scratch path");
     let path = root.join("docker");
     fs::write(
@@ -453,6 +520,26 @@ STDOUT
 ;;
 ps)
 cat '{directory}/ids'
+;;
+image)
+case "$2" in
+ls)
+cat '{directory}/image-ids'
+;;
+inspect)
+document='{directory}/'"$3"'.json'
+if [ -f "$document" ]; then
+cat "$document"
+else
+printf 'Error response from daemon: No such image: %s\n' "$3" >&2
+exit 1
+fi
+;;
+*)
+printf 'unexpected image invocation: %s\n' "$*" >&2
+exit 1
+;;
+esac
 ;;
 inspect)
 document='{directory}/'"$4"'.json'
@@ -599,6 +686,7 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
             version_stderr: UNREACHABLE_STDERR,
             info: "",
             containers: &[],
+            images: &[],
         },
     );
 
@@ -634,6 +722,7 @@ fn output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engin
             version_stderr: "",
             info: INFO_ANSWERING,
             containers: &[],
+            images: &[],
         },
     ))]);
 
@@ -775,6 +864,7 @@ fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() 
                     version_stderr: "",
                     info: INFO_ANSWERING,
                     containers: &[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)],
+                    images: &[],
                 },
             ),
             "docker",
@@ -808,6 +898,7 @@ fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
                     version_stderr: "",
                     info: INFO_ANSWERING,
                     containers: &[],
+                    images: &[],
                 },
             ),
             "docker",
@@ -1357,4 +1448,130 @@ fn a_container_on_the_engines_default_logging_records_no_options() {
     // Act & Assert
     assert_eq!(text(&field(&logging, "driver")), "json-file");
     assert!(keys_of(&field(&logging, "options")).is_empty());
+}
+
+fn image_of(name: &str, id: &str) -> Observation {
+    field(&field(&answering_server(name), "images"), id)
+}
+
+#[test]
+fn the_images_are_keyed_by_their_own_id() {
+    // Arrange: the opposite arrangement from containers, and for the opposite reason. A
+    // container's name outlives its id; an image's tags are the thing that moves.
+    let images = field(&answering_server("images"), "images");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&images),
+        vec![DANGLING_IMAGE.to_owned(), TAGGED_IMAGE.to_owned()]
+    );
+}
+
+#[test]
+fn an_image_records_every_tag_that_points_at_it_sorted() {
+    // Arrange: two tags on one image is ordinary, `:1` and `:latest` being the usual pair,
+    // and docker promises no order between them.
+    let image = image_of("image-tags", TAGGED_IMAGE);
+
+    // Act & Assert
+    assert_eq!(
+        items_of(&field(&image, "tags"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["fixture-app:1".to_owned(), "fixture-app:latest".to_owned()]
+    );
+    assert!(items_of(&field(&image, "registry_digests")).is_empty());
+}
+
+#[test]
+fn an_image_records_its_size_and_the_platform_it_was_built_for() {
+    // Arrange: a multi-architecture tag hides the platform, and an image whose architecture
+    // does not match the box is a container that will not start.
+    let image = image_of("image-platform", TAGGED_IMAGE);
+    let platform = field(&image, "platform");
+
+    // Act & Assert
+    assert_eq!(integer(&field(&image, "size_bytes")), 8_652_792);
+    assert_eq!(text(&field(&platform, "architecture")), "arm64");
+    assert_eq!(text(&field(&platform, "operating_system")), "linux");
+    assert_eq!(text(&field(&platform, "variant")), "v8");
+}
+
+#[test]
+fn a_dangling_image_records_no_tags_rather_than_being_dropped() {
+    // Arrange: the image a rebuild displaced. It holds disk, it is usually an accident, and
+    // `<none>:<none>` in `docker images` is the only place an operator ever sees it.
+    let image = image_of("dangling", DANGLING_IMAGE);
+
+    // Act & Assert
+    assert!(items_of(&field(&image, "tags")).is_empty());
+    assert_eq!(integer(&field(&image, "size_bytes")), 8_652_792);
+}
+
+#[test]
+fn an_images_labels_carry_the_provenance_of_the_build() {
+    // Arrange: `org.opencontainers.image.revision` names the commit an image was built
+    // from, which is the only link from a running box back to the source that made it.
+    let labels = field(&image_of("provenance", DANGLING_IMAGE), "labels");
+
+    // Act & Assert
+    assert_eq!(
+        text(&field(&labels, "org.opencontainers.image.revision")),
+        "9f8e7d6"
+    );
+    assert_eq!(
+        text(&field(&labels, "org.opencontainers.image.title")),
+        "fixture"
+    );
+}
+
+#[test]
+fn an_image_the_engine_still_knows_the_parent_of_records_it() {
+    // Arrange: the classic builder records a parent chain and buildkit records none, so
+    // both a digest and an absence are ordinary here.
+    let image = image_of("image-parent", TAGGED_IMAGE);
+
+    // Act & Assert
+    assert_eq!(
+        text(&field(&image, "parent")),
+        "sha256:d0e93b62e38199f58d210648e86e485c13900f798f372a2cf31032a904c6f232"
+    );
+}
+
+#[test]
+fn an_image_that_vanished_while_being_read_is_recorded_too() {
+    // Arrange: `docker image prune` does to images exactly what a cron `--rm` does to
+    // containers, so the same loss list serves both.
+    let server = field(
+        &field(
+            &docker_facet(
+                "vanished-image",
+                DockerFixtures {
+                    version: VERSION_ANSWERING,
+                    version_stderr: "",
+                    info: INFO_ANSWERING,
+                    containers: &[],
+                    images: &[
+                        (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
+                        (DANGLING_IMAGE, None),
+                    ],
+                },
+            ),
+            "docker",
+        ),
+        "server",
+    );
+    let unreadable = field(&server, "unreadable_images");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&field(&server, "images")),
+        vec![TAGGED_IMAGE.to_owned()]
+    );
+    assert_eq!(unreadable.volatility(), Volatility::Volatile);
+    let entries = items_of(&unreadable);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(text(&field(&entries[0], "id")), DANGLING_IMAGE);
+    assert!(text(&field(&entries[0], "reason")).contains("No such image"));
 }

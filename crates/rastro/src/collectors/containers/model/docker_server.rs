@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
-use crate::collectors::containers::model::{CgroupControl, DockerContainers};
+use crate::collectors::containers::model::{CgroupControl, DockerContainers, DockerImages};
 use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver, SwarmState};
 
 /// The daemon's own account of itself, which only exists when a daemon answered.
@@ -58,6 +58,8 @@ pub struct DockerServer {
     /// type is: a daemon that did not answer has no container list, and there is a difference
     /// between an empty list and no list at all.
     pub containers: DockerContainers,
+    /// What the engine holds, whether or not anything is running it.
+    pub images: DockerImages,
 }
 
 impl From<&DockerServer> for Observation {
@@ -83,6 +85,7 @@ impl From<&DockerServer> for Observation {
                         .map(|(name, version)| (name.as_str(), Observation::from(version))),
                 ),
             ),
+            ("images", Observation::from(&server.images)),
             (
                 "default_runtime",
                 Observation::text(server.default_runtime.as_str()),
@@ -110,6 +113,11 @@ impl From<&DockerServer> for Observation {
             ),
             ("storage_driver", Observation::from(&server.storage_driver)),
             ("swarm", Observation::from(&server.swarm)),
+            (
+                "unreadable_images",
+                Observation::list(server.images.unreadable().iter().map(Observation::from))
+                    .volatile(),
+            ),
             (
                 // Volatile, because a container that came and went between the id list and
                 // the read of it is the host changing on its own. See `UnreadableObject`.

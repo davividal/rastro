@@ -3247,3 +3247,35 @@ The log *driver* is recorded, with its options, because an unbounded `json-file`
 box fills its disk and the difference between that and the same driver with `max-size`
 set is invisible unless both are there. A container docker reports no driver for is on
 `json-file`, which is the engine's own default rather than a guess.
+
+## Images are keyed by id, which is the opposite of how containers are keyed
+
+Containers are keyed by name because a name outlives the id it is minted with. Images
+are keyed by id for the mirror-image reason: **a tag is not identity, and moving one is
+the event worth catching.** `nginx:1.29` repointed at a rebuilt image leaves the old
+image on the box with no tags and gives the new one the tag, and only an id-keyed table
+shows both halves of that at once. Keyed by tag, the same event would read as one entry
+whose contents changed, which says less.
+
+**A dangling image is kept.** `docker image ls --all` includes the images a rebuild
+displaced, and they are state: they hold disk, they are usually an accident, and
+`<none>:<none>` is the only place an operator ever meets them. An entry with an empty
+tag list says exactly that.
+
+**The labels are read for the provenance.** `org.opencontainers.image.revision` names
+the commit an image was built from, which on a box running images nobody can rebuild
+from memory is the only link back to the source. Measured on two builds of the same
+Dockerfile: the tag moved, the revision label changed, and the displaced image kept the
+old one.
+
+**What is deliberately left out of an image**, each for its own reason:
+
+- the image's own `Config`: those are container defaults, and every container running
+  the image already reports them resolved, environment included;
+- `RootFS.Layers`: content the id already addresses, and a list per image on a box with
+  eighty of them;
+- `Metadata.LastTagTime`: it moves when somebody re-tags rather than when anything about
+  the image changes.
+
+The size is required rather than optional, unlike a limit: an image always has one, so a
+negative or unreadable figure is a misread and fails, where an absent limit is a fact.
