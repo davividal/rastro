@@ -4,10 +4,11 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
+use crate::collectors::inet::{HardwareAddress, IpAddress};
 use crate::collectors::network::model::{InterfaceAddress, NetworkInterface};
 use crate::collectors::network::value_objects::{
-    AddressFamily, AddressLifetime, AddressScope, HardwareAddress, InterfaceFlag, InterfaceFlags,
-    InterfaceName, IpAddress, LinkType, OperationalState, PrefixLength,
+    AddressFamily, AddressLifetime, AddressScope, InterfaceFlag, InterfaceFlags, InterfaceName,
+    LinkType, OperationalState, PrefixLength,
 };
 
 /// `ip`'s spelling of an interface, kept apart from rastro's meaning.
