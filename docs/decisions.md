@@ -552,6 +552,10 @@ paths and hostnames, which rastro already publishes deliberately.
 **Revisit when redaction lands.** Deciding whether diagnostic text is an observed
 value is a prerequisite of that work, not an afterthought to it.
 
+**Both have landed** — see
+[`--raw`, and a document that admits which one it is](#--raw-and-a-document-that-admits-which-one-it-is).
+The decision above stands; the reason it gave for deferring does not.
+
 ## A fingerprint is sensitive operational data until redaction exists
 
 The document is not merely a description of a host, it is a target-selection aid.
@@ -2401,11 +2405,12 @@ secrets hashed at serialisation time, `--raw` opting out, as
 [the security policy states plainly](#the-security-policy-states-what-is-not-defended-redaction-included) — would
 have the collector select `rolpassword`, mark it `sensitive`, and let the renderer decide. That
 is the better shape and it is unreachable today, because nothing acts on the annotation and
-`--raw` is not built, so marking a verifier sensitive prints a verifier. When both exist this
-becomes the one value where `--raw` cannot be a render-time decision: the material is not in
-the process to render, so opting out means the collector asking a different question of the
-server. That is a query change, not an annotation, and it needs deciding before `--raw` claims
-to cover this facet.
+`--raw` was not built, so marking a verifier sensitive would have printed a verifier. Both now
+exist, and this remains the one value where `--raw` cannot be a render-time decision: the
+material is not in the process to render, so opting out means the collector asking a different
+question of the server. That is a query change, not an annotation, and it is still undecided —
+see [`--raw`, and a document that admits which one it is](#--raw-and-a-document-that-admits-which-one-it-is),
+which records that `--raw` does not claim to cover this facet.
 
 **The collector's version went to `3`.** On identical host state every role now carries
 a key it did not, so a consumer diffing across the change has to be able to see that the
@@ -2863,3 +2868,56 @@ CI, for no reason at all.
 The guard now names both errnos, and the distinction is reachable from a test,
 because neither can be provoked from a fixture and the alternative is a rule
 nothing checks.
+
+# `--raw`, and a document that admits which one it is
+
+Dated 2026-09-08. Finishes the mechanism
+[Redacting a sensitive value](#redacting-a-sensitive-value) left half-built, which that
+entry closed by naming `--raw` as not built.
+
+`--raw` sets `Disclosure::Raw` for the run. It prints a warning on stderr first, and the
+warning names what the file now holds rather than the flag that caused it: the operator
+typed the flag, so repeating it back tells them nothing, whereas "this document carries
+the box's secrets in cleartext" is the fact that decides whether they pipe it anywhere.
+
+**The disclosure is in the `invocation` facet, beside the view, as `config.disclosure`.**
+Same argument the view is there for: each axis rewrites the document wholesale, so
+diffing a `--raw` fingerprint against a redacted one would report a changed value at
+every sensitive field with nothing in either document to explain it. Two keys rather than
+one, because the axes are independent — a complete view says nothing about whether a
+secret in it was withheld, which is the whole reason `Disclosure` is not another value of
+`View`.
+
+**`Cli::view()` became `Cli::presentation()`.** One accessor, because `Presentation` is
+the pair and nothing downstream wants half of it, and because building it through
+`From<View>` and then opting out keeps redaction-by-default structural here too: a branch
+that forgot `--raw` entirely still produces the safe document.
+
+**The port grew two re-exports rather than the collector reaching around it.**
+`invocation` needs `Presentation` and `Disclosure` to report them, and
+`tests/purity.rs` forbids a built-in collector naming `rastro_fingerprint` — under a
+comment that names the fix as widening the port. `View` was already re-exported for the
+same reason, so this is the established shape and not a new hole in it.
+
+**The `invocation` collector's version went to `2`.** On identical host state the facet
+now carries a key it did not, so a consumer diffing across the change has to be able to
+see that the collector moved rather than the box. Same rule that took `postgresql` to
+`3`.
+
+**Cost, and it is the real one:** a fingerprint taken before this change and one taken
+after differ in the `invocation` facet on an unchanged host. The version bump is what
+makes that legible rather than mysterious; it does not make it go away.
+
+**Withdrawn: "`--raw` is not built" as a reason to defer.** Two entries rest on it and
+their decisions still stand, but the premise no longer does. Neither is reversed here and
+both are now revisitable on their merits:
+
+- [A facet's error text is not classified](#a-facets-error-text-is-not-classified)
+  deferred on the mechanism not existing. It exists. Whether diagnostic text is an
+  observed value is now a question that can be answered rather than postponed.
+- [The postgresql role digest is not marked sensitive](#redacting-a-sensitive-value)
+  named the harder case, and that case is unchanged by this work: the verifier is not in
+  the process to render, so opting out of withholding it means the collector asking the
+  server a different question. That is a query change, not a render-time decision, and
+  `--raw` still does not cover this facet. Recorded here so the gap is not read as an
+  oversight now that the flag exists.

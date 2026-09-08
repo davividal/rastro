@@ -876,3 +876,37 @@ fn the_two_presentation_axes_are_recorded_independently() {
     assert_eq!(config["view"], json!("complete"));
     assert_eq!(config["disclosure"], json!("redacted"));
 }
+
+#[test]
+fn raw_warns_that_the_document_will_carry_its_secrets_in_the_clear() {
+    // Act
+    let output = run(&["--raw", "--config", without_walking()]);
+
+    // Assert: the operator asked for this, and the thing worth saying is what the file on
+    // disk now is rather than what the flag was named. `0600` is the only thing between it
+    // and the next reader, and the excluded-collector warning sets the precedent that a
+    // decision costing the document something is said out loud.
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        stderr.contains("--raw"),
+        "the warning should name the flag that caused it, got {stderr:?}"
+    );
+    assert!(
+        stderr.contains("cleartext"),
+        "the warning should say what the document now holds, got {stderr:?}"
+    );
+}
+
+#[test]
+fn a_redacted_run_says_nothing_about_disclosure_on_stderr() {
+    // Act
+    let output = run(&["--config", without_walking()]);
+
+    // Assert: the default is the safe one, so there is nothing to warn about. A tool that
+    // narrates its own safe path teaches the operator to skim the line that matters.
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
+    assert!(
+        !stderr.contains("cleartext"),
+        "a redacted run has nothing to disclose, got {stderr:?}"
+    );
+}
