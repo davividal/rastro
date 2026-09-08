@@ -1,5 +1,12 @@
 # rastro
 
+[![ci](https://img.shields.io/github/actions/workflow/status/davividal/rastro/ci.yml?branch=master&label=ci)](https://github.com/davividal/rastro/actions/workflows/ci.yml)
+[![quality gate](https://sonarcloud.io/api/project_badges/measure?project=davividal_rastro&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=davividal_rastro)
+[![coverage](https://sonarcloud.io/api/project_badges/measure?project=davividal_rastro&metric=coverage)](https://sonarcloud.io/component_measures?id=davividal_rastro&metric=coverage)
+[![release](https://img.shields.io/github/v/release/davividal/rastro?include_prereleases)](https://github.com/davividal/rastro/releases)
+[![rust](https://img.shields.io/badge/rust-latest%20stable-orange)](mise.toml)
+[![license](https://img.shields.io/github/license/davividal/rastro)](LICENSE)
+
 `rastro` emits a canonical, diffable fingerprint of a host's state: filesystem,
 OS runtime, and the internal state of the services it finds running.
 
