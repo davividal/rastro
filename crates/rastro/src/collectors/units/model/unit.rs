@@ -6,7 +6,7 @@ use rastro_collector::{EnvironmentVariableName, Observation};
 
 use super::unit_file::UnitFile;
 use super::unit_runtime::UnitRuntime;
-use crate::collectors::systemd::ExecStart;
+use crate::collectors::systemd::{EnvironmentFile, ExecStart};
 
 /// A unit as rastro means it: whatever is on disk, and whatever systemd has loaded.
 ///
@@ -49,12 +49,17 @@ pub struct Unit {
     /// actually lives on most boxes that have one. Redaction still diffs, so a rotated
     /// credential shows as a changed digest without the document carrying it.
     ///
-    /// **Empty is not the same as unset elsewhere.** systemd reads an `EnvironmentFile=`
-    /// at exec time, so a unit whose whole environment comes from a file reports nothing
-    /// here. What that file is called is a separate property and is not yet collected,
-    /// which makes this field an incomplete answer to "what does this service run with"
-    /// and a complete answer to "what does its unit declare".
+    /// **Empty is not the same as "sets nothing".** systemd reads an `EnvironmentFile=` at
+    /// exec time, so a unit whose whole environment comes from a file reports nothing here
+    /// and runs with plenty. [`Self::environment_files`] is where that unit shows up, and
+    /// reading the two together is the only way to ask what a service runs with.
     pub environment: BTreeMap<EnvironmentVariableName, String>,
+    /// The files the unit reads its environment from, in the order systemd reads them.
+    ///
+    /// **Paths only: what is inside them is not collected.** So this says which files a
+    /// migration must not leave behind, and does not say which variables would go missing
+    /// if it did.
+    pub environment_files: Vec<EnvironmentFile>,
 }
 
 impl From<&Unit> for Observation {
@@ -67,6 +72,10 @@ impl From<&Unit> for Observation {
                         .iter()
                         .map(|(name, value)| (name.as_str(), Observation::text(value).sensitive())),
                 ),
+            ),
+            (
+                "environment_files",
+                Observation::list(unit.environment_files.iter().map(Observation::from)),
             ),
             (
                 "exec_start",

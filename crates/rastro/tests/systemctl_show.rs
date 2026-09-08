@@ -216,6 +216,7 @@ ExecStartEx={ path=/bin/true ; argv[]=/bin/true ; flags= ; start_time=[n/a] ; \
 stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
 Environment=SIMPLE=plain \"SPACED=two words\" \"QUOTED=has\\\"quote\" EMPTY= EQUALS=a=b=c
 EnvironmentFiles=/etc/envtest.env (ignore_errors=no)
+EnvironmentFiles=/etc/missing.env (ignore_errors=yes)
 Id=envtest.service
 
 Environment=\"NEWLINE=a\\nb\" \"TAB=a\\tb\" \"BACKSLASH=a\\\\b\" \"SINGLE=it's\" \
@@ -300,5 +301,104 @@ fn an_environment_entry_with_no_equals_is_refused() {
     assert!(
         failure.to_string().contains("NAMEONLY"),
         "the operator needs to know which entry, got: {failure}"
+    );
+}
+
+fn environment_files_of(name: &str) -> Vec<(String, bool)> {
+    let unit = UnitName::new(name).expect("a legal unit name");
+
+    systemctl_show::parse(SHOWN_WITH_ENVIRONMENT)
+        .expect("these fixtures are well formed")
+        .get(&unit)
+        .unwrap_or_else(|| panic!("expected {name:?} in the output"))
+        .environment_files
+        .iter()
+        .map(|file| (file.path.as_str().to_owned(), file.ignore_errors))
+        .collect()
+}
+
+#[test]
+fn an_environment_file_carries_its_path_and_whether_systemd_tolerates_its_absence() {
+    // Act
+    let files = environment_files_of("envtest.service");
+
+    // Assert: `ignore_errors` is systemd's own word for the `-` prefix in
+    // `EnvironmentFile=-/path`, kept as systemd spells it. The distinction is behaviour, not
+    // bookkeeping: a required file that did not survive a migration stops the unit, and an
+    // optional one is designed not to.
+    assert_eq!(
+        files,
+        vec![
+            ("/etc/envtest.env".to_owned(), false),
+            ("/etc/missing.env".to_owned(), true),
+        ]
+    );
+}
+
+#[test]
+fn environment_files_keep_systemds_order_because_a_later_file_overrides_an_earlier_one() {
+    // Arrange: two files whose paths sort the other way round from the order the unit reads
+    // them, so a parser that sorted would be caught.
+    let shown = "\
+EnvironmentFiles=/etc/zzz.env (ignore_errors=no)
+EnvironmentFiles=/etc/aaa.env (ignore_errors=no)
+Id=ordered.service
+";
+    let unit = UnitName::new("ordered.service").expect("a legal unit name");
+
+    // Act
+    let parsed = systemctl_show::parse(shown).expect("a well formed group");
+    let paths: Vec<&str> = parsed[&unit]
+        .environment_files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+
+    // Assert: last one wins on a repeated variable, so the order *is* the meaning. Sorting
+    // these would be the same mistake as sorting `/proc/mounts`.
+    assert_eq!(paths, ["/etc/zzz.env", "/etc/aaa.env"]);
+}
+
+#[test]
+fn a_unit_with_no_environment_file_prints_no_line_and_reports_none() {
+    // Act & Assert: unlike `Environment=`, which prints an empty value, this property is
+    // absent from the group entirely. Two different spellings of absence in one dump.
+    assert!(environment_files_of("edge.service").is_empty());
+}
+
+#[test]
+fn an_environment_file_whose_line_has_no_ignore_errors_is_refused() {
+    // Arrange: not a shape systemd produces, so reaching it means this parser misread the
+    // line, and a path recorded without knowing whether it is required is worse than none.
+    let malformed = "EnvironmentFiles=/etc/bare.env\nId=broken.service\n";
+
+    // Act
+    let result = systemctl_show::parse(malformed);
+
+    // Assert
+    let failure = result.expect_err("a line with no `(ignore_errors=…)` cannot be read");
+    assert!(
+        failure.to_string().contains("/etc/bare.env"),
+        "the operator needs to know which line, got: {failure}"
+    );
+}
+
+#[test]
+fn an_environment_file_path_may_contain_a_space() {
+    // Arrange: systemd quotes nothing on this property, so the path runs up to the last
+    // ` (ignore_errors=`. Splitting on the first space would truncate this one.
+    let shown = "\
+EnvironmentFiles=/etc/my app.env (ignore_errors=no)
+Id=spaced.service
+";
+    let unit = UnitName::new("spaced.service").expect("a legal unit name");
+
+    // Act
+    let parsed = systemctl_show::parse(shown).expect("a well formed group");
+
+    // Assert
+    assert_eq!(
+        parsed[&unit].environment_files[0].path.as_str(),
+        "/etc/my app.env"
     );
 }

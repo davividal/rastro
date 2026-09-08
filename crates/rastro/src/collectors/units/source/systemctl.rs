@@ -52,6 +52,13 @@ const EXEC_START_PROPERTY: &str = "--property=ExecStartEx";
 /// `ExecStartEx` is asked of systemd rather than read out of the unit file.
 const ENVIRONMENT_PROPERTY: &str = "--property=Environment";
 
+/// Ask which files each unit reads its environment from.
+///
+/// The property is plural where the directive is not, and it prints one line per file. This
+/// is the half `Environment=` cannot answer: systemd opens these at exec time, so a unit
+/// configured entirely through one declares an empty environment.
+const ENVIRONMENT_FILES_PROPERTY: &str = "--property=EnvironmentFiles";
+
 /// Everything after this is a unit name, however much it looks like an option.
 ///
 /// **Not optional, and not defensive programming.** systemd's root slice and root mount are
@@ -121,6 +128,7 @@ impl Systemctl {
             ID_PROPERTY,
             EXEC_START_PROPERTY,
             ENVIRONMENT_PROPERTY,
+            ENVIRONMENT_FILES_PROPERTY,
             NO_PAGER,
             END_OF_OPTIONS,
         ];
@@ -152,6 +160,7 @@ impl Systemctl {
                 runtime: runtimes.get(name).cloned(),
                 exec_start: shown_unit.exec_start,
                 environment: shown_unit.environment,
+                environment_files: shown_unit.environment_files,
             };
 
             (name.clone(), unit)

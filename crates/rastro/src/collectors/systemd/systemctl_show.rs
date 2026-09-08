@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use rastro_collector::{CollectionError, EnvironmentVariableName};
 use serde::Deserialize;
 
+use super::environment_file::EnvironmentFile;
 use super::exec_start::ExecStart;
 use super::shown_unit::ShownUnit;
 use super::unit_name::UnitName;
@@ -26,6 +27,13 @@ use super::unit_name::UnitName;
 const ID: &str = "Id=";
 const EXEC_START: &str = "ExecStartEx=";
 const ENVIRONMENT: &str = "Environment=";
+const ENVIRONMENT_FILES: &str = "EnvironmentFiles=";
+
+/// What separates an environment file's path from systemd's note about it.
+///
+/// Split on the *last* of these rather than the first space, because nothing quotes this
+/// property and a path may contain a space.
+const IGNORE_ERRORS: &str = " (ignore_errors=";
 
 /// What separates the fields inside one command's braced group.
 const FIELDS: &str = " ; ";
@@ -86,13 +94,50 @@ fn parse_group(group: &str) -> Result<(UnitName, ShownUnit), CollectionError> {
         None => BTreeMap::new(),
     };
 
+    // Absent entirely when the unit names no file, which is how this property spells
+    // absence: `Environment=` prints its key with an empty value instead.
+    let environment_files = group
+        .lines()
+        .filter_map(|line| line.strip_prefix(ENVIRONMENT_FILES))
+        .map(parse_environment_file)
+        .collect::<Result<Vec<EnvironmentFile>, CollectionError>>()?;
+
     Ok((
         UnitName::new(name)?,
         ShownUnit {
             exec_start,
             environment,
+            environment_files,
         },
     ))
+}
+
+/// One `EnvironmentFiles=/path (ignore_errors=bool)` line.
+fn parse_environment_file(line: &str) -> Result<EnvironmentFile, CollectionError> {
+    let (path, tolerated) = line
+        .trim_end()
+        .strip_suffix(')')
+        .and_then(|line| line.rsplit_once(IGNORE_ERRORS))
+        .ok_or_else(|| {
+            CollectionError::new(format!(
+                "`systemctl show` printed an {ENVIRONMENT_FILES:?} line with no \
+                 {IGNORE_ERRORS:?} note, so whether the unit needs that file cannot be told: \
+                 {line:?}"
+            ))
+        })?;
+
+    let ignore_errors = match tolerated {
+        "yes" => true,
+        "no" => false,
+        other => {
+            return Err(CollectionError::new(format!(
+                "`systemctl show` reported `ignore_errors={other}` for {path:?}, and rastro \
+                 knows only `yes` and `no`"
+            )));
+        }
+    };
+
+    EnvironmentFile::new(path, ignore_errors)
 }
 
 /// The `Environment=` line's entries, keyed by name.

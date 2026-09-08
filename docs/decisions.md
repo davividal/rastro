@@ -2980,10 +2980,39 @@ splitting it would claim a structure the source cannot support. `Environment=` k
 quoting, so the entries are recoverable exactly, and the honest record is the split one. A
 reader who knows the first entry would otherwise assume the same limitation applies here.
 
-**Cost:** a facet that reads as complete and is not. A service whose whole configuration
-lives in an `EnvironmentFile=` reports an empty `environment` object, which is
-indistinguishable from one that genuinely sets nothing until the file paths land beside it.
-Named in the field's own documentation so it is not discovered from a diff.
+## The files a unit reads, beside the variables it declares
+
+`EnvironmentFiles=` lands in the same facet, and it is what stops the previous section being
+a trap. A service configured entirely through one declares an empty `environment` and runs
+with a full one; the two fields are only an answer read together, which both now say in
+their own documentation.
+
+**Paths only. What is inside the files is not read.** So the facet says which files a
+migration must not leave behind, and does not say which variables would go missing if it
+did. That is the smaller claim and it is the one the data supports.
+
+**`ignore_errors` is systemd's word and is kept as systemd spells it**, for what a unit file
+writes as the `-` prefix in `EnvironmentFile=-/path`. `required` was considered and rejected:
+the double negative is unlovely, and the vocabulary of the tool being quoted is the spelling
+a reader can look up. The distinction is behaviour and not bookkeeping — a required file
+that did not survive a migration stops the unit, and an optional one is designed for exactly
+that absence.
+
+**The order is kept and never sorted.** systemd reads these in the order the unit declares
+them and a later file overrides a variable an earlier one set, so the order *is* the
+meaning. The same reasoning that keeps kernel order in `/proc/mounts`.
+
+**Two spellings of absence in one dump, and the parser has to know both.** A unit that sets
+no variables prints `Environment=` with nothing after it; a unit that names no file prints
+no `EnvironmentFiles=` line at all. Measured, not assumed.
+
+**Nothing here is withheld.** A path is not a credential, and it is the whole of the
+migration finding. The values on the `Environment=` line still are.
+
+**Cost:** the facet now names a file it cannot read, so a diff can show that
+`/etc/myapp.env` is still there and still say nothing about the variable inside it that
+changed. Reading those files is a separate decision, and it is the one where redaction
+starts earning its keep on this facet rather than merely being available.
 
 # Every collector is version `1` until rastro has a release
 

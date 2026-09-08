@@ -7,12 +7,13 @@
 
 mod support;
 
+use rastro::collectors::systemd::EnvironmentFile;
 use rastro::collectors::units::{
     LoadState, Systemctl, Unit, UnitFileState, UnitName, UnitRegistry, UnitsCollector,
 };
 use rastro_collector::{Collector, EnvironmentVariableName, Presence};
 use rastro_fingerprint::{Content, Observation, Presentation, Scalar, View};
-use support::observation::{field, keys_of};
+use support::observation::{field, items_of, keys_of};
 
 /// Real rows, covering an enabled service, a masked one, an alias, a template, a
 /// runtime-enabled unit and the transient scope of a login session.
@@ -302,7 +303,13 @@ fn a_unit_renders_both_sides_with_a_null_for_the_missing_one() {
     // every consumer, so both sides are always there and one is null.
     assert_eq!(
         keys_of(&template),
-        ["environment", "exec_start", "file", "runtime"]
+        [
+            "environment",
+            "environment_files",
+            "exec_start",
+            "file",
+            "runtime"
+        ]
     );
     assert_eq!(
         field(&template, "runtime").content(),
@@ -416,6 +423,7 @@ fn a_units_environment_values_are_withheld_and_its_names_are_not() {
         runtime: None,
         exec_start: Vec::new(),
         environment,
+        environment_files: Vec::new(),
     };
 
     // Act
@@ -448,6 +456,7 @@ fn a_units_environment_value_is_readable_under_raw() {
         runtime: None,
         exec_start: Vec::new(),
         environment,
+        environment_files: Vec::new(),
     };
 
     // Act
@@ -461,4 +470,66 @@ fn a_units_environment_value_is_readable_under_raw() {
         text(&field(&field(&rendered, "environment"), "RUST_LOG")),
         "info"
     );
+}
+
+#[test]
+fn a_unit_configured_only_through_a_file_declares_no_variables_and_still_names_the_file() {
+    // Arrange: the shape that makes the two fields need reading together. `Environment=` is
+    // empty because systemd opens the file at exec time, and the unit runs with whatever is
+    // in it.
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment: std::collections::BTreeMap::new(),
+        environment_files: vec![
+            EnvironmentFile::new("/etc/myapp.env", false).expect("an absolute path"),
+            EnvironmentFile::new("/etc/myapp.local.env", true).expect("an absolute path"),
+        ],
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+    let files = items_of(&field(&rendered, "environment_files"));
+
+    // Assert: an empty `environment` beside a populated `environment_files` is exactly the
+    // case a reader would otherwise take for "this unit sets nothing".
+    assert!(keys_of(&field(&rendered, "environment")).is_empty());
+    assert_eq!(files.len(), 2);
+    assert_eq!(text(&field(&files[0], "path")), "/etc/myapp.env");
+    assert_eq!(
+        field(&files[0], "ignore_errors").content(),
+        &Content::Scalar(Scalar::Boolean(false)),
+        "the unit requires this one, so its absence after a migration stops the service"
+    );
+    assert_eq!(
+        field(&files[1], "ignore_errors").content(),
+        &Content::Scalar(Scalar::Boolean(true))
+    );
+}
+
+#[test]
+fn an_environment_file_path_is_not_withheld() {
+    // Arrange: the path is the migration finding and is not a credential. What the file
+    // holds is not read at all, so there is nothing here to redact.
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment: std::collections::BTreeMap::new(),
+        environment_files: vec![
+            EnvironmentFile::new("/etc/myapp.env", false).expect("an absolute path"),
+        ],
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+
+    // Assert
+    let files = items_of(&field(&rendered, "environment_files"));
+    assert_eq!(text(&field(&files[0], "path")), "/etc/myapp.env");
 }
