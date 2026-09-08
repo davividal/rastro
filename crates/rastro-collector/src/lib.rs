@@ -40,8 +40,8 @@ pub use value_objects::{
 /// fourth workspace member depending on this crate alone, which is more
 /// machinery than the regression is worth.
 pub use rastro_fingerprint::{
-    CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion, Content, FacetName,
-    FingerprintError, Observation, Scalar, Sensitivity, View, Volatility,
+    CollectorCategory, CollectorId, CollectorIdentity, CollectorVersion, Content, Disclosure,
+    FacetName, FingerprintError, Observation, Presentation, Scalar, Sensitivity, View, Volatility,
 };
 
 /// Whether a collector's subject is on this host.

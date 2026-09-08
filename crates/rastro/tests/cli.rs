@@ -844,3 +844,35 @@ fn a_run_leaves_the_kernel_module_list_untouched() {
         "rastro loaded {loaded:?}, so the fingerprint describes a host it had just changed"
     );
 }
+
+#[test]
+fn the_effective_config_records_the_disclosure_the_run_was_taken_under() {
+    // Act
+    let default = document(&["--config", without_walking()]);
+    let raw = document(&["--raw", "--config", without_walking()]);
+
+    // Assert: the envelope has to admit which of the two documents it is. Diffing a `--raw`
+    // fingerprint against a redacted one otherwise reports a changed value at every
+    // sensitive field, with nothing in either document to explain it.
+    assert_eq!(
+        facet(&default, "metadata", "invocation")["data"]["config"]["disclosure"],
+        json!("redacted"),
+        "redaction is the default, so a run that asked for nothing gets the safe document"
+    );
+    assert_eq!(
+        facet(&raw, "metadata", "invocation")["data"]["config"]["disclosure"],
+        json!("raw")
+    );
+}
+
+#[test]
+fn the_two_presentation_axes_are_recorded_independently() {
+    // Act: the complete view, still redacted.
+    let complete = document(&["--include-volatile", "--config", without_walking()]);
+
+    // Assert: a fuller document is not a way round an annotation, which is exactly why
+    // disclosure is a second axis rather than another value of the view.
+    let config = facet(&complete, "metadata", "invocation")["data"]["config"].clone();
+    assert_eq!(config["view"], json!("complete"));
+    assert_eq!(config["disclosure"], json!("redacted"));
+}

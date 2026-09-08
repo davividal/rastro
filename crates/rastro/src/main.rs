@@ -51,7 +51,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
         collectors::built_in(collectors::Run {
             effective_config: collectors::effective_config(
                 &resolved.config,
-                invocation.view(),
+                invocation.presentation(),
                 invocation.staged_binary(),
                 resolved.detail,
             ),
@@ -88,7 +88,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
     let written = output::write(
         &resolved.destination,
         &fingerprint,
-        invocation.view(),
+        invocation.presentation(),
         invocation.force(),
     )?;
 

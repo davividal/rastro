@@ -5,10 +5,11 @@ mod support;
 
 use std::time::{Duration, UNIX_EPOCH};
 
-use rastro::collectors::filesystem::WalkPolicy;
-use rastro::collectors::{InvocationCollector, seconds_since_epoch};
+use rastro::collectors::filesystem::{Detail, WalkPolicy};
+use rastro::collectors::{InvocationCollector, effective_config, seconds_since_epoch};
+use rastro::config::Config;
 use rastro_collector::{Collector, FacetName, FilesystemClaim, Observation, WalkedTree};
-use rastro_fingerprint::Volatility;
+use rastro_fingerprint::{Presentation, Volatility};
 use support::observation::{field, is_null, text};
 
 #[test]
@@ -158,4 +159,40 @@ fn a_clock_set_before_1970_fails_the_invocation_facet_rather_than_the_run() {
 
     // Assert
     assert!(refused.is_err());
+}
+
+#[test]
+fn the_effective_config_records_whether_sensitive_values_were_shown() {
+    // Arrange: the same argument that puts the view in here. Disclosure is a flag, and it
+    // rewrites every sensitive value in the document, so diffing a `--raw` fingerprint
+    // against a redacted one would report a changed value at every one of them with nothing
+    // in either document to explain it.
+    let config = Config::default();
+
+    // Act
+    let redacted = effective_config(&config, Presentation::diffable(), false, Detail::Summary);
+    let raw = effective_config(
+        &config,
+        Presentation::diffable().raw(),
+        false,
+        Detail::Summary,
+    );
+
+    // Assert
+    assert_eq!(text(&field(&redacted, "disclosure")), "redacted");
+    assert_eq!(text(&field(&raw, "disclosure")), "raw");
+}
+
+#[test]
+fn the_effective_config_still_names_the_view_beside_the_disclosure() {
+    // Arrange: the two axes are independent, so the document has to carry both. A complete
+    // view says nothing about whether a secret in it was withheld.
+    let config = Config::default();
+
+    // Act
+    let complete = effective_config(&config, Presentation::complete(), false, Detail::Summary);
+
+    // Assert
+    assert_eq!(text(&field(&complete, "view")), "complete");
+    assert_eq!(text(&field(&complete, "disclosure")), "redacted");
 }

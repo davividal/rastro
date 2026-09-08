@@ -10,7 +10,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use rastro::output::{Counting, Destination, default_file_name, publish, utc_stamp};
+use rastro::output::{self, Counting, Destination, default_file_name, publish, utc_stamp};
+use rastro_collector::fingerprint_host;
+use rastro_collector::{
+    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    CollectorVersion, FacetName, Observation, Presence, Presentation,
+};
+use rastro_fingerprint::observation::redaction::REDACTION_PREFIX;
 use serde_json::Value;
 mod support;
 
@@ -851,4 +857,106 @@ fn an_output_file_behind_a_symlinked_parent_is_still_left_out_of_the_walk() {
         "the document carries its own output file at {}",
         physical.display()
     );
+}
+
+/// A collector holding one secret, so the write path can be asked what it does with one.
+///
+/// Written here rather than reached for among the built-ins because no built-in marks
+/// anything sensitive yet: this test is what proves the seam works before the first real
+/// collector depends on it.
+struct SecretKeeper {
+    name: FacetName,
+    identity: CollectorIdentity,
+}
+
+impl SecretKeeper {
+    const SECRET: &'static str = "postgres://app:hunter2@localhost/app";
+
+    fn new() -> Self {
+        Self {
+            name: FacetName::new("secret_keeper").expect("a legal facet name"),
+            identity: CollectorIdentity::new(
+                CollectorId::new("secret_keeper").expect("a legal collector id"),
+                CollectorVersion::new("1").expect("a legal collector version"),
+            ),
+        }
+    }
+}
+
+impl Collector for SecretKeeper {
+    fn name(&self) -> &FacetName {
+        &self.name
+    }
+
+    fn identity(&self) -> &CollectorIdentity {
+        &self.identity
+    }
+
+    fn category(&self) -> CollectorCategory {
+        CollectorCategory::State
+    }
+
+    fn presence(&self) -> Presence {
+        Presence::Present
+    }
+
+    fn collect(&self) -> Result<Observation, CollectionError> {
+        Ok(Observation::object([(
+            "database_url",
+            Observation::text(Self::SECRET).sensitive(),
+        )]))
+    }
+}
+
+/// The `secret_keeper` facet's one field, as the document rendered it.
+fn secret_as_written(presentation: Presentation) -> String {
+    let collectors: Vec<Box<dyn Collector>> = vec![Box::new(SecretKeeper::new())];
+    let fingerprint = fingerprint_host::run(&collectors).expect("a collector that cannot fail");
+
+    let directory = std::env::temp_dir().join(format!(
+        "rastro-disclosure-{}-{:?}",
+        std::process::id(),
+        presentation.disclosure()
+    ));
+    std::fs::create_dir_all(&directory).expect("a temp directory");
+    let path = directory.join("fingerprint.json");
+    let destination = Destination::File(path.clone());
+
+    output::write(&destination, &fingerprint, presentation, true)
+        .expect("the document should be written");
+
+    let document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the document should be on disk"))
+            .expect("the write path emits a JSON document");
+    std::fs::remove_dir_all(&directory).ok();
+    facet(&document, "facets", "secret_keeper")["data"]["database_url"]
+        .as_str()
+        .expect("the field is text either way")
+        .to_owned()
+}
+
+#[test]
+fn a_sensitive_value_is_a_digest_in_the_document_by_default() {
+    // Act
+    let written = secret_as_written(Presentation::complete());
+
+    // Assert: the prefix names the recipe, because a bare digest on a field whose name is
+    // not obviously a secret reads exactly like a value.
+    assert!(
+        written.starts_with(REDACTION_PREFIX),
+        "a secret reached the document as it stands: {written:?}"
+    );
+    assert!(
+        !written.contains("hunter2"),
+        "the material survived its own redaction: {written:?}"
+    );
+}
+
+#[test]
+fn raw_shows_a_sensitive_value_as_it_stands() {
+    // Act
+    let written = secret_as_written(Presentation::complete().raw());
+
+    // Assert: the whole point of the opt-out, and the reason it is an opt-out.
+    assert_eq!(written, SecretKeeper::SECRET);
 }

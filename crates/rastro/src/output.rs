@@ -44,7 +44,7 @@ use std::io::{self, BufWriter, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-use rastro_fingerprint::{Fingerprint, View, json};
+use rastro_fingerprint::{Fingerprint, Presentation, json};
 
 pub use timestamp::utc_stamp;
 
@@ -130,12 +130,12 @@ pub fn default_file_name(hostname: Option<&str>, started_at: i64) -> String {
 pub fn write(
     destination: &Destination,
     fingerprint: &Fingerprint,
-    view: View,
+    presentation: Presentation,
     force: bool,
 ) -> Result<Written, OutputError> {
     let bytes = match destination {
-        Destination::Stdout => to_stdout(fingerprint, view)?,
-        Destination::File(path) => to_file(path, fingerprint, view, force)?,
+        Destination::Stdout => to_stdout(fingerprint, presentation)?,
+        Destination::File(path) => to_file(path, fingerprint, presentation, force)?,
     };
 
     Ok(Written {
@@ -144,11 +144,11 @@ pub fn write(
     })
 }
 
-fn to_stdout(fingerprint: &Fingerprint, view: View) -> Result<u64, OutputError> {
+fn to_stdout(fingerprint: &Fingerprint, presentation: Presentation) -> Result<u64, OutputError> {
     let stdout = io::stdout();
     let mut writer = BufWriter::with_capacity(256 * 1024, stdout.lock());
 
-    let counted = render(&mut writer, fingerprint, view)
+    let counted = render(&mut writer, fingerprint, presentation)
         .and_then(|bytes| writer.flush().map(|()| bytes))
         .map_err(|error| failure("stdout", "could not be written", &error))?;
 
@@ -158,7 +158,7 @@ fn to_stdout(fingerprint: &Fingerprint, view: View) -> Result<u64, OutputError> 
 fn to_file(
     path: &Path,
     fingerprint: &Fingerprint,
-    view: View,
+    presentation: Presentation,
     force: bool,
 ) -> Result<u64, OutputError> {
     // **A destination that is not a regular file is written through, never published over.**
@@ -176,7 +176,7 @@ fn to_file(
     if let Ok(existing) = fs::symlink_metadata(path)
         && !existing.file_type().is_file()
     {
-        return straight_into(path, fingerprint, view);
+        return straight_into(path, fingerprint, presentation);
     }
 
     let staging = staging_path(path);
@@ -193,7 +193,7 @@ fn to_file(
         // business and mentioning it would send them looking for a file they never chose.
         .map_err(|error| failure(&path.display().to_string(), "could not be written", &error))?;
 
-    let written = write_and_publish(file, &staging, path, fingerprint, view, force);
+    let written = write_and_publish(file, &staging, path, fingerprint, presentation, force);
     if written.is_err() {
         // Best effort: the run has already failed, and a leftover partial file is the thing
         // the temporary name existed to prevent.
@@ -208,7 +208,11 @@ fn to_file(
 /// Opened and truncated in place, because the point of naming a device, a FIFO or
 /// `/dev/stdout` is to write *through* it. Not synced either: there is nothing durable behind
 /// it to flush.
-fn straight_into(path: &Path, fingerprint: &Fingerprint, view: View) -> Result<u64, OutputError> {
+fn straight_into(
+    path: &Path,
+    fingerprint: &Fingerprint,
+    presentation: Presentation,
+) -> Result<u64, OutputError> {
     let named = path.display().to_string();
     let file = fs::OpenOptions::new()
         .write(true)
@@ -217,7 +221,7 @@ fn straight_into(path: &Path, fingerprint: &Fingerprint, view: View) -> Result<u
         .map_err(|error| failure(&named, "could not be opened", &error))?;
 
     let mut writer = BufWriter::with_capacity(256 * 1024, file);
-    let bytes = render(&mut writer, fingerprint, view)
+    let bytes = render(&mut writer, fingerprint, presentation)
         .map_err(|error| failure(&named, "could not be written", &error))?;
     writer
         .flush()
@@ -241,7 +245,7 @@ fn write_and_publish(
     staging: &Path,
     path: &Path,
     fingerprint: &Fingerprint,
-    view: View,
+    presentation: Presentation,
     force: bool,
 ) -> Result<u64, OutputError> {
     // The destination throughout, for the reason above: the staging file is an implementation
@@ -249,7 +253,7 @@ fn write_and_publish(
     let named = path.display().to_string();
     let mut writer = BufWriter::with_capacity(256 * 1024, file);
 
-    let bytes = render(&mut writer, fingerprint, view)
+    let bytes = render(&mut writer, fingerprint, presentation)
         .map_err(|error| failure(&named, "could not be written", &error))?;
 
     writer
@@ -317,9 +321,13 @@ pub fn publish(staging: &Path, path: &Path, force: bool) -> Result<(), OutputErr
 }
 
 /// The document, and how many bytes it was.
-fn render(writer: &mut impl Write, fingerprint: &Fingerprint, view: View) -> io::Result<u64> {
+fn render(
+    writer: &mut impl Write,
+    fingerprint: &Fingerprint,
+    presentation: Presentation,
+) -> io::Result<u64> {
     let mut counted = Counting::over(writer);
-    json::to_canonical_json_writer(fingerprint, view, &mut counted)?;
+    json::to_canonical_json_writer(fingerprint, presentation, &mut counted)?;
 
     Ok(counted.bytes)
 }

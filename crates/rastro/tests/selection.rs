@@ -3,14 +3,14 @@
 use rastro::collectors;
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
-use rastro_fingerprint::{Observation, View};
+use rastro_fingerprint::{Observation, Presentation};
 
 mod support;
 
 use support::observation::{field, is_null, items_of, keys_of, text};
 
 fn effective(config: &Config) -> Observation {
-    collectors::effective_config(config, View::Diffable, false, Detail::Summary)
+    collectors::effective_config(config, Presentation::diffable(), false, Detail::Summary)
 }
 
 /// A run resolved as the composition root would, with the two host readings supplied so this
