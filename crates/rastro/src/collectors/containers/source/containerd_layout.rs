@@ -80,7 +80,11 @@ impl ContainerdLayout {
             .unwrap_or_else(|| DEFAULT_ADDRESS.to_owned());
 
         Self {
-            address: as_walked(address, "containerd address"),
+            // **Not resolved, unlike the two directories below.** The address is handed to
+            // `ctr`, which follows a symlink itself, and what rastro records is where it
+            // asked. The directories are handed to nothing: they are compared against paths
+            // the filesystem walk produces, and it never follows a symlink.
+            address: AbsolutePath::new(address, "containerd address").ok(),
             root: as_walked(
                 configured.root.unwrap_or_else(|| DEFAULT_ROOT.to_owned()),
                 "containerd root",
@@ -93,13 +97,17 @@ impl ContainerdLayout {
     }
 }
 
-/// A path as the filesystem walk would see it.
+/// A directory as the filesystem walk would see it.
 ///
 /// **Resolved through its symlinks, because otherwise a claim over it is a rule about a tree
 /// nothing visits.** docker gives its containerd `state = "/var/run/docker/containerd/daemon"`,
 /// and on Debian `/var/run` is a symlink to `/run`; the walk never follows a symlink, so it
 /// only ever records the real path. A path that cannot be resolved is kept as reported, since
 /// a declared rule that matches nothing is still better than a silent omission.
+///
+/// This is why the socket address is *not* put through here: it is handed to `ctr` rather
+/// than compared with the walk, and resolving it would change what rastro records about
+/// where it asked.
 fn as_walked(path: String, kind: &str) -> Option<AbsolutePath> {
     let resolved = fs::canonicalize(&path)
         .ok()

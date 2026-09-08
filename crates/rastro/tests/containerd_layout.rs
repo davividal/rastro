@@ -254,6 +254,30 @@ fn a_containerd_naming_no_directories_is_at_the_documented_defaults() {
 }
 
 #[test]
+fn the_address_is_recorded_as_the_engine_reported_it() {
+    // Arrange: **not resolved, unlike the directories.** docker names its containerd's
+    // socket under `/var/run`, which on Linux is a symlink to `/run`; the address is handed
+    // to `ctr`, which follows it, and what rastro records is where it asked. Resolving it
+    // would also make this assertion depend on whether the box running the test happens to
+    // have that symlink, which is how a test passes on macOS and fails on Debian.
+    let root = scratch_tree("containerd-address-verbatim", &[]);
+    let config = config_naming(&root, "/var/run/docker/containerd/containerd.sock");
+    let proc = proc_with(
+        "verbatim",
+        "/usr/local/bin/containerd",
+        &["/usr/local/bin/containerd", "--config", &config],
+    );
+
+    // Act & Assert
+    assert_eq!(
+        ContainerdLayout::under(&proc)
+            .address
+            .map(|address| address.as_str().to_owned()),
+        Some("/var/run/docker/containerd/containerd.sock".to_owned())
+    );
+}
+
+#[test]
 fn a_directory_reached_through_a_symlink_is_recorded_as_the_walk_would_see_it() {
     // Arrange: **the second trap, and it would have made the claim do nothing.** docker's
     // containerd is given `state = "/var/run/docker/containerd/daemon"`, and on Debian
