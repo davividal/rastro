@@ -10,8 +10,8 @@ use crate::collectors::containers::value_objects::EngineFlavour;
 ///
 /// An enum rather than a trait, for the reason the packages facet gives: the engines are read
 /// in genuinely different ways, and an exhaustive match is what makes the compiler name every
-/// site when a third arrives. Adding an [`EngineFlavour`] variant fails to compile until
-/// [`Self::detect`] says what to look for.
+/// site when a third arrives. Adding an [`EngineFlavour`] variant fails to compile until the
+/// detection below says what to look for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineSource {
     Docker(Docker),
