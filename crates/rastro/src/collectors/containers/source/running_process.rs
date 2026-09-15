@@ -1,5 +1,6 @@
 //! Finding a running process by the binary behind it, and whose it is.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -36,7 +37,7 @@ pub fn running(proc: impl AsRef<Path>, program: &str) -> Vec<RunningProcess> {
         let path = entry.path();
         let is_process = path
             .file_name()
-            .and_then(|name| name.to_str())
+            .and_then(OsStr::to_str)
             .is_some_and(|name| name.chars().all(|character| character.is_ascii_digit()));
         if !is_process {
             continue;
@@ -45,7 +46,7 @@ pub fn running(proc: impl AsRef<Path>, program: &str) -> Vec<RunningProcess> {
         let Ok(executable) = fs::read_link(path.join("exe")) else {
             continue;
         };
-        if executable.file_name().and_then(|name| name.to_str()) != Some(program) {
+        if executable.file_name().and_then(OsStr::to_str) != Some(program) {
             continue;
         }
 
