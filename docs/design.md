@@ -129,9 +129,18 @@ engines. Enough to prove the detect-and-dispatch pattern exec-contract authors
 will copy, and between them the two shapes it comes in: a service that will
 report its effective state, and a service that will not.
 
-**Layer 3, containers.** One `containers` facet covering every engine on the box,
-keyed by flavour — the way `packages` covers dpkg and apk — because an operator
-asking about containers is asking one question. Container state is Layer 3 rather
+**Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
+installed and what each holds of its own, and `containers`, what is running. Both are
+keyed by engine flavour — the way `packages` covers dpkg and apk — because an operator
+asking about containers is asking one question.
+
+**The split is the facet's central arrangement.** A container is a tenant of the box; an
+engine is what happens to be running it, and an image, a volume or a network is an
+artefact of that engine's store. So "what is running here" is one subtree a reader opens
+without knowing which engines exist, and everything that is not a container stays with the
+engine that holds it. The engine remains the first key under `containers`, because it has
+to be: `docker/web` and `podman/web` are two different containers with one name, and
+containerd has no names at all. Container state is Layer 3 rather
 than Layer 2 despite being a fixed surface: it is reached only through an
 engine-specific tool, dispatched from that engine's presence, which is what makes a
 surface Layer 3. Two engines legitimately sit side by side, since docker runs

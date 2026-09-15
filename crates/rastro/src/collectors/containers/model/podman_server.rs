@@ -34,6 +34,13 @@ pub struct PodmanServer {
     pub containers: PodmanContainers,
 }
 
+impl PodmanServer {
+    /// The containers this service holds, keyed by name.
+    pub fn containers(&self) -> Observation {
+        Observation::from(&self.containers)
+    }
+}
+
 impl From<&PodmanServer> for Observation {
     fn from(server: &PodmanServer) -> Self {
         Observation::object([
@@ -48,7 +55,6 @@ impl From<&PodmanServer> for Observation {
             ("cgroup_version", text(server.cgroup_version.as_ref())),
             ("database_backend", text(server.database_backend.as_ref())),
             ("oci_runtime", text(server.oci_runtime.as_ref())),
-            ("containers", Observation::from(&server.containers)),
             ("socket", Observation::text(server.socket.as_str())),
             ("store", Observation::from(&server.store)),
             ("version", Observation::from(&server.version)),

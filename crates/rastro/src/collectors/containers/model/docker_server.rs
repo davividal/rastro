@@ -68,20 +68,26 @@ pub struct DockerServer {
     pub networks: DockerNetworks,
 }
 
+impl DockerServer {
+    /// The containers this daemon holds, keyed by name.
+    ///
+    /// Rendered apart from the rest of the server for the reason on
+    /// [`ContainerInventory`](crate::collectors::containers::ContainerInventory): a
+    /// container is a tenant of the box rather than an artefact of the engine's store.
+    pub fn containers(&self) -> Observation {
+        Observation::object(
+            self.containers
+                .named()
+                .iter()
+                .map(|(name, container)| (name.as_str(), Observation::from(container))),
+        )
+    }
+}
+
 impl From<&DockerServer> for Observation {
     fn from(server: &DockerServer) -> Self {
         Observation::object([
             ("cgroup", Observation::from(&server.cgroup)),
-            (
-                "containers",
-                Observation::object(
-                    server
-                        .containers
-                        .named()
-                        .iter()
-                        .map(|(name, container)| (name.as_str(), Observation::from(container))),
-                ),
-            ),
             (
                 "components",
                 Observation::object(

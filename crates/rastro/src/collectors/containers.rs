@@ -61,15 +61,15 @@ pub mod value_objects;
 
 pub use model::{
     AddressPool, CgroupControl, ContainerCapabilities, ContainerCommand, ContainerDevice,
-    ContainerEngine, ContainerEngines, ContainerEnvironment, ContainerHealthcheck, ContainerImage,
-    ContainerLabels, ContainerLimits, ContainerLogging, ContainerMount, ContainerMounts,
-    ContainerNamespaces, ContainerNetwork, ContainerNetworks, ContainerPorts, ContainerSecurity,
-    ContainerState, ContainerdContainer, ContainerdEngine, ContainerdImage, ContainerdNamespace,
-    ContainerdNamespaces, ContainerdServer, ContainerdTask, DockerContainer, DockerContainers,
-    DockerEngine, DockerImage, DockerImages, DockerNetwork, DockerNetworks, DockerServer,
-    DockerVolume, DockerVolumes, ImagePlatform, NameResolution, NetworkAddressing, ObservedHealth,
-    PodmanEngine, PodmanServer, PodmanStore, PublishedBinding, ResourceLimit, RestartPolicy,
-    UnreadableObject,
+    ContainerEngine, ContainerEnvironment, ContainerHealthcheck, ContainerImage,
+    ContainerInventory, ContainerLabels, ContainerLimits, ContainerLogging, ContainerMount,
+    ContainerMounts, ContainerNamespaces, ContainerNetwork, ContainerNetworks, ContainerPorts,
+    ContainerSecurity, ContainerState, ContainerdContainer, ContainerdEngine, ContainerdImage,
+    ContainerdNamespace, ContainerdNamespaces, ContainerdServer, ContainerdTask, DockerContainer,
+    DockerContainers, DockerEngine, DockerImage, DockerImages, DockerNetwork, DockerNetworks,
+    DockerServer, DockerVolume, DockerVolumes, ImagePlatform, NameResolution, NetworkAddressing,
+    ObservedHealth, PodmanEngine, PodmanServer, PodmanStore, PublishedBinding, ResourceLimit,
+    RestartPolicy, UnreadableObject,
 };
 pub use source::{Containerd, ContainerdLayout, Docker, EngineSource, Podman, PodmanLayout};
 pub use value_objects::{
@@ -166,7 +166,7 @@ impl Collector for ContainersCollector {
             .map(EngineSource::read)
             .collect::<Result<Vec<ContainerEngine>, CollectionError>>()?;
 
-        Ok(Observation::from(&ContainerEngines::new(found)?))
+        Ok(Observation::from(&ContainerInventory::new(found)?))
     }
 
     /// Every tree an engine on this box keeps to itself, sealed.

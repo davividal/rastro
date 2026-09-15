@@ -222,6 +222,11 @@ fn podman_facet(name: &str, info: &str, service: Option<String>) -> Observation 
         .expect("the fixtures are well formed")
 }
 
+/// One engine's own entry, from the facet's `engines` half.
+fn engine_of(facet: &Observation, flavour: &str) -> Observation {
+    field(&field(facet, "engines"), flavour)
+}
+
 fn claimed(collector: &ContainersCollector) -> Vec<(String, ClaimedReading)> {
     let mut claims: Vec<(String, ClaimedReading)> = collector
         .filesystem_claims()
@@ -253,7 +258,14 @@ fn the_facet_holds_podman_under_its_own_key() {
     let observed = podman_facet("keyed", INFO, Some(SOCKET.to_owned()));
 
     // Assert
-    assert_eq!(keys_of(&observed), vec!["podman".to_owned()]);
+    assert_eq!(
+        keys_of(&field(&observed, "engines")),
+        vec!["podman".to_owned()]
+    );
+    assert_eq!(
+        keys_of(&field(&observed, "containers")),
+        vec!["podman".to_owned()]
+    );
 }
 
 #[test]
@@ -261,7 +273,7 @@ fn a_running_service_reports_itself_and_the_store_it_resolved() {
     // Arrange: the service's own account, which is a different fact from the configuration
     // rastro read to build the claim. A store moved in a file the service has not been
     // restarted to pick up is exactly the disagreement worth seeing.
-    let podman = field(
+    let podman = engine_of(
         &podman_facet("answering", INFO, Some(SOCKET.to_owned())),
         "podman",
     );
@@ -290,7 +302,7 @@ fn a_box_with_no_service_is_installed_and_unread_with_the_reason() {
     // daemonless, so a host can be full of running containers with no podman process at all.
     // Reading it any other way would initialise the store, so rastro says what it did not do
     // and why rather than leaving a reader to wonder whether it looked.
-    let podman = field(&podman_facet("no-service", INFO, None), "podman");
+    let podman = engine_of(&podman_facet("no-service", INFO, None), "podman");
 
     // Act & Assert
     assert_eq!(text(&field(&podman, "client_version")), "5.8.6");
@@ -368,10 +380,10 @@ fn container_of(name: &str, container: &str) -> Observation {
     field(
         &field(
             &field(
-                &field(&podman_facet(name, INFO, Some(SOCKET.to_owned())), "podman"),
-                "server",
+                &podman_facet(name, INFO, Some(SOCKET.to_owned())),
+                "containers",
             ),
-            "containers",
+            "podman",
         ),
         container,
     )
@@ -383,13 +395,10 @@ fn the_containers_are_keyed_by_name() {
     // it is minted with.
     let containers = field(
         &field(
-            &field(
-                &podman_facet("names", INFO, Some(SOCKET.to_owned())),
-                "podman",
-            ),
-            "server",
+            &podman_facet("names", INFO, Some(SOCKET.to_owned())),
+            "containers",
         ),
-        "containers",
+        "podman",
     );
 
     // Act & Assert

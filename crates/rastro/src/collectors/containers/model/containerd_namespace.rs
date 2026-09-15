@@ -53,7 +53,7 @@ impl ContainerdNamespace {
         })
     }
 
-    pub fn containers(&self) -> &BTreeMap<ContainerId, ContainerdContainer> {
+    pub fn held(&self) -> &BTreeMap<ContainerId, ContainerdContainer> {
         &self.containers
     }
 
@@ -66,18 +66,20 @@ impl ContainerdNamespace {
     }
 }
 
+impl ContainerdNamespace {
+    /// The containers in this namespace, keyed by id.
+    pub fn containers(&self) -> Observation {
+        Observation::object(
+            self.held()
+                .iter()
+                .map(|(id, container)| (id.as_str(), Observation::from(container))),
+        )
+    }
+}
+
 impl From<&ContainerdNamespace> for Observation {
     fn from(namespace: &ContainerdNamespace) -> Self {
         Observation::object([
-            (
-                "containers",
-                Observation::object(
-                    namespace
-                        .containers()
-                        .iter()
-                        .map(|(id, container)| (id.as_str(), Observation::from(container))),
-                ),
-            ),
             (
                 "images",
                 Observation::object(

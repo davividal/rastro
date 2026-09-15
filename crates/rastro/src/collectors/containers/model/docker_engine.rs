@@ -40,6 +40,20 @@ impl DockerEngine {
     }
 }
 
+impl DockerEngine {
+    /// What it holds, or an empty map for a daemon that did not answer.
+    ///
+    /// Empty rather than absent: the engine's own entry says whether it was read and why,
+    /// so a reader who has opened the containers is asking a different question, and an
+    /// engine with nothing to show answers it the same way as one holding nothing.
+    pub fn containers(&self) -> Observation {
+        match &self.server {
+            Some(server) => server.containers(),
+            None => Observation::object::<&str>([]),
+        }
+    }
+}
+
 impl From<&DockerEngine> for Observation {
     fn from(engine: &DockerEngine) -> Self {
         Observation::object([

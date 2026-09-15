@@ -783,15 +783,28 @@ fn docker_facet(name: &str, fixtures: DockerFixtures) -> Observation {
         .expect("the fixtures are well formed")
 }
 
+/// One engine's own entry: what it is and what it holds that is not a container.
+fn engine_of(facet: &Observation, flavour: &str) -> Observation {
+    field(&field(facet, "engines"), flavour)
+}
+
+/// The containers one engine runs, from the facet's other half.
+fn containers_of(facet: &Observation, flavour: &str) -> Observation {
+    field(&field(facet, "containers"), flavour)
+}
+
 fn answering_server(name: &str) -> Observation {
     field(
-        &field(&docker_facet(name, DockerFixtures::answering()), "docker"),
+        &engine_of(&docker_facet(name, DockerFixtures::answering()), "docker"),
         "server",
     )
 }
 
 fn container_of(name: &str, container: &str) -> Observation {
-    field(&field(&answering_server(name), "containers"), container)
+    field(
+        &containers_of(&docker_facet(name, DockerFixtures::answering()), "docker"),
+        container,
+    )
 }
 
 #[test]
@@ -816,19 +829,34 @@ fn presence_is_present_when_docker_is_on_the_host() {
 }
 
 #[test]
-fn the_facet_is_keyed_by_the_engine() {
-    // Act
+fn the_facet_holds_the_engines_and_what_they_run_as_two_halves() {
+    // Arrange: **the facet's central arrangement.** A container is a tenant of the box and
+    // an engine is what happens to be running it, so "what is running here" is one subtree
+    // a reader opens without knowing which engines exist, and "what is installed here" is
+    // its sibling. The engine is still the first key under each, because `docker/web` and
+    // `podman/web` are two containers with one name.
     let observed = docker_facet("keyed", DockerFixtures::answering());
 
-    // Assert
-    assert_eq!(keys_of(&observed), vec!["docker".to_owned()]);
+    // Act & Assert
+    assert_eq!(
+        keys_of(&observed),
+        vec!["containers".to_owned(), "engines".to_owned()]
+    );
+    assert_eq!(
+        keys_of(&field(&observed, "engines")),
+        vec!["docker".to_owned()]
+    );
+    assert_eq!(
+        keys_of(&field(&observed, "containers")),
+        vec!["docker".to_owned()]
+    );
 }
 
 #[test]
 fn an_answering_docker_reports_what_its_daemon_is_running_with() {
     // Act
     let observed = docker_facet("answering", DockerFixtures::answering());
-    let docker = field(&observed, "docker");
+    let docker = engine_of(&observed, "docker");
     let server = field(&docker, "server");
 
     // Assert
@@ -898,7 +926,7 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
     );
 
     // Act
-    let docker = field(&observed, "docker");
+    let docker = engine_of(&observed, "docker");
 
     // Assert
     assert_eq!(text(&field(&docker, "client_version")), "29.8.0");
@@ -910,7 +938,7 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
 #[test]
 fn an_answering_daemon_records_no_reason_to_be_unreachable() {
     // Arrange
-    let docker = field(
+    let docker = engine_of(
         &docker_facet("no-reason", DockerFixtures::answering()),
         "docker",
     );
@@ -949,7 +977,10 @@ fn output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engin
 fn the_containers_are_keyed_by_name_without_dockers_leading_slash() {
     // Arrange: docker reports a container's name as `/web`, a leftover from the days when
     // links made a namespace of it. The name an operator uses is what the document keys on.
-    let containers = field(&answering_server("names"), "containers");
+    let containers = containers_of(
+        &docker_facet("names", DockerFixtures::answering()),
+        "docker",
+    );
 
     // Act & Assert
     assert_eq!(
@@ -1064,29 +1095,24 @@ fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() 
     // Arrange: a `docker run --rm` from cron can end between the id list and the inspect of
     // it. Recording the loss keeps the omission visible, and the entry is volatile because a
     // container that comes and goes on its own is the host changing on its own.
-    let server = field(
-        &field(
-            &docker_facet(
-                "vanished",
-                DockerFixtures {
-                    version: VERSION_ANSWERING,
-                    version_stderr: "",
-                    info: INFO_ANSWERING,
-                    containers: &[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)],
-                    images: &[],
-                    volumes: &[],
-                    networks: &[],
-                },
-            ),
-            "docker",
-        ),
-        "server",
+    let observed = docker_facet(
+        "vanished",
+        DockerFixtures {
+            version: VERSION_ANSWERING,
+            version_stderr: "",
+            info: INFO_ANSWERING,
+            containers: &[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
     );
+    let server = field(&engine_of(&observed, "docker"), "server");
     let unreadable = field(&server, "unreadable_containers");
 
     // Act & Assert
     assert_eq!(
-        keys_of(&field(&server, "containers")),
+        keys_of(&containers_of(&observed, "docker")),
         vec!["web".to_owned()]
     );
     assert_eq!(unreadable.volatility(), Volatility::Volatile);
@@ -1100,27 +1126,22 @@ fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() 
 fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
     // Arrange: an engine installed and running with nothing on it is a real state, and a
     // different one from an engine that could not be asked.
-    let server = field(
-        &field(
-            &docker_facet(
-                "empty",
-                DockerFixtures {
-                    version: VERSION_ANSWERING,
-                    version_stderr: "",
-                    info: INFO_ANSWERING,
-                    containers: &[],
-                    images: &[],
-                    volumes: &[],
-                    networks: &[],
-                },
-            ),
-            "docker",
-        ),
-        "server",
+    let observed = docker_facet(
+        "empty",
+        DockerFixtures {
+            version: VERSION_ANSWERING,
+            version_stderr: "",
+            info: INFO_ANSWERING,
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
     );
+    let server = field(&engine_of(&observed, "docker"), "server");
 
     // Act & Assert
-    assert!(keys_of(&field(&server, "containers")).is_empty());
+    assert!(keys_of(&containers_of(&observed, "docker")).is_empty());
     assert!(items_of(&field(&server, "unreadable_containers")).is_empty());
 }
 
@@ -1756,27 +1777,22 @@ fn an_image_the_engine_still_knows_the_parent_of_records_it() {
 fn an_image_that_vanished_while_being_read_is_recorded_too() {
     // Arrange: `docker image prune` does to images exactly what a cron `--rm` does to
     // containers, so the same loss list serves both.
-    let server = field(
-        &field(
-            &docker_facet(
-                "vanished-image",
-                DockerFixtures {
-                    version: VERSION_ANSWERING,
-                    version_stderr: "",
-                    info: INFO_ANSWERING,
-                    containers: &[],
-                    images: &[
-                        (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
-                        (DANGLING_IMAGE, None),
-                    ],
-                    volumes: &[],
-                    networks: &[],
-                },
-            ),
-            "docker",
-        ),
-        "server",
+    let observed = docker_facet(
+        "vanished-image",
+        DockerFixtures {
+            version: VERSION_ANSWERING,
+            version_stderr: "",
+            info: INFO_ANSWERING,
+            containers: &[],
+            images: &[
+                (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
+                (DANGLING_IMAGE, None),
+            ],
+            volumes: &[],
+            networks: &[],
+        },
     );
+    let server = field(&engine_of(&observed, "docker"), "server");
     let unreadable = field(&server, "unreadable_images");
 
     // Act & Assert

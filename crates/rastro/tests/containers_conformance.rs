@@ -63,16 +63,23 @@ fn lines_of(output: &str) -> BTreeSet<String> {
 
 /// rastro's own reading of this box, through the real detection.
 fn observed() -> Observation {
-    let collector = ContainersCollector::new();
-    let observation = collector
+    ContainersCollector::new()
         .collect()
-        .expect("a live docker should be readable; if it is not, that is the finding");
+        .expect("a live docker should be readable; if it is not, that is the finding")
+}
 
-    field(&observation, "docker")
+/// docker's own entry: what it is, and what it holds that is not a container.
+fn engine() -> Observation {
+    field(&field(&observed(), "engines"), "docker")
+}
+
+/// The containers docker runs, from the facet's other half.
+fn containers() -> Observation {
+    field(&field(&observed(), "containers"), "docker")
 }
 
 fn server() -> Observation {
-    let docker = observed();
+    let docker = engine();
     let server = field(&docker, "server");
 
     assert!(
@@ -96,9 +103,7 @@ fn the_container_names_are_the_ones_docker_lists() {
     );
 
     // Act
-    let ours: BTreeSet<String> = keys_of(&field(&server(), "containers"))
-        .into_iter()
-        .collect();
+    let ours: BTreeSet<String> = keys_of(&containers()).into_iter().collect();
 
     // Assert
     assert_eq!(ours, theirs);

@@ -44,6 +44,16 @@ impl PodmanEngine {
     }
 }
 
+impl PodmanEngine {
+    /// What it holds, or an empty map where no service answered.
+    pub fn containers(&self) -> Observation {
+        match &self.server {
+            Some(server) => server.containers(),
+            None => Observation::object::<&str>([]),
+        }
+    }
+}
+
 impl From<&PodmanEngine> for Observation {
     fn from(engine: &PodmanEngine) -> Self {
         Observation::object([

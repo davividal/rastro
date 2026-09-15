@@ -257,6 +257,11 @@ esac
     Containerd::using(tool, Some(ADDRESS.to_owned()))
 }
 
+/// One engine's own entry, from the facet's `engines` half.
+fn engine_of(facet: &Observation, flavour: &str) -> Observation {
+    field(&field(facet, "engines"), flavour)
+}
+
 fn containerd_facet(name: &str, version: &str, namespaces: &str) -> Observation {
     ContainersCollector::reading(vec![EngineSource::Containerd(fake_containerd(
         name, version, namespaces,
@@ -283,14 +288,21 @@ fn the_facet_holds_containerd_under_its_own_key() {
     let observed = containerd_facet("keyed", VERSION, NAMESPACES);
 
     // Act & Assert
-    assert_eq!(keys_of(&observed), vec!["containerd".to_owned()]);
+    assert_eq!(
+        keys_of(&field(&observed, "engines")),
+        vec!["containerd".to_owned()]
+    );
+    assert_eq!(
+        keys_of(&field(&observed, "containers")),
+        vec!["containerd".to_owned()]
+    );
 }
 
 #[test]
 fn containerd_reports_the_client_and_the_server_it_reached() {
     // Arrange: the revision matters more here than for docker. containerd's version moves
     // slowly and the revision is what a distribution's rebuild changes.
-    let containerd = field(
+    let containerd = engine_of(
         &containerd_facet("versions", VERSION, NAMESPACES),
         "containerd",
     );
@@ -312,7 +324,7 @@ fn the_address_it_was_reached_at_is_recorded() {
     // docker's own runtime directory rather than at containerd's default, so the address
     // distinguishes a containerd docker manages from one the operator runs.
     let server = field(
-        &field(
+        &engine_of(
             &containerd_facet("address", VERSION, NAMESPACES),
             "containerd",
         ),
@@ -330,7 +342,7 @@ fn the_namespaces_are_keyed_by_name() {
     // is the outer key rather than a field on each container, because two namespaces may
     // hold containers with the same id and nothing in one is visible from the other.
     let server = field(
-        &field(
+        &engine_of(
             &containerd_facet("namespaces", VERSION, NAMESPACES),
             "containerd",
         ),
@@ -370,7 +382,7 @@ fn a_containerd_with_no_address_to_reach_is_installed_and_unreachable() {
     ))])
     .collect()
     .expect("an unreachable containerd is not a failed read");
-    let containerd = field(&observed, "containerd");
+    let containerd = engine_of(&observed, "containerd");
 
     // Assert
     assert_eq!(text(&field(&containerd, "client_version")), "v2.3.4");
@@ -400,17 +412,40 @@ fn output_that_carries_no_server_block_fails_the_facet() {
     );
 }
 
-fn namespace_of(name: &str, per_namespace: &[NamespaceFixtures], namespace: &str) -> Observation {
-    let observed = ContainersCollector::reading(vec![EngineSource::Containerd(
-        fake_containerd_holding(name, VERSION, NAMESPACES, per_namespace),
-    )])
+fn read_holding(name: &str, per_namespace: &[NamespaceFixtures]) -> Observation {
+    ContainersCollector::reading(vec![EngineSource::Containerd(fake_containerd_holding(
+        name,
+        VERSION,
+        NAMESPACES,
+        per_namespace,
+    ))])
     .collect()
-    .expect("the fixtures are well formed");
+    .expect("the fixtures are well formed")
+}
 
+/// One namespace's entry on the engine's side: its images, and what could not be read.
+fn namespace_of(name: &str, per_namespace: &[NamespaceFixtures], namespace: &str) -> Observation {
     field(
         &field(
-            &field(&field(&observed, "containerd"), "server"),
+            &field(
+                &engine_of(&read_holding(name, per_namespace), "containerd"),
+                "server",
+            ),
             "namespaces",
+        ),
+        namespace,
+    )
+}
+
+/// The containers of one namespace, from the facet's other half.
+///
+/// containerd keeps the extra level a reader has to pass through, because a namespace is its
+/// tenancy boundary and two of them may hold the same id.
+fn containers_in(name: &str, per_namespace: &[NamespaceFixtures], namespace: &str) -> Observation {
+    field(
+        &field(
+            &field(&read_holding(name, per_namespace), "containers"),
+            "containerd",
         ),
         namespace,
     )
@@ -443,13 +478,10 @@ fn a_namespaces_containers_are_keyed_by_id() {
     // Arrange: keyed by id rather than by name, unlike docker's containers, because
     // containerd has no names. A container's id is whatever created it chose: docker and a
     // kubelet use a hex string, `nerdctl` uses the name the operator typed.
-    let namespace = namespace_of("keyed-containers", &both_namespaces(), "k8s.io");
+    let containers = containers_in("keyed-containers", &both_namespaces(), "k8s.io");
 
     // Act & Assert
-    assert_eq!(
-        keys_of(&field(&namespace, "containers")),
-        vec!["web-1".to_owned()]
-    );
+    assert_eq!(keys_of(&containers), vec!["web-1".to_owned()]);
 }
 
 #[test]
@@ -457,10 +489,7 @@ fn a_container_records_the_runtime_and_the_image_containerd_holds_for_it() {
     // Arrange: the layer underneath docker's account. Which OCI runtime runs a container is
     // containerd's to say, and nothing in the docker entry does.
     let container = field(
-        &field(
-            &namespace_of("runtime", &both_namespaces(), "moby"),
-            "containers",
-        ),
+        &containers_in("runtime", &both_namespaces(), "moby"),
         "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e",
     );
 
@@ -481,10 +510,7 @@ fn a_container_docker_manages_has_no_snapshotter_of_its_own() {
     // Arrange: docker keeps its own snapshots and hands containerd a prepared rootfs, so
     // both fields come back empty. Empty text would claim a snapshotter called nothing.
     let container = field(
-        &field(
-            &namespace_of("snapshotter", &both_namespaces(), "moby"),
-            "containers",
-        ),
+        &containers_in("snapshotter", &both_namespaces(), "moby"),
         "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e",
     );
 
@@ -498,10 +524,7 @@ fn a_container_created_through_containerd_records_its_snapshot_and_sandbox() {
     // Arrange: what a `nerdctl` or kubelet container looks like. The sandbox is the value a
     // kubernetes node needs, since it is what ties a container to its pod.
     let container = field(
-        &field(
-            &namespace_of("nerdctl", &both_namespaces(), "k8s.io"),
-            "containers",
-        ),
+        &containers_in("nerdctl", &both_namespaces(), "k8s.io"),
         "web-1",
     );
 
@@ -517,10 +540,7 @@ fn a_running_container_carries_the_task_that_is_running_it() {
     // pid and the status live on the task rather than on the container.
     let task = field(
         &field(
-            &field(
-                &namespace_of("task", &both_namespaces(), "moby"),
-                "containers",
-            ),
+            &containers_in("task", &both_namespaces(), "moby"),
             "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e",
         ),
         "task",
@@ -542,10 +562,7 @@ fn a_container_with_no_task_is_defined_and_not_running() {
     // Arrange: the state that has no equivalent in docker's account, where a container
     // always carries a status. Here the absence of a task *is* the status.
     let container = field(
-        &field(
-            &namespace_of("taskless", &both_namespaces(), "k8s.io"),
-            "containers",
-        ),
+        &containers_in("taskless", &both_namespaces(), "k8s.io"),
         "web-1",
     );
 
@@ -584,8 +601,11 @@ fn a_container_that_vanished_while_being_read_is_recorded_per_namespace() {
     let namespace = namespace_of("vanished", &namespaces, "moby");
     let unreadable = field(&namespace, "unreadable_containers");
 
-    // Assert
-    assert_eq!(keys_of(&field(&namespace, "containers")).len(), 1);
+    // Assert: the loss stays with the account of the read, the survivor with the containers.
+    assert_eq!(
+        keys_of(&containers_in("vanished", &namespaces, "moby")).len(),
+        1
+    );
     assert_eq!(unreadable.volatility(), Volatility::Volatile);
     let entries = items_of(&unreadable);
     assert_eq!(text(&field(&entries[0], "id")), "gone-1");
@@ -881,7 +901,7 @@ exit 1
     let observed = ContainersCollector::reading(vec![EngineSource::Containerd(containerd)])
         .collect()
         .expect("the fixtures are well formed");
-    let server = field(&field(&observed, "containerd"), "server");
+    let server = field(&engine_of(&observed, "containerd"), "server");
 
     // Assert
     assert_eq!(

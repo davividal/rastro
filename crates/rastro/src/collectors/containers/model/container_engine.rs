@@ -27,6 +27,19 @@ pub enum ContainerEngine {
 }
 
 impl ContainerEngine {
+    /// What this engine holds, rendered for the facet's `containers` half.
+    ///
+    /// A second view of data the engine already owns rather than a second copy of it: the
+    /// model keeps its natural shape, where a server holds what it is running, and the
+    /// document presents the containers where a reader looks for them.
+    pub fn containers(&self) -> Observation {
+        match self {
+            Self::Containerd(containerd) => containerd.containers(),
+            Self::Docker(docker) => docker.containers(),
+            Self::Podman(podman) => podman.containers(),
+        }
+    }
+
     pub fn flavour(&self) -> EngineFlavour {
         match self {
             Self::Containerd(_) => EngineFlavour::Containerd,

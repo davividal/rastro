@@ -40,6 +40,20 @@ impl ContainerdNamespaces {
     }
 }
 
+impl ContainerdNamespaces {
+    /// The containers of every namespace, keyed by namespace and then by id.
+    ///
+    /// The extra level is containerd's own: a namespace is its tenancy boundary, and two of
+    /// them may hold the same id.
+    pub fn containers(&self) -> Observation {
+        Observation::object(
+            self.namespaces()
+                .iter()
+                .map(|(name, namespace)| (name.as_str(), namespace.containers())),
+        )
+    }
+}
+
 impl From<&ContainerdNamespaces> for Observation {
     fn from(namespaces: &ContainerdNamespaces) -> Self {
         Observation::object(

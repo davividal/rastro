@@ -36,6 +36,16 @@ impl ContainerdEngine {
     }
 }
 
+impl ContainerdEngine {
+    /// What it holds, keyed by namespace, or an empty map where nothing answered.
+    pub fn containers(&self) -> Observation {
+        match &self.server {
+            Some(server) => server.namespaces.containers(),
+            None => Observation::object::<&str>([]),
+        }
+    }
+}
+
 impl From<&ContainerdEngine> for Observation {
     fn from(engine: &ContainerdEngine) -> Self {
         Observation::object([

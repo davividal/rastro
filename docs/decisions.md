@@ -3793,3 +3793,29 @@ container that belongs to one is reachable in ways a standalone container is not
 **One name per container, and more than one is a misread.** podman's `Names` is a list for
 docker compatibility and holds exactly one, so a second is not a container with two names:
 it is the answer not being the shape rastro thinks, and it fails rather than picking one.
+
+## Containers are hoisted out of the engine that runs them
+
+The facet has two halves, `engines` and `containers`, rather than one tree of engines with
+their containers inside them.
+
+**The rule behind the split: a container is a tenant of the box, an image is an artefact of
+the engine's store.** What an operator asks a fingerprint first is what is running here,
+and answering it should not require knowing which engines the box has. What stays with the
+engine is everything that is not a container — its images, its volumes, its networks, its
+version, and the account of whether it could be read at all.
+
+**The engine is still the first key under `containers`, and that is not a compromise.**
+`docker/web` and `podman/web` are two different containers that share a name; containerd has
+no names at all and keys by id, one namespace deeper. A flat list keyed by container name
+would collide on the first and be impossible for the second, and a flat list with a union of
+every dialect's fields is the thing this facet refuses everywhere else.
+
+**The losses stay with the engine.** A container that vanished between the id list and the
+read of it is a fact about the *read*, not about the containers that survived, so
+`unreadable_containers` sits beside the daemon status that describes the same read.
+
+**One model, two views, not two copies.** The engine still owns its containers in the
+model — a server holds what it is running — and the document renders that ownership twice:
+once as the engine's entry without them, once as the containers half. Nothing is duplicated
+in the document, so there is no second place for a diff to disagree with itself.
