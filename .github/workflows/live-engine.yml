@@ -71,8 +71,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
 
+      # As root, because that is what rastro is on a production box and what the claim
+      # needs: the engine's root is root-owned, so an unprivileged run cannot read the
+      # directories the claim is compared against. Its own target directory keeps the
+      # root-owned build artefacts out of the one the unprivileged step below uses.
       - name: Compare rastro's answer with the engine's
-        run: cargo test --locked --test containers_conformance
+        run: |
+          sudo -E env "CARGO_TARGET_DIR=/tmp/conformance-target" \
+            "$(command -v cargo)" test --locked --test containers_conformance
 
       # The facet's own tests too, on a box that has an engine: they are fixture-driven and
       # pass anywhere, but a run here proves the detection finds a real docker rather than

@@ -161,8 +161,20 @@ fn the_sealed_trees_are_the_engines_own_directories_and_never_the_operators_data
         "docker did not say where its root is, so the claim cannot be checked"
     );
 
+    // The engine's root is root-owned and unreadable to anybody else, which is a
+    // requirement of this test rather than a finding about rastro: the collector's own claim
+    // is deliberately left unmade when it cannot list the root, on the rule that a claim it
+    // cannot resolve is worse than none. So the comparison needs the privilege rastro runs
+    // with in production, and says so rather than dying on a bare permission error.
+    let listed = std::fs::read_dir(&root).unwrap_or_else(|error| {
+        panic!(
+            "this test compares the claim against the directories under {root:?}, which is \
+             root-owned ({error}). Run this target as root — the workflow does, with sudo."
+        )
+    });
+
     let mut theirs = BTreeSet::new();
-    for entry in std::fs::read_dir(&root).expect("the engine's root should be readable") {
+    for entry in listed {
         let entry = entry.expect("a readable directory entry");
         if entry.path().is_dir() && entry.file_name() != OPERATOR_DATA {
             theirs.insert(entry.path().to_string_lossy().into_owned());
