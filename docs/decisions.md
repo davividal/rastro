@@ -2913,7 +2913,7 @@ pre-release format change as though the format were already published.
 their decisions still stand, but the premise no longer does. Neither is reversed here and
 both are now revisitable on their merits:
 
-- [A facet's error text is not classified](#a-facets-error-text-is-not-classified)
+- [A facet's error text is not classified, yet](#a-facets-error-text-is-not-classified-yet)
   deferred on the mechanism not existing. It exists. Whether diagnostic text is an
   observed value is now a question that can be answered rather than postponed.
 - [The postgresql role digest is not marked sensitive](#redacting-a-sensitive-value)
