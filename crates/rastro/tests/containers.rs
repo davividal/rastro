@@ -2218,3 +2218,248 @@ fn the_shared_memory_size_is_recorded_with_the_other_limits() {
     // Act & Assert
     assert_eq!(integer(&field(&limits, "shared_memory_bytes")), 67_108_864);
 }
+
+/// A box whose daemon answers, holding exactly what a test names.
+///
+/// The four lists are where a misread shows up, so a refusal test names one of them and
+/// leaves the rest empty rather than restating the whole answering box.
+fn holding<'a>(
+    containers: &'a [(&'a str, Option<&'a str>)],
+    images: &'a [(&'a str, Option<&'a str>)],
+    volumes: &'a [(&'a str, Option<&'a str>)],
+    networks: &'a [(&'a str, Option<&'a str>)],
+) -> DockerFixtures<'a> {
+    DockerFixtures {
+        version: VERSION_ANSWERING,
+        version_stderr: "",
+        info: INFO_ANSWERING,
+        containers,
+        images,
+        volumes,
+        networks,
+    }
+}
+
+/// The failure a box with these fixtures produces, which is what a misread must become.
+fn refusal(name: &str, fixtures: DockerFixtures) -> String {
+    ContainersCollector::reading(vec![EngineSource::Docker(fake_docker(name, fixtures))])
+        .collect()
+        .expect_err("a misread answer is a failure, not a document")
+        .to_string()
+}
+
+/// An `inspect` that returns an empty array, which is how a test drives the object that
+/// went away between being listed and being described.
+const DESCRIBES_NOTHING: &str = "[]";
+
+#[test]
+fn a_volume_that_vanished_while_being_read_is_recorded_rather_than_dropped() {
+    // Arrange: `docker volume prune` between the list and the inspect, which is the volumes'
+    // version of the `--rm` race the containers have. The loss is one named entry, not the
+    // whole engine.
+    let observed = docker_facet(
+        "vanished-volume",
+        holding(
+            &[],
+            &[],
+            &[
+                ("fixture-vol", Some(INSPECT_PLAIN_VOLUME)),
+                ("pruned", None),
+            ],
+            &[],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&field(&server, "volumes")),
+        vec!["fixture-vol".to_owned()]
+    );
+    let entries = items_of(&field(&server, "unreadable_volumes"));
+    assert_eq!(entries.len(), 1);
+    assert_eq!(text(&field(&entries[0], "id")), "pruned");
+    assert!(text(&field(&entries[0], "reason")).contains("no such volume"));
+}
+
+#[test]
+fn a_network_that_vanished_while_being_read_is_recorded_rather_than_dropped() {
+    // Arrange: the same race again, from `docker compose down` removing a project's network.
+    let observed = docker_facet(
+        "vanished-network",
+        holding(
+            &[],
+            &[],
+            &[],
+            &[
+                (BRIDGE_NETWORK_ID, Some(INSPECT_BRIDGE_NETWORK)),
+                (FIXTURE_NETWORK_ID, None),
+            ],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&field(&server, "networks")),
+        vec!["bridge".to_owned()]
+    );
+    let entries = items_of(&field(&server, "unreadable_networks"));
+    assert_eq!(entries.len(), 1);
+    assert_eq!(text(&field(&entries[0], "id")), FIXTURE_NETWORK_ID);
+    assert!(text(&field(&entries[0], "reason")).contains("not found"));
+}
+
+#[test]
+fn an_inspect_that_describes_nothing_is_a_failed_read_rather_than_a_silent_gap() {
+    // Arrange: **an empty array is the other half of the race, and it exits zero.** The
+    // object was listed, the inspect of it found nothing, and docker reports that by
+    // succeeding with no document rather than by failing. Reading `first()` off it without
+    // saying so would drop the object from the fingerprint with nothing recorded.
+    let observed = docker_facet(
+        "describes-nothing",
+        holding(
+            &[(WEB_ID, Some(DESCRIBES_NOTHING))],
+            &[(TAGGED_IMAGE, Some(DESCRIBES_NOTHING))],
+            &[("fixture-vol", Some(DESCRIBES_NOTHING))],
+            &[(BRIDGE_NETWORK_ID, Some(DESCRIBES_NOTHING))],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert
+    for (list, described) in [
+        ("unreadable_containers", "described no container"),
+        ("unreadable_images", "described no image"),
+        ("unreadable_volumes", "described no volume"),
+        ("unreadable_networks", "described no network"),
+    ] {
+        let entries = items_of(&field(&server, list));
+        assert_eq!(entries.len(), 1, "{list} should hold the one object");
+        assert!(
+            text(&field(&entries[0], "reason")).contains(described),
+            "{list} should say what docker failed to describe"
+        );
+    }
+}
+
+#[test]
+fn a_blank_line_in_a_listing_is_skipped_rather_than_read_as_an_object() {
+    // Arrange: every one of these lists is `--quiet`, and a blank line in one is the shape a
+    // trailing newline takes. Read as an id it would refuse the whole facet over nothing.
+    let observed = docker_facet(
+        "blank-lines",
+        holding(
+            &[("", None), (WEB_ID, Some(INSPECT_WEB))],
+            &[("", None), (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE))],
+            &[("", None), ("fixture-vol", Some(INSPECT_PLAIN_VOLUME))],
+            &[
+                ("", None),
+                (BRIDGE_NETWORK_ID, Some(INSPECT_BRIDGE_NETWORK)),
+            ],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&containers_of(&observed, "docker")),
+        vec!["web".to_owned()]
+    );
+    assert_eq!(keys_of(&field(&server, "images")).len(), 1);
+    assert_eq!(keys_of(&field(&server, "volumes")).len(), 1);
+    assert_eq!(keys_of(&field(&server, "networks")).len(), 1);
+    assert!(items_of(&field(&server, "unreadable_containers")).is_empty());
+}
+
+#[test]
+fn a_container_the_daemon_reports_twice_fails_the_facet_rather_than_being_collapsed() {
+    // Arrange: **the document keys on the name, so a repeat is not a duplicate entry, it is
+    // a misread.** One of the two would silently replace the other and the fingerprint would
+    // be short by a container, which is exactly the loss this facet exists to make visible.
+    let failure = refusal(
+        "twice-container",
+        holding(
+            &[(WEB_ID, Some(INSPECT_WEB)), (WEB_ID, Some(INSPECT_WEB))],
+            &[],
+            &[],
+            &[],
+        ),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("container \"web\" twice"),
+        "the failure should name the container it was told about twice: {failure}"
+    );
+}
+
+#[test]
+fn an_image_the_daemon_reports_twice_fails_the_facet() {
+    // Arrange
+    let failure = refusal(
+        "twice-image",
+        holding(
+            &[],
+            &[
+                (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
+                (TAGGED_IMAGE, Some(INSPECT_TAGGED_IMAGE)),
+            ],
+            &[],
+            &[],
+        ),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("twice"),
+        "the failure should say the image was reported twice: {failure}"
+    );
+}
+
+#[test]
+fn a_volume_the_daemon_reports_twice_fails_the_facet() {
+    // Arrange
+    let failure = refusal(
+        "twice-volume",
+        holding(
+            &[],
+            &[],
+            &[
+                ("fixture-vol", Some(INSPECT_PLAIN_VOLUME)),
+                ("fixture-vol", Some(INSPECT_PLAIN_VOLUME)),
+            ],
+            &[],
+        ),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("volume \"fixture-vol\" twice"),
+        "the failure should name the volume: {failure}"
+    );
+}
+
+#[test]
+fn a_network_the_daemon_reports_twice_fails_the_facet() {
+    // Arrange: two ids can carry one name, which is the shape this guard is really about:
+    // the list is of ids and the document is keyed by name.
+    let failure = refusal(
+        "twice-network",
+        holding(
+            &[],
+            &[],
+            &[],
+            &[
+                (BRIDGE_NETWORK_ID, Some(INSPECT_BRIDGE_NETWORK)),
+                (FIXTURE_NETWORK_ID, Some(INSPECT_BRIDGE_NETWORK)),
+            ],
+        ),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("network \"bridge\" twice"),
+        "the failure should name the network: {failure}"
+    );
+}
