@@ -1,6 +1,6 @@
 //! A containerd namespace.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// The name of a containerd namespace: `moby`, `k8s.io`, `default`.
 ///
@@ -28,11 +28,5 @@ impl NamespaceName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&NamespaceName> for Observation {
-    fn from(name: &NamespaceName) -> Self {
-        Observation::text(name.as_str())
     }
 }

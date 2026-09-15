@@ -1,6 +1,6 @@
 //! Which transport a container's port speaks.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// The engine's own word: `tcp`, `udp`, `sctp`.
 ///
@@ -17,11 +17,5 @@ impl TransportProtocol {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&TransportProtocol> for Observation {
-    fn from(protocol: &TransportProtocol) -> Self {
-        Observation::text(protocol.as_str())
     }
 }

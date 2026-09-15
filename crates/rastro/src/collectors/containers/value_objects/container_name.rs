@@ -1,6 +1,6 @@
 //! The name a container is known by.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// A container's name, which is what the facet keys on.
 ///
@@ -30,11 +30,5 @@ impl ContainerName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&ContainerName> for Observation {
-    fn from(name: &ContainerName) -> Self {
-        Observation::text(name.as_str())
     }
 }

@@ -1,6 +1,6 @@
 //! The name of an environment variable a container carries.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// A variable's name, which is the half of an environment entry that is safe to print.
 ///
@@ -30,11 +30,5 @@ impl VariableName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&VariableName> for Observation {
-    fn from(name: &VariableName) -> Self {
-        Observation::text(name.as_str())
     }
 }

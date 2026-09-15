@@ -1,6 +1,6 @@
 //! The name of a network a container is attached to.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// A network's name, which is what both the operator and the other containers know it by.
 ///
@@ -27,11 +27,5 @@ impl NetworkName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&NetworkName> for Observation {
-    fn from(name: &NetworkName) -> Self {
-        Observation::text(name.as_str())
     }
 }

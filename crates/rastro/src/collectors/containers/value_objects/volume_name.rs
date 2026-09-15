@@ -1,6 +1,6 @@
 //! The name a volume is known by.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// A volume's name, which is its identity to the engine and to every container that mounts
 /// it.
@@ -30,11 +30,5 @@ impl VolumeName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&VolumeName> for Observation {
-    fn from(name: &VolumeName) -> Self {
-        Observation::text(name.as_str())
     }
 }

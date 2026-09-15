@@ -1,6 +1,6 @@
 //! The key of a label attached to a container.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// A label's key, conventionally reverse-DNS: `com.docker.compose.project`.
 ///
@@ -27,11 +27,5 @@ impl LabelName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&LabelName> for Observation {
-    fn from(name: &LabelName) -> Self {
-        Observation::text(name.as_str())
     }
 }

@@ -1,7 +1,5 @@
 //! Which container engine this is.
 
-use rastro_collector::Observation;
-
 /// The engines rastro can read, and the key each one's state sits under.
 ///
 /// **Keyed by flavour rather than by anything the operator chose**, because a box runs at
@@ -30,11 +28,5 @@ impl EngineFlavour {
             Self::Docker => "docker",
             Self::Podman => "podman",
         }
-    }
-}
-
-impl From<&EngineFlavour> for Observation {
-    fn from(flavour: &EngineFlavour) -> Self {
-        Observation::text(flavour.as_str())
     }
 }

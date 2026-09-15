@@ -1,6 +1,6 @@
 //! Which of a flavour's engines this is.
 
-use rastro_collector::{CollectionError, NonEmptyText, Observation};
+use rastro_collector::{CollectionError, NonEmptyText};
 
 /// The account an engine belongs to, which is what tells two engines of one flavour apart.
 ///
@@ -45,11 +45,5 @@ impl EngineInstance {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&EngineInstance> for Observation {
-    fn from(instance: &EngineInstance) -> Self {
-        Observation::text(instance.as_str())
     }
 }
