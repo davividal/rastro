@@ -3601,14 +3601,30 @@ entry is what an operator gets pointed at.
 
 **Three routes are open, and one of them is the CLI in a mode that cannot write.**
 
-- **`podman --remote`, which is the answer and needs no HTTP client.** The same binary in
+- **`podman --remote`, which is the answer and needs no HTTP client — but only where a
+  service is already running.** The same binary in
   remote mode is a pure API client, the thing `podman-remote` is, and it never links the
   store path at all: `--root` is rejected there as an unknown flag, because the flag belongs
   to code that is not in play. Measured on a quiet box with a service running, five reads —
   `ps`, `images`, `volume ls`, `network ls`, `info` — changed **nothing**, against a
   zero-change control. Measured again with no service *and* no store, it exits 125, creates
-  no store and changes nothing. So it is safe whether or not anything answers, which is what
-  lets the three-way ladder be the same as docker's.
+  no store and changes nothing.
+
+  **Detection is the service's process, not its socket, and that distinction is the whole
+  care.** `podman.socket` is socket-activated: on the reference machine the socket unit is
+  *enabled* and the service unit is *disabled*, `TriggeredBy=podman.socket`. So the socket
+  file exists whether or not anything is listening behind it, and connecting to it makes
+  systemd start `podman system service` — which then opens the store, creating it if it is
+  not there. Connecting on spec would cause exactly the mutation the local CLI was refused
+  for, one step removed and harder to see. A `/proc` scan for a running service is a pure
+  read and answers the real question, so that is what detection does.
+
+  **And "podman is running" is usually false on a box full of running containers.** podman
+  starts a container and exits; `conmon` and the OCI runtime keep it alive. The reference
+  machine had 17 containers, 18 `conmon` processes and *no* podman process doing that work —
+  the one it had was a service its macOS client talks to, which is an artefact of
+  `podman machine` rather than anything a podman host normally has. So the common case is a
+  box where podman is installed, containers are up, and there is nothing to ask.
 - **Its store, read as files.** The design already grants this shape for apk: read a
   manager's own database where the tool offers no format rastro controls. podman's is
   SQLite with no schema contract, so it is the weaker of the two.
