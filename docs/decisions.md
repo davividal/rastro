@@ -3565,32 +3565,50 @@ directories, and `overlay/.has-mount-program`. On a box where podman is installe
 never been used, a fingerprint run would create a container store and then report the box
 it had just changed.
 
-**And a read on an initialised store still writes.** Five reads — `ps`, `images`,
-`volume ls`, `network ls`, `info` — against the store the first read had made, with a
-zero-change control interval either side, moved `storage.lock`'s mtime and ctime, moved the
-`overlay` directory's stamps, and created two new files in the runroot:
-`overlay/volatile-true` and `overlay/idmapped-lower-dir-true`, which are probes podman
-writes to test what the filesystem underneath supports.
+**And on an initialised store it writes when the store needs work**, which is worse than
+writing always. Three measurements, each against a zero-change control:
 
-So it is worse than the nginx case rather than comparable to it. `nginx -t` created log
-files the configuration named; podman writes a database, takes locks by writing to them,
-and leaves capability probes behind on every read. There is no flag that turns that off,
-because it is not a side effect of a read: it is how a daemonless engine reaches the state
-a daemon would have been holding.
+| local `podman`, store state | changed |
+| --- | --- |
+| empty | **22 created**: `db.sql`, five lock files, the driver's directories |
+| overlay driver, initialised | **8**: `overlay/volatile-true` and `overlay/idmapped-lower-dir-true`, probes podman writes to test what the filesystem supports, plus `storage.lock`'s stamps |
+| vfs driver, initialised | **0** across five reads, and it succeeds with the store made read-only |
+
+**The last row is not a reprieve.** A mutation that depends on the driver and on what is
+already there is harder to defend than a constant one, because the box it changes most is
+the box nobody has ever run podman on — and that is exactly the run every later comparison
+is made against. A first fingerprint that creates a container store is a first fingerprint
+of a box that no longer exists.
+
+**The mechanism, which is the part worth keeping.** podman is daemonless, so in local mode
+there is no engine until the command starts one: `podman ps` opens the store, takes the
+locks, initialises the graph driver, opens or creates the database, probes the filesystem,
+answers, and exits. Every one of those writes is part of *being* the engine rather than
+part of reading it. That is also why `nginx -t` is the nearer comparison than it first
+looks: both are a tool doing the work of the service in order to answer a question about
+it.
+
+**Corrects an earlier reading in this same entry.** It first said every read on an
+initialised store writes. That was measured on an overlay store and generalised, and the
+vfs measurement above disproves the general form. The entry is corrected here rather than
+in a new one because nothing has been released against it, and because the corrected fact
+strengthens the decision rather than reversing it.
 
 **The consequence, and it is a design position rather than a delay.** There is no podman
 dialect in this facet, and there will not be one built on `podman`. A box running podman
 reads as `absent`, which is a limit of rastro rather than a fact about the box, and this
 entry is what an operator gets pointed at.
 
-**Two routes are open and neither is the CLI.**
+**Three routes are open, and one of them is the CLI in a mode that cannot write.**
 
-- **Its API socket.** podman ships a `podman.socket` unit that serves docker's own API, and
-  on the machine this was measured on it is *enabled and listening* at
-  `/run/podman/podman.sock`. Where the operator runs it, the store is already initialised by
-  the service and asking it is the same kind of read the docker socket is. That needs its own
-  measurement, and an HTTP client, which the docker dialect never needed because it went
-  through the client.
+- **`podman --remote`, which is the answer and needs no HTTP client.** The same binary in
+  remote mode is a pure API client, the thing `podman-remote` is, and it never links the
+  store path at all: `--root` is rejected there as an unknown flag, because the flag belongs
+  to code that is not in play. Measured on a quiet box with a service running, five reads —
+  `ps`, `images`, `volume ls`, `network ls`, `info` — changed **nothing**, against a
+  zero-change control. Measured again with no service *and* no store, it exits 125, creates
+  no store and changes nothing. So it is safe whether or not anything answers, which is what
+  lets the three-way ladder be the same as docker's.
 - **Its store, read as files.** The design already grants this shape for apk: read a
   manager's own database where the tool offers no format rastro controls. podman's is
   SQLite with no schema contract, so it is the weaker of the two.
@@ -3660,3 +3678,29 @@ assert the sealed tree holds the layer path `docker image inspect` reports in
 compare. Listing the root's children needs neither an image nor a driver-specific field,
 and it checks what the claim actually promises: every directory the engine keeps to itself
 is sealed, and the one holding the operator's volumes never is.
+
+## Talk to an engine, never be one
+
+The podman measurements above are an instance of a rule worth stating on its own, because
+it decides how every future engine is read.
+
+**A client cannot change the host; an engine must.** docker's CLI has never written
+anything during a read, and neither has `ctr`, because both are clients: they open a
+socket, send a request, and decode the answer. podman's CLI in local mode writes because
+it is not a client of anything — it is the engine, assembled for the duration of one
+command and torn down after. The store it opens, the locks it takes and the capability
+probes it leaves are what being an engine consists of.
+
+So the question to ask of a new engine is not "is this tool read-only?" but **"is this
+tool a client, and is there something for it to be a client of?"** Where the answer is no,
+there are only two honest moves: read the engine's own files, which cannot mutate, or
+report the engine as present and unread and say why.
+
+This also explains the nginx entry better than that entry did. `nginx -T` creates log
+files not because testing a configuration is careless, but because a configuration test is
+nginx *doing the work of starting* in order to answer a question about starting. Same
+shape, different subsystem.
+
+**What it means for the facet.** rastro may run a tool that asks an engine, and must not
+run a tool that becomes one. `docker`, `ctr` and `podman --remote` are on the first side.
+Local `podman` is on the second, and no flag moves it across.
