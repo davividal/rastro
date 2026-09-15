@@ -2,6 +2,8 @@
 
 use rastro_collector::Observation;
 
+use crate::collectors::containers::model::engine_entry::{optional_server, status_reason};
+
 use crate::collectors::containers::model::PodmanServer;
 use crate::collectors::containers::value_objects::{DaemonStatus, EngineVersion};
 
@@ -58,21 +60,9 @@ impl From<&PodmanEngine> for Observation {
     fn from(engine: &PodmanEngine) -> Self {
         Observation::object([
             ("client_version", Observation::from(&engine.client_version)),
-            (
-                "server",
-                match &engine.server {
-                    Some(server) => Observation::from(server),
-                    None => Observation::null(),
-                },
-            ),
+            ("server", optional_server(engine.server.as_ref())),
             ("service", Observation::from(&engine.service)),
-            (
-                "service_reason",
-                match engine.service.reason() {
-                    Some(reason) => Observation::text(reason),
-                    None => Observation::null(),
-                },
-            ),
+            ("service_reason", status_reason(&engine.service)),
         ])
     }
 }

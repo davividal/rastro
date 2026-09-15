@@ -38,6 +38,7 @@ mod docker_networks;
 mod docker_server;
 mod docker_volume;
 mod docker_volumes;
+mod engine_entry;
 mod image_platform;
 mod name_resolution;
 mod network_addressing;

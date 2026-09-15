@@ -2,6 +2,8 @@
 
 use rastro_collector::Observation;
 
+use crate::collectors::containers::model::engine_entry::{optional_server, status_reason};
+
 use crate::collectors::containers::model::DockerServer;
 use crate::collectors::containers::value_objects::{DaemonStatus, EngineVersion};
 
@@ -59,20 +61,8 @@ impl From<&DockerEngine> for Observation {
         Observation::object([
             ("client_version", Observation::from(&engine.client_version)),
             ("daemon", Observation::from(&engine.daemon)),
-            (
-                "daemon_reason",
-                match engine.daemon.reason() {
-                    Some(reason) => Observation::text(reason),
-                    None => Observation::null(),
-                },
-            ),
-            (
-                "server",
-                match &engine.server {
-                    Some(server) => Observation::from(server),
-                    None => Observation::null(),
-                },
-            ),
+            ("daemon_reason", status_reason(&engine.daemon)),
+            ("server", optional_server(engine.server.as_ref())),
         ])
     }
 }
