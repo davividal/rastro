@@ -18,6 +18,7 @@ use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Observation, Volatility};
 use support::fs_tree::scratch_tree;
 use support::observation::{field, integer, is_null, items_of, keys_of, text};
+use support::shim;
 
 /// `ctr version`, which is text and not JSON: `ctr` offers no machine-readable form of it.
 ///
@@ -153,10 +154,10 @@ fn fake_containerd_holding(
 ) -> Containerd {
     let root = scratch_tree(&format!("containerd-{name}"), &[]);
     let directory = root.to_str().expect("a UTF-8 scratch path");
-    let path = root.join("ctr");
-    fs::write(
-        &path,
-        format!(
+    let tool = shim::executable(
+        &root,
+        "ctr",
+        &format!(
             r#"#!/bin/sh
 # The arguments are scanned rather than positional: `ctr` takes `--version` on its own and
 # every subcommand behind an address flag.
@@ -220,11 +221,7 @@ exit 1
 esac
 "#
         ),
-    )
-    .expect("a writable script");
-    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).expect("an executable script");
+    );
 
     for namespace in per_namespace {
         let mut ids = String::new();
@@ -251,8 +248,6 @@ esac
         )
         .expect("a writable fixture");
     }
-
-    let tool = CanonicalTool::located_in("ctr", &[directory]).expect("the fake tool is locatable");
 
     Containerd::using(tool, Some(ADDRESS.to_owned()))
 }

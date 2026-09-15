@@ -9,15 +9,14 @@
 mod support;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 
 use rastro::collectors::ContainersCollector;
-use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{Docker, EngineSource};
 use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Observation, Sensitivity, Volatility};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
+use support::shim;
 
 /// `docker version --format '{{json .}}'` on a box whose daemon answers.
 ///
@@ -666,10 +665,10 @@ fn fake_docker(name: &str, fixtures: DockerFixtures) -> Docker {
     fs::write(root.join("network-ids"), &network_ids).expect("a writable fixture");
 
     let directory = root.to_str().expect("a UTF-8 scratch path");
-    let path = root.join("docker");
-    fs::write(
-        &path,
-        format!(
+    let tool = shim::executable(
+        &root,
+        "docker",
+        &format!(
             r#"#!/bin/sh
 case "$1" in
 version)
@@ -766,15 +765,9 @@ esac
             info = fixtures.info,
             directory = directory,
         ),
-    )
-    .expect("a writable script");
-    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).expect("an executable script");
+    );
 
-    Docker::using(
-        CanonicalTool::located_in("docker", &[directory]).expect("the fake tool is locatable"),
-    )
+    Docker::using(tool)
 }
 
 fn docker_facet(name: &str, fixtures: DockerFixtures) -> Observation {

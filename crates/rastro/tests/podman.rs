@@ -10,9 +10,6 @@
 
 mod support;
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-
 use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{
@@ -22,6 +19,7 @@ use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Observation, Volatility};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
+use support::shim;
 
 /// `podman --version`, the one local call rastro makes.
 const CLIENT_VERSION: &str = "podman version 5.8.6";
@@ -132,11 +130,10 @@ fn fake_podman_holding(
     containers: &str,
 ) -> (CanonicalTool, std::path::PathBuf) {
     let root = scratch_tree(&format!("podman-{name}"), &[]);
-    let directory = root.to_str().expect("a UTF-8 scratch path");
-    let path = root.join("podman");
-    fs::write(
-        &path,
-        format!(
+    let tool = shim::executable(
+        &root,
+        "podman",
+        &format!(
             r#"#!/bin/sh
 remote=no
 for argument in "$@"; do
@@ -174,16 +171,9 @@ printf 'unexpected invocation: %s\n' "$*" >&2
 exit 1
 "#
         ),
-    )
-    .expect("a writable script");
-    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).expect("an executable script");
+    );
 
-    (
-        CanonicalTool::located_in("podman", &[directory]).expect("the fake tool is locatable"),
-        root,
-    )
+    (tool, root)
 }
 
 /// A store on disk, with the directories a real graph root holds.
