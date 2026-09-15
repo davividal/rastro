@@ -7,6 +7,8 @@ use serde::Deserialize;
 
 use rastro_collector::AbsolutePath;
 
+use super::running_process::command_lines_of;
+
 /// The three places containerd documents as its defaults, and the only values here that are
 /// not read from the box.
 const DEFAULT_ADDRESS: &str = "/run/containerd/containerd.sock";
@@ -118,42 +120,8 @@ fn as_walked(path: String, kind: &str) -> Option<AbsolutePath> {
 }
 
 /// The command line of the containerd running here, if one is.
-///
-/// The executable behind the process is what identifies it, for the reason the exporters
-/// facet gives about units: a name is whatever somebody chose, and the binary is the fact.
 fn command_line_of(proc: &Path) -> Option<Vec<String>> {
-    for entry in fs::read_dir(proc).ok()?.flatten() {
-        let path = entry.path();
-        if !path
-            .file_name()?
-            .to_str()?
-            .chars()
-            .all(|c| c.is_ascii_digit())
-        {
-            continue;
-        }
-
-        let Ok(executable) = fs::read_link(path.join("exe")) else {
-            continue;
-        };
-        if executable.file_name().and_then(|name| name.to_str()) != Some(PROGRAM) {
-            continue;
-        }
-
-        let Ok(raw) = fs::read(path.join("cmdline")) else {
-            continue;
-        };
-
-        return Some(
-            String::from_utf8_lossy(&raw)
-                .split('\0')
-                .filter(|argument| !argument.is_empty())
-                .map(str::to_owned)
-                .collect(),
-        );
-    }
-
-    None
+    command_lines_of(proc, PROGRAM).into_iter().next()
 }
 
 /// The value of a flag written either way round: `--flag value` or `--flag=value`.

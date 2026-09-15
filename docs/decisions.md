@@ -3720,3 +3720,48 @@ shape, different subsystem.
 **What it means for the facet.** rastro may run a tool that asks an engine, and must not
 run a tool that becomes one. `docker`, `ctr` and `podman --remote` are on the first side.
 Local `podman` is on the second, and no flag moves it across.
+
+## podman is read through a service somebody else is running, and claimed from its files
+
+The refusal above stands: podman's local CLI never comes through the gate. What comes
+through instead is `podman --remote`, which is the same binary acting as a client, plus a
+filesystem claim that needs no podman at all. Three parts, each measured.
+
+**One local call, and it is a flag rather than a subcommand.** `podman --version` on a
+wiped box created nothing; `podman version` created 22 entries. The difference is not
+cosmetic: the subcommand reports a *server* version, and in local mode producing one means
+becoming the server. So the client's version is read with the flag and everything else goes
+to the service.
+
+**The service is found by its process, never by its socket.** `podman.socket` is
+socket-activated — on the reference machine the socket unit is enabled and the service unit
+is *disabled*, `TriggeredBy=podman.socket` — so the socket file exists whether or not
+anything is behind it, and connecting to it makes systemd start the service, which then
+opens the store. A `/proc` scan for a running `podman system service` is a pure read and
+answers the real question. Its address comes from its own command line where it names one,
+and from the documented default where systemd handed it the socket instead.
+
+**"Installed and unread" is the ordinary state, not a failure.** podman is daemonless, so a
+box can be full of running containers with no podman process at all: the reference machine
+had 17 containers, 18 `conmon` processes and no podman doing that work. The entry records
+the client version, `service: unreachable`, and the reason in full, so a reader is never
+left wondering whether rastro looked. Verified on a live box: with the service stopped, the
+read changed **0** entries in podman's store.
+
+**The claim is built from podman's configuration rather than from podman**, which is what
+lets it exist in that state — and it is the part that matters most for the walk, since the
+store held 376,948 of one machine's 834,466 entries. `graphroot` and `runroot` come from
+`storage.conf`, distributed defaults first and the operator's second, falling back to the
+documented paths when neither names them, which is the ordinary case: neither file sets a
+root on a stock box.
+
+**The volume tree is discovered rather than named, which is where this differs from
+docker.** docker always keeps volumes inside its root, so that one name is hardcoded.
+podman's `volume_path` lives in `containers.conf` and may sit outside the store entirely;
+where it does, every child of the store is sealed and the volumes are left where the walk
+finds them.
+
+**Still owed:** rootless podman. Each user's service listens at
+`/run/user/<uid>/podman/podman.sock` with its own store, and root can connect to all of
+them. That means one flavour with several instances, which the facet's one-entry-per-flavour
+shape does not hold, so it needs a shape decision before it needs code.

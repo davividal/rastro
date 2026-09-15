@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::containers::model::{ContainerdEngine, DockerEngine};
+use crate::collectors::containers::model::{ContainerdEngine, DockerEngine, PodmanEngine};
 use crate::collectors::containers::value_objects::EngineFlavour;
 
 /// An engine rastro found, in the shape its own concepts have.
@@ -23,6 +23,7 @@ pub enum ContainerEngine {
     /// every container, image, volume and network on the box, and without the indirection
     /// every value of this enum would be as large as the largest of them.
     Docker(Box<DockerEngine>),
+    Podman(PodmanEngine),
 }
 
 impl ContainerEngine {
@@ -30,6 +31,7 @@ impl ContainerEngine {
         match self {
             Self::Containerd(_) => EngineFlavour::Containerd,
             Self::Docker(_) => EngineFlavour::Docker,
+            Self::Podman(_) => EngineFlavour::Podman,
         }
     }
 }
@@ -39,6 +41,7 @@ impl From<&ContainerEngine> for Observation {
         match engine {
             ContainerEngine::Containerd(containerd) => Observation::from(containerd),
             ContainerEngine::Docker(docker) => Observation::from(docker.as_ref()),
+            ContainerEngine::Podman(podman) => Observation::from(podman),
         }
     }
 }

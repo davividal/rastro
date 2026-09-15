@@ -63,9 +63,10 @@ pub use model::{
     ContainerdNamespaces, ContainerdServer, ContainerdTask, DockerContainer, DockerContainers,
     DockerEngine, DockerImage, DockerImages, DockerNetwork, DockerNetworks, DockerServer,
     DockerVolume, DockerVolumes, ImagePlatform, NameResolution, NetworkAddressing, ObservedHealth,
-    PublishedBinding, ResourceLimit, RestartPolicy, UnreadableObject,
+    PodmanEngine, PodmanServer, PodmanStore, PublishedBinding, ResourceLimit, RestartPolicy,
+    UnreadableObject,
 };
-pub use source::{Containerd, ContainerdLayout, Docker, EngineSource};
+pub use source::{Containerd, ContainerdLayout, Docker, EngineSource, Podman, PodmanLayout};
 pub use value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus,
     EngineFlavour, EngineInstant, EngineVersion, ExposedPort, ImageDigest, ImageReference,

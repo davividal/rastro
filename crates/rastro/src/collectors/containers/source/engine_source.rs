@@ -4,6 +4,7 @@ use rastro_collector::{CollectionError, WalkedTree};
 
 use super::containerd::Containerd;
 use super::docker::Docker;
+use super::podman::Podman;
 use crate::collectors::containers::model::ContainerEngine;
 use crate::collectors::containers::value_objects::EngineFlavour;
 
@@ -17,6 +18,7 @@ use crate::collectors::containers::value_objects::EngineFlavour;
 pub enum EngineSource {
     Containerd(Containerd),
     Docker(Docker),
+    Podman(Podman),
 }
 
 impl EngineSource {
@@ -32,6 +34,7 @@ impl EngineSource {
         match flavour {
             EngineFlavour::Containerd => Containerd::detect().map(Self::Containerd),
             EngineFlavour::Docker => Docker::detect().map(Self::Docker),
+            EngineFlavour::Podman => Podman::detect().map(Self::Podman),
         }
     }
 
@@ -39,6 +42,7 @@ impl EngineSource {
         match self {
             Self::Containerd(containerd) => Ok(ContainerEngine::Containerd(containerd.read()?)),
             Self::Docker(docker) => Ok(ContainerEngine::Docker(Box::new(docker.read()?))),
+            Self::Podman(podman) => Ok(ContainerEngine::Podman(podman.read()?)),
         }
     }
 
@@ -47,6 +51,7 @@ impl EngineSource {
         match self {
             Self::Containerd(containerd) => containerd.private_trees(),
             Self::Docker(docker) => docker.private_trees(),
+            Self::Podman(podman) => podman.private_trees(),
         }
     }
 }
