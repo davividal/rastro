@@ -50,10 +50,21 @@ pub struct Unit {
     /// actually lives on most boxes that have one. Redaction still diffs, so a rotated
     /// credential shows as a changed digest without the document carrying it.
     ///
-    /// **Empty is not the same as "sets nothing".** systemd reads an `EnvironmentFile=` at
-    /// exec time, so a unit whose whole environment comes from a file reports nothing here
-    /// and runs with plenty. [`Self::environment_files`] is where that unit shows up, and
-    /// reading the two together is the only way to ask what a service runs with.
+    /// **Empty carries three different meanings, and only the first is "sets nothing".**
+    /// Measured on a box running real systemd rather than reasoned about:
+    ///
+    /// - The unit declares no variables.
+    /// - The unit's environment comes from an `EnvironmentFile=`, which systemd opens at
+    ///   exec time and which therefore contributes nothing to this field.
+    ///   [`Self::environment_files`] is where that unit shows up.
+    /// - **systemd has not loaded the unit**, so it was never asked. The `show` request
+    ///   names the units `list-units` returned, for the reason `exec_start` documents: an
+    ///   unresolved unit file has no effective configuration to report, and systemd
+    ///   garbage-collects a static unit that is inactive and unreferenced, so a unit file
+    ///   on disk is not evidence that this field was ever populated.
+    ///
+    /// Only the first two are answerable from this facet alone. The third is visible
+    /// because [`Self::runtime`] is `null` for a unit systemd has not loaded.
     pub environment: BTreeMap<EnvironmentVariableName, String>,
     /// The files the unit reads its environment from, in the order systemd reads them,
     /// each with what rastro found in it.
