@@ -3843,3 +3843,33 @@ which is the sort of thing to do once.
 **Cost, accepted knowingly:** one more level for every box that will only ever have one
 instance, which is most of them. The alternative was a key whose meaning changes depending
 on what the box happens to run, and that is the worse of the two.
+
+## A rootless engine is found by whose process it is
+
+podman's per-user services are discovered the same way root's is — by looking for a running
+`podman system service` — with one addition: the account that owns the process, taken from
+the uid of its own `/proc` directory. That is one `stat` rather than a parse of `status`,
+and the kernel sets it to the process's real uid.
+
+**Each instance is read as that user's engine, not as root's with a different socket.** A
+rootless podman is configured somewhere else and defaults somewhere else: its store is under
+the user's home rather than in `/var/lib`, its runtime state is in their runtime directory,
+and their `~/.config/containers` overrides the system files rather than being overridden by
+them. A layout that used root's paths would name root's store as theirs.
+
+**The account's name comes from `/etc/passwd`, read here rather than taken from the
+`accounts` facet**, because a collector may not read another collector: what one facet
+knows is not a channel the others may use. It is three columns of a file every Unix has, and
+it exists so the document says `alice` rather than `1000`. A uid nobody named falls back to
+the number, which is still true where saying nothing would not be.
+
+**Root's engine is reported whenever the binary is there; a user's only when their service
+is.** Root's store and its claim exist whether or not anything is running, and rastro can
+read the configuration for it. For a user with no service there is nothing rastro can learn
+without changing their box, and inventing an entry from the defaults would be describing a
+store that may not exist.
+
+Verified on a live box: `alice` and `root` discovered as separate instances, answering at
+`/run/user/1001/podman/podman.sock` and `/run/podman/podman.sock`, with stores under
+`/home/alice/.local/share/containers/storage` and `/var/lib/containers/storage`, and their
+containers kept apart.

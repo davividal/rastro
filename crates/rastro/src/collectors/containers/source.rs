@@ -1,5 +1,6 @@
 //! The engines' own interfaces, one module per engine.
 
+mod accounts;
 mod containerd;
 mod containerd_layout;
 mod ctr_container_document;
@@ -21,6 +22,7 @@ mod podman_info;
 mod podman_layout;
 mod running_process;
 
+pub use accounts::{Account, accounts};
 pub use containerd::Containerd;
 pub use containerd_layout::ContainerdLayout;
 pub use docker::Docker;

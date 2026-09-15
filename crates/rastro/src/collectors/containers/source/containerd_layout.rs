@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use rastro_collector::AbsolutePath;
 
-use super::running_process::command_lines_of;
+use super::running_process::running;
 
 /// The three places containerd documents as its defaults, and the only values here that are
 /// not read from the box.
@@ -121,7 +121,10 @@ fn as_walked(path: String, kind: &str) -> Option<AbsolutePath> {
 
 /// The command line of the containerd running here, if one is.
 fn command_line_of(proc: &Path) -> Option<Vec<String>> {
-    command_lines_of(proc, PROGRAM).into_iter().next()
+    running(proc, PROGRAM)
+        .into_iter()
+        .next()
+        .map(|process| process.arguments)
 }
 
 /// The value of a flag written either way round: `--flag value` or `--flag=value`.

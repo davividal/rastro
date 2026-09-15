@@ -4,13 +4,16 @@ use std::path::Path;
 
 use rastro_collector::{AbsolutePath, CollectionError, WalkedTree};
 
+use super::accounts::{Account, accounts};
 use super::podman_container_row::PodmanContainerRow;
 use super::podman_info::PodmanInfoDocument;
 use super::podman_layout::PodmanLayout;
-use super::running_process::command_lines_of;
+use super::running_process::{RunningProcess, running};
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::containers::model::{PodmanContainers, PodmanEngine};
 use crate::collectors::containers::value_objects::{EngineInstance, EngineVersion};
+
+use std::collections::BTreeMap;
 
 const PROGRAM: &str = "podman";
 
@@ -27,6 +30,9 @@ const URL_FLAG: &str = "--url";
 
 /// The socket a root-owned service listens on when nothing says otherwise.
 const DEFAULT_SOCKET: &str = "/run/podman/podman.sock";
+
+/// The uid the system's own engines belong to.
+const ROOT: u32 = 0;
 
 /// The words in the command line of a process that is serving the API.
 const SERVICE_WORDS: [&str; 2] = ["system", "service"];
@@ -50,6 +56,8 @@ const NO_SERVICE: &str = "podman is installed and no `podman system service` is 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Podman {
     tool: CanonicalTool,
+    /// Whose engine this is, which is what tells two podmans on one box apart.
+    instance: EngineInstance,
     /// Where the store is, from podman's own configuration files rather than from podman.
     layout: PodmanLayout,
     /// The socket of a service that is already running, if one is.
@@ -57,31 +65,69 @@ pub struct Podman {
 }
 
 impl Podman {
-    /// Locates the client, reads the configuration, and looks for a running service.
-    pub fn detect() -> Option<Self> {
-        let tool = CanonicalTool::located(PROGRAM)?;
+    /// Every podman on this box: the system's, and one per user running a service.
+    ///
+    /// **Several, because a box can have several.** podman is per-user by design, so root's
+    /// engine and each rootless one are separate engines with separate stores, separate
+    /// sockets and containers that may share names. Root's is reported whenever the binary
+    /// is there, since its store and its claim exist whether or not a service is running; a
+    /// user's is reported only when their service is, because without one there is nothing
+    /// about them rastro can learn without changing the box.
+    pub fn detect_all() -> Vec<Self> {
+        let Some(tool) = CanonicalTool::located(PROGRAM) else {
+            return Vec::new();
+        };
 
-        Some(Self {
-            tool,
+        let known = accounts("/");
+        let services = serving(running("/proc", PROGRAM));
+
+        let mut engines = vec![Self {
+            tool: tool.clone(),
+            instance: EngineInstance::root(),
             layout: PodmanLayout::discover(),
-            service: serving_socket("/proc"),
-        })
+            service: services.get(&ROOT).cloned(),
+        }];
+
+        for (user_id, socket) in services {
+            if user_id == ROOT {
+                continue;
+            }
+
+            engines.push(Self {
+                tool: tool.clone(),
+                instance: account_named(&known, user_id),
+                layout: rootless_layout(known.get(&user_id), user_id),
+                service: Some(socket),
+            });
+        }
+
+        engines
     }
 
-    /// The same over a tool, a layout and a service the caller chose.
+    /// The same over a tool, a layout and a service the caller chose, as root's.
     pub fn using(tool: CanonicalTool, layout: PodmanLayout, service: Option<String>) -> Self {
+        Self::belonging_to(EngineInstance::root(), tool, layout, service)
+    }
+
+    /// The same, for an engine belonging to somebody else.
+    pub fn belonging_to(
+        instance: EngineInstance,
+        tool: CanonicalTool,
+        layout: PodmanLayout,
+        service: Option<String>,
+    ) -> Self {
         Self {
             tool,
+            instance,
             layout,
             service: service
                 .and_then(|socket| AbsolutePath::new(socket, "podman service socket").ok()),
         }
     }
 
-    /// The account this podman belongs to, which is root until rootless services are
-    /// discovered.
+    /// The account this podman belongs to.
     pub fn instance(&self) -> EngineInstance {
-        EngineInstance::root()
+        self.instance.clone()
     }
 
     /// podman as this box has it: the client, and the service if one is running.
@@ -192,7 +238,7 @@ impl Podman {
     }
 }
 
-/// The socket of a `podman system service` that is already running, if one is.
+/// Every running `podman system service`, keyed by the account it belongs to.
 ///
 /// **The process, not the socket file.** A socket file exists whenever the unit is enabled,
 /// which says nothing about whether anything is behind it, and connecting to a
@@ -201,23 +247,66 @@ impl Podman {
 ///
 /// The address comes from the service's own command line where it names one. Where systemd
 /// passed it the socket instead, which is what socket activation does, the command line
-/// names nothing and the documented default applies.
-fn serving_socket(proc: impl AsRef<Path>) -> Option<AbsolutePath> {
-    let serving = command_lines_of(proc, PROGRAM)
-        .into_iter()
-        .find(|arguments| {
-            SERVICE_WORDS
-                .iter()
-                .all(|word| arguments.iter().any(|a| a == word))
-        })?;
+/// names nothing and the documented default for that account applies: `/run/podman` for
+/// root, and the user's own runtime directory otherwise.
+fn serving(processes: Vec<RunningProcess>) -> BTreeMap<u32, AbsolutePath> {
+    let mut services = BTreeMap::new();
 
-    let named = serving
-        .iter()
-        .find_map(|argument| argument.strip_prefix("unix://"))
-        .map(str::to_owned)
-        .unwrap_or_else(|| DEFAULT_SOCKET.to_owned());
+    for process in processes {
+        let is_service = SERVICE_WORDS
+            .iter()
+            .all(|word| process.arguments.iter().any(|argument| argument == word));
+        if !is_service {
+            continue;
+        }
 
-    AbsolutePath::new(named, "podman service socket").ok()
+        let named = process
+            .arguments
+            .iter()
+            .find_map(|argument| argument.strip_prefix("unix://"))
+            .map(str::to_owned)
+            .unwrap_or_else(|| default_socket(process.user_id));
+
+        if let Ok(socket) = AbsolutePath::new(named, "podman service socket") {
+            services.insert(process.user_id, socket);
+        }
+    }
+
+    services
+}
+
+/// Where a service listens when nobody said: root's is system-wide, everyone else's is in
+/// their own runtime directory.
+fn default_socket(user_id: u32) -> String {
+    match user_id {
+        ROOT => DEFAULT_SOCKET.to_owned(),
+        user_id => format!("/run/user/{user_id}/podman/podman.sock"),
+    }
+}
+
+/// The name of an account, or its number where the box names it nothing.
+///
+/// A uid with no passwd entry is not an error: a service can run as a number nobody named,
+/// and a document saying `1000` is still true where one saying nothing would not be.
+fn account_named(known: &BTreeMap<u32, Account>, user_id: u32) -> EngineInstance {
+    known
+        .get(&user_id)
+        .and_then(|account| EngineInstance::new(account.name.clone()).ok())
+        .unwrap_or_else(|| {
+            EngineInstance::new(user_id.to_string()).expect("a uid is a legal instance name")
+        })
+}
+
+/// Where a rootless engine keeps its store.
+///
+/// Read from that user's own configuration, since podman's per-user files override the
+/// system ones, and falling back to the per-user defaults: the store under their home, the
+/// runtime state in their runtime directory.
+fn rootless_layout(account: Option<&Account>, user_id: u32) -> PodmanLayout {
+    match account {
+        Some(account) => PodmanLayout::for_account(&account.home, user_id),
+        None => PodmanLayout::default(),
+    }
 }
 
 /// The version out of `podman --version`, whose line is `podman version 5.8.6`.

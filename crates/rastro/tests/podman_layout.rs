@@ -165,3 +165,55 @@ fn a_configuration_that_will_not_parse_falls_back_rather_than_guessing_wrong() {
         Some("/var/lib/containers/storage".to_owned())
     );
 }
+
+#[test]
+fn a_rootless_layout_is_read_from_the_users_own_configuration() {
+    // Arrange: **a rootless engine is configured somewhere else and defaults somewhere
+    // else.** Its store is under the user's home rather than in `/var/lib`, its runtime
+    // state is in their runtime directory, and `~/.config/containers` overrides the system
+    // files rather than being overridden by them.
+    let home = scratch_tree("podman-rootless-configured", &[]);
+    write(
+        &home,
+        ".config/containers/storage.conf",
+        "[storage]\ngraphroot = \"/srv/alice/containers\"\n",
+    );
+
+    // Act
+    let layout = PodmanLayout::for_account(home.to_str().expect("utf-8"), 1000);
+
+    // Assert
+    assert_eq!(
+        layout.graph_root.map(|path| path.as_str().to_owned()),
+        Some("/srv/alice/containers".to_owned())
+    );
+    assert_eq!(
+        layout.run_root.map(|path| path.as_str().to_owned()),
+        Some("/run/user/1000/containers".to_owned())
+    );
+}
+
+#[test]
+fn a_rootless_user_who_configured_nothing_is_at_the_per_user_defaults() {
+    // Arrange: which are not the system ones. A document that claimed `/var/lib/containers`
+    // for alice would be naming root's store as hers.
+    let home = scratch_tree("podman-rootless-defaults", &[]);
+
+    // Act
+    let layout = PodmanLayout::for_account(home.to_str().expect("utf-8"), 1001);
+    let home = home.to_str().expect("utf-8");
+
+    // Assert
+    assert_eq!(
+        layout.graph_root.map(|path| path.as_str().to_owned()),
+        Some(format!("{home}/.local/share/containers/storage"))
+    );
+    assert_eq!(
+        layout.run_root.map(|path| path.as_str().to_owned()),
+        Some("/run/user/1001/containers".to_owned())
+    );
+    assert_eq!(
+        layout.volume_path.map(|path| path.as_str().to_owned()),
+        Some(format!("{home}/.local/share/containers/storage/volumes"))
+    );
+}

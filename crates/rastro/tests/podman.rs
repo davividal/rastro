@@ -15,7 +15,9 @@ use std::os::unix::fs::PermissionsExt;
 
 use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
-use rastro::collectors::containers::{EngineSource, Podman, PodmanLayout};
+use rastro::collectors::containers::{
+    EngineInstance, EngineSource, Podman, PodmanLayout, accounts,
+};
 use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Observation, Volatility};
 use support::fs_tree::{scratch_tree, write};
@@ -491,4 +493,75 @@ fn a_container_in_no_pod_records_none() {
     // Act & Assert
     assert!(is_null(&field(&container, "pod")));
     assert!(!boolean(&field(&container, "is_infra")));
+}
+
+#[test]
+fn two_engines_of_one_flavour_are_keyed_by_the_accounts_that_own_them() {
+    // Arrange: **the arrangement the instance level exists for.** root's podman and alice's
+    // are separate engines with separate stores and separate sockets, and a container called
+    // `web` in each is two different containers.
+    let (root_tool, _) = fake_podman("two-root", INFO);
+    let (alice_tool, _) = fake_podman("two-alice", INFO);
+    let collector = ContainersCollector::reading(vec![
+        EngineSource::Podman(Podman::using(
+            root_tool,
+            PodmanLayout::default(),
+            Some(SOCKET.to_owned()),
+        )),
+        EngineSource::Podman(Podman::belonging_to(
+            EngineInstance::new("alice").expect("a legal account name"),
+            alice_tool,
+            PodmanLayout::default(),
+            Some("/run/user/1000/podman/podman.sock".to_owned()),
+        )),
+    ]);
+
+    // Act
+    let observed = collector.collect().expect("the fixtures are well formed");
+
+    // Assert
+    assert_eq!(
+        keys_of(&field(&field(&observed, "engines"), "podman")),
+        vec!["alice".to_owned(), "root".to_owned()]
+    );
+    assert_eq!(
+        keys_of(&field(&field(&observed, "containers"), "podman")),
+        vec!["alice".to_owned(), "root".to_owned()]
+    );
+    assert_eq!(
+        text(&field(
+            &field(&field(&field(&observed, "engines"), "podman"), "alice"),
+            "client_version"
+        )),
+        "5.8.6"
+    );
+}
+
+#[test]
+fn an_account_is_read_from_passwd_by_the_uid_that_owns_the_service() {
+    // Arrange: a rootless engine belongs to a user, and a document that called it `1000`
+    // would make the reader go and look the number up. Read here rather than taken from the
+    // `accounts` facet, because a collector may not read another collector.
+    let root = scratch_tree("podman-passwd", &[]);
+    write(
+        &root,
+        "etc/passwd",
+        "root:x:0:0:root:/root:/bin/bash\n\
+         alice:x:1000:1000:Alice:/home/alice:/bin/bash\n\
+         broken-line-with-too-few-columns\n\
+         bob:x:1001:1001:Bob:/home/bob:/usr/sbin/nologin\n",
+    );
+
+    // Act
+    let known = accounts(&root);
+
+    // Assert
+    assert_eq!(known[&1000].name, "alice");
+    assert_eq!(known[&1000].home, "/home/alice");
+    assert_eq!(known[&0].home, "/root");
+    assert_eq!(
+        known.len(),
+        3,
+        "a line with the wrong number of columns is skipped rather than guessed at"
+    );
 }

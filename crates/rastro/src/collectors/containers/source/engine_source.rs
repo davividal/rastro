@@ -23,18 +23,24 @@ pub enum EngineSource {
 
 impl EngineSource {
     /// The engines this host actually has.
+    ///
+    /// A flavour may yield several, because podman is per-user: root's engine and each
+    /// rootless one are separate engines with separate stores.
     pub fn detect_all() -> Vec<Self> {
         EngineFlavour::ALL
             .into_iter()
-            .filter_map(Self::detect)
+            .flat_map(Self::detect)
             .collect()
     }
 
-    fn detect(flavour: EngineFlavour) -> Option<Self> {
+    fn detect(flavour: EngineFlavour) -> Vec<Self> {
         match flavour {
-            EngineFlavour::Containerd => Containerd::detect().map(Self::Containerd),
-            EngineFlavour::Docker => Docker::detect().map(Self::Docker),
-            EngineFlavour::Podman => Podman::detect().map(Self::Podman),
+            EngineFlavour::Containerd => Containerd::detect()
+                .map(Self::Containerd)
+                .into_iter()
+                .collect(),
+            EngineFlavour::Docker => Docker::detect().map(Self::Docker).into_iter().collect(),
+            EngineFlavour::Podman => Podman::detect_all().into_iter().map(Self::Podman).collect(),
         }
     }
 

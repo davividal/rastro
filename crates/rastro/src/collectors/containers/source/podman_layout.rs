@@ -19,6 +19,13 @@ const STORAGE_FILES: [&str; 2] = [
     "etc/containers/storage.conf",
 ];
 
+/// Where a user's own overrides live, relative to their home.
+const USER_STORAGE_FILE: &str = ".config/containers/storage.conf";
+const USER_ENGINE_FILE: &str = ".config/containers/containers.conf";
+
+/// Where a user's store and runtime state are when they have said nothing.
+const USER_GRAPH_ROOT: &str = ".local/share/containers/storage";
+
 /// Where the volume tree is configured, which is a different file from the store's.
 const ENGINE_FILES: [&str; 2] = [
     "usr/share/containers/containers.conf",
@@ -48,6 +55,42 @@ impl PodmanLayout {
     /// The layout on this host.
     pub fn discover() -> Self {
         Self::under("/")
+    }
+
+    /// The layout of one user's own podman.
+    ///
+    /// **A rootless engine is configured somewhere else and defaults somewhere else**, which
+    /// is most of why it needs its own reading: the store is under the user's home rather
+    /// than in `/var/lib`, the runtime state is in their runtime directory rather than in
+    /// `/run`, and their `~/.config/containers` overrides the system files rather than
+    /// being overridden by them.
+    pub fn for_account(home: &str, user_id: u32) -> Self {
+        let stored = read_files::<StorageConfiguration>(Path::new(home), &[USER_STORAGE_FILE]);
+        let engine = read_files::<EngineConfiguration>(Path::new(home), &[USER_ENGINE_FILE]);
+
+        let graph_root = stored
+            .iter()
+            .filter_map(|file| file.storage.as_ref()?.graphroot.clone())
+            .next_back()
+            .unwrap_or_else(|| format!("{home}/{USER_GRAPH_ROOT}"));
+
+        let run_root = stored
+            .iter()
+            .filter_map(|file| file.storage.as_ref()?.runroot.clone())
+            .next_back()
+            .unwrap_or_else(|| format!("/run/user/{user_id}/containers"));
+
+        let volume_path = engine
+            .iter()
+            .filter_map(|file| file.engine.as_ref()?.volume_path.clone())
+            .next_back()
+            .unwrap_or_else(|| format!("{graph_root}/{DEFAULT_VOLUMES}"));
+
+        Self {
+            graph_root: AbsolutePath::new(graph_root, "podman graph root").ok(),
+            run_root: AbsolutePath::new(run_root, "podman run root").ok(),
+            volume_path: AbsolutePath::new(volume_path, "podman volume path").ok(),
+        }
     }
 
     /// The same under a filesystem root the caller chose, which is what the tests hand it.

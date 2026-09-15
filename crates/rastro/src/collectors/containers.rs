@@ -33,6 +33,12 @@
 //! everything else. Where no service is running, which is the ordinary podman box, the
 //! entry says so and why, and the filesystem claim is still made from podman's own
 //! configuration. `docs/decisions.md` carries every measurement.
+//!
+//! **Every user's podman is its own engine**, found by the account that owns its service's
+//! process, read through that user's own configuration, and keyed under the account's name.
+//! Root's is reported whenever the binary is there; a user's only when their service is
+//! running, since without one there is nothing about it rastro can learn without changing
+//! their box.
 //! The alternative, an unconditional `present`, would put an engine-shaped empty answer into
 //! every fingerprint of every box that has never run a container.
 //!
@@ -71,7 +77,9 @@ pub use model::{
     ObservedHealth, PodmanEngine, PodmanServer, PodmanStore, PublishedBinding, ResourceLimit,
     RestartPolicy, UnreadableObject,
 };
-pub use source::{Containerd, ContainerdLayout, Docker, EngineSource, Podman, PodmanLayout};
+pub use source::{
+    Account, Containerd, ContainerdLayout, Docker, EngineSource, Podman, PodmanLayout, accounts,
+};
 pub use value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus,
     EngineFlavour, EngineInstance, EngineInstant, EngineVersion, ExposedPort, ImageDigest,
