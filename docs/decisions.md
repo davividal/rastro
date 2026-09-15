@@ -3111,6 +3111,21 @@ confident lie, and rastro is run unprivileged often enough for that to be routin
 include that will not read. Losing the enablement state of every unit on the box because one
 service's environment file is root-only is the worse trade by a distance.
 
+**What a box without systemd gets from this: nothing.** Verified on Alpine, where there is
+no `systemctl` and the `units` facet is `absent` — correctly, since it is a true statement
+about that box, and the run is otherwise unaffected. It follows from environment belonging
+to its carrier rather than to a facet of its own, and it is the direct cost of that choice:
+rastro's environment coverage is exactly as wide as the carriers it knows. Today that is
+systemd units and crontabs, so a non-systemd box reports crontab variables and no others.
+
+Two things follow, and the first is the more urgent. `/etc/environment` and
+`pam_env.conf` are init-agnostic, so they are the floor under every box rather than a
+rounding error on a systemd one — which is the argument for collecting them and is stronger
+than the one originally made for it. And OpenRC's `/etc/conf.d` and sysvinit's
+`/etc/default` are uncollected: each would be a new carrier reporting its own environment,
+in the shape `units` now has, which is the test the Debian-first convention sets and this
+design passes without a breaking change.
+
 **Cost:** rastro now opens files named by unit configuration, which is a wider read than the
 facet had before, and it does it on every run. The files are small by construction — systemd
 reads them itself at every service start — so this is a cost in *surface* rather than in
