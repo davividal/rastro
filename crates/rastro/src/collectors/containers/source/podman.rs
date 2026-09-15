@@ -4,11 +4,12 @@ use std::path::Path;
 
 use rastro_collector::{AbsolutePath, CollectionError, WalkedTree};
 
+use super::podman_container_row::PodmanContainerRow;
 use super::podman_info::PodmanInfoDocument;
 use super::podman_layout::PodmanLayout;
 use super::running_process::command_lines_of;
 use crate::collectors::canonical_tool::CanonicalTool;
-use crate::collectors::containers::model::PodmanEngine;
+use crate::collectors::containers::model::{PodmanContainers, PodmanEngine};
 use crate::collectors::containers::value_objects::EngineVersion;
 
 const PROGRAM: &str = "podman";
@@ -94,8 +95,29 @@ impl Podman {
 
         Ok(PodmanEngine::answering(
             client,
-            document.to_server(socket.clone())?,
+            document.to_server(socket.clone(), self.containers(socket)?)?,
         ))
+    }
+
+    /// The containers the service holds, from one list rather than a read per container.
+    ///
+    /// **One call, unlike docker's.** podman's list carries what docker needs an `inspect`
+    /// per container to say — the image, the state, the ports, the labels, the pod — so
+    /// there is no id list to race against and no per-container loss to record.
+    fn containers(&self, socket: &AbsolutePath) -> Result<PodmanContainers, CollectionError> {
+        let listed = self.ask(socket, &["ps", "--all", "--format", "json"])?;
+        let rows: Vec<PodmanContainerRow> = serde_json::from_str(&listed).map_err(|error| {
+            CollectionError::new(format!(
+                "could not read what `{PROGRAM} --remote ps` reported as JSON: {error}"
+            ))
+        })?;
+
+        let mut containers = Vec::new();
+        for row in &rows {
+            containers.push(row.to_container()?);
+        }
+
+        PodmanContainers::new(containers)
     }
 
     /// The store and the runtime state, sealed, with the operator's volumes spared.

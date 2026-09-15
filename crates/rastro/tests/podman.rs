@@ -17,9 +17,9 @@ use rastro::collectors::ContainersCollector;
 use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::containers::{EngineSource, Podman, PodmanLayout};
 use rastro_collector::{ClaimedReading, Collector, Presence};
-use rastro_fingerprint::Observation;
+use rastro_fingerprint::{Observation, Volatility};
 use support::fs_tree::{scratch_tree, write};
-use support::observation::{field, is_null, keys_of, text};
+use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
 /// `podman --version`, the one local call rastro makes.
 const CLIENT_VERSION: &str = "podman version 5.8.6";
@@ -58,12 +58,65 @@ const INFO: &str = r#"{
 
 const SOCKET: &str = "/run/podman/podman.sock";
 
+/// `podman --remote ps --all --format json`, verbatim from a service.
+///
+/// The two shapes that matter are both here: a running container whose `ExitedAt` is Go's
+/// zero time in seconds, and a stopped one that really did exit. The bare-hex `ImageID` is
+/// podman's spelling of what docker writes as `sha256:…`.
+const CONTAINERS: &str = r#"[
+  {
+    "Id": "3f1c5e6a7b8c9d0e1f2a3b4c5d6e7f809a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "Names": ["pweb"],
+    "Image": "docker.io/library/alpine:latest",
+    "ImageID": "1991bd789d7184290c3cce84fd6af068b8b745e9bddf178661ce7f5ecf68135c",
+    "State": "running",
+    "ExitCode": 0,
+    "Created": 1789469574,
+    "StartedAt": 1789469574,
+    "ExitedAt": -62135596800,
+    "Restarts": 0,
+    "Pod": "",
+    "IsInfra": false,
+    "AutoRemove": false,
+    "Labels": { "com.example.role": "web" },
+    "Networks": ["podman"],
+    "Ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "container_port": 80,
+        "host_port": 18081,
+        "range": 1,
+        "protocol": "tcp"
+      }
+    ]
+  },
+  {
+    "Id": "4e2d6f7a8b9c0d1e2f3a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f801",
+    "Names": ["pstopped"],
+    "Image": "docker.io/library/alpine:latest",
+    "ImageID": "1991bd789d7184290c3cce84fd6af068b8b745e9bddf178661ce7f5ecf68135c",
+    "State": "exited",
+    "ExitCode": 4,
+    "Created": 1789469574,
+    "StartedAt": 1789469574,
+    "ExitedAt": 1789469580,
+    "Restarts": 0,
+    "Pod": "",
+    "IsInfra": false,
+    "AutoRemove": false,
+    "Labels": null,
+    "Networks": ["podman"],
+    "Ports": null
+  }
+]"#;
+
 /// A `podman` answering `--version` locally and everything else only in remote mode.
 ///
 /// **The shim refuses a local subcommand, which is the point.** If the source ever called
 /// `podman ps` without `--remote`, this fails rather than quietly answering: on a real box
 /// that call would initialise the store, and no test should let it through unnoticed.
 fn fake_podman(name: &str, info: &str) -> (CanonicalTool, std::path::PathBuf) {
+    let containers = CONTAINERS;
     let root = scratch_tree(&format!("podman-{name}"), &[]);
     let directory = root.to_str().expect("a UTF-8 scratch path");
     let path = root.join("podman");
@@ -88,6 +141,16 @@ exit 1
 fi
 cat <<'STDOUT'
 {info}
+STDOUT
+exit 0
+;;
+ps)
+if [ "$remote" = no ]; then
+printf 'a local read would initialise the store: %s\n' "$*" >&2
+exit 1
+fi
+cat <<'STDOUT'
+{containers}
 STDOUT
 exit 0
 ;;
@@ -299,4 +362,129 @@ fn a_volume_tree_moved_out_of_the_store_leaves_every_child_sealed() {
         !trees.contains(&root.join("elsewhere").to_str().expect("utf-8").to_owned()),
         "the volume tree itself is never claimed, wherever it is: {trees:?}"
     );
+}
+
+fn container_of(name: &str, container: &str) -> Observation {
+    field(
+        &field(
+            &field(
+                &field(&podman_facet(name, INFO, Some(SOCKET.to_owned())), "podman"),
+                "server",
+            ),
+            "containers",
+        ),
+        container,
+    )
+}
+
+#[test]
+fn the_containers_are_keyed_by_name() {
+    // Arrange: keyed the way docker's are, and for the same reason: a name outlives the id
+    // it is minted with.
+    let containers = field(
+        &field(
+            &field(
+                &podman_facet("names", INFO, Some(SOCKET.to_owned())),
+                "podman",
+            ),
+            "server",
+        ),
+        "containers",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&containers),
+        vec!["pstopped".to_owned(), "pweb".to_owned()]
+    );
+}
+
+#[test]
+fn a_container_records_the_image_and_the_id_podman_resolved() {
+    // Arrange: podman prints the image id as bare hex where docker writes `sha256:…`, and
+    // each is recorded as its engine spells it rather than normalised into the other.
+    let container = container_of("image", "pweb");
+
+    // Act & Assert
+    assert_eq!(
+        text(&field(&container, "image")),
+        "docker.io/library/alpine:latest"
+    );
+    assert_eq!(
+        text(&field(&container, "image_id")),
+        "1991bd789d7184290c3cce84fd6af068b8b745e9bddf178661ce7f5ecf68135c"
+    );
+    assert_eq!(text(&field(&container, "state")), "running");
+}
+
+#[test]
+fn a_running_container_has_no_exit_stamp() {
+    // Arrange: **the trap, in podman's spelling.** A running container reports
+    // `"ExitedAt": -62135596800`, Go's zero time in whole seconds, which recorded as it
+    // stands would read as a container that exited in the year one.
+    let container = container_of("zero-time", "pweb");
+
+    // Act & Assert
+    assert!(is_null(&field(&container, "exited_seconds_since_epoch")));
+    assert_eq!(
+        integer(&field(&container, "created_seconds_since_epoch")),
+        1_789_469_574
+    );
+}
+
+#[test]
+fn a_stopped_container_records_when_it_exited_and_with_what() {
+    // Arrange
+    let container = container_of("exited", "pstopped");
+
+    // Act & Assert
+    assert_eq!(integer(&field(&container, "exit_code")), 4);
+    assert_eq!(
+        integer(&field(&container, "exited_seconds_since_epoch")),
+        1_789_469_580
+    );
+}
+
+#[test]
+fn the_stamps_are_volatile_and_the_state_is_not() {
+    // Arrange: the same split docker's containers get. `running` becoming `exited` is the
+    // line worth diffing; the seconds it happened at move on their own.
+    let container = container_of("volatility", "pstopped");
+
+    // Act & Assert
+    assert_eq!(
+        field(&container, "started_seconds_since_epoch").volatility(),
+        Volatility::Volatile
+    );
+    assert_eq!(
+        field(&container, "restarts").volatility(),
+        Volatility::Volatile
+    );
+    assert_eq!(field(&container, "state").volatility(), Volatility::Stable);
+}
+
+#[test]
+fn a_published_port_records_the_run_of_ports_it_covers() {
+    // Arrange: **podman's own shape, not docker's.** `-p 8000-8010:8000-8010` is one
+    // binding covering eleven ports here and eleven bindings in docker; flattening podman's
+    // would mean inventing ten entries the engine never reported.
+    let ports = field(&container_of("ports", "pweb"), "ports");
+    let bindings = items_of(&field(&ports, "80/tcp"));
+
+    // Act & Assert
+    assert_eq!(keys_of(&ports), vec!["80/tcp".to_owned()]);
+    assert_eq!(text(&field(&bindings[0], "host_address")), "127.0.0.1");
+    assert_eq!(integer(&field(&bindings[0], "host_port")), 18081);
+    assert_eq!(integer(&field(&bindings[0], "range")), 1);
+}
+
+#[test]
+fn a_container_in_no_pod_records_none() {
+    // Arrange: a pod is podman's own concept with no docker equivalent, and an empty string
+    // is how podman says a container is standalone.
+    let container = container_of("pod", "pweb");
+
+    // Act & Assert
+    assert!(is_null(&field(&container, "pod")));
+    assert!(!boolean(&field(&container, "is_infra")));
 }

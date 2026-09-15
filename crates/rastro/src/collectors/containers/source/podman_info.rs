@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 
-use crate::collectors::containers::model::{PodmanServer, PodmanStore};
+use crate::collectors::containers::model::{PodmanContainers, PodmanServer, PodmanStore};
 use crate::collectors::containers::value_objects::{EngineVersion, StorageDriver};
 
 /// podman's document, kept apart from rastro's meaning.
@@ -60,7 +60,11 @@ struct VersionHalf {
 
 impl PodmanInfoDocument {
     /// Translates the service's document into rastro's model, given where it was asked.
-    pub fn to_server(&self, socket: AbsolutePath) -> Result<PodmanServer, CollectionError> {
+    pub fn to_server(
+        &self,
+        socket: AbsolutePath,
+        containers: PodmanContainers,
+    ) -> Result<PodmanServer, CollectionError> {
         Ok(PodmanServer {
             version: EngineVersion::new(self.version.version.clone())?,
             api_version: EngineVersion::new(self.version.api_version.clone()).ok(),
@@ -85,6 +89,7 @@ impl PodmanInfoDocument {
                 "database backend",
             )
             .ok(),
+            containers,
         })
     }
 }

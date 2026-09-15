@@ -3765,3 +3765,31 @@ finds them.
 `/run/user/<uid>/podman/podman.sock` with its own store, and root can connect to all of
 them. That means one flavour with several instances, which the facet's one-entry-per-flavour
 shape does not hold, so it needs a shape decision before it needs code.
+
+## podman's containers come from one list, and its shapes are its own
+
+`podman --remote ps --all --format json` carries what docker needs an `inspect` per
+container to say: the image, the state, the ports, the labels, the pod. So there is no id
+list to race against here and no per-container loss to record, which is why podman's entry
+has no `unreadable_containers` beside docker's.
+
+Three shapes differ from docker's, and each is recorded as podman spells it:
+
+- **Timestamps are whole seconds since the epoch**, not RFC 3339 text. The key names carry
+  the unit the way the filesystem facet's do. A running container's `ExitedAt` is
+  `-62135596800`, Go's zero time in seconds, which is the same trap docker sets with
+  `0001-01-01T00:00:00Z` in a spelling that would read as the year one.
+- **An image id is bare hex**, where docker writes `sha256:` and the hex. `ImageDigest` now
+  accepts either and normalises neither, because rewriting podman's into docker's would mean
+  asserting an algorithm the engine never named.
+- **A published port keeps its range.** `-p 8000-8010:8000-8010` is one binding covering
+  eleven ports in podman and eleven bindings in docker. Flattening podman's would mean
+  inventing ten entries it never reported.
+
+**Pods are recorded because podman has them and docker does not.** A pod is a group of
+containers sharing namespaces, and its infra container is the one holding them open, so a
+container that belongs to one is reachable in ways a standalone container is not.
+
+**One name per container, and more than one is a misread.** podman's `Names` is a list for
+docker compatibility and holds exactly one, so a second is not a container with two names:
+it is the answer not being the shape rastro thinks, and it fails rather than picking one.

@@ -2,7 +2,13 @@
 
 use rastro_collector::{CollectionError, NonEmptyText, Observation};
 
-/// An `algorithm:hex` digest, as the registry world spells it: `sha256:28bd5f…`.
+/// A content address, in either spelling an engine uses: `sha256:28bd5f…` or bare hex.
+///
+/// **Two engines, two spellings of one value, and neither is normalised into the other.**
+/// docker writes an image's id as `sha256:` and the hex; podman's list prints the hex alone.
+/// Rewriting podman's into docker's would mean rastro asserting an algorithm the engine
+/// never named, and the rule here is the one the versions follow: record what the host
+/// reported.
 ///
 /// **The value this whole facet exists for.** A tag says what was asked for and moves under
 /// the operator's feet; a digest says what is running. `nginx:1.29` rebuilt upstream and
@@ -20,17 +26,18 @@ impl ImageDigest {
         let text = NonEmptyText::new(value, "image digest")?;
         let spelled = text.as_str();
 
-        let Some((algorithm, hex)) = spelled.split_once(':') else {
-            return Err(CollectionError::new(format!(
-                "the engine reported the digest {spelled:?}, which names no algorithm"
-            )));
+        let (algorithm, hex) = match spelled.split_once(':') {
+            Some((algorithm, hex)) => (Some(algorithm), hex),
+            None => (None, spelled),
         };
 
-        if algorithm.is_empty()
-            || !algorithm
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric())
-        {
+        let named = algorithm.is_none_or(|algorithm| {
+            !algorithm.is_empty()
+                && algorithm
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        });
+        if !named {
             return Err(CollectionError::new(format!(
                 "the engine reported the digest {spelled:?}, whose algorithm is not a word"
             )));

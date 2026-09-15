@@ -2,7 +2,7 @@
 
 use rastro_collector::{AbsolutePath, NonEmptyText, Observation};
 
-use crate::collectors::containers::model::PodmanStore;
+use crate::collectors::containers::model::{PodmanContainers, PodmanStore};
 use crate::collectors::containers::value_objects::EngineVersion;
 
 /// The answering service's own account of itself.
@@ -29,6 +29,9 @@ pub struct PodmanServer {
     pub cgroup_manager: Option<NonEmptyText>,
     /// `sqlite` or `boltdb`, which says which of two on-disk shapes the state is in.
     pub database_backend: Option<NonEmptyText>,
+    /// What the service holds, which is everything rastro knows about this box's containers
+    /// beyond where the store is.
+    pub containers: PodmanContainers,
 }
 
 impl From<&PodmanServer> for Observation {
@@ -45,6 +48,7 @@ impl From<&PodmanServer> for Observation {
             ("cgroup_version", text(server.cgroup_version.as_ref())),
             ("database_backend", text(server.database_backend.as_ref())),
             ("oci_runtime", text(server.oci_runtime.as_ref())),
+            ("containers", Observation::from(&server.containers)),
             ("socket", Observation::text(server.socket.as_str())),
             ("store", Observation::from(&server.store)),
             ("version", Observation::from(&server.version)),

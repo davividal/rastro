@@ -16,6 +16,7 @@ mod docker_version;
 mod docker_volume_document;
 mod engine_source;
 mod podman;
+mod podman_container_row;
 mod podman_info;
 mod podman_layout;
 mod running_process;
