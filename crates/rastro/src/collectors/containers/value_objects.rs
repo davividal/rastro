@@ -18,6 +18,7 @@ mod mount_kind;
 mod namespace_name;
 mod network_id;
 mod network_name;
+mod single_word;
 mod storage_driver;
 mod swarm_state;
 mod transport_protocol;

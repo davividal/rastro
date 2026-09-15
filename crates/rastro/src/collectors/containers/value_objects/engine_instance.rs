@@ -2,6 +2,8 @@
 
 use rastro_collector::{CollectionError, NonEmptyText};
 
+use crate::collectors::containers::value_objects::single_word::single_word;
+
 /// The account an engine belongs to, which is what tells two engines of one flavour apart.
 ///
 /// **One flavour is not one engine, and podman is why.** Every user on a box can run their
@@ -24,17 +26,7 @@ const ROOT: &str = "root";
 
 impl EngineInstance {
     pub fn new(value: impl Into<String>) -> Result<Self, CollectionError> {
-        let text = NonEmptyText::new(value, "engine instance")?;
-
-        if text.as_str().chars().any(char::is_whitespace) {
-            return Err(CollectionError::new(format!(
-                "the host reported the account {:?}, and an account name holding whitespace \
-                 means the answer was misread",
-                text.as_str()
-            )));
-        }
-
-        Ok(Self(text))
+        Ok(Self(single_word(value, "engine instance")?))
     }
 
     /// The system engine's instance: dockerd, containerd and a rootful podman all belong to

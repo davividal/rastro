@@ -2,6 +2,8 @@
 
 use rastro_collector::{CollectionError, NonEmptyText};
 
+use crate::collectors::containers::value_objects::single_word::single_word;
+
 /// A label's key, conventionally reverse-DNS: `com.docker.compose.project`.
 ///
 /// Worth naming because labels are how a container says who put it there. compose writes its
@@ -12,17 +14,7 @@ pub struct LabelName(NonEmptyText);
 
 impl LabelName {
     pub fn new(value: impl Into<String>) -> Result<Self, CollectionError> {
-        let text = NonEmptyText::new(value, "label name")?;
-
-        if text.as_str().chars().any(char::is_whitespace) {
-            return Err(CollectionError::new(format!(
-                "the engine reported the label name {:?}, and a key holding whitespace means \
-                 the answer was misread",
-                text.as_str()
-            )));
-        }
-
-        Ok(Self(text))
+        Ok(Self(single_word(value, "label name")?))
     }
 
     pub fn as_str(&self) -> &str {

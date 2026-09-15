@@ -2,6 +2,8 @@
 
 use rastro_collector::{CollectionError, NonEmptyText};
 
+use crate::collectors::containers::value_objects::single_word::single_word;
+
 /// A volume's name, which is its identity to the engine and to every container that mounts
 /// it.
 ///
@@ -15,17 +17,7 @@ pub struct VolumeName(NonEmptyText);
 
 impl VolumeName {
     pub fn new(value: impl Into<String>) -> Result<Self, CollectionError> {
-        let text = NonEmptyText::new(value, "volume name")?;
-
-        if text.as_str().chars().any(char::is_whitespace) {
-            return Err(CollectionError::new(format!(
-                "the engine reported the volume name {:?}, and a name holding whitespace \
-                 means the answer was misread",
-                text.as_str()
-            )));
-        }
-
-        Ok(Self(text))
+        Ok(Self(single_word(value, "volume name")?))
     }
 
     pub fn as_str(&self) -> &str {
