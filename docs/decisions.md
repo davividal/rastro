@@ -3089,6 +3089,15 @@ table would get both wrong:
 - A backslash outside quotes is an escape and vanishes (`a\b` is `ab`); inside quotes it is
   kept unless it precedes `"`, `\` or the end of the line.
 
+**A third rule, found later and by a failing test rather than by reading.** Trailing
+whitespace is dropped only where it was *outside* quotes: `V="  sp  "` keeps both runs of
+spaces, `V=val␠␠␠` loses its three, and `V="ab"cd␠␠` loses the two that follow the closing
+quote. Trimming once at the end of the scan — the obvious implementation, and the one that
+shipped first — gets the first case wrong and no measured example had caught it, because the
+probe file quoted nothing that was padded. The parser now tracks the last significant
+position as it scans. The lesson is the cheap one to record: a probe file proves the cases it
+contains, and the gap between "measured" and "measured exhaustively" is where this bug lived.
+
 **A repeated name takes the last value, where cron refuses one.** Not an inconsistency: a
 crontab is genuinely ambiguous about what its jobs run with, so refusing is the honest
 answer there. systemd's semantics here are defined, so mirroring them is reporting the box

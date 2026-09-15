@@ -1,7 +1,5 @@
 //! What an environment variable is called.
 
-use rastro_fingerprint::Observation;
-
 use crate::CollectionError;
 
 use super::non_empty_text::NonEmptyText;
@@ -27,11 +25,5 @@ impl EnvironmentVariableName {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl From<&EnvironmentVariableName> for Observation {
-    fn from(name: &EnvironmentVariableName) -> Self {
-        Observation::text(name.as_str())
     }
 }

@@ -1,6 +1,6 @@
 //! One file a unit reads its environment from.
 
-use rastro_collector::{AbsolutePath, CollectionError, Observation};
+use rastro_collector::{AbsolutePath, CollectionError};
 
 /// An `EnvironmentFile=` as `systemctl show` reports it.
 ///
@@ -30,14 +30,5 @@ impl EnvironmentFile {
             path: AbsolutePath::new(path, "unit environment file")?,
             ignore_errors,
         })
-    }
-}
-
-impl From<&EnvironmentFile> for Observation {
-    fn from(file: &EnvironmentFile) -> Self {
-        Observation::object([
-            ("ignore_errors", Observation::boolean(file.ignore_errors)),
-            ("path", Observation::text(file.path.as_str())),
-        ])
     }
 }

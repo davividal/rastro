@@ -402,3 +402,139 @@ Id=spaced.service
         "/etc/my app.env"
     );
 }
+
+/// The `Environment=` line of a one-unit group, parsed.
+fn environment_line(value: &str) -> Result<Vec<(String, String)>, String> {
+    let shown = format!("Environment={value}\nId=probe.service\n");
+
+    match systemctl_show::parse(&shown) {
+        Ok(parsed) => Ok(
+            parsed[&UnitName::new("probe.service").expect("a legal unit name")]
+                .environment
+                .iter()
+                .map(|(name, value)| (name.as_str().to_owned(), value.clone()))
+                .collect(),
+        ),
+        Err(failure) => Err(failure.to_string()),
+    }
+}
+
+fn one_value(value: &str) -> String {
+    let parsed = environment_line(value).expect("a well formed line");
+    assert_eq!(parsed.len(), 1, "expected one variable from {value:?}");
+
+    parsed[0].1.clone()
+}
+
+#[test]
+fn every_escape_systemds_cescape_emits_is_resolved() {
+    // Arrange & Assert: the table is systemd's `cescape`, and a branch of it that no test
+    // reaches is a branch nobody has checked against the thing it is copying. The measured
+    // cases upstream cover `\"`, `\\` and `\$`; these are the rest of the table.
+    for (escaped, expected) in [
+        ("A=x\\ay", '\u{7}'),
+        ("A=x\\by", '\u{8}'),
+        ("A=x\\fy", '\u{c}'),
+        ("A=x\\ny", '\n'),
+        ("A=x\\ry", '\r'),
+        ("A=x\\ty", '\t'),
+        ("A=x\\vy", '\u{b}'),
+        ("A=x\\'y", '\''),
+    ] {
+        assert_eq!(
+            one_value(escaped),
+            format!("x{expected}y"),
+            "escape in {escaped:?}"
+        );
+    }
+}
+
+#[test]
+fn a_hex_escape_becomes_the_byte_it_names() {
+    // Act & Assert: systemd writes `\xNN` for a byte it will not print.
+    assert_eq!(one_value("A=x\\x41y"), "xAy");
+}
+
+#[test]
+fn a_hex_escape_above_ascii_is_refused_rather_than_guessed_at() {
+    // Arrange: one escaped byte is half a character in any multi-byte encoding, and the
+    // value it belongs to is a Rust `String`. systemd leaves valid UTF-8 alone, so a high
+    // byte here means the value was never text.
+
+    // Act
+    let failure = environment_line("A=x\\xffy").expect_err("a high byte is not text");
+
+    // Assert
+    assert!(
+        failure.contains("0xff"),
+        "the operator needs the byte named, got: {failure}"
+    );
+}
+
+#[test]
+fn a_hex_escape_that_is_not_two_hex_digits_is_refused() {
+    // Act
+    let failure = environment_line("A=x\\xzz").expect_err("`zz` is not hex");
+
+    // Assert
+    assert!(failure.contains("hex digits"), "got: {failure}");
+}
+
+#[test]
+fn an_escape_outside_systemds_table_is_refused_rather_than_invented() {
+    // Arrange: reaching this means rastro's table has fallen behind systemd's. Inventing a
+    // character would put one in the document that is not in the process.
+
+    // Act
+    let failure = environment_line("A=x\\qy").expect_err("`\\q` is not in the table");
+
+    // Assert
+    assert!(failure.contains("cannot read"), "got: {failure}");
+}
+
+#[test]
+fn a_line_ending_in_a_lone_backslash_is_refused() {
+    // Act
+    let failure = environment_line("A=x\\").expect_err("a trailing backslash escapes nothing");
+
+    // Assert
+    assert!(failure.contains("lone backslash"), "got: {failure}");
+}
+
+#[test]
+fn an_environment_line_whose_quoting_does_not_close_is_refused() {
+    // Arrange: where one variable ends cannot be told, so every entry after it is a guess.
+
+    // Act
+    let failure = environment_line("\"A=unterminated").expect_err("the quote never closes");
+
+    // Assert
+    assert!(failure.contains("quoting does not close"), "got: {failure}");
+}
+
+#[test]
+fn a_name_repeated_on_one_environment_line_is_refused() {
+    // Arrange: systemd has already merged the unit and its drop-ins by the time it prints
+    // this, so two entries sharing a name means the line was split wrongly. Quietly keeping
+    // one would hide the misreading behind a plausible answer.
+
+    // Act
+    let failure = environment_line("A=first A=second").expect_err("systemd prints no repeat");
+
+    // Assert
+    assert!(failure.contains("twice"), "got: {failure}");
+}
+
+#[test]
+fn an_ignore_errors_value_systemd_does_not_print_is_refused() {
+    // Arrange: the property is a boolean in systemd's own output, so anything else means
+    // the line was misread, and a path recorded without knowing whether the unit needs it
+    // is worse than no path.
+    let shown = "EnvironmentFiles=/etc/x.env (ignore_errors=maybe)\nId=probe.service\n";
+
+    // Act
+    let failure = systemctl_show::parse(shown).expect_err("`maybe` is not a boolean");
+
+    // Assert
+    assert!(failure.to_string().contains("maybe"), "got: {failure}");
+}

@@ -305,3 +305,41 @@ fn a_directory_where_a_file_was_declared_is_an_error_and_not_an_absence() {
         other => panic!("expected an unreadable file, got {other:?}"),
     }
 }
+
+#[test]
+fn a_file_whose_last_line_ends_in_a_backslash_continues_into_nothing() {
+    // Arrange: the continuation has no next line to join, so what it accumulated is the
+    // last logical line rather than being dropped on the floor.
+    let text = "A=one\nB=two \\";
+
+    // Act & Assert: both survive, and the dangling continuation does not swallow `B`.
+    assert_eq!(
+        variables(text),
+        vec![
+            ("A".to_owned(), "one".to_owned()),
+            ("B".to_owned(), "two".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_quoted_value_keeps_the_whitespace_it_was_given() {
+    // Act & Assert: the trailing-whitespace trim applies to a bare value only. Quoting is
+    // how a file says the spaces are part of the value, and `systemd` honours that.
+    assert_eq!(value_of("PADDED=\"  spaced  \"\n"), "  spaced  ");
+}
+
+#[test]
+fn a_trailing_backslash_is_a_continuation_even_at_the_end_of_the_file() {
+    // Arrange & Assert: measured. A backslash at the end of the last line continues into
+    // nothing rather than surviving as the value's last character, quoted or not, because
+    // the continuation is resolved before the quoting is.
+    assert_eq!(value_of("TRAILING=\"ends\\"), "ends");
+}
+
+#[test]
+fn a_continuation_inside_quotes_joins_with_no_separator_of_its_own() {
+    // Arrange & Assert: measured. `"a\` / `b"` is `ab`, not `a b` — the join adds nothing,
+    // so the only separator is whatever the text already had before the backslash.
+    assert_eq!(value_of("V=\"a\\\nb\"\n"), "ab");
+}

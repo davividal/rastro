@@ -149,15 +149,26 @@ fn assignment(line: &str) -> Option<(EnvironmentVariableName, String)> {
 ///
 /// Scanning continues past a closing quote rather than stopping there, because systemd's does:
 /// `'a\'b'` comes back as `a\b'`, the trailing `b'` appended to what the quotes held.
+///
+/// **Trailing whitespace is dropped only where it was outside quotes.** Measured, and it is
+/// the distinction the obvious implementation misses: `"  sp  "` keeps both runs of spaces
+/// because they are inside the quotes, while `"ab"cd  ` loses its two because they are not.
+/// Trimming once at the end gets the first case wrong, which is why the last significant
+/// position is tracked as the scan goes rather than reconstructed afterwards.
 fn unquoted(value: &str) -> String {
     let mut resolved = String::new();
     let mut characters = value.trim_start().chars();
     let mut quote: Option<char> = None;
+    let mut significant = 0;
 
     while let Some(character) = characters.next() {
         match (character, quote) {
             // A quote opens, or closes the one it matches. Any other quote is a character.
-            ('"' | '\'', None) => quote = Some(character),
+            ('"' | '\'', None) => {
+                quote = Some(character);
+                // Whatever the quotes go on to hold is kept, empty string included.
+                significant = resolved.len();
+            }
             ('"' | '\'', Some(open)) if open == character => quote = None,
 
             // Outside quotes and inside double quotes a backslash escapes; inside single
@@ -166,20 +177,23 @@ fn unquoted(value: &str) -> String {
             ('\\', Some('"')) => match characters.next() {
                 Some(escaped @ ('"' | '\\')) => resolved.push(escaped),
                 // Anything else keeps the backslash, which is why `\n` stays two characters.
-                Some(kept) => {
+                // `None` joins this arm rather than getting its own: a logical line cannot end
+                // in a backslash, because `logical_lines` has already taken that as a
+                // continuation, so the branch would be unreachable and untestable.
+                kept => {
                     resolved.push('\\');
-                    resolved.push(kept);
+                    resolved.extend(kept);
                 }
-                None => resolved.push('\\'),
             },
 
             _ => resolved.push(character),
         }
+
+        if quote.is_some() || !character.is_whitespace() {
+            significant = resolved.len();
+        }
     }
 
-    match quote {
-        // Quoted text keeps whatever whitespace it was given; bare text does not.
-        Some(_) => resolved,
-        None => resolved.trim_end().to_owned(),
-    }
+    resolved.truncate(significant);
+    resolved
 }
