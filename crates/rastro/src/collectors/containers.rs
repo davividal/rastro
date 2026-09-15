@@ -74,9 +74,9 @@ pub use model::{
 pub use source::{Containerd, ContainerdLayout, Docker, EngineSource, Podman, PodmanLayout};
 pub use value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus,
-    EngineFlavour, EngineInstant, EngineVersion, ExposedPort, ImageDigest, ImageReference,
-    LabelName, MountKind, NamespaceName, NetworkId, NetworkName, StorageDriver, SwarmState,
-    TransportProtocol, VariableName, VolumeName,
+    EngineFlavour, EngineInstance, EngineInstant, EngineVersion, ExposedPort, ImageDigest,
+    ImageReference, LabelName, MountKind, NamespaceName, NetworkId, NetworkName, StorageDriver,
+    SwarmState, TransportProtocol, VariableName, VolumeName,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs. A collector written
@@ -160,11 +160,10 @@ impl Collector for ContainersCollector {
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let found = self
-            .engines
-            .iter()
-            .map(EngineSource::read)
-            .collect::<Result<Vec<ContainerEngine>, CollectionError>>()?;
+        let mut found: Vec<(EngineInstance, ContainerEngine)> = Vec::new();
+        for engine in &self.engines {
+            found.push((engine.instance(), engine.read()?));
+        }
 
         Ok(Observation::from(&ContainerInventory::new(found)?))
     }

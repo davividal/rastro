@@ -3819,3 +3819,27 @@ read of it is a fact about the *read*, not about the containers that survived, s
 model — a server holds what it is running — and the document renders that ownership twice:
 once as the engine's entry without them, once as the containers half. Nothing is duplicated
 in the document, so there is no second place for a diff to disagree with itself.
+
+## A flavour holds instances, keyed by the account that owns the engine
+
+`containers/docker/root/web` rather than `containers/docker/web`, on both halves of the
+facet.
+
+**One flavour is not one engine, and podman is why.** Every user can run their own
+`podman system service` with its own store, its own socket and its own containers, so
+`alice`'s `web` and `bob`'s `web` are different containers and root may be running none at
+all. A key that held "the podman on this box" would have to pick one of them and call it
+the engine, which is a statement about the box that is not true.
+
+**The owning account is the identity because it is what separates them**: the store, the
+socket and the containers all belong to that user, and the name reads well in the ordinary
+case, where a box has exactly one instance and it is `root`.
+
+**It generalises past podman**, which is the other reason to spend a key on it. Rootless
+docker has the same shape, and so would a box where root runs dockerd while a user runs
+their own. Adding the level later would have been a second change to the output contract,
+which is the sort of thing to do once.
+
+**Cost, accepted knowingly:** one more level for every box that will only ever have one
+instance, which is most of them. The alternative was a key whose meaning changes depending
+on what the box happens to run, and that is the worse of the two.

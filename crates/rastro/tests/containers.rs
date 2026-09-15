@@ -785,12 +785,15 @@ fn docker_facet(name: &str, fixtures: DockerFixtures) -> Observation {
 
 /// One engine's own entry: what it is and what it holds that is not a container.
 fn engine_of(facet: &Observation, flavour: &str) -> Observation {
-    field(&field(facet, "engines"), flavour)
+    // Two keys, because a flavour holds instances: every user can run their own podman, so
+    // the account that owns an engine is the second key. On these fixtures it is always
+    // `root`, which is the ordinary box.
+    field(&field(&field(facet, "engines"), flavour), "root")
 }
 
 /// The containers one engine runs, from the facet's other half.
 fn containers_of(facet: &Observation, flavour: &str) -> Observation {
-    field(&field(facet, "containers"), flavour)
+    field(&field(&field(facet, "containers"), flavour), "root")
 }
 
 fn answering_server(name: &str) -> Observation {

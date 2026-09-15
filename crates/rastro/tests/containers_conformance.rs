@@ -70,12 +70,14 @@ fn observed() -> Observation {
 
 /// docker's own entry: what it is, and what it holds that is not a container.
 fn engine() -> Observation {
-    field(&field(&observed(), "engines"), "docker")
+    // `root` because dockerd is a system service; the level exists for the engines that can
+    // belong to somebody else, which is rootless podman and rootless docker.
+    field(&field(&field(&observed(), "engines"), "docker"), "root")
 }
 
 /// The containers docker runs, from the facet's other half.
 fn containers() -> Observation {
-    field(&field(&observed(), "containers"), "docker")
+    field(&field(&field(&observed(), "containers"), "docker"), "root")
 }
 
 fn server() -> Observation {

@@ -10,7 +10,7 @@ use super::podman_layout::PodmanLayout;
 use super::running_process::command_lines_of;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::containers::model::{PodmanContainers, PodmanEngine};
-use crate::collectors::containers::value_objects::EngineVersion;
+use crate::collectors::containers::value_objects::{EngineInstance, EngineVersion};
 
 const PROGRAM: &str = "podman";
 
@@ -76,6 +76,12 @@ impl Podman {
             service: service
                 .and_then(|socket| AbsolutePath::new(socket, "podman service socket").ok()),
         }
+    }
+
+    /// The account this podman belongs to, which is root until rootless services are
+    /// discovered.
+    pub fn instance(&self) -> EngineInstance {
+        EngineInstance::root()
     }
 
     /// podman as this box has it: the client, and the service if one is running.

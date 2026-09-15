@@ -224,7 +224,10 @@ fn podman_facet(name: &str, info: &str, service: Option<String>) -> Observation 
 
 /// One engine's own entry, from the facet's `engines` half.
 fn engine_of(facet: &Observation, flavour: &str) -> Observation {
-    field(&field(facet, "engines"), flavour)
+    // Two keys, because a flavour holds instances: every user can run their own podman, so
+    // the account that owns an engine is the second key. On these fixtures it is always
+    // `root`, which is the ordinary box.
+    field(&field(&field(facet, "engines"), flavour), "root")
 }
 
 fn claimed(collector: &ContainersCollector) -> Vec<(String, ClaimedReading)> {
@@ -376,15 +379,13 @@ fn a_volume_tree_moved_out_of_the_store_leaves_every_child_sealed() {
     );
 }
 
+fn containers_of(facet: &Observation) -> Observation {
+    field(&field(&field(facet, "containers"), "podman"), "root")
+}
+
 fn container_of(name: &str, container: &str) -> Observation {
     field(
-        &field(
-            &field(
-                &podman_facet(name, INFO, Some(SOCKET.to_owned())),
-                "containers",
-            ),
-            "podman",
-        ),
+        &containers_of(&podman_facet(name, INFO, Some(SOCKET.to_owned()))),
         container,
     )
 }
@@ -393,13 +394,7 @@ fn container_of(name: &str, container: &str) -> Observation {
 fn the_containers_are_keyed_by_name() {
     // Arrange: keyed the way docker's are, and for the same reason: a name outlives the id
     // it is minted with.
-    let containers = field(
-        &field(
-            &podman_facet("names", INFO, Some(SOCKET.to_owned())),
-            "containers",
-        ),
-        "podman",
-    );
+    let containers = containers_of(&podman_facet("names", INFO, Some(SOCKET.to_owned())));
 
     // Act & Assert
     assert_eq!(

@@ -6,7 +6,7 @@ use super::containerd::Containerd;
 use super::docker::Docker;
 use super::podman::Podman;
 use crate::collectors::containers::model::ContainerEngine;
-use crate::collectors::containers::value_objects::EngineFlavour;
+use crate::collectors::containers::value_objects::{EngineFlavour, EngineInstance};
 
 /// One engine present on the host, together with its own interface.
 ///
@@ -35,6 +35,18 @@ impl EngineSource {
             EngineFlavour::Containerd => Containerd::detect().map(Self::Containerd),
             EngineFlavour::Docker => Docker::detect().map(Self::Docker),
             EngineFlavour::Podman => Podman::detect().map(Self::Podman),
+        }
+    }
+
+    /// The account this engine belongs to.
+    ///
+    /// Every engine rastro reads today is root's: dockerd and containerd are system
+    /// services, and a rootful podman service is root's too. A rootless podman belongs to
+    /// the user running it, which is what this will answer once they are discovered.
+    pub fn instance(&self) -> EngineInstance {
+        match self {
+            Self::Containerd(_) | Self::Docker(_) => EngineInstance::root(),
+            Self::Podman(podman) => podman.instance(),
         }
     }
 

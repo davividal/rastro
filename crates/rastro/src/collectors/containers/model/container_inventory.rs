@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use rastro_collector::{CollectionError, Observation};
 
 use crate::collectors::containers::model::ContainerEngine;
-use crate::collectors::containers::value_objects::EngineFlavour;
+use crate::collectors::containers::value_objects::{EngineFlavour, EngineInstance};
 
 /// The facet's two halves: the engines, and the containers they hold.
 ///
@@ -24,22 +24,40 @@ use crate::collectors::containers::value_objects::EngineFlavour;
 /// Images, volumes and networks are the store's, and the losses from reading — a container
 /// that vanished mid-read — belong with the account of the read rather than with the
 /// containers that survived it.
+///
+/// **A flavour holds instances rather than one engine**, because one flavour is not one
+/// engine: every user on a box can run their own podman with its own store, so the account
+/// that owns an engine is the second key on both halves. On an ordinary box that reads
+/// `docker/root`, which is one level of ceremony for the case that has one instance and the
+/// only arrangement that does not have to call somebody's engine *the* engine.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ContainerInventory(BTreeMap<EngineFlavour, ContainerEngine>);
+pub struct ContainerInventory(BTreeMap<EngineFlavour, BTreeMap<EngineInstance, ContainerEngine>>);
 
 impl ContainerInventory {
-    /// Files each reading under its flavour, refusing a repeat.
+    /// Files each reading under its flavour and the account that owns it, refusing a repeat
+    /// of the pair.
+    ///
+    /// A repeat is not two engines: one account cannot own two of a flavour, since they
+    /// would share a store and a socket, so it means the same engine was detected twice.
     pub fn new(
-        engines: impl IntoIterator<Item = ContainerEngine>,
+        engines: impl IntoIterator<Item = (EngineInstance, ContainerEngine)>,
     ) -> Result<Self, CollectionError> {
-        let mut keyed = BTreeMap::new();
+        let mut keyed: BTreeMap<EngineFlavour, BTreeMap<EngineInstance, ContainerEngine>> =
+            BTreeMap::new();
 
-        for engine in engines {
+        for (instance, engine) in engines {
             let flavour = engine.flavour();
-            if keyed.insert(flavour, engine).is_some() {
+            if keyed
+                .entry(flavour)
+                .or_default()
+                .insert(instance.clone(), engine)
+                .is_some()
+            {
                 return Err(CollectionError::new(format!(
-                    "the {} engine was read twice, so one engine was detected twice",
-                    flavour.as_str()
+                    "the {} engine belonging to {:?} was read twice, so one engine was \
+                     detected twice",
+                    flavour.as_str(),
+                    instance.as_str()
                 )));
             }
         }
@@ -47,7 +65,7 @@ impl ContainerInventory {
         Ok(Self(keyed))
     }
 
-    pub fn engines(&self) -> &BTreeMap<EngineFlavour, ContainerEngine> {
+    pub fn engines(&self) -> &BTreeMap<EngineFlavour, BTreeMap<EngineInstance, ContainerEngine>> {
         &self.0
     }
 
@@ -61,21 +79,27 @@ impl From<&ContainerInventory> for Observation {
         Observation::object([
             (
                 "containers",
-                Observation::object(
-                    inventory
-                        .engines()
-                        .iter()
-                        .map(|(flavour, engine)| (flavour.as_str(), engine.containers())),
-                ),
+                Observation::object(inventory.engines().iter().map(|(flavour, instances)| {
+                    (
+                        flavour.as_str(),
+                        Observation::object(
+                            instances
+                                .iter()
+                                .map(|(instance, engine)| (instance.as_str(), engine.containers())),
+                        ),
+                    )
+                })),
             ),
             (
                 "engines",
-                Observation::object(
-                    inventory
-                        .engines()
-                        .iter()
-                        .map(|(flavour, engine)| (flavour.as_str(), Observation::from(engine))),
-                ),
+                Observation::object(inventory.engines().iter().map(|(flavour, instances)| {
+                    (
+                        flavour.as_str(),
+                        Observation::object(instances.iter().map(|(instance, engine)| {
+                            (instance.as_str(), Observation::from(engine))
+                        })),
+                    )
+                })),
             ),
         ])
     }

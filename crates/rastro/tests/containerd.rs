@@ -259,7 +259,10 @@ esac
 
 /// One engine's own entry, from the facet's `engines` half.
 fn engine_of(facet: &Observation, flavour: &str) -> Observation {
-    field(&field(facet, "engines"), flavour)
+    // Two keys, because a flavour holds instances: every user can run their own podman, so
+    // the account that owns an engine is the second key. On these fixtures it is always
+    // `root`, which is the ordinary box.
+    field(&field(&field(facet, "engines"), flavour), "root")
 }
 
 fn containerd_facet(name: &str, version: &str, namespaces: &str) -> Observation {
@@ -444,8 +447,11 @@ fn namespace_of(name: &str, per_namespace: &[NamespaceFixtures], namespace: &str
 fn containers_in(name: &str, per_namespace: &[NamespaceFixtures], namespace: &str) -> Observation {
     field(
         &field(
-            &field(&read_holding(name, per_namespace), "containers"),
-            "containerd",
+            &field(
+                &field(&read_holding(name, per_namespace), "containers"),
+                "containerd",
+            ),
+            "root",
         ),
         namespace,
     )

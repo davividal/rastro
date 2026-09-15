@@ -131,8 +131,14 @@ report its effective state, and a service that will not.
 
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
-keyed by engine flavour — the way `packages` covers dpkg and apk — because an operator
-asking about containers is asking one question.
+keyed by engine flavour and then by the account that owns the engine — the way `packages`
+covers dpkg and apk — because an operator asking about containers is asking one question.
+
+**A flavour holds instances rather than one engine.** Every user on a box can run their
+own podman with its own store and its own socket, so `alice/web` and `bob/web` are
+different containers and root may be running neither. On an ordinary box this reads
+`docker/root`, one level of ceremony for the case that has a single instance and the only
+arrangement that never has to call somebody's engine *the* engine.
 
 **The split is the facet's central arrangement.** A container is a tenant of the box; an
 engine is what happens to be running it, and an image, a volume or a network is an
