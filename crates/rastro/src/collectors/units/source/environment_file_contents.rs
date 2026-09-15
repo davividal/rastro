@@ -151,7 +151,7 @@ fn assignment(line: &str) -> Option<(EnvironmentVariableName, String)> {
 /// `'a\'b'` comes back as `a\b'`, the trailing `b'` appended to what the quotes held.
 fn unquoted(value: &str) -> String {
     let mut resolved = String::new();
-    let mut characters = value.trim_start().chars().peekable();
+    let mut characters = value.trim_start().chars();
     let mut quote: Option<char> = None;
 
     while let Some(character) = characters.next() {

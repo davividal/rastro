@@ -59,6 +59,10 @@ impl From<&EnvironmentSource> for Observation {
                     Observation::object(variables.iter().map(|(name, value)| {
                         (name.as_str(), Observation::text(value).sensitive())
                     })),
+                    // Saturating rather than failing: the count is bounded by the lines in
+                    // a file systemd reads at every service start, so the conversion cannot
+                    // narrow in practice and refusing to render a facet over it would be the
+                    // worse answer if it ever did.
                     Observation::integer(i64::try_from(*ignored_lines).unwrap_or(i64::MAX)),
                     Observation::null(),
                 ),
