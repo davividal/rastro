@@ -80,7 +80,7 @@ impl ProcessesCollector {
                 // Second version: the facet's data is unchanged but its *visibility* is not.
                 // A consumer that saw processes in a default run and now sees none needs to
                 // be able to tell that the collector moved rather than the host emptying.
-                CollectorVersion::new("2").expect("`2` is a legal collector version"),
+                CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
             processes,
         }

@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // collector written outside this repo looks exactly like this.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence, View,
+    CollectorVersion, Disclosure, FacetName, Observation, Presence, Presentation, View,
 };
 
 use crate::collectors::filesystem::Detail;
@@ -19,10 +19,14 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Shaped here rather than on `Config`, because assembling a facet's tree is
 /// the collector's job and `Config` is a plain settings type.
 ///
-/// The view is in here because it *is* part of the effective config: it is a
-/// flag, and it is the single most diff-corrupting one rastro has. Diffing a
+/// The presentation is in here because both its axes *are* part of the effective
+/// config: each is a flag, and each rewrites the document wholesale. Diffing a
 /// complete document against a diffable one would otherwise produce pages of
-/// spurious removals with nothing to explain them.
+/// spurious removals with nothing to explain them, and diffing a `--raw` one
+/// against a redacted one would report a changed value at every sensitive field.
+///
+/// Recorded as two keys rather than one, because the axes are independent: a
+/// complete view says nothing about whether a secret in it was withheld.
 ///
 /// The config file's path is recorded, unannotated. It is provenance, not a
 /// secret: hashing it as `sensitive` would destroy the only thing it is for,
@@ -35,12 +39,19 @@ const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// rather than a hint that appears only on remote runs.
 pub fn effective_config(
     config: &Config,
-    view: View,
+    presentation: Presentation,
     staged_binary: bool,
     detail: Detail,
 ) -> Observation {
     Observation::object([
         ("detail", Observation::text(detail.as_str())),
+        (
+            "disclosure",
+            Observation::text(match presentation.disclosure() {
+                Disclosure::Redacted => "redacted",
+                Disclosure::Raw => "raw",
+            }),
+        ),
         (
             "excluded_collectors",
             Observation::list(
@@ -60,7 +71,7 @@ pub fn effective_config(
         ("staged_binary", Observation::boolean(staged_binary)),
         (
             "view",
-            Observation::text(match view {
+            Observation::text(match presentation.view() {
                 View::Diffable => "diffable",
                 View::Complete => "complete",
             }),

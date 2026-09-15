@@ -10,6 +10,7 @@
 
 mod absolute_path;
 mod byte_size;
+mod environment_variable_name;
 mod non_empty_text;
 mod process_name;
 mod setting_value;
@@ -17,6 +18,7 @@ mod walked_tree;
 
 pub use absolute_path::AbsolutePath;
 pub use byte_size::ByteSize;
+pub use environment_variable_name::EnvironmentVariableName;
 pub use non_empty_text::NonEmptyText;
 pub use process_name::ProcessName;
 /// Re-exported rather than defined here: redaction spells the same digest, and that rule is

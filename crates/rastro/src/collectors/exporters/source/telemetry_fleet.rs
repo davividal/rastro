@@ -81,8 +81,8 @@ impl TelemetryFleet {
     pub fn identify(shown: &str) -> Result<Vec<Deployment>, CollectionError> {
         let mut found = Vec::new();
 
-        for (unit, starts) in systemctl_show::parse(shown)? {
-            let Some(start) = starts.first() else {
+        for (unit, shown_unit) in systemctl_show::parse(shown)? {
+            let Some(start) = shown_unit.exec_start.first() else {
                 continue;
             };
             let Some(known) = known_agent::agent_of(start.executable.as_str()) else {

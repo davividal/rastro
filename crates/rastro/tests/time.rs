@@ -256,12 +256,11 @@ fn collect_reports_the_facet_even_on_a_host_with_none_of_the_files() {
 }
 
 #[test]
-fn the_collector_reports_its_second_version() {
-    // Act: the source changed from `timedatectl` to the files and two of the five fields went
-    // with it, so a consumer comparing fingerprints across the change needs to see that the
-    // collector moved rather than the host.
+fn the_collector_reports_its_pre_release_version() {
+    // Act: every collector is `1` until rastro has a release. The source of this facet changed
+    // and its version deliberately did not — see the decision log.
     let collector = TimeCollector::reading(ClockFiles::new());
 
     // Assert
-    assert_eq!(collector.identity().version.as_str(), "2");
+    assert_eq!(collector.identity().version.as_str(), "1");
 }

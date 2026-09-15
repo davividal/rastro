@@ -7,12 +7,14 @@
 
 mod support;
 
+use rastro::collectors::systemd::EnvironmentFile;
 use rastro::collectors::units::{
-    LoadState, Systemctl, Unit, UnitFileState, UnitName, UnitRegistry, UnitsCollector,
+    EnvironmentReading, EnvironmentSource, LoadState, Systemctl, Unit, UnitFileState, UnitName,
+    UnitRegistry, UnitsCollector,
 };
-use rastro_collector::{Collector, Presence};
-use rastro_fingerprint::{Content, Observation, Scalar, View};
-use support::observation::{field, keys_of};
+use rastro_collector::{Collector, EnvironmentVariableName, Presence};
+use rastro_fingerprint::{Content, Observation, Presentation, Scalar, View};
+use support::observation::{field, items_of, keys_of};
 
 /// Real rows, covering an enabled service, a masked one, an alias, a template, a
 /// runtime-enabled unit and the transient scope of a login session.
@@ -300,7 +302,16 @@ fn a_unit_renders_both_sides_with_a_null_for_the_missing_one() {
 
     // Assert: a key that is sometimes present and sometimes missing is awkward for
     // every consumer, so both sides are always there and one is null.
-    assert_eq!(keys_of(&template), ["exec_start", "file", "runtime"]);
+    assert_eq!(
+        keys_of(&template),
+        [
+            "environment",
+            "environment_files",
+            "exec_start",
+            "file",
+            "runtime"
+        ]
+    );
     assert_eq!(
         field(&template, "runtime").content(),
         &Content::Scalar(Scalar::Null)
@@ -393,4 +404,255 @@ fn what_a_unit_starts_survives_into_the_diffable_view() {
         other => panic!("expected a list, got {other:?}"),
     };
     assert_eq!(text(&field(&started[0], "executable")), "/usr/sbin/sshd");
+}
+
+#[test]
+fn a_units_environment_values_are_withheld_and_its_names_are_not() {
+    // Arrange: a unit carrying the shape a real deployment has, one credential and one
+    // setting that is not.
+    let mut environment = std::collections::BTreeMap::new();
+    environment.insert(
+        EnvironmentVariableName::new("DATABASE_URL").expect("a legal name"),
+        "postgres://app:hunter2@localhost/app".to_owned(),
+    );
+    environment.insert(
+        EnvironmentVariableName::new("RUST_LOG").expect("a legal name"),
+        "info".to_owned(),
+    );
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment,
+        environment_files: Vec::new(),
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+    let shown = field(&rendered, "environment");
+
+    // Assert: the name is the migration finding and is not a secret, so it stays legible.
+    // The value is where the password is, so it does not.
+    assert_eq!(keys_of(&shown), ["DATABASE_URL", "RUST_LOG"]);
+    for name in ["DATABASE_URL", "RUST_LOG"] {
+        assert!(
+            text(&field(&shown, name)).starts_with("redacted:sha256+xxh3:"),
+            "{name} reached the document as it stands"
+        );
+    }
+}
+
+#[test]
+fn a_units_environment_value_is_readable_under_raw() {
+    // Arrange
+    let mut environment = std::collections::BTreeMap::new();
+    environment.insert(
+        EnvironmentVariableName::new("RUST_LOG").expect("a legal name"),
+        "info".to_owned(),
+    );
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment,
+        environment_files: Vec::new(),
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete().raw())
+        .expect("nothing here is volatile");
+
+    // Assert: the annotation is a classification, and what to do about it is decided at
+    // render time. An operator who opted out reads the value.
+    assert_eq!(
+        text(&field(&field(&rendered, "environment"), "RUST_LOG")),
+        "info"
+    );
+}
+
+#[test]
+fn a_unit_configured_only_through_a_file_declares_no_variables_and_still_names_the_file() {
+    // Arrange: the shape that makes the two fields need reading together. `Environment=` is
+    // empty because systemd opens the file at exec time, and the unit runs with whatever is
+    // in it.
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment: std::collections::BTreeMap::new(),
+        environment_files: vec![
+            source_read(
+                "/etc/myapp.env",
+                false,
+                [("DATABASE_URL", "postgres://x")],
+                0,
+            ),
+            source_read("/etc/myapp.local.env", true, [], 0),
+        ],
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+    let files = items_of(&field(&rendered, "environment_files"));
+
+    // Assert: an empty `environment` beside a populated `environment_files` is exactly the
+    // case a reader would otherwise take for "this unit sets nothing".
+    assert!(keys_of(&field(&rendered, "environment")).is_empty());
+    assert_eq!(files.len(), 2);
+    assert_eq!(text(&field(&files[0], "path")), "/etc/myapp.env");
+    assert_eq!(
+        field(&files[0], "ignore_errors").content(),
+        &Content::Scalar(Scalar::Boolean(false)),
+        "the unit requires this one, so its absence after a migration stops the service"
+    );
+    assert_eq!(
+        field(&files[1], "ignore_errors").content(),
+        &Content::Scalar(Scalar::Boolean(true))
+    );
+}
+
+#[test]
+fn an_environment_file_path_is_not_withheld() {
+    // Arrange: the path is the migration finding and is not a credential. What the file
+    // holds is not read at all, so there is nothing here to redact.
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment: std::collections::BTreeMap::new(),
+        environment_files: vec![source_read("/etc/myapp.env", false, [], 0)],
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+
+    // Assert
+    let files = items_of(&field(&rendered, "environment_files"));
+    assert_eq!(text(&field(&files[0], "path")), "/etc/myapp.env");
+}
+
+/// A declared file that was read, with the variables it set.
+fn source_read<'a>(
+    path: &str,
+    ignore_errors: bool,
+    variables: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ignored_lines: usize,
+) -> EnvironmentSource {
+    EnvironmentSource {
+        declared: EnvironmentFile::new(path, ignore_errors).expect("an absolute path"),
+        reading: EnvironmentReading::Read {
+            variables: variables
+                .into_iter()
+                .map(|(name, value)| {
+                    (
+                        EnvironmentVariableName::new(name).expect("a legal name"),
+                        value.to_owned(),
+                    )
+                })
+                .collect(),
+            ignored_lines,
+        },
+    }
+}
+
+fn unit_with(environment_files: Vec<EnvironmentSource>) -> Observation {
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment: std::collections::BTreeMap::new(),
+        environment_files,
+    };
+
+    Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile")
+}
+
+#[test]
+fn a_variable_read_out_of_an_environment_file_is_named_and_its_value_withheld() {
+    // Act
+    let rendered = unit_with(vec![source_read(
+        "/etc/myapp.env",
+        false,
+        [("DATABASE_URL", "postgres://app:hunter2@localhost/app")],
+        0,
+    )]);
+    let file = &items_of(&field(&rendered, "environment_files"))[0];
+
+    // Assert: this is the whole point of the step. The name tells an operator the service
+    // needs `DATABASE_URL` and the file must come across; the value is the credential and
+    // does not leave the box in the document.
+    assert_eq!(text(&field(file, "status")), "ok");
+    assert_eq!(keys_of(&field(file, "variables")), ["DATABASE_URL"]);
+    let value = text(&field(&field(file, "variables"), "DATABASE_URL"));
+    assert!(
+        value.starts_with("redacted:sha256+xxh3:"),
+        "a credential reached the document as it stands: {value:?}"
+    );
+    assert!(!value.contains("hunter2"), "got {value:?}");
+}
+
+#[test]
+fn a_file_the_unit_requires_and_that_is_not_there_is_absent_rather_than_a_failure() {
+    // Act
+    let rendered = unit_with(vec![EnvironmentSource {
+        declared: EnvironmentFile::new("/etc/gone.env", false).expect("an absolute path"),
+        reading: EnvironmentReading::Absent,
+    }]);
+    let file = &items_of(&field(&rendered, "environment_files"))[0];
+
+    // Assert: absence is state, and this is the loudest thing this facet can say. A unit
+    // whose required environment file is missing will not start, so the pair of
+    // `ignore_errors: false` and `status: absent` is a finding rather than a gap.
+    assert_eq!(text(&field(file, "status")), "absent");
+    assert_eq!(
+        field(file, "ignore_errors").content(),
+        &Content::Scalar(Scalar::Boolean(false))
+    );
+    assert_eq!(
+        field(file, "variables").content(),
+        &Content::Scalar(Scalar::Null)
+    );
+}
+
+#[test]
+fn a_file_that_would_not_open_is_an_error_and_not_an_absence() {
+    // Act
+    let rendered = unit_with(vec![EnvironmentSource {
+        declared: EnvironmentFile::new("/etc/secret.env", false).expect("an absolute path"),
+        reading: EnvironmentReading::Unreadable("Permission denied (os error 13)".to_owned()),
+    }]);
+    let file = &items_of(&field(&rendered, "environment_files"))[0];
+
+    // Assert: the distinction the three-valued presence exists for, one level down. rastro
+    // runs unprivileged often enough that "I was not allowed to look" is a routine answer,
+    // and reporting it as `absent` would claim the file is gone.
+    assert_eq!(text(&field(file, "status")), "error");
+    assert!(text(&field(file, "error")).contains("Permission denied"));
+    assert_eq!(
+        field(file, "variables").content(),
+        &Content::Scalar(Scalar::Null)
+    );
+}
+
+#[test]
+fn a_line_systemd_would_set_nothing_from_is_counted_in_the_document() {
+    // Act
+    let rendered = unit_with(vec![source_read("/etc/myapp.env", false, [], 2)]);
+    let file = &items_of(&field(&rendered, "environment_files"))[0];
+
+    // Assert: `export FOO=bar` is the line an operator writes and systemd ignores, so a
+    // file can look right and set nothing. The count is what surfaces that.
+    assert_eq!(
+        field(file, "ignored_lines").content(),
+        &Content::Scalar(Scalar::Integer(2))
+    );
 }

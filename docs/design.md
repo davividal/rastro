@@ -166,10 +166,12 @@ where the collector put them.
 **Leaf values** are `null`, boolean, integer or text. No floating point; see the
 [decision](decisions.md#the-format-admits-no-floating-point-numbers).
 
-### Two views
+### Two views, and a second axis beside them
 
-A view says *what is in* the document; the format says what it looks like. Two
-independent axes, so every format renders either view.
+A view says *what is in* the document; the format says what it looks like; the
+disclosure says whether a value the collector marked sensitive is shown as it
+stands. Three independent axes, so every format renders either view under either
+disclosure.
 
 - **diffable** (the default): volatile values omitted, subtrees included.
 - **complete** (`--include-volatile`): everything observed. Two such runs of an
@@ -177,6 +179,19 @@ independent axes, so every format renders either view.
 
 Diffable is the default because a default that produces noise teaches the
 operator that the tool is noisy.
+
+**Disclosure is not a view, and that is why it is a separate axis.** A volatile
+value is dropped from the diffable view and kept in the complete one; a sensitive
+value is withheld from *both*, because the complete view is a fuller document and
+not a way round an annotation.
+
+- **redacted** (the default): a sensitive value stands in as
+  `redacted:sha256+xxh3:<digest>`.
+- **raw** (`--raw`): sensitive values as they stand, with a warning on stderr.
+
+Both are recorded in the `invocation` facet as `config.view` and
+`config.disclosure`, because each rewrites the document and a diff across either
+would otherwise report changes nothing accounts for.
 
 ### Determinism rules
 
@@ -220,8 +235,8 @@ path with `-o`, to a tmpfs, or off the box.
 ## Security posture
 
 Of the following, the `unsafe`-free build, the absence of network I/O, the output
-file's mode and redaction itself are true today. `--raw` is not built, so there is
-no opting out of redaction yet; the root requirement arrives with Layer 1.
+file's mode, redaction and `--raw` are all true today. The root requirement arrives
+with Layer 1.
 
 - **Requires root.** It reads `/etc`, user crontabs and firewall state.
   Degrading gracefully without root is roadmap.
@@ -229,11 +244,13 @@ no opting out of redaction yet; the root requirement arrives with Layer 1.
   there is no window in which a document naming every path on the box is
   world-readable. Written to a temporary sibling and renamed, so a run that died
   half way leaves no half document to be diffed.
-- **Redaction on by default**, in both views, and `--raw` will opt out with a
-  warning once it exists. A withheld value stands in as
-  `redacted:sha256+xxh3:<digest>`. It is an option, not a guarantee: marking fields
-  `sensitive` is the collector author's job, and a digest proves a value changed
-  rather than hiding a guessable one.
+- **Redaction on by default**, in both views, and `--raw` opts out with a warning
+  on stderr. A withheld value stands in as `redacted:sha256+xxh3:<digest>`. It is an
+  option, not a guarantee: marking fields `sensitive` is the collector author's job,
+  and a digest proves a value changed rather than hiding a guessable one. Which of
+  the two a document was rendered under is in the `invocation` facet as
+  `config.disclosure`, beside the view, because both axes rewrite the document and a
+  diff across either would otherwise report changes nothing accounts for.
 - **No network I/O in v1.** A simplification, not policy — a firewall collector
   verifying rules from outside the ruleset dump would be legitimate.
 
