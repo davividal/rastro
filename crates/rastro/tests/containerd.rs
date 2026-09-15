@@ -919,3 +919,184 @@ exit 1
         "/run/docker/containerd/daemon"
     );
 }
+
+/// The failure a containerd with these fixtures produces.
+///
+/// Every one of these is a table `ctr` printed in a shape rastro does not read. A parser
+/// that guessed at one would put a pid where a status belongs and record it as fact.
+fn refusal(name: &str, per_namespace: &[NamespaceFixtures]) -> String {
+    ContainersCollector::reading(vec![EngineSource::Containerd(fake_containerd_holding(
+        name,
+        VERSION,
+        NAMESPACES,
+        per_namespace,
+    ))])
+    .collect()
+    .expect_err("a table rastro cannot read is a failure, not a document")
+    .to_string()
+}
+
+/// One namespace holding nothing, which is what the other namespace in the list needs.
+fn empty_namespace(name: &str) -> NamespaceFixtures<'_> {
+    NamespaceFixtures {
+        name,
+        containers: &[],
+        tasks: NO_TASKS,
+        images: NO_IMAGES,
+    }
+}
+
+#[test]
+fn a_task_row_with_the_wrong_number_of_columns_fails_rather_than_being_guessed_at() {
+    // Arrange: **the day the format changed.** A fourth column would shift the status one
+    // place, and a parser that took `columns[2]` anyway would record the new column's value
+    // as the container's status without anything saying so.
+    let failure = refusal(
+        "task-columns",
+        &[
+            NamespaceFixtures {
+                name: "moby",
+                containers: &[],
+                tasks: "TASK    PID    STATUS    \nweb-1    3175    RUNNING    extra\n",
+                images: NO_IMAGES,
+            },
+            empty_namespace("k8s.io"),
+        ],
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("4 columns rather than 3"),
+        "the failure should count what it found: {failure}"
+    );
+}
+
+#[test]
+fn a_task_row_whose_pid_is_not_a_number_fails_rather_than_being_dropped() {
+    // Arrange: the pid is the handle from a container to the `processes` facet, so a value
+    // that is not one means the column is not the column rastro thinks it is.
+    let failure = refusal(
+        "task-pid",
+        &[
+            NamespaceFixtures {
+                name: "moby",
+                containers: &[],
+                tasks: "TASK    PID    STATUS    \nweb-1    none    RUNNING\n",
+                images: NO_IMAGES,
+            },
+            empty_namespace("k8s.io"),
+        ],
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("is not a pid"),
+        "the failure should say which value was not a pid: {failure}"
+    );
+}
+
+#[test]
+fn a_table_whose_first_line_names_no_columns_fails_rather_than_reading_as_empty() {
+    // Arrange: the header's own offsets are what every cell is sliced by, so a first line
+    // that is blank leaves nothing to slice with. Read as an empty table it would report a
+    // namespace with no images, which is a different and plausible-looking fact.
+    let failure = refusal(
+        "no-header",
+        &[
+            NamespaceFixtures {
+                name: "moby",
+                containers: &[],
+                tasks: NO_TASKS,
+                images: "\ndocker.io/library/alpine:latest\n",
+            },
+            empty_namespace("k8s.io"),
+        ],
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("names no columns"),
+        "the failure should say the header was unusable: {failure}"
+    );
+}
+
+#[test]
+fn an_image_reported_twice_in_one_namespace_fails_the_facet() {
+    // Arrange: a reference is a namespace's key for an image, and containerd holds one entry
+    // per reference. Two means the rows were sliced wrong, not that the box has two.
+    let repeated = format!("{IMAGES}{}", IMAGES.lines().last().expect("a row"));
+    let failure = refusal(
+        "image-twice",
+        &[
+            NamespaceFixtures {
+                name: "moby",
+                containers: &[],
+                tasks: NO_TASKS,
+                images: &repeated,
+            },
+            empty_namespace("k8s.io"),
+        ],
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("twice"),
+        "the failure should say the image was reported twice: {failure}"
+    );
+}
+
+#[test]
+fn a_container_reported_twice_in_one_namespace_fails_the_facet() {
+    // Arrange: within a namespace an id is unique, which is what makes it the key. Across
+    // namespaces it is not, and that is why the namespace is the level above.
+    let failure = refusal(
+        "container-twice",
+        &[
+            NamespaceFixtures {
+                name: "moby",
+                containers: &[
+                    (
+                        "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e",
+                        Some(CONTAINER_INFO),
+                    ),
+                    (
+                        "bf4ea5bdd32301e4a7f81b39ea157d37e0b992306c6605fa2f52422283fb7d1e",
+                        Some(CONTAINER_INFO),
+                    ),
+                ],
+                tasks: TASKS,
+                images: NO_IMAGES,
+            },
+            empty_namespace("k8s.io"),
+        ],
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("twice"),
+        "the failure should say the container was reported twice: {failure}"
+    );
+}
+
+#[test]
+fn a_namespace_listed_twice_fails_the_facet() {
+    // Arrange: `ctr namespaces ls` lists each once, so a repeat means the list was misread,
+    // and reading it anyway would ask the same namespace twice and report the second answer
+    // as though it were the box.
+    let collector = ContainersCollector::reading(vec![EngineSource::Containerd(fake_containerd(
+        "namespace-twice",
+        VERSION,
+        "moby\nmoby\n",
+    ))]);
+
+    // Act
+    let failure = collector
+        .collect()
+        .expect_err("one namespace listed twice is a misread");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("twice"),
+        "the failure should say the namespace was listed twice: {failure}"
+    );
+}
