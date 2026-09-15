@@ -166,10 +166,12 @@ where the collector put them.
 **Leaf values** are `null`, boolean, integer or text. No floating point; see the
 [decision](decisions.md#the-format-admits-no-floating-point-numbers).
 
-### Two views
+### Two views, and a second axis beside them
 
-A view says *what is in* the document; the format says what it looks like. Two
-independent axes, so every format renders either view.
+A view says *what is in* the document; the format says what it looks like; the
+disclosure says whether a value the collector marked sensitive is shown as it
+stands. Three independent axes, so every format renders either view under either
+disclosure.
 
 - **diffable** (the default): volatile values omitted, subtrees included.
 - **complete** (`--include-volatile`): everything observed. Two such runs of an
@@ -177,6 +179,19 @@ independent axes, so every format renders either view.
 
 Diffable is the default because a default that produces noise teaches the
 operator that the tool is noisy.
+
+**Disclosure is not a view, and that is why it is a separate axis.** A volatile
+value is dropped from the diffable view and kept in the complete one; a sensitive
+value is withheld from *both*, because the complete view is a fuller document and
+not a way round an annotation.
+
+- **redacted** (the default): a sensitive value stands in as
+  `redacted:sha256+xxh3:<digest>`.
+- **raw** (`--raw`): sensitive values as they stand, with a warning on stderr.
+
+Both are recorded in the `invocation` facet as `config.view` and
+`config.disclosure`, because each rewrites the document and a diff across either
+would otherwise report changes nothing accounts for.
 
 ### Determinism rules
 
