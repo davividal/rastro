@@ -25,8 +25,13 @@
 //!   quotes it is kept unless it precedes `"`, `\` or the end of the line.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::io;
 
 use rastro_collector::EnvironmentVariableName;
+
+use crate::collectors::systemd::EnvironmentFile;
+use crate::collectors::units::model::{EnvironmentReading, EnvironmentSource};
 
 /// What one environment file sets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -40,6 +45,35 @@ pub struct EnvironmentFileContents {
     /// contain a space, so systemd sets nothing and the file still looks right. A count
     /// makes that visible without this parser guessing at what was meant.
     pub ignored_lines: usize,
+}
+
+/// Opens one declared environment file, recording what happened either way.
+///
+/// **Never fails the facet.** A file that is not there is state, and one that will not open
+/// is a failure of that file rather than of the box's whole unit table — the same call the
+/// nginx collector makes when an included configuration will not read. Losing the enablement
+/// state of every unit because one service's environment file is root-only would be the
+/// worse trade by a distance, and rastro is run unprivileged often enough for that to be
+/// routine rather than hypothetical.
+///
+/// `NotFound` is the only errno treated as absence. Anything else, permission denied most of
+/// all, is recorded with its message: reporting `absent` for a file rastro was merely not
+/// allowed to read would be a confident lie about the box, which is the distinction the
+/// three-valued [`Presence`](rastro_collector::Presence) exists for one level up.
+pub fn read(declared: EnvironmentFile) -> EnvironmentSource {
+    let reading = match fs::read_to_string(declared.path.as_str()) {
+        Ok(text) => {
+            let contents = parse(&text);
+            EnvironmentReading::Read {
+                variables: contents.variables,
+                ignored_lines: contents.ignored_lines,
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => EnvironmentReading::Absent,
+        Err(error) => EnvironmentReading::Unreadable(error.to_string()),
+    };
+
+    EnvironmentSource { declared, reading }
 }
 
 /// Reads a file's text the way systemd would.

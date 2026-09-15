@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use rastro_collector::{EnvironmentVariableName, Observation};
 
+use super::environment_source::EnvironmentSource;
 use super::unit_file::UnitFile;
 use super::unit_runtime::UnitRuntime;
-use crate::collectors::systemd::{EnvironmentFile, ExecStart};
+use crate::collectors::systemd::ExecStart;
 
 /// A unit as rastro means it: whatever is on disk, and whatever systemd has loaded.
 ///
@@ -54,12 +55,13 @@ pub struct Unit {
     /// and runs with plenty. [`Self::environment_files`] is where that unit shows up, and
     /// reading the two together is the only way to ask what a service runs with.
     pub environment: BTreeMap<EnvironmentVariableName, String>,
-    /// The files the unit reads its environment from, in the order systemd reads them.
+    /// The files the unit reads its environment from, in the order systemd reads them,
+    /// each with what rastro found in it.
     ///
-    /// **Paths only: what is inside them is not collected.** So this says which files a
-    /// migration must not leave behind, and does not say which variables would go missing
-    /// if it did.
-    pub environment_files: Vec<EnvironmentFile>,
+    /// Never sorted: systemd reads these in the order the unit declares them and a later
+    /// file overrides a variable an earlier one set, so the order *is* part of the meaning.
+    /// The same reasoning that keeps kernel order in `/proc/mounts`.
+    pub environment_files: Vec<EnvironmentSource>,
 }
 
 impl From<&Unit> for Observation {

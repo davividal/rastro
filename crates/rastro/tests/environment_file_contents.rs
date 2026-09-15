@@ -11,6 +11,8 @@
 //! exec time. There is no non-mutating way to ask, so the format is read directly and the
 //! divergence risk is carried here, in tests, rather than in a claim.
 
+use rastro::collectors::systemd::EnvironmentFile;
+use rastro::collectors::units::EnvironmentReading;
 use rastro::collectors::units::environment_file_contents;
 
 /// The variables a file's text sets, as `(name, value)` pairs in name order.
@@ -231,4 +233,75 @@ fn the_whole_probe_file_reads_as_systemd_read_it() {
         parsed.ignored_lines, 1,
         "`export EXPORTED=maybe`, which systemd also set nothing from"
     );
+}
+
+/// A scratch directory this test binary owns, under the target tree rather than the box.
+fn scratch(name: &str) -> std::path::PathBuf {
+    let directory = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    std::fs::create_dir_all(&directory).expect("a scratch directory");
+
+    directory
+}
+
+#[test]
+fn reading_a_real_file_reports_what_it_sets() {
+    // Arrange
+    let path = scratch("read").join("app.env");
+    std::fs::write(&path, "DATABASE_URL=postgres://x\nexport NOPE=1\n")
+        .expect("the scratch file should be writable");
+    let declared = EnvironmentFile::new(path.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let source = environment_file_contents::read(declared);
+
+    // Assert
+    match source.reading {
+        EnvironmentReading::Read {
+            variables,
+            ignored_lines,
+        } => {
+            assert_eq!(variables.len(), 1);
+            assert_eq!(
+                ignored_lines, 1,
+                "the `export` line, which systemd also drops"
+            );
+        }
+        other => panic!("expected the file to be read, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_missing_file_is_absent_rather_than_an_error() {
+    // Arrange: routine for a file the unit marked `ignore_errors`, and the whole finding for
+    // one it did not.
+    let path = scratch("missing").join("never-written.env");
+    let declared =
+        EnvironmentFile::new(path.to_str().expect("a UTF-8 path"), true).expect("an absolute path");
+
+    // Act
+    let source = environment_file_contents::read(declared);
+
+    // Assert
+    assert_eq!(source.reading, EnvironmentReading::Absent);
+}
+
+#[test]
+fn a_directory_where_a_file_was_declared_is_an_error_and_not_an_absence() {
+    // Arrange: a directory stands in for the unreadable case, because it fails for every
+    // caller. A mode-based fixture would not: `chmod 000` still reads as root, and this
+    // suite is run both ways on purpose.
+    let directory = scratch("not-a-file");
+    let declared = EnvironmentFile::new(directory.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let source = environment_file_contents::read(declared);
+
+    // Assert: rastro was able to look and what it found would not read, which is a different
+    // statement about the box from "there is nothing here".
+    match source.reading {
+        EnvironmentReading::Unreadable(why) => assert!(!why.is_empty(), "the reason is the point"),
+        other => panic!("expected an unreadable file, got {other:?}"),
+    }
 }

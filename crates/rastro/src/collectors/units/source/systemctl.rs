@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rastro_collector::CollectionError;
 
+use super::environment_file_contents;
 use super::systemctl_unit_files::UnitFileRow;
 use super::systemctl_units::UnitRow;
 use crate::collectors::canonical_tool::CanonicalTool;
@@ -160,7 +161,11 @@ impl Systemctl {
                 runtime: runtimes.get(name).cloned(),
                 exec_start: shown_unit.exec_start,
                 environment: shown_unit.environment,
-                environment_files: shown_unit.environment_files,
+                environment_files: shown_unit
+                    .environment_files
+                    .into_iter()
+                    .map(environment_file_contents::read)
+                    .collect(),
             };
 
             (name.clone(), unit)

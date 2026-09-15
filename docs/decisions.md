@@ -3053,3 +3053,65 @@ argues does not need protecting, and it is the last moment at which the reset is
 **Consistency check for a reviewer:** `grep -c 'CollectorVersion::new("1")'` over
 `crates/rastro/src/collectors/` should equal the number of collectors, and nothing should
 match `"2"` or `"3"`.
+
+# The environment files are read, and that is the nginx exception a second time
+
+Dated 2026-09-15. The previous section left the facet naming files it could not read. This
+closes that, and it does so by parsing a configuration format, which needs the same
+justification nginx needed.
+
+**The licence, and why it applies.** The rule is to prefer effective, resolved state over
+reading config, and `systemctl show -p Environment` *is* that effective state — for what a
+unit declares. It deliberately does not cover these files: systemd opens them when it execs
+the process, not when it loads the unit, measured against systemd 257 where a variable set
+only in a file did not appear on the property. Every way of making systemd resolve them
+starts the unit, which is a mutation, so there is no non-mutating account to prefer. That is
+exactly the nginx condition, and the format is read directly.
+
+**What bounds the risk of disagreeing with systemd's own parser.** Two things, and neither
+is confidence.
+
+- Every rule was **measured**, by pointing a unit with `ExecStart=/usr/bin/env` at a probe
+  file under systemd 257 and reading the bytes back. `tests/environment_file_contents.rs`
+  holds the probe whole, so a divergence shows up as a failing test rather than as a wrong
+  value in somebody's fingerprint.
+- **Values are `sensitive`.** A value this parser gets subtly wrong still digests
+  deterministically and still diffs, so byte-identity and change detection are unaffected;
+  only `--raw` would show the divergence. Names are *not* withheld, which is why the
+  line-level rules matter more than the escapes, and the tests concentrate there — a
+  mishandled continuation invents or loses a name, and a name is printed in the clear.
+
+**Two rules that are the opposite of the unit-file syntax they look like.** A shared escape
+table would get both wrong:
+
+- `"a\nb"` in an environment file is a backslash and an `n`. On a unit's `Environment=` line
+  it is a line feed.
+- A backslash outside quotes is an escape and vanishes (`a\b` is `ab`); inside quotes it is
+  kept unless it precedes `"`, `\` or the end of the line.
+
+**A repeated name takes the last value, where cron refuses one.** Not an inconsistency: a
+crontab is genuinely ambiguous about what its jobs run with, so refusing is the honest
+answer there. systemd's semantics here are defined, so mirroring them is reporting the box
+and anything else would be rastro inventing a disagreement.
+
+**A line systemd sets nothing from is counted, not dropped.** `export FOO=bar` is what an
+operator writes out of shell habit; the name would contain a space, so systemd sets nothing
+and the file still looks right. `ignored_lines` makes that visible without this parser
+guessing at what was meant. It is the one field here that reports a *mistake* rather than a
+state.
+
+**Three readings, using the facet's own vocabulary one level down.** `ok`, `absent`,
+`error`. A missing file is state — routine for one marked `ignore_errors`, and the whole
+finding for one that is not, since that unit will not start. A file that is there and will
+not open is an `error` carrying its reason. `NotFound` is the only errno read as absence,
+because reporting `absent` for a file rastro was merely not allowed to read would be a
+confident lie, and rastro is run unprivileged often enough for that to be routine.
+
+**One file's failure never fails the facet.** The same call the nginx collector makes for an
+include that will not read. Losing the enablement state of every unit on the box because one
+service's environment file is root-only is the worse trade by a distance.
+
+**Cost:** rastro now opens files named by unit configuration, which is a wider read than the
+facet had before, and it does it on every run. The files are small by construction — systemd
+reads them itself at every service start — so this is a cost in *surface* rather than in
+time: a unit file that names a path is now a path rastro will open.

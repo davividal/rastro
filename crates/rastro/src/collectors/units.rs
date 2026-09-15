@@ -18,7 +18,7 @@ pub mod source;
 pub mod value_objects;
 
 pub use crate::collectors::systemd::UnitName;
-pub use model::{Unit, UnitFile, UnitRegistry, UnitRuntime};
+pub use model::{EnvironmentReading, EnvironmentSource, Unit, UnitFile, UnitRegistry, UnitRuntime};
 pub use source::{
     EnvironmentFileContents, Systemctl, UnitFileRow, UnitRow, environment_file_contents,
 };
