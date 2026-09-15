@@ -118,7 +118,19 @@ const CONTAINERS: &str = r#"[
 /// `podman ps` without `--remote`, this fails rather than quietly answering: on a real box
 /// that call would initialise the store, and no test should let it through unnoticed.
 fn fake_podman(name: &str, info: &str) -> (CanonicalTool, std::path::PathBuf) {
-    let containers = CONTAINERS;
+    fake_podman_holding(name, info, CONTAINERS)
+}
+
+/// The same shim, answering `ps` with a list a test chose.
+///
+/// Its own entry point because the list is where a misread shows up: podman reports every
+/// container in one document, so a row rastro cannot read costs the whole engine and has to
+/// say so.
+fn fake_podman_holding(
+    name: &str,
+    info: &str,
+    containers: &str,
+) -> (CanonicalTool, std::path::PathBuf) {
     let root = scratch_tree(&format!("podman-{name}"), &[]);
     let directory = root.to_str().expect("a UTF-8 scratch path");
     let path = root.join("podman");
@@ -564,4 +576,157 @@ fn an_account_is_read_from_passwd_by_the_uid_that_owns_the_service() {
         3,
         "a line with the wrong number of columns is skipped rather than guessed at"
     );
+}
+
+/// A service whose `info` answers with the fields empty, which is a real shape: podman
+/// prints `""` for a value it has not resolved rather than leaving the key out.
+const INFO_WITHOUT_DETAIL: &str = r#"{
+  "host": {},
+  "store": {},
+  "version": { "Version": "6.0.2" }
+}"#;
+
+/// One row, with the fields a test wants to vary spliced in.
+fn one_container(names: &str, extra: &str) -> String {
+    format!(
+        r#"[
+  {{
+    "Id": "3f1c5e6a7b8c9d0e1f2a3b4c5d6e7f809a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "Names": {names},
+    "Image": "docker.io/library/alpine:latest",
+    "ImageID": "1991bd789d7184290c3cce84fd6af068b8b745e9bddf178661ce7f5ecf68135c",
+    "State": "running",
+    "ExitCode": 0,
+    "Created": 1789469574,
+    "StartedAt": 1789469574,
+    "ExitedAt": -62135596800,
+    "Restarts": 0,
+    "IsInfra": false,
+    {extra}
+  }}
+]"#
+    )
+}
+
+/// The facet a service holding these containers produces.
+fn podman_holding(name: &str, containers: &str) -> Observation {
+    let (tool, _) = fake_podman_holding(name, INFO, containers);
+
+    ContainersCollector::reading(vec![EngineSource::Podman(Podman::using(
+        tool,
+        PodmanLayout::default(),
+        Some(SOCKET.to_owned()),
+    ))])
+    .collect()
+    .expect("the fixtures are well formed")
+}
+
+/// The failure a service holding these containers produces.
+fn refusal(name: &str, containers: &str) -> String {
+    let (tool, _) = fake_podman_holding(name, INFO, containers);
+
+    ContainersCollector::reading(vec![EngineSource::Podman(Podman::using(
+        tool,
+        PodmanLayout::default(),
+        Some(SOCKET.to_owned()),
+    ))])
+    .collect()
+    .expect_err("a misread list is a failure, not a document")
+    .to_string()
+}
+
+#[test]
+fn a_container_reported_under_two_names_fails_rather_than_one_being_picked() {
+    // Arrange: **podman's `Names` is a list and holds exactly one.** Taking the first of two
+    // would key the container under a name chosen by position, and the next run could as
+    // easily pick the other and diff as a container removed and another added.
+    let failure = refusal(
+        "two-names",
+        &one_container(r#"["pweb", "pweb-2"]"#, r#""Pod": """#),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("under 2 names"),
+        "the failure should say how many names it was given: {failure}"
+    );
+}
+
+#[test]
+fn a_container_reported_with_no_name_fails_rather_than_being_keyed_by_nothing() {
+    // Arrange: the name is the key, so a row without one cannot be recorded at all.
+    let failure = refusal("no-name", &one_container("[]", r#""Pod": """#));
+
+    // Act & Assert
+    assert!(
+        failure.contains("no name at all"),
+        "the failure should say the row had no name: {failure}"
+    );
+}
+
+#[test]
+fn two_containers_of_one_name_fail_the_engine_rather_than_one_replacing_the_other() {
+    // Arrange: one service's containers are unique by name, which is what makes the name the
+    // key. Two means the list was misread, and the survivor would look like the whole truth.
+    let doubled = CONTAINERS.replace("pstopped", "pweb");
+    let failure = refusal("same-name", &doubled);
+
+    // Act & Assert
+    assert!(
+        failure.contains("twice"),
+        "the failure should say the container was reported twice: {failure}"
+    );
+}
+
+#[test]
+fn a_port_binding_that_names_no_range_covers_the_one_port() {
+    // Arrange: **podman omits `range` where it is 1**, so a missing field is the ordinary
+    // single-port publish rather than a binding of no ports at all.
+    let observed = podman_holding(
+        "no-range",
+        &one_container(
+            r#"["pweb"]"#,
+            r#""Pod": "",
+    "Ports": [
+      { "host_ip": "0.0.0.0", "container_port": 80, "host_port": 18081, "protocol": "tcp" }
+    ]"#,
+        ),
+    );
+    let ports = field(&field(&containers_of(&observed), "pweb"), "ports");
+    let binding = &items_of(&field(&ports, "80/tcp"))[0];
+
+    // Act & Assert
+    assert_eq!(integer(&field(binding, "range")), 1);
+}
+
+#[test]
+fn a_container_in_a_pod_records_the_pod_it_belongs_to() {
+    // Arrange: a pod is podman's own grouping, and containers in one share a network
+    // namespace. A container that is in one and a container that is not are different state.
+    let observed = podman_holding(
+        "in-a-pod",
+        &one_container(r#"["pweb"]"#, r#""Pod": "web-pod", "AutoRemove": true"#),
+    );
+    let container = field(&containers_of(&observed), "pweb");
+
+    // Act & Assert
+    assert_eq!(text(&field(&container, "pod")), "web-pod");
+    // A container that removes itself when it stops is state that leaves on its own, which
+    // is what volatile means.
+    assert_eq!(container.volatility(), Volatility::Volatile);
+}
+
+#[test]
+fn a_service_that_resolved_none_of_its_detail_records_null_rather_than_empty_text() {
+    // Arrange: podman answers `""` for a value it has not resolved, and empty text recorded
+    // as a value would read as a box that has a cgroup manager called nothing.
+    let observed = podman_facet("no-detail", INFO_WITHOUT_DETAIL, Some(SOCKET.to_owned()));
+    let server = field(&engine_of(&observed, "podman"), "server");
+    let store = field(&server, "store");
+
+    // Act & Assert
+    assert!(is_null(&field(&server, "api_version")));
+    assert!(is_null(&field(&server, "cgroup_manager")));
+    assert!(is_null(&field(&store, "graph_root")));
+    assert!(is_null(&field(&store, "driver")));
 }
