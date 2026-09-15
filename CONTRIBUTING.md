@@ -97,9 +97,13 @@ execution seam.
 That label is a *tier*, not this workflow. It says two things at once: this change
 needs more than the ordinary gates, and the deeper checks are now running for it.
 Every workflow in the tier reacts to that one label, so you never have to work out
-which deep check your change needs — that is a reviewer's question. The tier holds
-the distributions run today, and `docs/design.md`'s "Planned, not yet running" list
-is what joins it next.
+which deep check your change needs — that is a reviewer's question. The tier holds the
+distributions run and the live-engine conformance run today, and `docs/design.md`'s
+"Planned, not yet running" list is what joins it next.
+
+**A change to the `containers` facet wants the label**, because the fixture tests pass
+anywhere and only the live-engine run asks docker whether rastro's answer matches its
+own.
 
 ## Working conventions
 

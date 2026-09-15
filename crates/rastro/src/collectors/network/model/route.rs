@@ -2,8 +2,9 @@
 
 use rastro_collector::Observation;
 
+use crate::collectors::inet::IpAddress;
 use crate::collectors::network::value_objects::{
-    AddressScope, InterfaceName, IpAddress, RouteDestination, RoutePreference, RouteProtocol,
+    AddressScope, InterfaceName, RouteDestination, RoutePreference, RouteProtocol,
 };
 
 /// A route as rastro means it.

@@ -1,0 +1,1741 @@
+info: cargo-llvm-cov currently setting cfg(coverage); you can opt-out it by passing --no-cfg-coverage
+   Compiling rastro-fingerprint v0.0.0 (/w/crates/rastro-fingerprint)
+   Compiling time v0.3.55
+   Compiling rastro-collector v0.0.0 (/w/crates/rastro-collector)
+   Compiling asn1-rs v0.7.2
+   Compiling der-parser v10.0.0
+   Compiling oid-registry v0.8.1
+   Compiling x509-parser v0.18.1
+   Compiling rastro v0.0.0 (/w/crates/rastro)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.18s
+     Running unittests src/lib.rs (/tmp/target/llvm-cov-target/debug/deps/rastro-93dcc6c911ae026a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/tmp/target/llvm-cov-target/debug/deps/rastro-f1291d0e4b2d9b8f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/accounts.rs (/tmp/target/llvm-cov-target/debug/deps/accounts-6692f907c2bb9d83)
+
+running 31 tests
+test a_shadow_failure_never_quotes_the_line_it_came_from ... ok
+test parse_accepts_an_empty_comment ... ok
+test parse_reads_a_groups_members ... ok
+test parse_keeps_the_comment_field_whole_rather_than_splitting_its_commas ... ok
+test parse_reads_an_empty_member_column_as_no_members ... ok
+test parse_reads_every_column_of_a_passwd_line ... ok
+test parse_records_a_blank_shell_as_absent_rather_than_as_the_default ... ok
+test parse_refuses_a_compat_directive_rather_than_under_reporting_the_accounts ... ok
+test parse_refuses_a_group_line_with_the_wrong_number_of_columns ... ok
+test parse_refuses_a_passwd_line_with_the_wrong_number_of_columns ... ok
+test parse_refuses_a_relative_home_directory ... ok
+test parse_sorts_a_groups_members ... ok
+test password_status_keeps_the_placeholder_a_tool_wrote ... ok
+test password_status_reads_a_hash_as_usable_and_names_the_scheme ... ok
+test parse_skips_a_commented_out_account ... ok
+test password_status_reads_an_empty_field_as_no_password_at_all ... ok
+test password_status_never_keeps_the_hash ... ok
+test password_status_tells_a_locked_hash_apart_from_a_placeholder ... ok
+test password_status_reads_a_legacy_crypt_hash_as_usable_with_no_scheme ... ok
+test a_user_renders_every_field_a_reader_needs ... ok
+test presence_is_absent_when_there_is_no_passwd_file ... ok
+test a_group_renders_its_members ... ok
+test collect_reports_the_whole_database ... ok
+test read_refuses_a_group_defined_twice ... ok
+test read_joins_a_user_to_its_shadow_entry ... ok
+test read_refuses_a_user_defined_twice ... ok
+test read_tolerates_a_shadow_line_naming_no_account ... ok
+test read_leaves_the_password_unknown_when_the_host_keeps_no_shadow_database ... ok
+test presence_is_present_when_the_host_keeps_a_local_account_database ... ok
+test read_refuses_a_user_the_shadow_database_does_not_mention ... ok
+test the_facet_holds_users_and_groups_side_by_side ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/block_devices.rs (/tmp/target/llvm-cov-target/debug/deps/block_devices-50b23bcb0f3054f8)
+
+running 19 tests
+test collect_fails_rather_than_reporting_no_storage_without_lsblk ... ok
+test parse_accepts_a_box_with_no_block_devices ... ok
+test parse_keeps_a_volume_identifier_that_is_not_a_uuid ... ok
+test a_device_renders_a_null_for_every_column_it_has_no_value_for ... ok
+test every_device_renders_the_same_keys ... ok
+test parse_keys_devices_by_name ... ok
+test parse_reads_a_null_mountpoint_list_as_no_mount_points ... ok
+test parse_reads_a_device_mounted_in_more_than_one_place ... ok
+test parse_keeps_the_tree_as_a_parent_link ... ok
+test parse_reads_the_boolean_columns ... ok
+test parse_records_the_size_in_bytes_rather_than_a_rounded_rendering ... ok
+test parse_refuses_a_device_reported_twice ... ok
+test parse_reads_a_device_stacked_on_a_partition ... ok
+test parse_reads_a_whole_disk ... ok
+test parse_refuses_output_that_is_not_json ... ok
+test parse_reads_an_empty_partition_as_having_no_filesystem ... ok
+test parse_tells_a_filesystem_uuid_apart_from_a_partition_uuid ... ok
+test presence_is_undetermined_without_lsblk_rather_than_absent ... ok
+test presence_is_present_when_lsblk_is_on_the_host ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/canonical_tool.rs (/tmp/target/llvm-cov-target/debug/deps/canonical_tool-4bbd9862e185ddcf)
+
+running 22 tests
+test a_tool_that_fails_silently_says_so ... ok
+test located_does_not_search_the_path ... ok
+test a_short_stderr_is_quoted_whole ... ok
+test located_finds_a_tool_in_a_named_directory ... ok
+test located_finds_a_tool_in_a_system_directory ... ok
+test located_reports_a_tool_that_is_not_installed ... ok
+test a_one_character_stderr_is_not_swallowed ... ok
+test a_multibyte_character_on_the_cut_is_not_split ... ok
+test run_accepts_output_exactly_at_its_bound ... ok
+test a_reason_followed_by_whitespace_is_not_cut_away ... ok
+test a_failing_tools_stderr_keeps_the_end_not_the_beginning ... ok
+test run_clears_the_environment_apart_from_the_locale ... ok
+test run_refuses_a_tool_that_writes_more_than_its_bound ... ok
+test run_refuses_output_that_is_not_valid_utf8 ... ok
+test run_gives_a_tool_that_reads_stdin_an_immediate_end_of_input ... ok
+test run_reports_a_tool_that_exits_unsuccessfully ... ok
+test run_returns_what_the_tool_wrote_to_stdout ... ok
+test run_kills_a_tool_that_does_not_finish_in_time ... ok
+test a_timeout_reports_the_bound_it_actually_had ... ok
+test run_returns_when_a_tool_closes_its_streams_and_keeps_going ... ok
+test run_kills_what_the_tool_started_too ... ok
+test run_kills_a_descendant_of_a_tool_that_already_exited ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.41s
+
+     Running tests/cli.rs (/tmp/target/llvm-cov-target/debug/deps/cli-5ade75b1ba9ba68d)
+
+running 30 tests
+test a_bare_run_records_each_walked_path_as_one_digest ... ok
+test a_bare_run_reports_the_hostname_as_metadata ... ok
+test a_config_path_that_cannot_be_read_fails_the_run ... ok
+test a_bare_run_reports_the_mount_table_as_state ... ok
+test a_bare_run_omits_the_run_timestamp ... ok
+test a_bare_run_reports_the_installed_packages_as_state ... ok
+test a_bare_run_reports_the_loaded_modules_as_state ... ok
+test a_bare_run_reports_the_binary_it_is_running_from ... ok
+test a_bare_run_writes_a_fingerprint_to_stdout ... ok
+test a_run_leaves_the_kernel_module_list_untouched ... ok
+test an_excluded_collector_is_omitted_rather_than_recorded_absent ... ok
+test debug_reports_a_line_per_collector_on_stderr ... ok
+test a_run_that_excludes_nothing_collects_every_collector ... ok
+test an_exclusion_is_announced_on_stderr ... ok
+test a_staged_run_says_so_in_the_effective_config ... ok
+test excluding_a_metadata_collector_fails_the_run ... ok
+test excluding_a_collector_that_does_not_exist_fails_the_run ... ok
+test progress_and_no_progress_together_are_refused ... ok
+test debug_reports_what_the_walk_cost_and_where_the_document_went ... ok
+test run_with_version_flag_prints_the_crate_version ... ok
+test debug_writes_no_timing_into_the_document ... ok
+test detail_records_every_attribute_the_walk_read ... ok
+test no_progress_keeps_stderr_empty_even_on_a_terminal ... ok
+test including_volatile_values_carries_the_run_timestamp ... ok
+test no_kernel_pointer_reaches_the_document ... ok
+test progress_forced_on_reaches_stderr_even_when_it_is_not_a_terminal ... ok
+test stderr_stays_empty_on_a_successful_run ... ok
+test the_effective_config_reaches_the_document ... ok
+test the_effective_config_records_which_detail_the_run_was_taken_at ... ok
+test two_bare_runs_produce_byte_identical_output ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.40s
+
+     Running tests/config.rs (/tmp/target/llvm-cov-target/debug/deps/config-737f2cac574b7097)
+
+running 19 tests
+test a_config_cannot_ask_for_content_to_be_hashed ... ok
+test a_config_can_narrow_the_walk_over_trees_it_names ... ok
+test a_config_with_no_exclusions_excludes_nothing ... ok
+test no_config_named_means_the_default_rather_than_a_failure ... ok
+test a_malformed_config_names_the_file_it_could_not_parse ... ok
+test parse_accepts_a_collectors_table_with_no_exclusions ... ok
+test a_config_with_no_filesystem_section_narrows_nothing ... ok
+test a_named_config_is_the_one_that_is_read ... ok
+test load_records_the_path_it_read ... ok
+test parse_deduplicates_and_orders_the_exclusion_list ... ok
+test parse_refuses_malformed_toml ... ok
+test the_default_config_has_no_source ... ok
+test parse_reads_the_exclusion_list ... ok
+test parse_refuses_a_misspelled_table ... ok
+test the_default_config_excludes_nothing ... ok
+test parse_refuses_a_misspelled_key ... ok
+test the_walk_narrowings_are_sorted_and_deduplicated ... ok
+test two_configs_meaning_the_same_thing_are_equal ... ok
+test load_refuses_a_path_it_could_not_record_faithfully ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/containerd.rs (/tmp/target/llvm-cov-target/debug/deps/containerd-bf3d3ae7ad325df1)
+
+running 24 tests
+test a_containerd_with_no_address_to_reach_is_installed_and_unreachable ... ok
+test a_container_docker_manages_has_no_snapshotter_of_its_own ... ok
+test a_container_records_the_runtime_and_the_image_containerd_holds_for_it ... ok
+test a_containerd_image_records_no_size_because_the_only_figure_is_rounded ... ok
+test a_container_with_no_task_is_defined_and_not_running ... ok
+test a_neighbour_with_a_longer_name_is_not_mistaken_for_a_child ... ok
+test a_container_created_through_containerd_records_its_snapshot_and_sandbox ... ok
+test a_namespace_holding_no_images_records_an_empty_map ... ok
+test a_tree_inside_one_already_sealed_is_not_claimed_again ... ok
+test containerd_reports_where_it_keeps_what_it_holds ... ok
+test containerd_seals_its_store_and_its_runtime_state ... ok
+test one_tree_two_engines_resolved_to_is_claimed_once ... ok
+test a_namespaces_images_are_keyed_by_reference ... ok
+test a_container_that_vanished_while_being_read_is_recorded_per_namespace ... ok
+test containerd_reports_the_client_and_the_server_it_reached ... ok
+test presence_is_present_when_containerd_is_on_the_host ... ok
+test output_that_carries_no_server_block_fails_the_facet ... ok
+test a_namespaces_containers_are_keyed_by_id ... ok
+test a_running_container_carries_the_task_that_is_running_it ... ok
+test an_images_platforms_are_recorded_sorted ... ok
+test the_address_it_was_reached_at_is_recorded ... ok
+test the_facet_holds_containerd_under_its_own_key ... ok
+test the_namespaces_are_keyed_by_name ... ok
+test the_columns_are_sliced_by_the_headers_offsets_so_a_two_word_size_shifts_nothing ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/containerd_layout.rs (/tmp/target/llvm-cov-target/debug/deps/containerd_layout-d27731312ee89663)
+
+running 11 tests
+test a_box_with_no_containerd_running_has_no_address ... ok
+test a_configuration_that_cannot_be_read_falls_back_to_the_default ... ok
+test the_address_comes_from_the_running_containerds_own_flag ... ok
+test the_address_comes_from_the_configuration_the_process_names ... ok
+test a_containerd_that_names_nothing_is_at_the_documented_default ... ok
+test a_containerd_naming_no_directories_is_at_the_documented_defaults ... ok
+test the_flag_is_read_when_it_is_written_with_an_equals_sign ... ok
+test a_directory_reached_through_a_symlink_is_recorded_as_the_walk_would_see_it ... ok
+test the_address_is_recorded_as_the_engine_reported_it ... ok
+test the_directories_come_from_the_configuration_too ... ok
+test the_debug_socket_is_not_mistaken_for_the_one_that_answers ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/containers.rs (/tmp/target/llvm-cov-target/debug/deps/containers-34d99c1b5189ea0a)
+
+running 78 tests
+test a_container_on_the_engines_default_logging_records_no_options ... ok
+test a_container_given_none_of_them_records_each_as_the_shape_it_is ... ok
+test a_container_records_the_command_the_engine_resolved_rather_than_the_one_configured ... ok
+test a_cgroup_driver_and_version_are_reported_as_the_daemon_resolved_them ... ok
+test a_container_records_the_image_it_asked_for_beside_the_one_it_got ... ok
+test a_container_records_the_account_and_the_directory_it_runs_in ... ok
+test a_bind_mount_records_the_host_path_and_its_propagation ... ok
+test a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped ... ok
+test a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing ... ok
+test a_container_that_changed_nothing_records_no_capability_changes ... ok
+test a_container_with_no_ipv6_address_records_none_rather_than_empty_text ... ok
+test a_containers_kernel_parameters_are_its_own_and_not_the_hosts ... ok
+test a_file_under_the_root_is_not_claimed_as_a_tree ... ok
+test a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable ... ok
+test a_container_with_no_healthcheck_records_none ... ok
+test a_dangling_image_records_no_tags_rather_than_being_dropped ... ok
+test a_device_passed_in_is_keyed_by_where_it_appears_inside ... ok
+test a_container_that_will_delete_itself_is_volatile_whole ... ok
+test a_hardened_container_records_what_it_added_dropped_and_forbade ... ok
+test a_network_records_what_it_permits_beyond_its_addressing ... ok
+test a_healthcheck_records_its_command_and_its_timings ... ok
+test a_limit_the_container_does_not_have_is_absent_rather_than_zero ... ok
+test a_network_that_was_asked_for_nothing_records_no_request ... ok
+test a_networks_driver_options_are_recorded_because_they_decide_what_it_permits ... ok
+test a_networks_entry_records_the_address_and_the_network_it_is_on ... ok
+test a_restart_policy_that_names_no_retry_limit_records_none ... ok
+test a_port_exposed_and_published_nowhere_is_recorded_with_no_bindings ... ok
+test a_published_port_records_where_it_is_reachable_from ... ok
+test a_restart_policy_with_a_retry_limit_records_both_halves ... ok
+test a_networks_addressing_is_recorded_as_the_engine_resolved_it ... ok
+test a_running_container_records_no_finish_stamp ... ok
+test a_static_address_that_was_asked_for_is_recorded_beside_the_one_assigned ... ok
+test a_variable_set_to_nothing_is_recorded_as_empty_rather_than_dropped ... ok
+test a_ulimit_records_both_halves_because_they_differ ... ok
+test a_tmpfs_mount_is_read_from_the_only_place_docker_reports_it ... ok
+test a_volume_created_with_nothing_but_a_name_records_neither_map ... ok
+test an_engine_whose_root_is_not_known_claims_nothing ... ok
+test a_volume_records_its_driver_and_where_the_engine_keeps_it ... ok
+test a_volume_mount_records_the_volume_and_where_the_engine_keeps_it ... ok
+test an_account_or_directory_the_image_decides_is_absent_rather_than_empty ... ok
+test an_answering_daemon_records_no_reason_to_be_unreachable ... ok
+test a_volumes_driver_options_are_recorded_because_they_say_where_the_data_is ... ok
+test an_answering_docker_reports_what_its_daemon_is_running_with ... ok
+test an_environment_value_holding_an_equals_sign_keeps_all_of_it ... ok
+test an_image_that_vanished_while_being_read_is_recorded_too ... ok
+test an_exited_container_records_its_exit_code_and_when_it_finished ... ok
+test presence_is_absent_when_no_container_engine_is_on_the_host ... ok
+test presence_is_present_when_docker_is_on_the_host ... ok
+test every_tree_the_engine_keeps_to_itself_is_sealed ... ok
+test an_image_records_every_tag_that_points_at_it_sorted ... ok
+test output_that_is_not_json_fails_the_facet_rather_than_reading_as_an_empty_engine ... ok
+test an_image_records_its_size_and_the_platform_it_was_built_for ... ok
+test an_image_the_engine_still_knows_the_parent_of_records_it ... ok
+test an_images_labels_carry_the_provenance_of_the_build ... ok
+test the_components_report_which_containerd_and_runc_the_engine_runs ... ok
+test the_containers_are_keyed_by_name_without_dockers_leading_slash ... ok
+test the_bindings_of_one_port_are_sorted_rather_than_left_in_the_engines_order ... ok
+test the_configured_healthcheck_is_stable_while_the_health_it_observes_is_volatile ... ok
+test the_containers_attached_to_a_network_are_not_recorded_twice ... ok
+test the_environment_is_keyed_by_variable_and_every_value_is_sensitive ... ok
+test the_facet_holds_the_engines_and_what_they_run_as_two_halves ... ok
+test the_health_log_is_not_recorded_at_all ... ok
+test the_images_are_keyed_by_their_own_id ... ok
+test the_limits_are_recorded_in_the_units_the_engine_reports_them_in ... ok
+test the_labels_are_recorded_as_the_engine_holds_them ... ok
+test the_log_driver_and_its_options_are_recorded ... ok
+test the_mounts_are_keyed_by_the_path_inside_the_container ... ok
+test the_namespaces_record_which_of_them_the_container_shares_with_the_host ... ok
+test the_name_resolution_a_container_was_given_is_recorded_whole ... ok
+test the_networks_are_keyed_by_name_with_their_aliases_sorted ... ok
+test the_network_namespace_records_whichever_of_the_four_things_it_can_be ... ok
+test the_networks_of_the_box_are_keyed_by_name ... ok
+test the_ports_are_keyed_the_way_the_engine_names_them ... ok
+test the_tree_holding_the_operators_own_data_is_left_to_the_walk ... ok
+test the_security_options_are_sorted_rather_than_left_in_the_daemons_order ... ok
+test the_shared_memory_size_is_recorded_with_the_other_limits ... ok
+test the_stamps_and_the_restart_count_are_volatile_while_the_status_is_not ... ok
+test the_volumes_are_keyed_by_name ... ok
+
+test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/cron.rs (/tmp/target/llvm-cov-target/debug/deps/cron-00087dcd5168cd76)
+
+running 22 tests
+test a_boot_schedule_is_marked_as_one ... ok
+test parse_does_not_take_a_command_containing_an_equals_for_an_assignment ... ok
+test parse_normalises_the_whitespace_inside_a_schedule_but_not_the_command ... ok
+test parse_reads_a_shorthand_schedule ... ok
+test parse_reads_a_schedule_with_a_step ... ok
+test parse_reads_a_tab_aligned_job ... ok
+test parse_reads_a_user_crontab_without_an_account_column ... ok
+test parse_reads_the_same_line_differently_in_the_two_dialects ... ok
+test parse_reads_the_environment_a_crontab_sets ... ok
+test parse_refuses_a_line_with_too_few_schedule_fields ... ok
+test presence_is_always_present_because_the_subject_is_where_cron_keeps_jobs ... ok
+test read_names_the_file_a_failure_came_from ... ok
+test read_keeps_the_jobs_in_the_files_order ... ok
+test parse_refuses_a_variable_set_twice ... ok
+test read_lists_the_scripts_in_a_run_parts_directory ... ok
+test the_default_source_names_the_spool_and_the_four_run_parts_directories ... ok
+test read_reports_an_absent_source_as_absent_rather_than_omitting_it ... ok
+test read_tells_an_absent_run_parts_directory_apart_from_an_empty_one ... ok
+test read_keys_a_user_crontab_by_the_account_rather_than_the_path ... ok
+test read_skips_a_placeholder_file_because_cron_does ... ok
+test read_reads_all_four_kinds_of_source ... ok
+test read_skips_a_saved_copy_left_beside_a_real_drop_in ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/determinism.rs (/tmp/target/llvm-cov-target/debug/deps/determinism-e2a5cbd5dd06104d)
+
+running 3 tests
+test a_churning_trees_moving_stamps_do_not_move_the_document ... ok
+test a_change_outside_a_churning_tree_does_move_the_document ... ok
+test two_walks_of_an_unchanged_tree_render_identical_bytes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exporters.rs (/tmp/target/llvm-cov-target/debug/deps/exporters-ffd3f9d39bcc44d6)
+
+running 25 tests
+test a_prometheus_version_survives_an_empty_branch ... ok
+test a_prometheus_version_is_read_from_whichever_stream_carries_it ... ok
+test an_agent_with_no_version_flag_reports_no_build ... ok
+test a_version_line_that_is_not_recognised_is_a_failure_rather_than_a_guess ... ok
+test an_address_that_omits_its_host_keeps_the_port_and_no_host ... ok
+test an_argument_that_is_not_a_flag_is_refused ... ok
+test an_agent_with_nothing_to_report_renders_its_absences_as_null ... ok
+test cadvisor_spells_its_version_its_own_way ... ok
+test identify_finds_every_known_agent_and_nothing_else ... ok
+test an_ipv6_address_loses_only_its_brackets ... ok
+test identify_reads_the_endpoint_cadvisor_spells_across_two_flags ... ok
+test identify_leaves_an_agent_without_a_configured_endpoint_absent ... ok
+test identify_reads_the_endpoint_from_a_prometheus_listen_address ... ok
+test identify_recognises_an_agent_whose_unit_is_not_named_after_it ... ok
+test presence_is_absent_without_systemd ... ok
+test identify_keeps_the_flags_an_agent_was_started_with ... ok
+test identify_records_a_boolean_flag_as_present_without_a_value ... ok
+test nothing_in_the_facet_is_volatile ... ok
+test the_observation_is_keyed_by_unit_so_two_instances_of_one_agent_both_appear ... ok
+test the_observation_carries_the_agent_its_endpoint_and_its_flags ... ok
+test the_facet_is_absent_when_no_known_agent_is_deployed ... ok
+test using_names_the_systemctl_tool_it_will_run ... ok
+test read_returns_an_empty_fleet_when_systemd_lists_no_units ... ok
+test read_keeps_collectd_without_trying_to_guess_a_build ... ok
+test read_records_a_known_agent_even_when_rastro_will_not_run_its_binary ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/filesystem.rs (/tmp/target/llvm-cov-target/debug/deps/filesystem-10041a20ba40fe36)
+
+running 23 tests
+test an_operators_rule_beats_a_collectors_claim ... ok
+test an_operators_rule_beats_a_shipped_one_too ... ok
+test an_operators_rules_leave_every_other_tree_alone ... ok
+test claimed_carries_the_shipped_rules_through_untouched ... ok
+test claimed_reads_a_metadata_only_claim_as_metadata_only ... ok
+test claimed_refuses_a_claim_that_repeats_a_shipped_rule ... ok
+test built_in_opens_no_file_anywhere ... ok
+test built_in_marks_the_trees_that_churn_without_meaning_as_churning ... ok
+test new_reads_a_tree_spelled_with_a_trailing_slash ... ok
+test new_reads_the_root_however_many_separators_it_is_spelled_with ... ok
+test new_refuses_a_table_that_does_not_cover_the_root ... ok
+test new_refuses_the_root_named_twice_under_two_spellings ... ok
+test claimed_reads_a_claimed_tree_the_way_its_claimant_asked ... ok
+test policy_for_falls_back_to_the_root_rule ... ok
+test new_refuses_two_rules_for_one_tree ... ok
+test claimed_refuses_a_tree_another_rule_already_governs ... ok
+test the_effective_table_renders_every_rule_with_its_claimant ... ok
+test policy_for_covers_the_tree_named_by_the_rule_itself ... ok
+test policy_for_matches_whole_components_rather_than_text_prefixes ... ok
+test the_effective_table_says_when_the_operator_decided ... ok
+test sha256_is_spelled_the_way_the_document_will_record_it ... ok
+test policy_for_prefers_the_most_specific_tree ... ok
+test two_operator_rules_for_one_tree_are_refused ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/filesystem_digest.rs (/tmp/target/llvm-cov-target/debug/deps/filesystem_digest-1b126a84987a409a)
+
+running 12 tests
+test a_digest_is_the_same_on_every_run_of_the_same_binary ... ok
+test a_digest_is_written_as_sixteen_lowercase_hex_characters ... ok
+test a_directorys_derived_stamps_stay_out_of_its_digest ... ok
+test a_churning_trees_moving_attributes_stay_out_of_its_digest ... ok
+test a_churning_entry_still_reports_what_does_not_churn ... ok
+test a_symlinks_target_moves_the_digest ... ok
+test an_entry_whose_mode_changed_gets_a_different_digest ... ok
+test the_content_digest_algorithm_is_still_named_for_the_collector_that_will_use_it ... ok
+test a_withheld_text_says_nothing_about_the_value_it_withheld ... ok
+test every_stable_attribute_moves_the_digest ... ok
+test a_withheld_text_is_not_the_same_as_an_absent_one ... ok
+test an_entry_renders_as_one_digest_of_its_metadata ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/filesystem_hashing.rs (/tmp/target/llvm-cov-target/debug/deps/filesystem_hashing-faf06a7e0636b47f)
+
+running 3 tests
+test a_stream_digests_to_the_value_sha256sum_reports ... ok
+test a_read_that_genuinely_fails_is_reported ... ok
+test an_interrupted_read_is_retried_rather_than_reported ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/filesystem_refusal.rs (/tmp/target/llvm-cov-target/debug/deps/filesystem_refusal-20ef595aba52dd5f)
+
+running 14 tests
+test a_deleted_file_on_an_nfs_server_is_an_absence_too ... ok
+test a_kernel_number_the_document_can_hold_is_kept_exactly ... ok
+test a_path_one_walk_described_and_another_could_not_list_keeps_its_description ... ok
+test a_descriptor_that_is_not_a_regular_file_is_refused_rather_than_hashed ... ok
+test a_path_read_twice_and_differently_fails_the_walk ... ok
+test a_refusal_at_a_path_that_is_gone_records_nothing ... ok
+test a_path_that_will_not_be_read_is_not_an_absence ... ok
+test a_refusal_at_a_path_that_is_there_records_the_path_and_the_reason ... ok
+test a_path_that_is_no_longer_there_is_an_absence ... ok
+test a_refused_path_renders_only_the_reason_it_could_not_be_read ... ok
+test a_kernel_number_too_wide_for_the_document_refuses_the_entry ... ok
+test an_inventory_carries_refusals_of_different_paths_side_by_side ... ok
+test the_same_path_read_twice_and_identically_is_one_entry ... ok
+test a_symlink_whose_target_will_not_spell_is_refused_rather_than_ending_the_walk ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/filesystem_scope.rs (/tmp/target/llvm-cov-target/debug/deps/filesystem_scope-9b1b359d711caa36)
+
+running 17 tests
+test a_walk_leaves_out_the_document_it_is_writing ... ok
+test a_walk_leaves_out_an_output_path_reached_through_a_symlinked_directory ... ok
+test roots_covers_a_filesystem_that_holds_data_without_a_block_device ... ok
+test boundaries_covers_every_mount_including_the_ones_not_walked ... ok
+test roots_refuses_a_mount_point_the_kernel_escaped ... ok
+test roots_refuses_a_host_where_nothing_real_is_mounted ... ok
+test roots_covers_every_mount_but_the_kernels_own_interfaces ... ok
+test roots_reports_a_mount_point_mounted_twice_once ... ok
+test the_collector_fails_rather_than_reporting_a_host_with_no_files ... ok
+test the_collector_fails_the_facet_when_the_claims_did_not_resolve ... ok
+test the_collector_is_present_on_every_host ... ok
+test the_collector_collapses_a_path_two_walks_both_reached ... ok
+test the_collector_refuses_two_readings_of_one_path_that_disagree ... ok
+test the_collector_reports_every_entry_under_the_roots_it_walks ... ok
+test the_collector_stops_at_a_boundary_that_shares_its_device ... ok
+test a_staged_run_omits_the_executable_it_is_running_from ... ok
+test a_local_run_reports_the_executable_it_is_running_from ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/filesystem_walk.rs (/tmp/target/llvm-cov-target/debug/deps/filesystem_walk-21a98628a1698b3b)
+
+running 33 tests
+test an_entry_renders_a_device_as_its_two_numbers ... ok
+test an_entry_in_a_churning_tree_keeps_everything_in_the_complete_view ... ok
+test an_entry_in_a_churning_tree_omits_the_attributes_that_move ... ok
+test an_entry_renders_a_block_device_as_its_two_numbers ... ok
+test an_unspellable_name_directly_under_an_unspellable_directory_has_no_directory_to_name ... ok
+test an_entry_marks_a_directorys_stamps_and_link_count_volatile ... ok
+test walk_digests_a_regular_file_the_policy_hashes ... ok
+test an_entry_renders_every_field_it_owns ... ok
+test an_entry_keeps_a_directorys_stamps_in_the_complete_view ... ok
+test walk_leaves_a_metadata_only_tree_undigested ... ok
+test an_entry_keeps_a_regular_files_stamps_and_link_count_in_the_diffable_view ... ok
+test an_inventory_is_keyed_by_path_in_path_order ... ok
+test an_entry_renders_what_it_does_not_have_as_null ... ok
+test walk_omits_nothing_when_the_observer_is_elsewhere ... ok
+test walk_records_a_device_nodes_major_and_minor_numbers ... ok
+test walk_records_a_child_it_cannot_stat_and_keeps_going ... ok
+test walk_orders_entries_by_path ... ok
+test walk_omits_the_observers_own_executable ... ok
+test walk_records_a_directory_it_cannot_list_and_keeps_going ... ok
+test walk_records_a_status_change_a_chmod_makes_without_a_modification ... ok
+test walk_records_a_sealed_tree_as_its_own_directory_and_goes_no_further ... ok
+test walk_records_a_directory_without_a_digest ... ok
+test walk_records_an_entry_it_cannot_describe_and_keeps_going ... ok
+test walk_refuses_a_root_that_is_not_there ... ok
+test walk_records_a_path_that_will_not_decode_and_keeps_going ... ok
+test walk_records_a_symlink_target_without_following_it ... ok
+test walk_records_the_modification_and_status_change_times_the_kernel_holds ... ok
+test walk_records_the_inode_and_link_count_two_hardlinks_share ... ok
+test walk_reports_the_root_every_directory_and_every_file ... ok
+test walk_seals_only_the_tree_that_was_claimed ... ok
+test walk_records_the_mode_the_owner_and_the_group ... ok
+test walk_sees_a_rewrite_that_left_the_size_and_the_policy_unchanged ... ok
+test walk_records_a_socket_and_a_fifo_as_having_no_content ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/firewall.rs (/tmp/target/llvm-cov-target/debug/deps/firewall-a7f2c6972e61d99b)
+
+running 27 tests
+test a_backend_reads_through_the_program_that_names_its_own_subsystem ... ok
+test a_chain_renders_its_policy_and_its_rules ... ok
+test a_subsystem_compiled_into_the_kernel_is_read_rather_than_assumed_empty ... ok
+test a_resident_subsystem_whose_tool_is_missing_is_an_error ... ok
+test an_unreadable_kernel_configuration_is_an_error_not_an_empty_ruleset ... ok
+test an_absent_subsystem_is_reported_even_when_its_tool_is_installed ... ok
+test a_subsystem_the_kernel_never_loaded_is_reported_without_running_anything ... ok
+test collect_reports_a_key_per_interface_even_with_nothing_found ... ok
+test every_backend_is_reported_so_the_document_shape_never_moves ... ok
+test parse_drops_the_timestamped_header ... ok
+test parse_drops_the_packet_and_byte_counters ... ok
+test parse_files_a_rule_under_the_chain_it_was_appended_to ... ok
+test parse_keeps_the_rules_in_the_order_the_kernel_tests_them ... ok
+test parse_reads_a_built_in_chains_policy ... ok
+test parse_reads_an_empty_dump_as_a_box_that_filters_nothing ... ok
+test parse_reads_every_table_in_the_dump ... ok
+test parse_refuses_a_rule_before_any_table_was_opened ... ok
+test parse_refuses_a_rule_for_a_chain_the_dump_never_declared ... ok
+test parse_records_a_user_defined_chain_as_having_no_policy ... ok
+test parse_refuses_a_line_the_grammar_does_not_know ... ok
+test presence_is_always_present_because_the_subject_is_what_rastro_can_read ... ok
+test parse_refuses_a_table_dumped_twice ... ok
+test the_inventory_refuses_a_backend_reported_twice ... ok
+test the_two_families_share_the_nftables_subsystem_and_not_the_legacy_one ... ok
+test the_inventory_tells_an_empty_ruleset_apart_from_a_subsystem_that_cannot_hold_one ... ok
+test a_dump_that_fails_is_reported_rather_than_read_as_an_empty_ruleset ... ok
+test a_resident_subsystem_with_a_readable_tool_is_dumped ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/host.rs (/tmp/target/llvm-cov-target/debug/deps/host-412f3f7e84b1d8d9)
+
+running 4 tests
+test an_unreadable_hostname_is_an_error_facet_rather_than_an_absent_one ... ok
+test the_default_host_collector_is_the_one_that_reads_for_itself ... ok
+test the_host_collector_reads_the_hostname_itself_when_nobody_hands_it_one ... ok
+test the_host_facet_reports_the_hostname_it_was_given ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/invocation.rs (/tmp/target/llvm-cov-target/debug/deps/invocation-ce1e1f256954e513)
+
+running 8 tests
+test seconds_since_epoch_accepts_the_epoch_itself ... ok
+test a_clock_set_before_1970_fails_the_invocation_facet_rather_than_the_run ... ok
+test seconds_since_epoch_counts_from_1970 ... ok
+test the_invocation_facet_carries_the_effective_walk_table ... ok
+test the_invocation_facet_names_the_binary_the_walk_left_out ... ok
+test the_invocation_facet_reports_no_observer_when_the_kernel_would_not_say ... ok
+test seconds_since_epoch_refuses_a_clock_set_before_1970 ... ok
+test the_invocation_facet_reports_the_clock_reading_it_was_given ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/kernel_residency.rs (/tmp/target/llvm-cov-target/debug/deps/kernel_residency-0b3f0f8a5dabc928)
+
+running 11 tests
+test a_loaded_module_is_resident_even_without_the_kernel_config ... ok
+test a_built_in_subsystem_is_still_known_without_the_loaded_module_list ... ok
+test a_module_in_proc_modules_is_loaded ... ok
+test a_module_that_is_buildable_but_not_loaded_is_absent ... ok
+test a_module_the_kernel_config_never_mentions_is_absent ... ok
+test absent_needs_both_sources_read ... ok
+test a_module_the_kernel_was_built_with_is_resident_without_being_listed ... ok
+test residency_is_undetermined_when_the_kernel_config_cannot_be_read ... ok
+test residency_is_undetermined_when_the_loaded_module_list_cannot_be_read ... ok
+test a_resident_subsystem_is_safe_to_ask_and_an_absent_one_is_not ... ok
+test a_subsystem_keeps_its_two_names_apart ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/locale.rs (/tmp/target/llvm-cov-target/debug/deps/locale-cc5fb86da28724ec)
+
+running 13 tests
+test a_value_with_a_quote_on_one_side_only_is_left_alone ... ok
+test presence_is_always_present_because_a_box_with_no_files_falls_back_to_the_c_locale ... ok
+test collect_reports_every_file_even_when_none_of_them_exists ... ok
+test read_keeps_an_explicitly_empty_setting ... ok
+test read_reads_every_file_it_was_given ... ok
+test read_skips_a_line_that_sets_nothing ... ok
+test read_skips_comments_and_blank_lines ... ok
+test read_refuses_a_setting_written_twice ... ok
+test the_default_source_names_the_three_files_that_matter ... ok
+test read_keeps_the_case_a_setting_was_written_in ... ok
+test read_reads_a_settings_file ... ok
+test read_reports_a_file_that_is_not_there_as_absent_rather_than_omitting_it ... ok
+test read_strips_the_quotes_a_shell_fragment_may_use ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/modules.rs (/tmp/target/llvm-cov-target/debug/deps/modules-d4a1d576f6b07197)
+
+running 28 tests
+test parse_ignores_blank_lines ... ok
+test parse_keeps_a_taint_letter_it_does_not_know ... ok
+test parse_ignores_the_going_and_coming_markers_in_the_taint_column ... ok
+test parse_names_the_taint_letters_it_knows ... ok
+test parse_keys_the_table_by_module_name ... ok
+test parse_reads_the_columns_that_describe_state ... ok
+test parse_reads_a_negative_reference_count ... ok
+test parse_reads_the_dependants_column_as_a_sorted_set ... ok
+test parse_refuses_a_line_with_too_few_columns ... ok
+test parse_refuses_a_module_reported_twice ... ok
+test parse_refuses_a_size_that_is_not_a_number ... ok
+test parse_reads_permanent_alongside_real_dependants ... ok
+test parse_reads_a_dash_as_no_dependants ... ok
+test parse_reads_permanent_as_removability_not_as_a_dependant ... ok
+test parse_refuses_a_state_the_kernel_does_not_report ... ok
+test parse_reads_a_dash_reference_count_as_untracked ... ok
+test parse_reports_removability_as_unknown_when_the_kernel_cannot_unload ... ok
+test parse_still_reports_removable_when_the_kernel_does_track_unloading ... ok
+test taint_flag_knows_the_whole_kernel_alphabet ... ok
+test taint_flag_spells_an_unknown_letter_in_the_document ... ok
+test the_load_address_is_not_recorded_at_all ... ok
+test the_observation_of_a_module_carries_the_contracted_keys ... ok
+test the_reference_count_does_not_reach_the_diffable_view ... ok
+test read_names_the_file_it_could_not_open ... ok
+test presence_is_undetermined_when_procfs_is_not_mounted ... ok
+test presence_is_absent_when_the_kernel_has_no_module_support ... ok
+test read_translates_a_table_on_disk_into_the_model ... ok
+test presence_is_present_when_the_interface_is_there ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/mounts.rs (/tmp/target/llvm-cov-target/debug/deps/mounts-3413b3d87bb4426f)
+
+running 31 tests
+test parse_decodes_an_escape_in_the_filesystem_type ... ok
+test a_table_that_cannot_be_read_becomes_a_failed_collection ... ok
+test parse_decodes_an_escaped_equals_in_an_option_name ... ok
+test parse_decodes_an_escaped_comma_in_an_option_value ... ok
+test parse_decodes_an_escaped_option_before_sorting_it ... ok
+test parse_decodes_an_escaped_hash_in_the_device_and_the_filesystem_type ... ok
+test parse_decodes_an_escaped_space_in_a_mount_point ... ok
+test parse_decodes_escapes_in_the_device_too ... ok
+test parse_decodes_tab_newline_and_backslash ... ok
+test parse_ignores_blank_lines ... ok
+test parse_keeps_a_carriage_return_inside_a_column ... ok
+test parse_keeps_a_mount_point_containing_unicode_whitespace ... ok
+test parse_keeps_a_quoted_option_value_whole ... ok
+test parse_keeps_both_entries_when_a_mount_point_repeats ... ok
+test parse_keeps_every_option_when_a_value_contains_a_stray_quote ... ok
+test parse_keeps_every_option_when_a_value_contains_an_unclosed_quoted_opening ... ok
+test parse_keeps_every_option_when_a_value_starts_with_a_quote_and_never_closes_it ... ok
+test parse_keeps_one_entry_when_an_option_is_repeated ... ok
+test parse_keeps_the_kernel_order_of_mounts ... ok
+test parse_keeps_unicode_whitespace_in_the_device_and_the_ideographic_space ... ok
+test parse_leaves_a_backslash_alone_when_it_is_not_an_escape ... ok
+test parse_leaves_an_octal_escape_the_kernel_does_not_use_alone ... ok
+test parse_leaves_a_hash_alone_when_the_kernel_did_not_escape_it ... ok
+test parse_reads_the_four_fields_that_matter ... ok
+test parse_refuses_a_line_it_cannot_read ... ok
+test parse_refuses_a_line_missing_the_trailing_columns ... ok
+test parse_refuses_a_mount_point_that_is_not_absolute ... ok
+test parse_sorts_the_options ... ok
+test read_names_the_file_it_could_not_open ... ok
+test the_observation_of_a_mount_carries_the_contracted_keys ... ok
+test read_translates_a_table_on_disk_into_the_model ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/network.rs (/tmp/target/llvm-cov-target/debug/deps/network-a0ebe523e5c9e4ea)
+
+running 26 tests
+test collect_fails_rather_than_reporting_empty_networking_without_ip ... ok
+test parse_decodes_the_forever_sentinel_as_permanent ... ok
+test parse_accepts_an_empty_route_table ... ok
+test a_routes_expiry_does_not_reach_the_diffable_view ... ok
+test parse_reads_a_leased_lifetime_as_a_countdown ... ok
+test a_lifetimes_permanence_survives_the_diffable_view_and_its_countdown_does_not ... ok
+test a_permanent_lifetime_is_still_marked_volatile_where_it_is_absent ... ok
+test parse_reads_a_route_with_a_gateway ... ok
+test parse_reads_an_interface_and_its_addresses_from_one_call ... ok
+test parse_reads_an_ipv6_route_with_a_preference_and_no_scope ... ok
+test parse_reads_both_routing_tables_into_one_list ... ok
+test parse_reads_an_interface_with_no_dynamic_key_as_not_dynamic ... ok
+test parse_records_no_gateway_for_a_directly_attached_network ... ok
+test parse_reads_the_protocol_of_a_route_nobody_declared_one_for ... ok
+test parse_refuses_a_route_whose_protocol_ip_declined_to_print ... ok
+test parse_refuses_a_prefix_wider_than_any_address_family ... ok
+test parse_refuses_an_interface_reported_twice ... ok
+test parse_refuses_output_that_is_not_json ... ok
+test parse_sorts_the_addresses_on_an_interface ... ok
+test parse_sorts_the_flags ... ok
+test presence_is_present_when_ip_is_on_the_host ... ok
+test parse_sorts_the_routes ... ok
+test presence_is_undetermined_without_ip_rather_than_absent ... ok
+test the_facet_holds_interfaces_and_routes_side_by_side ... ok
+test the_protocol_that_installed_a_route_survives_the_diffable_view ... ok
+test read_asks_ip_for_details_so_a_proto_boot_route_survives ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx.rs (/tmp/target/llvm-cov-target/debug/deps/nginx-3631bbb84b711f8d)
+
+running 13 tests
+test a_banner_carries_what_the_binary_was_built_with ... ok
+test a_banner_names_the_product_and_its_version ... ok
+test a_banner_that_names_no_version_is_refused ... ok
+test a_build_that_names_no_temp_path_still_claims_the_five_nginx_uses ... ok
+test a_binary_names_the_trees_it_was_built_to_write_into ... ok
+test a_binary_reads_its_configuration_where_it_was_built_to ... ok
+test a_build_that_says_nothing_falls_back_to_nginx_s_own_defaults ... ok
+test a_host_with_no_nginx_is_absent_rather_than_failed ... ok
+test a_relative_temp_path_is_claimed_where_nginx_would_put_it ... ok
+test a_configure_argument_holding_spaces_stays_one_argument ... ok
+test a_host_without_nginx_claims_no_trees ... ok
+test text_that_is_not_a_banner_is_refused ... ok
+test the_facet_is_named_nginx ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_certificates.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_certificates-7194e72ea90a8895)
+
+running 8 tests
+test a_certificate_named_through_a_variable_is_not_a_missing_file ... ok
+test a_certificate_that_is_not_there_is_refused_by_name ... ok
+test a_file_that_is_not_a_certificate_is_refused_rather_than_believed ... ok
+test a_key_that_cannot_be_described_says_so ... ok
+test every_kind_of_alternative_name_reaches_the_document_as_itself ... ok
+test a_certificate_is_read_from_the_file_the_configuration_names ... ok
+test a_key_reached_through_a_symlink_is_described_by_its_target ... ok
+test the_key_is_described_and_never_opened ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_conf.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_conf-430a2884d564beb1)
+
+running 23 tests
+test a_block_may_be_empty ... ok
+test a_block_holds_the_directives_inside_it ... ok
+test a_backslash_hides_a_delimiter_from_the_grammar ... ok
+test a_brace_that_is_not_a_variable_still_opens_a_block ... ok
+test a_block_that_no_directive_names_is_a_failure ... ok
+test a_braced_variable_does_not_open_a_block ... ok
+test a_braced_variable_inside_a_path_keeps_the_path_whole ... ok
+test a_comment_runs_to_the_end_of_the_line ... ok
+test a_directive_is_a_name_and_its_arguments ... ok
+test a_directive_that_is_never_terminated_is_a_failure ... ok
+test a_hash_inside_a_token_is_not_a_comment ... ok
+test a_quote_that_is_not_at_the_start_of_a_token_is_an_ordinary_character ... ok
+test a_quoted_argument_loses_its_quotes ... ok
+test a_semicolon_that_terminates_nothing_is_a_failure ... ok
+test a_trailing_backslash_ends_the_file_rather_than_the_reader ... ok
+test an_empty_argument_survives ... ok
+test an_escape_inside_quotes_is_the_character_it_names ... ok
+test an_escape_outside_quotes_is_the_character_it_names ... ok
+test an_unclosed_block_names_where_it_opened ... ok
+test an_unknown_escape_keeps_its_backslash ... ok
+test an_unmatched_close_is_a_failure ... ok
+test an_unterminated_quote_is_a_failure ... ok
+test single_quotes_escape_the_same_way ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_config_files.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_config_files-c22b3b97529f04cf)
+
+running 13 tests
+test a_bracket_expression_is_refused_rather_than_guessed_at ... ok
+test a_file_included_twice_is_read_twice_and_recorded_once ... ok
+test a_digest_is_taken_of_what_the_file_says_rather_than_how_it_is_written ... ok
+test a_glob_include_reads_every_match_in_sorted_order ... ok
+test a_file_that_includes_itself_keeps_the_refusal ... ok
+test a_digest_changes_when_a_directive_does ... ok
+test an_absolute_include_is_taken_as_it_stands ... ok
+test a_literal_include_of_a_file_that_is_not_there_is_recorded ... ok
+test an_include_cycle_is_refused_rather_than_followed ... ok
+test an_include_brings_in_the_directives_of_the_file_it_names ... ok
+test a_glob_that_matches_nothing_is_not_a_failure ... ok
+test a_file_the_grammar_refuses_costs_only_that_file ... ok
+test an_include_resolves_against_the_configuration_s_own_directory ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_conformance.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_conformance-e607c9858da664b7)
+
+running 1 test
+test rastro_reads_the_files_nginx_reads_in_the_order_nginx_reads_them ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_facet.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_facet-22df0353c32199fe)
+
+running 11 tests
+test a_file_renders_its_digest_and_a_refused_one_renders_its_reason ... ok
+test a_certificate_renders_what_it_says_or_why_it_could_not_be_read ... ok
+test a_location_renders_where_it_sends_and_what_it_does_not_log ... ok
+test a_wall_renders_its_users_and_a_digest_that_is_not_a_password ... ok
+test a_stream_server_renders_without_the_fields_it_cannot_have ... ok
+test a_pool_renders_its_members_and_its_settings ... ok
+test the_facet_holds_the_binary_the_master_the_configuration_and_both_services ... ok
+test the_binary_renders_what_it_reported_and_nulls_what_it_did_not ... ok
+test the_configuration_names_both_bases_and_who_chose_the_root ... ok
+test the_master_renders_the_two_instants_that_answer_whether_the_config_is_loaded ... ok
+test a_host_renders_every_part_of_what_it_serves ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_hosts.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_hosts-ffcf96988a07ece8)
+
+running 10 tests
+test a_directive_given_no_arguments_is_a_failure_that_names_it ... ok
+test a_user_file_that_cannot_be_read_says_so_rather_than_reading_as_empty ... ok
+test a_listen_carries_its_address_and_its_switches ... ok
+test a_working_tree_is_found_wherever_it_is_declared ... ok
+test a_resolver_keeps_its_addresses_and_drops_its_settings ... ok
+test a_location_keeps_where_it_sends_and_who_may_reach_it ... ok
+test a_certificate_keeps_the_key_that_belongs_to_it ... ok
+test a_pool_sorts_its_members_and_keeps_what_each_was_given ... ok
+test every_server_block_becomes_a_host_in_the_order_it_was_written ... ok
+test a_wall_names_its_users_and_never_their_passwords ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_master.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_master-86df84f4937733d5)
+
+running 10 tests
+test an_nginx_that_is_not_running_is_not_invented ... ok
+test a_worker_that_leaves_mid_scan_is_skipped_rather_than_fatal ... ok
+test a_master_that_leaves_mid_scan_is_no_master_rather_than_a_failure ... ok
+test a_binary_reached_through_a_symlink_is_still_the_running_one ... ok
+test a_value_glued_to_its_flag_is_read_too ... ok
+test an_upgraded_binary_is_still_the_running_nginx ... ok
+test the_masters_command_line_says_which_configuration_is_being_served ... ok
+test the_master_is_the_process_whose_title_says_so ... ok
+test a_master_whose_executable_cannot_be_read_is_still_a_master ... ok
+test the_workers_date_the_last_reload ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/nginx_stream.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_stream-12856cf08eaccc4b)
+
+running 6 tests
+test a_stream_context_has_pools_of_its_own ... ok
+test a_stream_server_keeps_where_it_listens_and_where_it_sends ... ok
+test a_stream_server_carries_its_certificate_and_its_access_rules ... ok
+test a_stream_server_is_not_read_as_a_virtual_host ... ok
+test a_log_destination_carries_where_and_how ... ok
+test a_log_switched_off_is_a_destination_like_any_other ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/nginx_users.rs (/tmp/target/llvm-cov-target/debug/deps/nginx_users-e96cb3b7887663b5)
+
+running 3 tests
+test every_scheme_says_whether_its_verifier_carries_a_salt ... ok
+test comments_and_blank_lines_are_not_users ... ok
+test a_line_that_names_no_user_is_a_failure ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/output.rs (/tmp/target/llvm-cov-target/debug/deps/output-93eb2a2adf32eb32)
+
+running 30 tests
+test a_dash_means_stdout_rather_than_a_file_called_dash ... ok
+test a_default_name_carries_the_host_and_the_instant ... ok
+test a_default_name_cannot_be_steered_out_of_the_working_directory ... ok
+test a_default_name_drops_a_hostname_that_survives_filtering_as_nothing ... ok
+test a_default_name_leaves_out_a_hostname_it_could_not_read ... ok
+test a_forced_publication_that_cannot_replace_the_destination_says_so ... ok
+test a_destination_that_appeared_while_the_document_was_rendering_is_refused ... ok
+test a_long_hostname_is_cut_rather_than_making_an_unusable_name ... ok
+test a_named_path_is_taken_as_given ... ok
+test a_publication_that_fails_for_any_other_reason_names_the_destination ... ok
+test a_staging_file_that_outlives_its_publication_is_reported ... ok
+test a_write_that_cannot_happen_names_the_path_and_leaves_nothing ... ok
+test a_destination_with_no_filename_is_refused_rather_than_panicking ... ok
+test a_destination_that_is_a_directory_is_refused_and_left_alone ... ok
+test a_device_destination_is_written_through_and_not_replaced ... ok
+test a_refused_publication_leaves_the_original_and_no_staging_file ... ok
+test no_path_means_the_default_name_in_the_working_directory ... ok
+test the_counting_writer_reports_what_went_through_it_and_flushes_the_writer ... ok
+test a_bare_run_writes_the_document_to_a_file_and_nothing_to_stdout ... ok
+test a_config_can_seal_a_tree_so_the_walk_stops_there ... ok
+test debug_names_the_file_the_document_went_to_and_how_big_it_was ... ok
+test an_existing_output_file_is_refused_rather_than_overwritten ... ok
+test utc_stamp_gets_the_calendar_right_where_it_is_easy_to_get_wrong ... ok
+test utc_stamp_writes_a_sortable_instant_without_a_colon ... ok
+test the_invocation_facet_admits_the_output_file_it_left_out ... ok
+test force_replaces_the_file_and_the_result_is_still_private ... ok
+test the_default_file_name_agrees_with_the_started_at_in_the_document ... ok
+test the_output_file_is_created_private_to_its_owner ... ok
+test the_resolved_output_path_reaches_both_the_walk_and_the_envelope ... ok
+test an_output_file_behind_a_symlinked_parent_is_still_left_out_of_the_walk ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.60s
+
+     Running tests/packages.rs (/tmp/target/llvm-cov-target/debug/deps/packages-6a1c697906a1b355)
+
+running 25 tests
+test a_host_with_no_manager_rastro_reads_is_state_not_a_failure ... ok
+test a_package_with_no_status_omits_the_key_rather_than_nulling_it ... ok
+test an_inventory_names_every_manager_even_from_a_partial_report ... ok
+test an_inventory_refuses_a_manager_reported_twice ... ok
+test apk_names_the_database_it_could_not_open ... ok
+test apk_reads_a_database_on_disk ... ok
+test apk_reads_every_stanza ... ok
+test apk_reads_the_three_fields_it_needs_from_a_stanza ... ok
+test apk_refuses_a_field_that_is_present_but_empty ... ok
+test apk_refuses_a_stanza_with_no_version ... ok
+test apk_refuses_two_stanzas_that_ran_together ... ok
+test apk_reports_no_status_rather_than_inventing_one ... ok
+test dpkg_keeps_a_package_it_has_not_fully_installed ... ok
+test dpkg_keys_the_set_by_name ... ok
+test dpkg_reads_the_fields_that_describe_a_package ... ok
+test dpkg_refuses_a_field_that_is_present_but_empty ... ok
+test dpkg_refuses_a_line_with_the_wrong_field_count ... ok
+test dpkg_reads_the_status_as_three_words ... ok
+test presence_is_present_when_one_manager_is_found ... ok
+test dpkg_refuses_a_package_reported_twice ... ok
+test the_collector_claims_no_database_of_a_manager_that_is_not_here ... ok
+test the_collector_claims_the_database_of_every_manager_it_found ... ok
+test the_observation_of_a_package_carries_the_contracted_keys ... ok
+test the_inventory_is_keyed_by_manager ... ok
+test dpkg_is_read_through_the_tool_rastro_actually_runs ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/podman.rs (/tmp/target/llvm-cov-target/debug/deps/podman-1b8171fd30fd6eb4)
+
+running 15 tests
+test a_box_with_no_service_is_installed_and_unread_with_the_reason ... ok
+test a_running_container_has_no_exit_stamp ... ok
+test an_account_is_read_from_passwd_by_the_uid_that_owns_the_service ... ok
+test a_container_in_no_pod_records_none ... ok
+test a_container_records_the_image_and_the_id_podman_resolved ... ok
+test presence_is_present_when_podman_is_on_the_host ... ok
+test a_volume_tree_moved_out_of_the_store_leaves_every_child_sealed ... ok
+test a_running_service_reports_itself_and_the_store_it_resolved ... ok
+test a_stopped_container_records_when_it_exited_and_with_what ... ok
+test a_published_port_records_the_run_of_ports_it_covers ... ok
+test the_store_is_sealed_child_by_child_with_the_volume_tree_spared ... ok
+test the_facet_holds_podman_under_its_own_key ... ok
+test the_containers_are_keyed_by_name ... ok
+test the_stamps_are_volatile_and_the_state_is_not ... ok
+test two_engines_of_one_flavour_are_keyed_by_the_accounts_that_own_them ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/podman_layout.rs (/tmp/target/llvm-cov-target/debug/deps/podman_layout-01c07c231efee2e0)
+
+running 9 tests
+test a_configuration_that_will_not_parse_falls_back_rather_than_guessing_wrong ... ok
+test a_box_with_no_configuration_at_all_still_has_the_documented_defaults ... ok
+test the_documented_defaults_apply_when_neither_file_sets_them ... ok
+test a_rootless_layout_is_read_from_the_users_own_configuration ... ok
+test the_distributed_defaults_are_read_when_the_operator_overrides_nothing ... ok
+test a_volume_tree_moved_out_of_the_store_is_read_from_the_engine_configuration ... ok
+test a_rootless_user_who_configured_nothing_is_at_the_per_user_defaults ... ok
+test the_volume_tree_defaults_to_one_inside_the_graph_root ... ok
+test the_roots_come_from_the_operators_configuration ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql-ffc8cf6873f1e886)
+
+running 60 tests
+test a_cluster_id_refuses_a_half_it_cannot_render ... ok
+test a_status_qualifier_reaches_the_facet_as_its_own_list ... ok
+test a_setting_that_can_hold_a_credential_is_redacted ... ok
+test a_non_privileged_read_marks_the_settings_incomplete ... ok
+test clusters_render_in_one_deterministic_key_order ... ok
+test parse_drops_a_setting_that_came_from_our_own_connection ... ok
+test parse_keeps_a_quoted_value_whole ... ok
+test parse_keeps_a_data_directory_when_only_the_log_file_carries_a_space ... ok
+test parse_orders_settings_by_name ... ok
+test parse_keeps_a_client_sourced_setting_that_is_not_our_application_name ... ok
+test parse_reads_a_doubled_quote_as_one_quote ... ok
+test parse_reads_a_setting_awaiting_a_restart ... ok
+test a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none ... ok
+test parse_reads_a_box_with_no_cluster_created_as_an_empty_inventory ... ok
+test parse_preserves_trailing_space_in_a_value ... ok
+test parse_reads_a_standby_as_running_and_in_recovery ... ok
+test parse_reads_a_stopped_standby_as_neither_running_nor_lost ... ok
+test parse_reads_a_value_containing_a_newline ... ok
+test parse_reads_an_empty_unit_as_no_unit ... ok
+test parse_reads_an_empty_owner_column_as_no_owner ... ok
+test parse_reads_every_column_of_a_setting ... ok
+test parse_reads_every_registered_cluster ... ok
+test parse_reads_the_context_and_source_location_of_a_setting ... ok
+test parse_records_a_missing_package_without_failing_the_facet ... ok
+test parse_reads_the_owner_rather_than_assuming_postgres ... ok
+test parse_records_a_supervisor_alongside_recovery ... ok
+test parse_records_no_data_directory_where_the_row_cannot_be_split_into_whole_paths ... ok
+test parse_refuses_a_row_it_cannot_tell_a_cluster_from ... ok
+test parse_refuses_a_row_with_the_wrong_number_of_columns ... ok
+test parse_refuses_a_status_that_is_neither_online_nor_down ... ok
+test parse_refuses_output_with_no_settings_in_it ... ok
+test parse_refuses_two_rows_for_one_setting ... ok
+test parse_tells_a_stopped_cluster_from_a_running_one ... ok
+test a_standby_failing_for_a_non_refusal_reason_still_fails_the_facet ... ok
+test a_standby_refusing_connections_is_kept_as_its_observed_half ... ok
+test read_carries_a_running_clusters_control_lineage ... ok
+test read_carries_a_running_clusters_file_settings ... ok
+test read_carries_a_running_clusters_available_extensions ... ok
+test read_carries_a_running_clusters_hba_rules ... ok
+test read_asks_a_running_cluster_and_carries_its_settings ... ok
+test read_carries_a_running_clusters_replication_slots ... ok
+test read_carries_a_running_clusters_role_settings ... ok
+test read_does_not_ask_a_stopped_cluster ... ok
+test read_does_not_ask_a_stopped_cluster_for_roles ... ok
+test read_refuses_a_register_it_cannot_read ... ok
+test read_reports_which_cluster_could_not_be_answered_for ... ok
+test recovery_reaches_the_facet_as_its_own_fact ... ok
+test the_collector_claims_no_tree_for_a_data_directory_the_row_could_not_spell ... ok
+test the_collector_claims_nothing_when_the_register_cannot_be_read ... ok
+test the_collector_claims_nothing_without_postgresql_common ... ok
+test the_collector_names_the_facet_it_fills ... ok
+test the_collector_reports_absent_without_postgresql_common ... ok
+test the_collector_seals_every_registered_cluster_data_directory ... ok
+test using_names_the_register_it_will_run ... ok
+test read_carries_the_observed_half_from_the_pid_file ... ok
+test read_carries_the_lens_the_settings_were_read_through ... ok
+test read_carries_a_running_clusters_roles ... ok
+test read_connects_on_the_running_port_not_the_stale_configured_one ... ok
+test read_carries_every_cluster_the_register_lists ... ok
+test read_falls_back_to_the_second_candidate_for_every_query ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/postgresql_available_extensions.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_available_extensions-f866e570e61fcf57)
+
+running 5 tests
+test parse_reads_a_cluster_with_no_available_extensions_as_empty ... ok
+test parse_reads_an_available_but_uninstalled_extension ... ok
+test parse_reads_an_extension_whose_control_file_omits_a_default_version ... ok
+test new_refuses_one_extension_available_twice ... ok
+test parse_reads_an_installed_extension ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_control_data.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_control_data-dc01e4fdf3e637aa)
+
+running 5 tests
+test parse_refuses_an_empty_result ... ok
+test parse_reads_the_system_identifier_and_timeline ... ok
+test parse_refuses_more_than_one_row ... ok
+test parse_refuses_a_timeline_that_is_not_a_number ... ok
+test parse_refuses_an_empty_system_identifier ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_databases.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_databases-017c9802c80cd554)
+
+running 14 tests
+test parse_orders_databases_by_name ... ok
+test parse_orders_the_grants_of_a_database ... ok
+test parse_gathers_one_grantees_privileges_into_one_grant ... ok
+test parse_reads_a_grant_made_to_public ... ok
+test parse_reads_a_database_that_refuses_connections ... ok
+test parse_reads_a_database_and_its_owner ... ok
+test parse_reads_a_grantee_whose_name_contains_a_delimiter ... ok
+test parse_reads_a_null_acl_as_the_servers_own_defaults ... ok
+test parse_reads_an_acl_that_exists_and_grants_nothing ... ok
+test parse_reads_an_unlimited_connection_limit_as_no_limit ... ok
+test parse_refuses_a_privilege_it_does_not_know ... ok
+test parse_refuses_output_with_no_databases_in_it ... ok
+test parse_refuses_the_same_privilege_for_one_grantee_twice ... ok
+test parse_refuses_two_rows_for_one_database ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_extensions.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_extensions-36c77524ed8a90ad)
+
+running 5 tests
+test parse_reads_a_database_with_no_extensions ... ok
+test parse_orders_extensions_by_name ... ok
+test parse_reads_an_extension_with_its_version_and_schema ... ok
+test parse_refuses_the_same_extension_twice ... ok
+test parse_refuses_a_row_with_the_wrong_number_of_columns ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_file_settings.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_file_settings-3c445d9c46c72200)
+
+running 7 tests
+test a_credential_bearing_file_line_is_redacted ... ok
+test new_refuses_one_seqno_reported_twice ... ok
+test an_unparseable_line_renders_a_null_name ... ok
+test parse_orders_lines_by_the_sequence_the_server_read_them ... ok
+test parse_reads_a_line_and_where_it_came_from ... ok
+test parse_reads_a_line_that_will_not_apply_with_its_error ... ok
+test parse_reads_an_unparseable_line_with_no_name_and_its_error ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_hba_rules.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_hba_rules-3050cc1e796bc82d)
+
+running 5 tests
+test parse_keeps_an_array_column_as_the_server_rendered_it ... ok
+test parse_reads_the_eleven_column_shape ... ok
+test a_cluster_id_reports_its_major_version ... ok
+test parse_reads_the_nine_column_shape ... ok
+test parse_refuses_a_row_that_is_neither_shape ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_memberships.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_memberships-e53bd977a47715fb)
+
+running 7 tests
+test parse_gathers_every_role_one_member_holds ... ok
+test parse_reads_a_cluster_with_no_memberships_at_all ... ok
+test parse_reads_a_membership_granted_with_the_admin_option ... ok
+test parse_reads_who_is_a_member_of_what ... ok
+test parse_reads_a_membership_granted_without_the_admin_option ... ok
+test parse_refuses_a_row_with_the_wrong_number_of_columns ... ok
+test parse_refuses_the_same_membership_twice ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_postmaster.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_postmaster-d0993eb51d852730)
+
+running 7 tests
+test parse_reads_a_standby_refusing_connections ... ok
+test parse_reads_a_padded_status_line ... ok
+test parse_reads_the_running_port ... ok
+test parse_reads_an_empty_socket_directory_as_none ... ok
+test parse_reads_the_socket_directory_and_listen_addresses ... ok
+test parse_refuses_a_file_with_no_port ... ok
+test parse_refuses_a_port_that_is_not_a_number ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_read_lens.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_read_lens-7ee7270e41b22426)
+
+running 6 tests
+test a_non_superuser_with_the_grant_sees_every_setting ... ok
+test parse_reads_the_role_and_database_that_answered ... ok
+test a_non_superuser_without_the_grant_loses_the_superuser_only_settings ... ok
+test parse_refuses_an_empty_result ... ok
+test parse_refuses_more_than_one_row ... ok
+test a_superuser_sees_every_setting ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_replication_slots.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_replication_slots-e7c485c805f4ecdd)
+
+running 5 tests
+test new_refuses_one_slot_reported_twice ... ok
+test parse_reads_a_physical_slot_with_no_plugin_or_database ... ok
+test parse_reads_a_cluster_with_no_slots_as_empty ... ok
+test parse_reads_a_logical_slot_with_its_plugin_and_database ... ok
+test parse_reads_the_five_column_shape_without_two_phase ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_role_settings.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_role_settings-6937a191011f7a6e)
+
+running 7 tests
+test new_refuses_one_override_named_twice_for_the_same_scope ... ok
+test parse_reads_a_cluster_with_no_overrides_as_an_empty_set ... ok
+test parse_reads_a_database_scoped_override ... ok
+test parse_orders_overrides_by_scope_then_name ... ok
+test parse_reads_an_override_scoped_to_a_role_in_a_database ... ok
+test parse_reads_a_role_scoped_override ... ok
+test parse_splits_a_value_on_the_first_equals_only ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/postgresql_roles.rs (/tmp/target/llvm-cov-target/debug/deps/postgresql_roles-8d1c200450ddc286)
+
+running 25 tests
+test a_password_digest_tells_two_roles_apart ... ok
+test parse_reads_a_connection_limit_the_operator_set ... ok
+test parse_reads_a_password_digest ... ok
+test parse_reads_a_role_with_no_password ... ok
+test parse_reads_a_role_that_holds_nothing ... ok
+test parse_reads_an_empty_expiry_as_no_expiry ... ok
+test parse_orders_roles_by_name ... ok
+test a_rotated_password_gives_a_different_digest ... ok
+test parse_reads_an_expiry_the_operator_set ... ok
+test parse_reads_an_unprivileged_superuser_apart_from_the_owner ... ok
+test parse_reads_an_unlimited_connection_limit_as_no_limit ... ok
+test parse_reads_every_attribute_of_a_role ... ok
+test an_untouched_password_gives_the_same_digest ... ok
+test parse_reads_how_a_password_is_stored ... ok
+test parse_reads_no_digest_for_a_role_with_no_password ... ok
+test parse_reads_no_digest_for_a_scheme_it_does_not_recognise ... ok
+test parse_refuses_a_digest_in_the_other_case ... ok
+test parse_reads_no_digest_for_an_md5_password ... ok
+test parse_refuses_a_digest_its_own_query_cannot_produce ... ok
+test parse_refuses_a_digest_that_is_not_hexadecimal ... ok
+test parse_refuses_a_password_method_its_own_query_cannot_produce ... ok
+test parse_refuses_a_row_with_the_wrong_number_of_columns ... ok
+test parse_refuses_a_flag_that_is_not_a_boolean ... ok
+test parse_refuses_two_rows_for_one_role ... ok
+test parse_refuses_output_with_no_roles_in_it ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/preflight.rs (/tmp/target/llvm-cov-target/debug/deps/preflight-f027a59a59192edc)
+
+running 7 tests
+test a_document_that_would_crowd_a_tiny_disk_warns_whatever_the_host_actually_has ... ok
+test a_document_that_fits_easily_draws_no_warning ... ok
+test free_space_is_absent_when_df_named_no_filesystem ... ok
+test a_filesystem_that_reports_no_inode_count_does_not_break_the_sum ... ok
+test free_space_is_read_from_the_available_column ... ok
+test nothing_is_claimed_when_the_free_space_is_unknown ... ok
+test a_document_that_would_crowd_the_disk_says_so_in_numbers ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/proc_net.rs (/tmp/target/llvm-cov-target/debug/deps/proc_net-12b4dadfed5b4fac)
+
+running 26 tests
+test a_bound_datagram_socket_is_a_listener_without_the_accept_flag ... ok
+test a_connected_unix_socket_is_not_a_listener ... ok
+test a_datagram_socket_is_recorded_as_unconnected_rather_than_listening ... ok
+test a_named_listener_beside_an_unbound_socket_is_still_reported ... ok
+test a_malformed_row_fails_even_when_its_state_would_have_skipped_it ... ok
+test a_row_with_too_few_columns_is_refused_rather_than_skipped ... ok
+test a_unix_path_containing_a_space_survives_the_column_split ... ok
+test a_row_whose_inode_is_not_a_number_is_refused ... ok
+test a_unix_row_whose_flags_are_not_hexadecimal_are_refused ... ok
+test a_unix_socket_type_the_family_does_not_have_is_refused ... ok
+test a_row_carries_the_inode_that_names_its_holding_process ... ok
+test a_unix_row_with_too_few_columns_is_refused ... ok
+test a_unix_stream_listener_and_a_sequenced_packet_listener_keep_their_own_kinds ... ok
+test an_abstract_socket_keeps_the_marker_that_says_it_is_in_no_filesystem ... ok
+test a_unix_row_whose_inode_is_not_a_number_is_refused ... ok
+test an_address_column_with_no_port_is_refused ... ok
+test an_ipv6_address_is_decoded_word_by_word_not_byte_by_byte ... ok
+test an_ipv4_address_that_is_not_hexadecimal_is_refused ... ok
+test an_ipv4_wildcard_is_the_address_that_says_reachable_from_anywhere ... ok
+test an_ipv4_address_is_decoded_from_its_little_endian_hexadecimal ... ok
+test an_ipv6_address_that_is_not_hexadecimal_is_refused ... ok
+test an_ipv6_row_read_as_ipv4_is_refused_rather_than_truncated ... ok
+test an_unbound_unix_socket_is_skipped_rather_than_failing_the_facet ... ok
+test an_ipv6_address_is_written_in_its_canonical_compressed_form ... ok
+test an_ipv6_address_of_the_wrong_width_is_refused ... ok
+test only_listening_sockets_are_taken_from_the_tcp_table ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/processes.rs (/tmp/target/llvm-cov-target/debug/deps/processes-806099c23415f7ca)
+
+running 20 tests
+test a_process_that_left_is_told_from_a_read_that_failed ... ok
+test presence_is_undetermined_when_procfs_is_not_mounted ... ok
+test presence_is_present_when_procfs_is_mounted ... ok
+test read_drops_exactly_one_trailing_nul ... ok
+test read_keeps_a_genuine_empty_final_argument ... ok
+test read_fails_when_a_status_file_is_there_and_is_not_what_rastro_expects ... ok
+test read_reads_the_unified_cgroup_line ... ok
+test read_reads_a_kernel_thread_as_having_no_command_line ... ok
+test read_ignores_everything_under_proc_that_is_not_a_process ... ok
+test no_process_reaches_the_diffable_view ... ok
+test read_reads_a_process_from_its_status_file ... ok
+test read_reports_no_control_group_on_a_host_with_a_v1_hierarchy ... ok
+test status_reads_a_field_with_tabs_in_its_value ... ok
+test the_collector_reports_its_second_version ... ok
+test read_skips_a_process_that_left_before_rastro_reached_it ... ok
+test read_splits_a_command_line_on_its_nul_separators ... ok
+test read_sorts_the_table_rather_than_leaving_it_in_pid_order ... ok
+test read_takes_the_real_id_rather_than_the_effective_one ... ok
+test status_fails_loudly_for_a_field_the_kernel_did_not_write ... ok
+test the_complete_view_keeps_every_field ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/progress.rs (/tmp/target/llvm-cov-target/debug/deps/progress-eb9a83feed89839e)
+
+running 10 tests
+test a_sink_that_is_not_drawing_writes_nothing_when_cleared ... ok
+test a_report_that_cannot_be_written_fails_rather_than_going_quiet ... ok
+test peak_memory_is_read_from_the_high_water_mark ... ok
+test peak_memory_is_reported_at_the_scale_a_human_reads ... ok
+test a_walk_progress_that_wants_nothing_reported_costs_nothing ... ok
+test a_kernel_that_does_not_report_a_high_water_mark_reports_no_peak ... ok
+test the_report_carries_the_walk_count_and_where_the_document_went ... ok
+test the_report_is_sorted_by_name_rather_than_by_when_a_collector_finished ... ok
+test the_report_leads_with_a_line_naming_itself ... ok
+test the_report_names_every_collector_with_its_outcome ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/purity.rs (/tmp/target/llvm-cov-target/debug/deps/purity-764247b1f52f11c6)
+
+running 9 tests
+test the_command_line_knows_nothing_about_collectors ... ok
+test the_config_is_a_plain_settings_type ... ok
+test the_config_knows_nothing_about_what_it_configures ... ok
+test the_nginx_collector_never_asks_nginx_to_load_its_configuration ... ok
+test a_collectors_leaf_values_know_nothing_about_the_shape_they_compose_into ... ok
+test a_collectors_domain_knows_nothing_about_the_host_interface_it_came_from ... ok
+test collectors_know_nothing_about_the_command_line ... ok
+test no_collector_runs_a_program_that_makes_the_kernel_load_a_module ... ok
+test collectors_reach_the_document_model_only_through_the_port ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+     Running tests/repositories.rs (/tmp/target/llvm-cov-target/debug/deps/repositories-c29dafff2cde1cf4)
+
+running 38 tests
+test apk_path_accessors_keep_the_named_file ... ok
+test apk_read_names_the_file_it_could_not_open ... ok
+test apk_records_a_commented_repository_as_disabled ... ok
+test apk_reads_a_tagged_repository ... ok
+test apk_default_points_at_the_system_file ... ok
+test apk_refuses_a_tag_with_no_uri_after_it ... ok
+test apk_reads_a_bare_uri_as_a_repository ... ok
+test apk_read_translates_a_file_on_disk ... ok
+test apk_skips_blank_lines_and_comment_markers_on_their_own ... ok
+test collect_reports_a_key_per_system_even_with_nothing_found ... ok
+test deb822_expands_one_paragraph_into_the_repositories_it_describes ... ok
+test deb822_folds_a_continuation_line_into_its_field ... ok
+test deb822_ignores_comment_lines ... ok
+test deb822_keeps_the_signing_key_as_a_setting ... ok
+test deb822_reads_a_disabled_paragraph ... ok
+test collect_reads_the_system_it_was_given ... ok
+test deb822_reads_several_paragraphs ... ok
+test deb822_refuses_a_paragraph_with_no_types ... ok
+test one_line_keeps_an_option_apt_knows_as_a_setting_rather_than_a_field ... ok
+test one_line_accepts_brackets_spaced_away_from_their_options ... ok
+test detect_finds_nothing_when_neither_system_is_configured ... ok
+test one_line_reads_a_flat_repository_with_no_components ... ok
+test one_line_reads_every_part_of_an_entry ... ok
+test one_line_refuses_an_unknown_archive_type ... ok
+test one_line_skips_a_comment_that_is_only_prose ... ok
+test one_line_reads_an_option_list_containing_spaces ... ok
+test presence_is_always_present_because_the_subject_is_what_rastro_can_read ... ok
+test one_line_records_a_commented_out_entry_as_disabled ... ok
+test one_line_refuses_an_option_list_that_never_closes ... ok
+test read_names_the_file_a_failure_came_from ... ok
+test read_ignores_a_file_apt_would_ignore ... ok
+test read_sorts_the_repositories_so_the_directory_order_never_reaches_the_facet ... ok
+test the_inventory_refuses_a_system_reported_twice ... ok
+test read_takes_both_formats_from_one_configuration_tree ... ok
+test the_collector_claims_nothing_for_apk ... ok
+test the_collector_claims_apts_fetched_indexes ... ok
+test read_keeps_the_same_repository_declared_twice ... ok
+test the_inventory_names_every_system_rastro_can_read ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/selection.rs (/tmp/target/llvm-cov-target/debug/deps/selection-fdd993425d0f150f)
+
+running 11 tests
+test a_default_config_excludes_nothing_and_records_that_it_came_from_nowhere ... ok
+test a_walk_table_that_could_not_be_resolved_is_null_rather_than_half_a_table ... ok
+test a_selection_names_its_collectors_when_a_test_prints_it ... ok
+test a_default_config_leaves_the_walk_total ... ok
+test selected_refuses_a_collector_name_that_does_not_exist ... ok
+test a_config_naming_something_that_is_not_a_tree_fails_only_the_walk ... ok
+test an_excluded_collector_does_not_run ... ok
+test selected_refuses_to_exclude_a_metadata_collector ... ok
+test every_collector_runs_when_nothing_is_excluded ... ok
+test selected_reports_what_it_excluded_so_the_operator_can_be_told ... ok
+test the_host_collector_cannot_be_excluded_either ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/sockets.rs (/tmp/target/llvm-cov-target/debug/deps/sockets-d20c59a268a151cf)
+
+running 16 tests
+test a_missing_address_family_is_state_rather_than_a_failure ... ok
+test a_table_that_exists_but_cannot_be_read_fails_rather_than_reporting_nothing ... ok
+test a_process_tree_rastro_cannot_read_leaves_the_sockets_unattributed ... ok
+test a_socket_is_joined_to_the_process_holding_it ... ok
+test a_unix_socket_renders_a_null_port ... ok
+test a_process_id_is_volatile_and_its_name_is_not ... ok
+test collect_fails_rather_than_reporting_an_empty_table_without_a_procfs ... ok
+test a_socket_no_visible_process_holds_is_reported_without_one ... ok
+test presence_is_undetermined_without_a_procfs_rather_than_absent ... ok
+test an_address_renders_the_same_keys_for_either_family ... ok
+test a_socket_held_by_more_than_one_process_names_both ... ok
+test an_abstract_unix_socket_is_kept ... ok
+test a_wildcard_is_told_apart_from_a_loopback_binding ... ok
+test presence_is_present_when_the_tables_are_there ... ok
+test both_families_land_in_one_table ... ok
+test the_sockets_are_sorted ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/ssh_access.rs (/tmp/target/llvm-cov-target/debug/deps/ssh_access-6c6c64c4db8118a8)
+
+running 30 tests
+test collect_fails_rather_than_reporting_no_access_without_an_sshd ... ok
+test a_failure_does_not_quote_a_whole_key_body ... ok
+test a_restricted_key_says_so_without_the_reader_counting_a_list ... ok
+test keys_does_not_split_a_quoted_option_on_its_commas ... ok
+test keys_keeps_a_comment_with_spaces_in_it_whole ... ok
+test keys_from_two_files_are_gathered_under_one_account_and_sorted ... ok
+test keys_parses_a_line_with_no_comment ... ok
+test keys_parses_a_line_with_no_options ... ok
+test keys_parses_the_options_at_the_front_of_a_line ... ok
+test keys_refuses_a_line_with_no_key_after_its_type ... ok
+test keys_skips_comments_and_blank_lines ... ok
+test presence_is_absent_without_an_sshd_rather_than_undetermined ... ok
+test read_accounts_fails_when_a_configured_key_path_is_a_directory ... ok
+test read_accounts_finds_keys_across_every_pattern ... ok
+test read_accounts_ignores_a_path_whose_parent_is_not_a_directory ... ok
+test read_accounts_reports_only_accounts_that_have_a_key_file ... ok
+test read_accounts_names_the_passwd_file_it_could_not_read ... ok
+test resolve_expands_the_home_token ... ok
+test resolve_puts_a_relative_pattern_under_the_home_directory ... ok
+test sshd_reads_every_key_file_pattern_in_the_order_it_searches_them ... ok
+test resolve_uses_an_absolute_pattern_as_it_stands ... ok
+test read_accounts_names_the_key_file_that_failed_to_parse ... ok
+test read_accounts_refuses_a_passwd_line_with_the_wrong_number_of_columns ... ok
+test read_accounts_skips_passwd_entries_missing_an_account_or_home ... ok
+test sshd_reads_the_settings_that_decide_whether_a_key_matters ... ok
+test sshd_keeps_permit_root_login_as_a_word_rather_than_a_boolean ... ok
+test sshd_refuses_a_dump_missing_a_setting ... ok
+test the_key_body_is_recorded_and_is_not_marked_sensitive ... ok
+test the_facet_holds_the_server_settings_beside_the_accounts ... ok
+test read_translates_the_server_and_account_files_together ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sysctl.rs (/tmp/target/llvm-cov-target/debug/deps/sysctl-531cc2adc85552ac)
+
+running 30 tests
+test an_ordinary_parameter_is_neither_volatile_nor_sensitive ... ok
+test classify_records_a_readable_entry_the_kernel_declined_as_withheld ... ok
+test classify_refuses_a_value_that_is_not_valid_utf8 ... ok
+test a_self_changing_parameter_is_marked_volatile ... ok
+test a_read_only_parameter_is_not_treated_as_a_counter ... ok
+test classify_skips_an_entry_nobody_is_allowed_to_read ... ok
+test of_joins_the_segments_with_dots ... ok
+test of_refuses_no_segments_at_all ... ok
+test a_per_interface_secret_is_marked_sensitive_by_its_last_segment ... ok
+test collect_fails_loudly_when_the_tree_cannot_be_listed ... ok
+test of_swaps_every_dot_in_a_segment_not_only_the_first ... ok
+test of_refuses_an_empty_segment ... ok
+test collect_reports_every_parameter_in_the_tree ... ok
+test of_swaps_a_dot_inside_a_segment_for_a_slash ... ok
+test a_counter_the_kernel_maintains_is_volatile_even_where_it_reads_zero ... ok
+test presence_is_absent_when_procfs_is_mounted_without_a_sysctl_tree ... ok
+test presence_is_present_when_the_tree_is_there ... ok
+test presence_is_undetermined_when_procfs_is_not_mounted_at_all ... ok
+test read_ignores_an_entry_that_is_neither_a_directory_nor_a_file ... ok
+test read_names_a_parameter_after_the_path_it_was_published_under ... ok
+test read_keeps_an_empty_value_apart_from_a_withheld_one ... ok
+test reported_drops_only_the_last_newline ... ok
+test read_omits_the_write_only_triggers_from_the_facet ... ok
+test reported_drops_the_newline_the_kernel_ends_a_value_with ... ok
+test read_walks_the_whole_tree_however_deep_it_goes ... ok
+test reported_keeps_a_value_that_is_only_a_newline_as_empty_text ... ok
+test read_orders_parameters_by_name_whatever_order_the_tree_yields ... ok
+test the_fast_open_key_is_marked_sensitive ... ok
+test reported_keeps_the_tabs_a_value_is_separated_by ... ok
+test the_uuid_parameter_is_volatile_because_it_differs_between_two_reads ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/systemctl_show.rs (/tmp/target/llvm-cov-target/debug/deps/systemctl_show-4ffaa9479b5a8d2e)
+
+running 10 tests
+test parse_finds_every_unit_that_was_shown ... ok
+test an_exec_start_renders_as_its_executable_and_its_argument_vector ... ok
+test parse_gives_a_unit_with_nothing_to_start_no_exec_start ... ok
+test parse_keeps_an_executable_systemd_will_resolve_itself ... ok
+test parse_keeps_every_exec_start_of_a_unit_that_has_several ... ok
+test parse_reads_the_command_a_unit_starts ... ok
+test parse_reads_nothing_from_nothing ... ok
+test parse_refuses_a_group_that_names_no_unit ... ok
+test parse_records_the_argument_vector_as_systemd_rendered_it ... ok
+test parse_refuses_the_same_unit_twice ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/test_support.rs (/tmp/target/llvm-cov-target/debug/deps/test_support-3e3b7f0c5f374ae8)
+
+running 5 tests
+test field_reads_the_named_entry_from_an_object ... ok
+test items_of_reads_a_list_observation ... ok
+test keys_of_preserves_the_objects_sorted_keys ... ok
+test write_creates_missing_parent_directories ... ok
+test scratch_tree_recreates_an_empty_root_with_its_subdirectories ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/time.rs (/tmp/target/llvm-cov-target/debug/deps/time-65408b1d004abca3)
+
+running 15 tests
+test collect_reports_the_facet_even_on_a_host_with_none_of_the_files ... ok
+test read_prefers_the_symlink_over_the_debian_text_file_when_they_disagree ... ok
+test presence_is_always_present_because_every_host_keeps_time_somehow ... ok
+test read_falls_back_to_the_text_file_when_there_is_no_symlink ... ok
+test read_reads_a_hardware_clock_running_on_local_time ... ok
+test read_reports_no_synchronisation_when_the_stamp_is_absent ... ok
+test read_reports_no_timezone_when_the_host_names_none ... ok
+test read_reads_a_hardware_clock_running_on_utc ... ok
+test read_treats_an_absent_adjtime_as_a_clock_on_utc ... ok
+test reading_the_files_starts_nothing ... ok
+test the_collector_reports_its_second_version ... ok
+test losing_synchronisation_stays_visible_in_a_diff ... ok
+test read_takes_the_timezone_from_the_localtime_symlink ... ok
+test every_value_survives_the_diffable_view ... ok
+test read_reports_synchronisation_from_the_stamp_file ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/timers.rs (/tmp/target/llvm-cov-target/debug/deps/timers-1413cb03a493abfd)
+
+running 16 tests
+test an_empty_timer_list_is_a_present_facet_rather_than_an_absent_one ... ok
+test collect_fails_rather_than_reporting_an_empty_table_without_systemd ... ok
+test an_absent_clock_is_volatile_too ... ok
+test parse_accepts_a_timer_that_starts_nothing_systemd_can_name ... ok
+test parse_keys_timers_by_name_rather_than_keeping_the_order_systemd_used ... ok
+test parse_reads_a_timer_that_activates_null ... ok
+test parse_reads_a_timer_with_no_activates_field_at_all ... ok
+test parse_reads_the_clocks_as_systemd_counts_them ... ok
+test parse_reads_the_unit_a_timer_starts ... ok
+test parse_refuses_a_timer_reported_twice ... ok
+test parse_records_a_timer_that_has_never_fired_as_having_no_last_trigger ... ok
+test parse_refuses_output_that_is_not_json ... ok
+test presence_is_absent_when_the_host_does_not_run_systemd ... ok
+test presence_is_present_when_systemd_is_on_the_host ... ok
+test the_diffable_view_keeps_what_a_timer_is_and_drops_when_it_fires ... ok
+test the_complete_view_keeps_the_schedule ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tool_as_user.rs (/tmp/target/llvm-cov-target/debug/deps/tool_as_user-2f24019a7cf2b39f)
+
+running 12 tests
+test arguments_for_passes_the_tools_arguments_through_untouched ... ok
+test located_succeeds_when_the_host_has_both_halves ... ok
+test new_refuses_a_name_no_account_could_have ... ok
+test located_fails_rather_than_reporting_a_service_absent ... ok
+test new_accepts_an_ordinary_user_name ... ok
+test new_refuses_a_name_that_sudo_would_read_as_a_numeric_uid ... ok
+test program_and_user_name_what_would_run ... ok
+test new_refuses_a_name_that_sudo_would_read_as_an_option ... ok
+test using_builds_the_argument_vector_sudo_receives ... ok
+test run_names_the_tool_and_user_when_the_delegator_fails ... ok
+test run_returns_the_delegated_tools_stdout ... ok
+test within_changes_the_bounds_of_the_delegated_run ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/units.rs (/tmp/target/llvm-cov-target/debug/deps/units-818b3a7d54005c71)
+
+running 22 tests
+test a_scope_that_is_not_a_numbered_session_is_kept ... ok
+test a_unit_renders_both_sides_with_a_null_for_the_missing_one ... ok
+test a_unit_whose_name_embeds_a_uid_is_not_treated_as_churn ... ok
+test a_login_sessions_scope_is_marked_volatile ... ok
+test collect_fails_rather_than_reporting_an_empty_registry_without_systemd ... ok
+test join_gives_a_not_found_unit_the_description_systemd_reports_for_it ... ok
+test join_gives_a_unit_that_starts_nothing_an_empty_command_list ... ok
+test join_keeps_a_unit_that_is_loaded_with_no_file_behind_it ... ok
+test join_keeps_a_unit_that_has_a_file_but_is_not_loaded ... ok
+test join_leaves_a_unit_systemd_did_not_resolve_starting_nothing ... ok
+test join_leaves_systemd_escaping_in_a_unit_name_alone ... ok
+test join_reads_the_runtime_state_of_a_loaded_unit ... ok
+test join_orders_units_by_name ... ok
+test join_reads_the_enablement_of_an_installed_unit ... ok
+test join_refuses_output_that_is_not_json ... ok
+test join_refuses_a_unit_reported_twice ... ok
+test join_records_what_a_unit_starts ... ok
+test join_records_an_absent_preset_as_absent ... ok
+test presence_is_present_when_systemd_is_on_the_host ... ok
+test join_sees_both_sides_of_a_unit_that_has_them ... ok
+test presence_is_absent_when_the_host_does_not_run_systemd ... ok
+test what_a_unit_starts_survives_into_the_diffable_view ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/target/llvm-cov-target/debug/deps/rastro_collector-129599f6a32aa240)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fingerprint_host.rs (/tmp/target/llvm-cov-target/debug/deps/fingerprint_host-5b350e3ae75d7daf)
+
+running 15 tests
+test a_present_collector_is_asked_to_collect_once ... ok
+test an_absent_collector_is_never_asked_to_collect ... ok
+test an_absent_collector_becomes_an_absent_facet ... ok
+test a_present_collector_that_fails_becomes_an_error_facet_carrying_the_message ... ok
+test a_present_collector_that_succeeds_becomes_an_ok_facet ... ok
+test an_absent_collector_is_still_reported_as_finished ... ok
+test an_undetermined_presence_is_never_asked_to_collect ... ok
+test an_undetermined_presence_becomes_an_error_facet_carrying_the_reason ... ok
+test two_collectors_claiming_the_same_facet_name_fail_the_run ... ok
+test run_orders_the_facets_by_name ... ok
+test an_unreported_run_is_what_run_has_always_been ... ok
+test a_concurrent_run_still_sorts_the_document_by_facet_name ... ok
+test a_concurrent_run_reports_every_collector_exactly_once ... ok
+test shared_collectors_run_at_the_same_time ... ok
+test an_exclusive_collector_never_overlaps_with_anything ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/one_dependency_is_enough.rs (/tmp/target/llvm-cov-target/debug/deps/one_dependency_is_enough-19ec2cc3b49167b7)
+
+running 1 test
+test a_collector_can_be_written_against_this_crate_alone ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/purity.rs (/tmp/target/llvm-cov-target/debug/deps/purity-048b87a98f984c9e)
+
+running 1 test
+test nothing_here_reads_the_host ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/purity_support.rs (/tmp/target/llvm-cov-target/debug/deps/purity_support-691127c683773ffe)
+
+running 2 tests
+test code_without_line_comments_keeps_code_and_drops_comment_lines ... ok
+test sources_in_finds_only_rust_files ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/value_objects.rs (/tmp/target/llvm-cov-target/debug/deps/value_objects-3df97d9554191874)
+
+running 6 tests
+test process_name_preserves_the_kernel_text ... ok
+test process_name_rejects_empty_text ... ok
+test setting_value_rejects_empty_text_with_its_kind ... ok
+test setting_value_renders_as_text ... ok
+test process_name_renders_as_text ... ok
+test setting_value_preserves_the_reported_text ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/target/llvm-cov-target/debug/deps/rastro_fingerprint-0d6138549f135d20)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/fingerprint.rs (/tmp/target/llvm-cov-target/debug/deps/fingerprint-1ceb373d51f5ff97)
+
+running 7 tests
+test facet_name_accepts_lowercase_digits_hyphen_and_underscore ... ok
+test facet_name_rejects_an_empty_value ... ok
+test facet_name_rejects_a_path_traversal_attempt ... ok
+test facets_in_selects_only_the_requested_category ... ok
+test from_facets_rejects_two_facets_sharing_a_name ... ok
+test facet_name_rejects_uppercase_letters ... ok
+test from_facets_orders_facets_by_name ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/identity.rs (/tmp/target/llvm-cov-target/debug/deps/identity-884da4ab90e64552)
+
+running 6 tests
+test collector_id_rejects_uppercase_letters ... ok
+test collector_id_accepts_lowercase_digits_hyphen_and_underscore ... ok
+test collector_version_rejects_a_value_containing_whitespace ... ok
+test collector_id_rejects_an_empty_value ... ok
+test collector_version_accepts_the_shapes_collector_authors_actually_use ... ok
+test collector_version_rejects_an_empty_value ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/json.rs (/tmp/target/llvm-cov-target/debug/deps/json-2fbd7e98867dbb20)
+
+running 16 tests
+test a_collector_is_identified_by_id_then_version ... ok
+test a_document_leads_with_how_to_read_it_then_the_run_then_the_state ... ok
+test observed_data_has_its_keys_sorted_whatever_order_the_collector_used ... ok
+test the_complete_view_renders_volatile_values ... ok
+test a_facet_leads_with_the_name_a_reader_scans_for ... ok
+test to_canonical_json_ends_with_a_newline ... ok
+test to_canonical_json_omits_data_for_a_facet_whose_payload_is_wholly_volatile ... ok
+test to_canonical_json_records_an_absent_facet_without_a_data_payload ... ok
+test to_canonical_json_renders_this_exact_document ... ok
+test to_canonical_json_orders_facets_by_name ... ok
+test to_canonical_json_renders_this_exact_document_in_the_complete_view ... ok
+test to_canonical_json_separates_metadata_facets_from_state_facets ... ok
+test the_diffable_view_is_byte_identical_across_differing_volatile_values ... ok
+test to_canonical_json_reports_the_reason_a_facet_failed ... ok
+test to_canonical_json_writer_reports_a_write_that_failed ... ok
+test to_canonical_json_writer_and_to_canonical_json_agree_byte_for_byte ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/observation.rs (/tmp/target/llvm-cov-target/debug/deps/observation-6646cd38978ac7a6)
+
+running 13 tests
+test a_nested_observation_keeps_its_own_annotation ... ok
+test a_redacted_view_does_not_carry_a_sensitive_value_as_it_stands ... ok
+test a_new_observation_is_stable_and_public ... ok
+test object_orders_its_keys_regardless_of_insertion_order ... ok
+test sensitive_annotates_the_observation_without_changing_its_content ... ok
+test a_raw_view_carries_a_sensitive_value_as_it_stands ... ok
+test the_complete_view_keeps_a_volatile_value ... ok
+test the_diffable_view_drops_a_volatile_value ... ok
+test the_diffable_view_drops_volatile_list_items ... ok
+test volatile_annotates_the_observation_without_changing_its_content ... ok
+test the_diffable_view_drops_a_whole_volatile_subtree ... ok
+test the_diffable_view_drops_a_wholly_volatile_observation ... ok
+test an_observation_can_be_both_volatile_and_sensitive ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/presentation.rs (/tmp/target/llvm-cov-target/debug/deps/presentation-467b4351bb0115f6)
+
+running 3 tests
+test a_view_alone_means_the_safe_disclosure ... ok
+test raw_opts_out_of_redaction_without_changing_the_view ... ok
+test the_named_constructors_carry_their_view_and_redact ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/purity.rs (/tmp/target/llvm-cov-target/debug/deps/purity-7717be83cfa7d948)
+
+running 4 tests
+test module_owns_matches_a_module_file_or_directory ... ok
+test referenced_modules_ignore_comments_and_self_references ... ok
+test the_modules_of_this_crate_form_no_cycle ... ok
+test nothing_here_reads_the_host ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/redaction.rs (/tmp/target/llvm-cov-target/debug/deps/redaction-e8171c2557a8add1)
+
+running 7 tests
+test a_null_is_not_redacted_because_it_withholds_nothing ... ok
+test a_scalar_that_changed_type_does_not_redact_to_the_same_stand_in ... ok
+test a_redaction_names_the_substitution_and_the_recipe ... ok
+test a_redaction_is_xxh3_over_the_lowercase_sha256_hex ... ok
+test redaction_covers_everything_under_a_sensitive_subtree ... ok
+test the_diffable_view_redacts_too_because_sensitivity_is_not_a_view ... ok
+test an_integer_and_the_text_of_that_integer_redact_differently ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

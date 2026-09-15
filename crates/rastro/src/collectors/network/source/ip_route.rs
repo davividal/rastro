@@ -4,9 +4,10 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
+use crate::collectors::inet::IpAddress;
 use crate::collectors::network::model::Route;
 use crate::collectors::network::value_objects::{
-    AddressScope, InterfaceName, IpAddress, RouteDestination, RoutePreference, RouteProtocol,
+    AddressScope, InterfaceName, RouteDestination, RoutePreference, RouteProtocol,
 };
 
 /// `ip`'s spelling of a route, kept apart from rastro's meaning.
