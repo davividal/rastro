@@ -598,8 +598,8 @@ fn one_container(names: &str, extra: &str) -> String {
     )
 }
 
-/// The facet a service holding these containers produces.
-fn podman_holding(name: &str, containers: &str) -> Observation {
+/// A collector reading one service that holds these containers.
+fn reading_containers(name: &str, containers: &str) -> ContainersCollector {
     let (tool, _) = fake_podman_holding(name, INFO, containers);
 
     ContainersCollector::reading(vec![EngineSource::Podman(Podman::using(
@@ -607,22 +607,21 @@ fn podman_holding(name: &str, containers: &str) -> Observation {
         PodmanLayout::default(),
         Some(SOCKET.to_owned()),
     ))])
-    .collect()
-    .expect("the fixtures are well formed")
+}
+
+/// The facet a service holding these containers produces.
+fn podman_holding(name: &str, containers: &str) -> Observation {
+    reading_containers(name, containers)
+        .collect()
+        .expect("the fixtures are well formed")
 }
 
 /// The failure a service holding these containers produces.
 fn refusal(name: &str, containers: &str) -> String {
-    let (tool, _) = fake_podman_holding(name, INFO, containers);
-
-    ContainersCollector::reading(vec![EngineSource::Podman(Podman::using(
-        tool,
-        PodmanLayout::default(),
-        Some(SOCKET.to_owned()),
-    ))])
-    .collect()
-    .expect_err("a misread list is a failure, not a document")
-    .to_string()
+    reading_containers(name, containers)
+        .collect()
+        .expect_err("a misread list is a failure, not a document")
+        .to_string()
 }
 
 #[test]

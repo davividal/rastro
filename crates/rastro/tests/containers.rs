@@ -2456,3 +2456,132 @@ fn a_network_the_daemon_reports_twice_fails_the_facet() {
         "the failure should name the network: {failure}"
     );
 }
+
+#[test]
+fn a_container_name_holding_whitespace_fails_rather_than_being_keyed_under_half_of_it() {
+    // Arrange: **no engine accepts a name with a space in it**, so one in the answer means
+    // the answer was split in the wrong place, and the entry would be keyed under half of
+    // somebody else's field.
+    let named_with_a_space = INSPECT_WEB.replace(r#""Name": "/web""#, r#""Name": "/web server""#);
+    let observed = docker_facet(
+        "spaced-name",
+        holding(&[(WEB_ID, Some(&named_with_a_space))], &[], &[], &[]),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert: the container it could not read is named, and none is invented.
+    assert!(keys_of(&containers_of(&observed, "docker")).is_empty());
+    let entries = items_of(&field(&server, "unreadable_containers"));
+    assert_eq!(text(&field(&entries[0], "id")), WEB_ID);
+    assert!(
+        text(&field(&entries[0], "reason")).contains("misread"),
+        "the entry should say the answer was misread: {:?}",
+        text(&field(&entries[0], "reason"))
+    );
+}
+
+#[test]
+fn a_listed_id_that_begins_with_a_dash_is_refused_before_it_reaches_the_client() {
+    // Arrange: **the one value in this collector that is not a literal its author wrote.**
+    // An id goes straight back to `docker inspect`, and one beginning with `-` arrives there
+    // as an option rather than as an id. The execution seam involves no shell, so this is not
+    // about quoting: it is about the tool's own argument parsing.
+    let failure = refusal("dash-id", holding(&[("-rf", None)], &[], &[], &[]));
+
+    // Act & Assert
+    assert!(
+        failure.contains("option rather than an id"),
+        "the failure should say what a leading dash would do: {failure}"
+    );
+}
+
+#[test]
+fn a_listed_id_that_is_not_an_identifier_is_refused() {
+    // Arrange: containerd lets whoever creates a container choose its id, so hex cannot be
+    // required, but a value holding a shell metacharacter is not an id under any engine.
+    let failure = refusal("odd-id", holding(&[("web;reboot", None)], &[], &[], &[]));
+
+    // Act & Assert
+    assert!(
+        failure.contains("is not an identifier"),
+        "the failure should say the id is not one: {failure}"
+    );
+}
+
+#[test]
+fn a_listed_image_id_that_is_not_a_digest_is_refused() {
+    // Arrange: a digest is the value this whole facet exists for — a tag moves, a digest says
+    // what is running — so a misread one is worse than a recorded failure, because it reads
+    // as a real address.
+    let failure = refusal(
+        "odd-digest",
+        holding(&[], &[("sha256:zzzz", None)], &[], &[]),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("not hexadecimal"),
+        "the failure should say the digest is not one: {failure}"
+    );
+}
+
+#[test]
+fn a_listed_image_id_whose_algorithm_is_not_a_word_is_refused() {
+    // Arrange: podman writes a digest as bare hex and docker as `sha256:` and the hex, so
+    // both spellings are accepted and neither is rewritten. What is not accepted is a
+    // separator with something that is not an algorithm in front of it.
+    let failure = refusal(
+        "odd-algorithm",
+        holding(&[], &[("sha 256:ab", None)], &[], &[]),
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("not a word"),
+        "the failure should say the algorithm is not one: {failure}"
+    );
+}
+
+#[test]
+fn a_port_the_engine_names_without_a_transport_is_refused_rather_than_assumed_to_be_tcp() {
+    // Arrange: docker always writes both halves, so a key with no transport means this is not
+    // the port table rastro thinks it is. Defaulting to tcp would record a udp port as a tcp
+    // one, which reads as true.
+    let without_transport = INSPECT_WEB.replace(r#""80/tcp":"#, r#""80":"#);
+    let observed = docker_facet(
+        "portless",
+        holding(&[(WEB_ID, Some(&without_transport))], &[], &[], &[]),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert: recorded as a container that could not be read, not as one with a
+    // guessed port.
+    let entries = items_of(&field(&server, "unreadable_containers"));
+    assert!(
+        text(&field(&entries[0], "reason")).contains("names no transport"),
+        "the entry should say the key named no transport: {:?}",
+        text(&field(&entries[0], "reason"))
+    );
+}
+
+#[test]
+fn one_flavour_detected_twice_for_one_account_fails_rather_than_one_replacing_the_other() {
+    // Arrange: **an account cannot own two engines of a flavour**, because they would share a
+    // store and a socket. Two means the detection found one engine twice, and keeping the
+    // second would silently discard whatever the first said.
+    let collector = ContainersCollector::reading(vec![
+        EngineSource::Docker(fake_docker("twice-a", DockerFixtures::answering())),
+        EngineSource::Docker(fake_docker("twice-b", DockerFixtures::answering())),
+    ]);
+
+    // Act
+    let failure = collector
+        .collect()
+        .expect_err("one account owns one engine of a flavour");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("was read twice"),
+        "the failure should name the engine detected twice: {failure}"
+    );
+}

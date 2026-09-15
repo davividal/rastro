@@ -68,10 +68,6 @@ impl ContainerInventory {
     pub fn engines(&self) -> &BTreeMap<EngineFlavour, BTreeMap<EngineInstance, ContainerEngine>> {
         &self.0
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 impl From<&ContainerInventory> for Observation {
