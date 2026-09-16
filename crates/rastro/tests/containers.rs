@@ -2610,3 +2610,26 @@ fn a_container_with_no_tmpfs_mount_is_read_rather_than_refused() {
     );
     assert!(items_of(&field(&server, "unreadable_containers")).is_empty());
 }
+
+#[test]
+fn every_logging_option_value_is_sensitive_because_some_drivers_take_a_credential() {
+    // Arrange: **docker's splunk driver requires `splunk-token`, and the gelf and fluentd
+    // drivers take an address that can carry one.** The option names are open-ended — a
+    // logging plugin defines its own — so a rule by key would have to enumerate every
+    // driver's options and would be wrong about the next one. The same reasoning the
+    // environment gets: the keys stay public, the values do not.
+    let options = field(
+        &field(&container_of("log-secrets", "limited"), "logging"),
+        "options",
+    );
+
+    // Act & Assert
+    assert!(!keys_of(&options).is_empty());
+    for option in keys_of(&options) {
+        assert_eq!(
+            field(&options, &option).sensitivity(),
+            Sensitivity::Sensitive,
+            "{option} should be sensitive whatever it is called"
+        );
+    }
+}

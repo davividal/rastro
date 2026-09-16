@@ -10,6 +10,13 @@ use rastro_collector::{NonEmptyText, Observation};
 /// fills its disk, and the difference between that and the same driver with `max-size` set is
 /// invisible unless both are recorded. A driver change is the other half: a container moved
 /// from `json-file` to `journald` still logs, and `docker logs` stops answering for it.
+///
+/// **Every option value is sensitive, on the same reasoning the environment gets.** docker's
+/// splunk driver requires a `splunk-token`, and the gelf and fluentd drivers take an address
+/// that can carry a credential in it. The names are open-ended, since a logging plugin
+/// defines its own, so a rule that judged by key would have to enumerate every driver's
+/// options and would be wrong about the next one. The keys stay public, which is what keeps
+/// this readable: a diff still says `max-size` changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerLogging {
     pub driver: NonEmptyText,
@@ -27,7 +34,7 @@ impl From<&ContainerLogging> for Observation {
                     logging
                         .options
                         .iter()
-                        .map(|(name, value)| (name.as_str(), Observation::text(value))),
+                        .map(|(name, value)| (name.as_str(), Observation::text(value).sensitive())),
                 ),
             ),
         ])
