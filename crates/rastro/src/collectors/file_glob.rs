@@ -31,9 +31,18 @@ const WILDCARDS: [char; 2] = ['*', '?'];
 const CLASS: char = '[';
 
 /// Whether this argument would be globbed rather than opened.
+///
+/// **A bracket expression counts, even though [`matching`] then refuses it.** `glob(3)` treats
+/// `[ab].env` as a pattern, so a caller that read it as a literal path would report a file
+/// that cannot exist as merely absent — the same silent wrongness as not expanding `*`, and
+/// harder to spot because the path looks ordinary. Answering `true` here routes it to the
+/// refusal instead, which is the honest answer.
 pub fn is_pattern(path: &Path) -> bool {
     path.components().any(|component| match component {
-        Component::Normal(name) => holds_wildcard(&name.to_string_lossy()),
+        Component::Normal(name) => {
+            let name = name.to_string_lossy();
+            holds_wildcard(&name) || name.contains(CLASS)
+        }
         _ => false,
     })
 }

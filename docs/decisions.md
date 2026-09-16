@@ -3201,6 +3201,15 @@ is then bounded twice, once on the size stat and once one byte past the limit, t
 because a file being appended to between the two is exactly what a bound is for. The same
 reasoning as the execution seam's output bound.
 
+**Reusing `file_glob` found a latent bug in it, and the review did not.** `is_pattern` tested
+only for `*` and `?`, so a declaration whose only metacharacter is a bracket — `[ab].env` —
+was read as a literal path and reported `absent`. That is the same silent wrongness as not
+expanding `*`, and harder to spot, because the path looks ordinary rather than obviously
+unexpanded. It answers `true` now, which routes the declaration to the refusal the module
+already had. nginx was wrong in the same way and is fixed by the same line, which the
+conformance test — rastro's include resolution against `nginx -T`'s own answer — confirms on
+both distributions.
+
 **Cost:** an environment file past a megabyte is now reported as an `error` rather than read.
 That is a misconfiguration by construction — systemd reads these itself at every service
 start — but it is a case rastro now declines rather than one it answers.

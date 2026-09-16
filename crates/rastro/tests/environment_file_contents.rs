@@ -559,3 +559,55 @@ fn a_wildcard_that_matches_nothing_is_still_one_entry() {
         "there is no file to name, and naming the pattern here would invent one"
     );
 }
+
+#[test]
+fn a_bracket_expression_is_refused_rather_than_matched_wrongly() {
+    // Arrange: `glob(3)` understands a bracket expression and rastro's expansion does not.
+    // Matching it wrongly would report a set of files the unit does not read, and nothing in
+    // the document would let a reader tell that from a set it does.
+    let directory = scratch("glob-bracket");
+    std::fs::write(directory.join("a.env"), "A=1\n").expect("writable");
+    let pattern = directory.join("[ab].env");
+    let declared = EnvironmentFile::new(pattern.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let sources = environment_file_contents::read(declared);
+
+    // Assert: recorded against the declaration as an error, so the refusal is visible rather
+    // than looking like an empty match.
+    assert_eq!(sources.len(), 1);
+    match &sources[0].reading {
+        EnvironmentReading::Unreadable(why) => assert!(
+            why.contains("bracket expression"),
+            "the reason should name what was refused, got: {why}"
+        ),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(sources[0].resolved.is_none());
+}
+
+#[test]
+fn a_question_mark_is_a_wildcard_too() {
+    // Arrange: `?` makes a declaration a pattern just as `*` does, so a unit using it must
+    // not have its single file reported as absent.
+    let directory = scratch("glob-question");
+    std::fs::write(directory.join("a.env"), "ONLY=one\n").expect("writable");
+    let pattern = directory.join("?.env");
+    let declared = EnvironmentFile::new(pattern.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let sources = environment_file_contents::read(declared);
+
+    // Assert
+    assert_eq!(sources.len(), 1);
+    assert!(
+        sources[0]
+            .resolved
+            .as_ref()
+            .expect("the match has a path")
+            .as_str()
+            .ends_with("a.env")
+    );
+}
