@@ -8,7 +8,12 @@ use crate::collectors::containers::model::ContainerdTask;
 use crate::collectors::containers::value_objects::ContainerId;
 
 /// The header `ctr` prints above the rows, which is the one line to skip.
-const HEADER: &str = "TASK";
+///
+/// Matched whole rather than by its first word: an id is whatever its creator chose, and
+/// `TASKS-web` is a legal one. Skipped on a prefix, that container's row would go with the
+/// header and the container would read as defined and not running, which is a wrong fact
+/// rather than a missing one.
+const HEADER: [&str; COLUMNS] = ["TASK", "PID", "STATUS"];
 
 /// How many columns a row has: the container's id, the pid, and the status.
 const COLUMNS: usize = 3;
@@ -31,11 +36,15 @@ impl CtrTasks {
 
         for line in output.lines() {
             let row = line.trim();
-            if row.is_empty() || row.starts_with(HEADER) {
+            if row.is_empty() {
                 continue;
             }
 
             let columns: Vec<&str> = row.split_whitespace().collect();
+            if columns == HEADER {
+                continue;
+            }
+
             if columns.len() != COLUMNS {
                 return Err(CollectionError::new(format!(
                     "could not read what `ctr tasks ls` reported: the row {row:?} has \

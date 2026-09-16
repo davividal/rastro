@@ -1095,3 +1095,36 @@ fn a_namespace_listed_twice_fails_the_facet() {
         "the failure should say the namespace was listed twice: {failure}"
     );
 }
+
+#[test]
+fn a_container_whose_id_begins_with_the_header_word_keeps_its_task() {
+    // Arrange: **containerd ids are whatever their creator chose**, and this collector
+    // deliberately accepts one that is not hex, so `TASKS-web` is a legal id. Skipping a row
+    // because it begins with the header's first word would drop that container's task, and a
+    // running container with no task reads as one that is defined and not running — a wrong
+    // fact rather than a missing one.
+    let named_like_the_header = NERDCTL_CONTAINER_INFO.replace("web-1", "TASKS-web");
+    let listed = [("TASKS-web", Some(named_like_the_header.as_str()))];
+    let namespaces = vec![
+        NamespaceFixtures {
+            name: "moby",
+            containers: &listed,
+            tasks: "TASK    PID    STATUS    \nTASKS-web    4021    RUNNING\n",
+            images: NO_IMAGES,
+        },
+        empty_namespace("k8s.io"),
+    ];
+
+    // Act
+    let task = field(
+        &field(
+            &containers_in("header-id", &namespaces, "moby"),
+            "TASKS-web",
+        ),
+        "task",
+    );
+
+    // Assert
+    assert_eq!(text(&field(&task, "status")), "RUNNING");
+    assert_eq!(integer(&field(&task, "process_id")), 4021);
+}
