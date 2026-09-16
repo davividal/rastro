@@ -2585,3 +2585,28 @@ fn one_flavour_detected_twice_for_one_account_fails_rather_than_one_replacing_th
         "the failure should name the engine detected twice: {failure}"
     );
 }
+
+#[test]
+fn a_container_with_no_tmpfs_mount_is_read_rather_than_refused() {
+    // Arrange: **`null` is what docker writes there, measured on 26.1.5.** Every container on
+    // that engine with no `--tmpfs` reports `"Tmpfs": null`, the same spelling the sysctls and
+    // the extra hosts already carry, and a field that only tolerates a map costs the whole
+    // document — which is every container on the box.
+    let without_tmpfs = INSPECT_WEB.replace(
+        r#""Tmpfs": { "/scratch": "rw,size=64m" }"#,
+        r#""Tmpfs": null"#,
+    );
+    let observed = docker_facet(
+        "no-tmpfs",
+        holding(&[(WEB_ID, Some(&without_tmpfs))], &[], &[], &[]),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+
+    // Act & Assert
+    assert_eq!(
+        keys_of(&containers_of(&observed, "docker")),
+        vec!["web".to_owned()],
+        "the container should be read, not lost to the tmpfs spelling"
+    );
+    assert!(items_of(&field(&server, "unreadable_containers")).is_empty());
+}

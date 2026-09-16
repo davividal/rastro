@@ -215,9 +215,12 @@ struct HostConfigHalf {
     #[serde(rename = "ExtraHosts", default)]
     extra_hosts: Option<Vec<String>>,
     /// Destination to option string, and the only place a `--tmpfs` mount appears at all.
-    /// Null on a container with none, which `default` covers either way.
+    ///
+    /// Optional because docker writes `null` here on a container with none, measured on
+    /// 26.1.5, and `default` covers only a field that is absent: a bare map refuses the whole
+    /// document, which on that engine is every container on the box.
     #[serde(rename = "Tmpfs", default)]
-    tmpfs: BTreeMap<String, String>,
+    tmpfs: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -433,7 +436,7 @@ impl DockerContainerDocument {
             ));
         }
 
-        for (destination, options) in &self.host_config.tmpfs {
+        for (destination, options) in self.host_config.tmpfs.iter().flatten() {
             mounts.push((
                 AbsolutePath::new(destination.clone(), "tmpfs destination")?,
                 ContainerMount {
