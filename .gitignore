@@ -12,3 +12,8 @@ review-results.md
 
 # Transient agentic-workflow artifact.
 /.code-goal-run.md
+
+# Where a coverage run's noise lands when somebody redirects it. The report itself goes to
+# `target/llvm-cov/`, which `/target` already covers; this is the stderr beside it, and one
+# copy reached a commit before this line existed.
+/cov.err
