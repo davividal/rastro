@@ -343,3 +343,144 @@ fn a_continuation_inside_quotes_joins_with_no_separator_of_its_own() {
     // so the only separator is whatever the text already had before the backslash.
     assert_eq!(value_of("V=\"a\\\nb\"\n"), "ab");
 }
+
+#[test]
+fn an_escaped_backslash_at_end_of_line_is_a_value_and_not_a_continuation() {
+    // Arrange: measured. `"ends\\"` is a value ending in one backslash, and the assignment
+    // on the next line survives. Counting the run of backslashes is the whole of it: an odd
+    // number continues the line, an even number is literal and the line ends.
+    //
+    // Getting this wrong does not merely mis-read a value, it *loses an assignment* — the
+    // next line is swallowed into this one — which is why it matters more than the escapes.
+    // Act & Assert: an even run ends the line, an odd run continues it, and the difference
+    // decides whether `W` exists at all.
+    assert_eq!(
+        variables("V=a\\\\\nW=b\n"),
+        vec![
+            ("V".to_owned(), "a\\".to_owned()),
+            ("W".to_owned(), "b".to_owned())
+        ],
+        "an even run is a literal backslash and the line ends"
+    );
+    assert_eq!(
+        variables("V=a\\\nW=b\n"),
+        vec![("V".to_owned(), "aW=b".to_owned())],
+        "an odd run escapes the newline, so the next line joins this one"
+    );
+    assert_eq!(
+        variables("V=\"a\\\\\nW=b\n"),
+        vec![
+            ("V".to_owned(), "a\\".to_owned()),
+            ("W".to_owned(), "b".to_owned())
+        ],
+        "the run is counted the same inside an unterminated quote"
+    );
+}
+
+#[test]
+fn a_quoted_value_does_not_span_physical_lines_without_a_continuation() {
+    // Arrange: measured, and it is the half of the review comment that was wrong. systemd
+    // does *not* carry a single-quoted value onto the next physical line: it truncates at
+    // the newline exactly as this parser does, and the orphaned closing line sets nothing.
+    let text = "MULTI='first\nsecond'\nAFTER=intact\n";
+
+    // Act
+    let parsed = environment_file_contents::parse(text);
+
+    // Assert
+    assert_eq!(
+        variables(text),
+        vec![
+            ("AFTER".to_owned(), "intact".to_owned()),
+            ("MULTI".to_owned(), "first".to_owned()),
+        ]
+    );
+    assert_eq!(parsed.ignored_lines, 1, "the orphaned `second'` line");
+}
+
+#[test]
+fn the_shells_expansion_characters_are_escapable_inside_double_quotes() {
+    // Arrange & Assert: measured. systemd strips the backslash before `$` and a backtick as
+    // well as before a quote and a backslash, so recording the backslash would put a
+    // character in the document that is not in the process — and a wrong redaction digest
+    // with it, since the digest is taken over whatever is recorded.
+    assert_eq!(value_of("PRICE=\"cost\\$5\"\n"), "cost$5");
+    assert_eq!(value_of("TICK=\"a\\`b\"\n"), "a`b");
+}
+
+#[test]
+fn a_name_systemd_would_reject_sets_nothing_and_is_counted() {
+    // Arrange: measured. Both of these reach the process as nothing at all, so a facet that
+    // reported them would claim the service has variables it does not.
+    let text = "BADNAME-X=x\n1BAD=y\nOK_NAME=z\n";
+
+    // Act
+    let parsed = environment_file_contents::parse(text);
+
+    // Assert
+    assert_eq!(
+        variables(text),
+        vec![("OK_NAME".to_owned(), "z".to_owned())]
+    );
+    assert_eq!(parsed.ignored_lines, 2, "punctuation, and a leading digit");
+}
+
+#[test]
+fn a_leading_underscore_is_a_legal_name() {
+    // Act & Assert: the grammar is a C identifier, so `_` opens one.
+    assert_eq!(value_of("_PRIVATE=ok\n"), "ok");
+}
+
+#[test]
+fn a_fifo_named_as_an_environment_file_is_refused_rather_than_opened() {
+    // Arrange: a unit may name anything, and opening a FIFO blocks until a writer appears.
+    // One such declaration would otherwise stop the whole fingerprint, so the type is
+    // checked before anything is opened. **If this test ever hangs, that check is gone.**
+    let path = scratch("fifo").join("pipe.env");
+    let _ = std::fs::remove_file(&path);
+    let made = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .expect("mkfifo should be runnable");
+    assert!(made.success(), "the fixture needs a FIFO");
+    let declared = EnvironmentFile::new(path.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let source = environment_file_contents::read(declared);
+
+    // Assert: an error and not an absence — rastro looked and found something it will not
+    // read, which is a different statement about the box from "there is nothing here".
+    match source.reading {
+        EnvironmentReading::Unreadable(why) => assert!(
+            why.contains("not a regular file"),
+            "the reason should name the type, got: {why}"
+        ),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_environment_file_past_the_bound_is_refused_rather_than_read() {
+    // Arrange: an environment file is small by construction, so one this size is already a
+    // misconfiguration. The bound is what stops it becoming a failed run.
+    let path = scratch("oversize").join("huge.env");
+    let mut line = String::from("A=");
+    line.push_str(&"x".repeat(2 * 1024 * 1024));
+    std::fs::write(&path, line).expect("the scratch file should be writable");
+    let declared = EnvironmentFile::new(path.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let source = environment_file_contents::read(declared);
+
+    // Assert
+    match source.reading {
+        EnvironmentReading::Unreadable(why) => {
+            assert!(why.contains("past the"), "got: {why}");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&path);
+}
