@@ -6,10 +6,10 @@
 //! name and a user cannot choose it. Reading one as the other silently turns the first word of
 //! a command into an account name.
 
-use rastro_collector::CollectionError;
+use rastro_collector::{CollectionError, EnvironmentVariableName};
 
 use crate::collectors::cron::model::{CronJob, CronTable};
-use crate::collectors::cron::value_objects::{CronCommand, JobOwner, Schedule, VariableName};
+use crate::collectors::cron::value_objects::{CronCommand, JobOwner, Schedule};
 
 /// How many fields a numeric schedule has: minute, hour, day of month, month, day of week.
 const SCHEDULE_FIELDS: usize = 5;
@@ -38,7 +38,9 @@ pub fn parse(contents: &str, owner_column: OwnerColumn) -> Result<CronTable, Col
         }
 
         match assignment(line) {
-            Some((name, value)) => environment.push((VariableName::new(name)?, value.to_owned())),
+            Some((name, value)) => {
+                environment.push((EnvironmentVariableName::new(name)?, value.to_owned()))
+            }
             None => jobs.push(parse_job(line, owner_column)?),
         }
     }

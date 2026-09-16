@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rastro_collector::Observation;
-
-use crate::collectors::containers::value_objects::VariableName;
+use rastro_collector::{EnvironmentVariableName, Observation};
 
 /// Every variable the container carries, keyed by name, with every value withheld.
 ///
@@ -27,14 +25,14 @@ use crate::collectors::containers::value_objects::VariableName;
 /// The value is plain text rather than a value object: `--env EMPTY=` is a variable the
 /// container has, set to nothing, which is a different fact from not having it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ContainerEnvironment(BTreeMap<VariableName, String>);
+pub struct ContainerEnvironment(BTreeMap<EnvironmentVariableName, String>);
 
 impl ContainerEnvironment {
-    pub fn new(variables: impl IntoIterator<Item = (VariableName, String)>) -> Self {
+    pub fn new(variables: impl IntoIterator<Item = (EnvironmentVariableName, String)>) -> Self {
         Self(variables.into_iter().collect())
     }
 
-    pub fn variables(&self) -> &BTreeMap<VariableName, String> {
+    pub fn variables(&self) -> &BTreeMap<EnvironmentVariableName, String> {
         &self.0
     }
 }

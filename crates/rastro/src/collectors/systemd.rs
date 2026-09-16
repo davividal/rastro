@@ -18,11 +18,15 @@
 //! The sibling of [`canonical_tool`](super::canonical_tool), which is shared for the
 //! same reason: one place to be right rather than one per collector.
 
+mod environment_file;
 mod exec_start;
 mod executable_path;
+mod shown_unit;
 pub mod systemctl_show;
 mod unit_name;
 
+pub use environment_file::EnvironmentFile;
 pub use exec_start::ExecStart;
 pub use executable_path::ExecutablePath;
+pub use shown_unit::ShownUnit;
 pub use unit_name::UnitName;

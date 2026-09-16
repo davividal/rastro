@@ -27,7 +27,7 @@ use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText};
 use crate::collectors::nginx::value_objects::{ConfigurationSource, SecondsSinceEpoch};
 
 use super::conf_syntax;
-use super::file_glob;
+use crate::collectors::file_glob;
 use crate::collectors::nginx::model::{Configuration, ConfigurationFile, Directive};
 
 /// The directive that pulls another file in.

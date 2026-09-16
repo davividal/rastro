@@ -14,6 +14,7 @@ use rastro::preflight;
 use rastro::progress::{self, Reporting, WalkProgress};
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
+use rastro_fingerprint::{Disclosure, Presentation};
 
 fn main() -> ExitCode {
     match run() {
@@ -46,12 +47,13 @@ fn run() -> Result<Written, Box<dyn Error>> {
     let resolved = resolve(&invocation)?;
 
     warn_if_the_document_may_crowd_the_disk(&resolved);
+    warn_if_secrets_are_not_being_withheld(&resolved, invocation.presentation());
 
     let selection = collectors::selected(
         collectors::built_in(collectors::Run {
             effective_config: collectors::effective_config(
                 &resolved.config,
-                invocation.view(),
+                invocation.presentation(),
                 invocation.staged_binary(),
                 resolved.detail,
             ),
@@ -88,7 +90,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
     let written = output::write(
         &resolved.destination,
         &fingerprint,
-        invocation.view(),
+        invocation.presentation(),
         invocation.force(),
     )?;
 
@@ -151,6 +153,24 @@ fn warn_if_the_document_may_crowd_the_disk(resolved: &Resolved) {
     if let Some(concern) = preflight::concern_at(path) {
         say(resolved, &concern);
     }
+}
+
+/// Before the run, because an operator who reached for `--raw` by habit should hear what the
+/// file is going to be while the box is still being read rather than after it is on disk.
+///
+/// What is worth saying is what the document now holds, not that a flag was passed: the
+/// operator typed it, so repeating it back teaches them nothing. `0600` is the whole of the
+/// protection left.
+fn warn_if_secrets_are_not_being_withheld(resolved: &Resolved, presentation: Presentation) {
+    if presentation.disclosure() == Disclosure::Redacted {
+        return;
+    }
+
+    say(
+        resolved,
+        "--raw: every value a collector marked sensitive is written as it stands, so this \
+         document carries the box's secrets in cleartext",
+    );
 }
 
 /// One line to the operator, without a live counter half-overwriting it.

@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rastro_collector::CollectionError;
 
+use super::environment_file_contents;
 use super::systemctl_unit_files::UnitFileRow;
 use super::systemctl_units::UnitRow;
 use crate::collectors::canonical_tool::CanonicalTool;
-use crate::collectors::systemd::{ExecStart, UnitName, systemctl_show};
+use crate::collectors::systemd::{ShownUnit, UnitName, systemctl_show};
 use crate::collectors::units::model::{Unit, UnitFile, UnitRegistry, UnitRuntime};
 
 const PROGRAM: &str = "systemctl";
@@ -43,6 +44,27 @@ const SHOW: &str = "show";
 
 const ID_PROPERTY: &str = "--property=Id";
 const EXEC_START_PROPERTY: &str = "--property=ExecStartEx";
+
+/// Ask what each unit sets for the process it starts.
+///
+/// **What the unit declares, not what the process gets.** An `EnvironmentFile=` is read at
+/// exec time and contributes nothing to this property, measured against systemd 257. It is
+/// still the effective declaration, resolved through every drop-in, which is the same reason
+/// `ExecStartEx` is asked of systemd rather than read out of the unit file.
+const ENVIRONMENT_PROPERTY: &str = "--property=Environment";
+
+/// Ask which files each unit reads its environment from.
+///
+/// The property is plural where the directive is not, and it prints one line per file. This
+/// is the half `Environment=` cannot answer: systemd opens these at exec time, so a unit
+/// configured entirely through one declares an empty environment.
+const ENVIRONMENT_FILES_PROPERTY: &str = "--property=EnvironmentFiles";
+
+/// Ask which names the unit takes back out again.
+///
+/// The last step of building a service's environment, so without it the facet reports a
+/// variable the process never receives.
+const UNSET_ENVIRONMENT_PROPERTY: &str = "--property=UnsetEnvironment";
 
 /// Everything after this is a unit name, however much it looks like an option.
 ///
@@ -112,6 +134,9 @@ impl Systemctl {
             SHOW,
             ID_PROPERTY,
             EXEC_START_PROPERTY,
+            ENVIRONMENT_PROPERTY,
+            ENVIRONMENT_FILES_PROPERTY,
+            UNSET_ENVIRONMENT_PROPERTY,
             NO_PAGER,
             END_OF_OPTIONS,
         ];
@@ -133,14 +158,22 @@ impl Systemctl {
     pub fn join(files: &str, loaded: &str, shown: &str) -> Result<UnitRegistry, CollectionError> {
         let files = Self::parse_unit_files(files)?;
         let runtimes = Self::parse_units(loaded)?;
-        let starts: BTreeMap<UnitName, Vec<ExecStart>> = systemctl_show::parse(shown)?;
+        let shown: BTreeMap<UnitName, ShownUnit> = systemctl_show::parse(shown)?;
 
         let names: BTreeSet<&UnitName> = files.keys().chain(runtimes.keys()).collect();
         let units = names.into_iter().map(|name| {
+            let shown_unit = shown.get(name).cloned().unwrap_or_default();
             let unit = Unit {
                 file: files.get(name).cloned(),
                 runtime: runtimes.get(name).cloned(),
-                exec_start: starts.get(name).cloned().unwrap_or_default(),
+                exec_start: shown_unit.exec_start,
+                environment: shown_unit.environment,
+                environment_files: shown_unit
+                    .environment_files
+                    .into_iter()
+                    .flat_map(environment_file_contents::read)
+                    .collect(),
+                unset_environment: shown_unit.unset_environment,
             };
 
             (name.clone(), unit)

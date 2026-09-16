@@ -116,7 +116,7 @@ invocation, one document.
 Named rather than implied, because several of these read as promises elsewhere in
 the documentation and are not built yet.
 
-- **`--raw` is not implemented, and redaction now is.** A value a collector marked
+- **Redaction and its `--raw` opt-out are both implemented.** A value a collector marked
   `sensitive` is replaced on the way out by `redacted:sha256+xxh3:` and sixteen hex
   characters: sha256 of the value as lowercase hex, then XXH3-64 over those hex
   characters. It happens in both views, because the complete view is a fuller
@@ -131,9 +131,11 @@ the documentation and are not built yet.
   **It is an option, not a guarantee**, because marking a field `sensitive` is the
   collector author's job. An unmarked credential is emitted like any other value.
 
-  The design describes `--raw` opting out of redaction with a warning on stderr.
-  That flag does not exist yet, so there is currently no way to read a sensitive
-  value out of a document, including for an operator who legitimately wants one.
+  **`--raw` opts out**, printing a warning on stderr that says what the document now
+  holds. It is the only way to read a sensitive value out of a document, and it makes
+  the file exactly as sensitive as the box: the `0600` mode is then the whole of the
+  protection. A run's choice is recorded in the `invocation` facet as
+  `config.disclosure`, so a document always admits which of the two it is.
 
   Two of the three collectors that meet a credential keep it out *structurally*
   rather than by annotation, which is a stronger guarantee than the layer above

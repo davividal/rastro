@@ -552,6 +552,10 @@ paths and hostnames, which rastro already publishes deliberately.
 **Revisit when redaction lands.** Deciding whether diagnostic text is an observed
 value is a prerequisite of that work, not an afterthought to it.
 
+**Both have landed** — see
+[`--raw`, and a document that admits which one it is](#--raw-and-a-document-that-admits-which-one-it-is).
+The decision above stands; the reason it gave for deferring does not.
+
 ## A fingerprint is sensitive operational data until redaction exists
 
 The document is not merely a description of a host, it is a target-selection aid.
@@ -2401,11 +2405,12 @@ secrets hashed at serialisation time, `--raw` opting out, as
 [the security policy states plainly](#the-security-policy-states-what-is-not-defended-redaction-included) — would
 have the collector select `rolpassword`, mark it `sensitive`, and let the renderer decide. That
 is the better shape and it is unreachable today, because nothing acts on the annotation and
-`--raw` is not built, so marking a verifier sensitive prints a verifier. When both exist this
-becomes the one value where `--raw` cannot be a render-time decision: the material is not in
-the process to render, so opting out means the collector asking a different question of the
-server. That is a query change, not an annotation, and it needs deciding before `--raw` claims
-to cover this facet.
+`--raw` was not built, so marking a verifier sensitive would have printed a verifier. Both now
+exist, and this remains the one value where `--raw` cannot be a render-time decision: the
+material is not in the process to render, so opting out means the collector asking a different
+question of the server. That is a query change, not an annotation, and it is still undecided —
+see [`--raw`, and a document that admits which one it is](#--raw-and-a-document-that-admits-which-one-it-is),
+which records that `--raw` does not claim to cover this facet.
 
 **The collector's version went to `3`.** On identical host state every role now carries
 a key it did not, so a consumer diffing across the change has to be able to see that the
@@ -3911,3 +3916,455 @@ named rather than guessed away — a docker that one day writes `null` where 26.
 both write `[]` costs that container's entry, loudly, in `unreadable_containers` with serde's
 own message. That is the failure this facet is shaped for, and it is a better trade than
 declaring shapes nobody has observed.
+# `--raw`, and a document that admits which one it is
+
+Dated 2026-09-08. Finishes the mechanism
+[Redacting a sensitive value](#redacting-a-sensitive-value) left half-built, which that
+entry closed by naming `--raw` as not built.
+
+`--raw` sets `Disclosure::Raw` for the run. It prints a warning on stderr first, and the
+warning names what the file now holds rather than the flag that caused it: the operator
+typed the flag, so repeating it back tells them nothing, whereas "this document carries
+the box's secrets in cleartext" is the fact that decides whether they pipe it anywhere.
+
+**The disclosure is in the `invocation` facet, beside the view, as `config.disclosure`.**
+Same argument the view is there for: each axis rewrites the document wholesale, so
+diffing a `--raw` fingerprint against a redacted one would report a changed value at
+every sensitive field with nothing in either document to explain it. Two keys rather than
+one, because the axes are independent — a complete view says nothing about whether a
+secret in it was withheld, which is the whole reason `Disclosure` is not another value of
+`View`.
+
+**`Cli::view()` became `Cli::presentation()`.** One accessor, because `Presentation` is
+the pair and nothing downstream wants half of it, and because building it through
+`From<View>` and then opting out keeps redaction-by-default structural here too: a branch
+that forgot `--raw` entirely still produces the safe document.
+
+**The port grew two re-exports rather than the collector reaching around it.**
+`invocation` needs `Presentation` and `Disclosure` to report them, and
+`tests/purity.rs` forbids a built-in collector naming `rastro_fingerprint` — under a
+comment that names the fix as widening the port. `View` was already re-exported for the
+same reason, so this is the established shape and not a new hole in it.
+
+**The `invocation` collector's version stays at `1`.** Not a special case for metadata: no
+collector moves before the first release, which
+[a later entry](#every-collector-is-version-1-until-rastro-has-a-release) makes the general
+rule and applies to the six that had already moved.
+
+**Cost, and it is the real one:** a fingerprint taken before this change and one taken
+after differ in the `invocation` facet on an unchanged host, and nothing in either document
+says why. That is accepted rather than solved, because the alternative prices a
+pre-release format change as though the format were already published.
+
+**Withdrawn: "`--raw` is not built" as a reason to defer.** Two entries rest on it and
+their decisions still stand, but the premise no longer does. Neither is reversed here and
+both are now revisitable on their merits:
+
+- [A facet's error text is not classified, yet](#a-facets-error-text-is-not-classified-yet)
+  deferred on the mechanism not existing. It exists. Whether diagnostic text is an
+  observed value is now a question that can be answered rather than postponed.
+- [The postgresql role digest is not marked sensitive](#redacting-a-sensitive-value)
+  named the harder case, and that case is unchanged by this work: the verifier is not in
+  the process to render, so opting out of withholding it means the collector asking the
+  server a different question. That is a query change, not a render-time decision, and
+  `--raw` still does not cover this facet. Recorded here so the gap is not read as an
+  oversight now that the flag exists.
+
+# The `units` facet reports what a unit sets in the environment
+
+Dated 2026-09-08. Driven by a question a file-copy migration raises: an application that
+needs a variable keeps working only if whatever sets it came across too, and a walk of the
+filesystem shows that `~/.bashrc` moved without saying what it set.
+
+**Environment belongs to whatever carries it, not to a facet of its own.** `cron` already
+reports the variables a crontab sets, for reasons its own model states. A unit's
+`Environment=` is the same concept on the other carrier, so it is reported by `units` and
+not by a new collector that would have to know how both work. The alternative considered
+and rejected was an `environment` collector with hooks the other collectors call, which
+inverts the dependency direction this repo keeps one-way — a collector never knows another
+exists, and the one cross-collector mechanism that does exist works the other way round:
+collectors *declare* filesystem claims and the composition root gathers them.
+
+`EnvironmentVariableName` moved out of `cron` and into `rastro-collector`, which is what the
+port's own rule asks for — a value earns its place there by having consumers in more than
+one collector. It is the only shared machinery the idea needed.
+
+**Names in the clear, values `sensitive`.** A name says which variable a service depends on,
+which is exactly the migration finding and is not itself a secret. A value is where a
+database password lives on most boxes that have one. Redaction still diffs, so a rotated
+credential shows as a changed digest without the document carrying it. This is the first
+facet where the annotation is doing the job it was built for on a value an operator would
+actually want back, which is why `--raw` landed first.
+
+## What `systemctl show -p Environment` actually prints, measured
+
+Against systemd 257 on Debian 13, in a container running real systemd, with throwaway
+units written and shown but never started. None of this is in the documentation in a form
+that could be relied on, and two of the five would have been got wrong by inference.
+
+- **One line**, however many the unit file spread the setting over. Entries are separated
+  by spaces and quoted only where they need to be: `SIMPLE=plain "SPACED=two words"`. The
+  quotes wrap the whole `NAME=VALUE`, not the value.
+- **Split on the first `=` only.** `EQUALS=a=b=c` is one variable.
+- **An empty value is legal**, and a unit that sets nothing prints `Environment=` with
+  nothing after it. A unit with no `EnvironmentFile=` prints no `EnvironmentFiles=` line at
+  all, so absence arrives differently on the two properties.
+- **systemd C-escapes what it shows, and the escaped spelling is not the value.**
+  `NEWLINE=a\nb` on the wire is a real line feed in the process, and `BACKSLASH=a\\b` is one
+  backslash. Measured by starting a unit with `ExecStart=/usr/bin/env` and reading the
+  bytes, rather than by reasoning about the format. Recording the wire spelling would have
+  put a value in the document that was never in anything's environment, so the line is
+  unescaped, and an escape outside systemd's table is refused rather than guessed at.
+- **`EnvironmentFile=` contributes nothing to this property.** A variable set only in the
+  file did not appear on the line, because systemd reads those at exec time and not at load
+  time. So this field answers "what does the unit declare", and *not* "what does the service
+  run with". That gap is real and is the reason the file paths are worth collecting next.
+
+**This is not the opposite of the `ExecStart` decision, and the difference is the point.**
+[The argument vector is kept whole](../crates/rastro/src/collectors/systemd/exec_start.rs)
+because systemd loses the quoting in `argv[]`, so
+splitting it would claim a structure the source cannot support. `Environment=` keeps its
+quoting, so the entries are recoverable exactly, and the honest record is the split one. A
+reader who knows the first entry would otherwise assume the same limitation applies here.
+
+## The files a unit reads, beside the variables it declares
+
+`EnvironmentFiles=` lands in the same facet, and it is what stops the previous section being
+a trap. A service configured entirely through one declares an empty `environment` and runs
+with a full one; the two fields are only an answer read together, which both now say in
+their own documentation.
+
+**Paths only. What is inside the files is not read.** So the facet says which files a
+migration must not leave behind, and does not say which variables would go missing if it
+did. That is the smaller claim and it is the one the data supports.
+
+**`ignore_errors` is systemd's word and is kept as systemd spells it**, for what a unit file
+writes as the `-` prefix in `EnvironmentFile=-/path`. `required` was considered and rejected:
+the double negative is unlovely, and the vocabulary of the tool being quoted is the spelling
+a reader can look up. The distinction is behaviour and not bookkeeping — a required file
+that did not survive a migration stops the unit, and an optional one is designed for exactly
+that absence.
+
+**The order is kept and never sorted.** systemd reads these in the order the unit declares
+them and a later file overrides a variable an earlier one set, so the order *is* the
+meaning. The same reasoning that keeps kernel order in `/proc/mounts`.
+
+**Two spellings of absence in one dump, and the parser has to know both.** A unit that sets
+no variables prints `Environment=` with nothing after it; a unit that names no file prints
+no `EnvironmentFiles=` line at all. Measured, not assumed.
+
+**Nothing here is withheld.** A path is not a credential, and it is the whole of the
+migration finding. The values on the `Environment=` line still are.
+
+**Cost:** the facet now names a file it cannot read, so a diff can show that
+`/etc/myapp.env` is still there and still say nothing about the variable inside it that
+changed. Reading those files is a separate decision, and it is the one where redaction
+starts earning its keep on this facet rather than merely being available.
+
+# Every collector is version `1` until rastro has a release
+
+Dated 2026-09-08. rastro is at `0.0.0` and has never been released. Six collectors had
+nonetheless moved past `1` — `firewall`, `network`, `processes`, `sockets` and `time` to
+`2`, `postgresql` to `3` — each for a reason that was locally sound and collectively wrong.
+
+**A collector version is a promise to somebody holding an older document.** Its whole job
+is to let a consumer diffing two fingerprints tell "the collector's output shape moved"
+apart from "the box changed". Before a release there is nobody in that position: no
+document exists that was produced by a published rastro, so there is no archive for a bump
+to protect. Each bump was priced as though the format were already published, and what it
+bought instead was a version field whose meaning depended on when a collector happened to
+last be touched.
+
+**So the rule is flat: every collector reports `1` until the first release**, and the six
+are reset to it. What a bump would have recorded is not lost — it is in this log, which is
+where a pre-release format change belongs.
+
+**After the first release the ordinary rule resumes**, and a facet that changes its key set
+on identical host state bumps as those six entries described.
+
+**Supersedes the version paragraph, and only that paragraph, in five entries.** The
+decisions themselves stand entirely; each still describes a real change to what its facet
+reports, and only the bump it prescribed is withdrawn:
+
+- [The time collector reads files, because `timedatectl` starts a unit](#the-time-collector-reads-files-because-timedatectl-starts-a-unit)
+- [`ip` is asked for details, because it hides a route's defaults](#ip-is-asked-for-details-because-it-hides-a-routes-defaults)
+- [The sockets facet is read from `/proc`, and loses the interface scope](#the-sockets-facet-is-read-from-proc-and-loses-the-interface-scope)
+- [A firewall backend is read only where its subsystem is already resident](#a-firewall-backend-is-read-only-where-its-subsystem-is-already-resident)
+- [A role password change is visible, and is hashed twice to get there](#a-role-password-change-is-visible-and-is-hashed-twice-to-get-there)
+
+**Cost:** a fingerprint taken from a build of rastro before this change compares against one
+taken after with six facets whose version went *backwards*. That is only meaningful to
+somebody holding a document from an unreleased build, which is the population this entry
+argues does not need protecting, and it is the last moment at which the reset is free.
+
+**Consistency check for a reviewer:** `grep -c 'CollectorVersion::new("1")'` over
+`crates/rastro/src/collectors/` should equal the number of collectors, and nothing should
+match `"2"` or `"3"`.
+
+# The environment files are read, and that is the nginx exception a second time
+
+Dated 2026-09-15. The previous section left the facet naming files it could not read. This
+closes that, and it does so by parsing a configuration format, which needs the same
+justification nginx needed.
+
+**The licence, and why it applies.** The rule is to prefer effective, resolved state over
+reading config, and `systemctl show -p Environment` *is* that effective state — for what a
+unit declares. It deliberately does not cover these files: systemd opens them when it execs
+the process, not when it loads the unit, measured against systemd 257 where a variable set
+only in a file did not appear on the property. Every way of making systemd resolve them
+starts the unit, which is a mutation, so there is no non-mutating account to prefer. That is
+exactly the nginx condition, and the format is read directly.
+
+**What bounds the risk of disagreeing with systemd's own parser.** Two things, and neither
+is confidence.
+
+- Every rule was **measured**, by pointing a unit with `ExecStart=/usr/bin/env` at a probe
+  file under systemd 257 and reading the bytes back. `tests/environment_file_contents.rs`
+  holds the probe whole, so a divergence shows up as a failing test rather than as a wrong
+  value in somebody's fingerprint.
+- **Values are `sensitive`.** A value this parser gets subtly wrong still digests
+  deterministically and still diffs, so byte-identity and change detection are unaffected;
+  only `--raw` would show the divergence. Names are *not* withheld, which is why the
+  line-level rules matter more than the escapes, and the tests concentrate there — a
+  mishandled continuation invents or loses a name, and a name is printed in the clear.
+
+**Two rules that are the opposite of the unit-file syntax they look like.** A shared escape
+table would get both wrong:
+
+- `"a\nb"` in an environment file is a backslash and an `n`. On a unit's `Environment=` line
+  it is a line feed.
+- A backslash outside quotes is an escape and vanishes (`a\b` is `ab`); inside quotes it is
+  kept unless it precedes `"`, `\` or the end of the line.
+
+**A third rule, found later and by a failing test rather than by reading.** Trailing
+whitespace is dropped only where it was *outside* quotes: `V="  sp  "` keeps both runs of
+spaces, `V=val␠␠␠` loses its three, and `V="ab"cd␠␠` loses the two that follow the closing
+quote. Trimming once at the end of the scan — the obvious implementation, and the one that
+shipped first — gets the first case wrong and no measured example had caught it, because the
+probe file quoted nothing that was padded. The parser now tracks the last significant
+position as it scans. The lesson is the cheap one to record: a probe file proves the cases it
+contains, and the gap between "measured" and "measured exhaustively" is where this bug lived.
+
+**A repeated name takes the last value, where cron refuses one.** Not an inconsistency: a
+crontab is genuinely ambiguous about what its jobs run with, so refusing is the honest
+answer there. systemd's semantics here are defined, so mirroring them is reporting the box
+and anything else would be rastro inventing a disagreement.
+
+**A line systemd sets nothing from is counted, not dropped.** `export FOO=bar` is what an
+operator writes out of shell habit; the name would contain a space, so systemd sets nothing
+and the file still looks right. `ignored_lines` makes that visible without this parser
+guessing at what was meant. It is the one field here that reports a *mistake* rather than a
+state.
+
+**Three readings, using the facet's own vocabulary one level down.** `ok`, `absent`,
+`error`. A missing file is state — routine for one marked `ignore_errors`, and the whole
+finding for one that is not, since that unit will not start. A file that is there and will
+not open is an `error` carrying its reason. `NotFound` is the only errno read as absence,
+because reporting `absent` for a file rastro was merely not allowed to read would be a
+confident lie, and rastro is run unprivileged often enough for that to be routine.
+
+**One file's failure never fails the facet.** The same call the nginx collector makes for an
+include that will not read. Losing the enablement state of every unit on the box because one
+service's environment file is root-only is the worse trade by a distance.
+
+**What a box without systemd gets from this: nothing.** Verified on Alpine, where there is
+no `systemctl` and the `units` facet is `absent` — correctly, since it is a true statement
+about that box, and the run is otherwise unaffected. It follows from environment belonging
+to its carrier rather than to a facet of its own, and it is the direct cost of that choice:
+rastro's environment coverage is exactly as wide as the carriers it knows. Today that is
+systemd units and crontabs, so a non-systemd box reports crontab variables and no others.
+
+Two things follow, and the first is the more urgent. `/etc/environment` and
+`pam_env.conf` are init-agnostic, so they are the floor under every box rather than a
+rounding error on a systemd one — which is the argument for collecting them and is stronger
+than the one originally made for it. And OpenRC's `/etc/conf.d` and sysvinit's
+`/etc/default` are uncollected: each would be a new carrier reporting its own environment,
+in the shape `units` now has, which is the test the Debian-first convention sets and this
+design passes without a breaking change.
+
+**Cost:** rastro now opens files named by unit configuration, which is a wider read than the
+facet had before, and it does it on every run. The files are small by construction — systemd
+reads them itself at every service start — so this is a cost in *surface* rather than in
+time: a unit file that names a path is now a path rastro will open.
+
+# What a review round found in the environment work
+
+Dated 2026-09-16. Seven findings against the three entries above. Recorded together because
+what they have in common is the lesson: **every one of them was a behaviour of systemd that
+the probe file did not contain.** The rules were measured, and measuring is not the same as
+measuring exhaustively.
+
+**`EnvironmentFile=` takes a wildcard, and `systemctl show` reports it unexpanded.** Measured:
+`EnvironmentFile=/etc/conf.d/*.env` comes back from the property with the `*` intact, so
+reading the declaration as a path found nothing and reported the whole set `absent` — losing
+exactly the variables the facet exists to name. Patterns are now expanded in byte order,
+which is the order systemd applies them in: a variable set in two matched files takes the
+later one's value. A pattern that matches nothing keeps one entry with a null `path`, because
+a *required* wildcard matching nothing stops the unit from starting, measured as
+`Result=resources`.
+
+That made the declaration and the file two different facts, so the entry carries both:
+`declared` changes when somebody edits the unit, `path` changes when somebody drops a file
+into the directory, and a facet that conflated them could not say which happened.
+`file_glob` moved out of the nginx collector to sit beside `canonical_tool`, since two
+collectors now meet the same `glob(3)` question.
+
+**`UnsetEnvironment=` is the last step of building a service's environment.** Measured: a
+unit with `Environment=TOKEN=secret` and `UnsetEnvironment=TOKEN` starts a process with no
+`TOKEN`. Without the property the facet claimed a service had a variable it never receives,
+which is the one thing a fingerprint must not do. Reported beside the declarations rather
+than applied to them: deleting the `Environment=` line and adding an `UnsetEnvironment=`
+reach the same process environment by different edits, and only a document carrying both can
+say which one happened.
+
+**Three corrections to the environment-file grammar**, each measured:
+
+- **The backslash before `$` and a backtick is stripped.** `"cost\$5"` reaches the process as
+  `cost$5`. The table had only `"` and `\`, so the document recorded a character the process
+  does not have — and the wrong redaction digest with it.
+- **A name is a C identifier.** `BADNAME-X=x` and `1BAD=y` set nothing at all; `OK_NAME=z`
+  arrives. Rejecting only whitespace let the facet claim variables the service does not have.
+  Checked in this parser rather than in `EnvironmentVariableName`, which is shared with cron
+  and deliberately imposes no character rule: the grammar is systemd's, so it belongs with
+  systemd's reader.
+- **What continues a line is the parity of the trailing backslash run**, not the last
+  character. `V=a\\` then `W=b` sets both; `V=a\` then `W=b` sets the one variable `V=aW=b`.
+  Treating an even run as a continuation swallowed the following line, so an assignment the
+  service really has vanished from the document with nothing to say it had been dropped. That
+  is the worst of the three, because the others mis-read a value and this one loses a name.
+
+**One finding was half right, and the half that was wrong is worth recording.** The review
+also held that a quoted value spans physical lines without a continuation. It does not:
+`MULTI='first` / `second'` gives systemd `MULTI=first` and sets nothing from the orphaned
+line, exactly as this parser already did. Checked rather than accepted, and there is now a
+test pinning it, so the next reader does not re-open it.
+
+**The declared path is not assumed to be a file.** A unit may name a FIFO, a character device
+such as `/dev/zero`, or something far larger than any environment file, and `read_to_string`
+on any of those blocks or exhausts memory — one such declaration anywhere on the box would
+stop the whole run. The type is checked by `stat` *before* anything is opened, because
+opening a FIFO blocks until a writer appears and a check made afterwards never runs. The read
+is then bounded twice, once on the size stat and once one byte past the limit, the second
+because a file being appended to between the two is exactly what a bound is for. The same
+reasoning as the execution seam's output bound.
+
+**Reusing `file_glob` found a latent bug in it, and the review did not.** `is_pattern` tested
+only for `*` and `?`, so a declaration whose only metacharacter is a bracket — `[ab].env` —
+was read as a literal path and reported `absent`. That is the same silent wrongness as not
+expanding `*`, and harder to spot, because the path looks ordinary rather than obviously
+unexpanded. It answers `true` now, which routes the declaration to the refusal the module
+already had. nginx was wrong in the same way and is fixed by the same line, which the
+conformance test — rastro's include resolution against `nginx -T`'s own answer — confirms on
+both distributions.
+
+**Cost:** an environment file past a megabyte is now reported as an `error` rather than read.
+That is a misconfiguration by construction — systemd reads these itself at every service
+start — but it is a case rastro now declines rather than one it answers.
+
+# One spelling for an environment variable name, across three carriers
+
+Dated 2026-09-16. The `containers` collector landed on master while this work was in flight,
+carrying its own `VariableName` for the same concept. Two spellings of one thing inside one
+document is exactly what the ubiquitous-language rule forbids, so `containers` now uses
+`rastro-collector`'s `EnvironmentVariableName` and its own type is gone.
+
+**The port's rule decided it rather than taste:** a value earns its place there by having
+consumers in more than one collector. `cron` had one, `units` made two, `containers` makes
+three. A crontab's `PATH`, a unit's `Environment=PATH` and a container's `PATH` are one
+concept observed on three carriers, and a reader diffing a document has to be able to compare
+them.
+
+**The merge went the stricter way on exactly one character.** `containers` refused `=` in a
+name and the shared type did not, so the shared type now does. That is not the stricter rule
+winning by default — it is the only character rule that is about the *format* rather than
+about taste: `=` separates the name from the value, so a name holding one means the entry was
+split in the wrong place and whatever landed either side of it is untrustworthy. Everything
+else stays permissive, because `execve(2)` carries any byte but `=` and NUL and a name that is
+really on the box must be reportable.
+
+**Where a stricter grammar does belong: with the parser that needs it.** systemd sets nothing
+from a name that is not a C identifier, so the environment-file reader drops `1BAD=y` and
+counts it — while a container engine reporting that same name is reporting something the
+process really has. Putting systemd's grammar in the shared type would have made two other
+facets lie. This is the general shape: **the shared type carries what is true of the concept,
+and a collector enforces what is true of its own source.**
+
+## What this settles about boundaries, and what it does not
+
+This is the first case where two collectors genuinely collided over one concept rather than
+over one *fact*, and it is worth separating the two, because an earlier round of this work
+deferred writing a general boundary rule on the grounds that the evidence was all one pattern.
+
+- **Two collectors observing the same concept share a type.** Settled here.
+- **Two collectors observing the same fact from different sources keep both**, because they
+  can disagree and the disagreement is the finding. Already settled three times: a configured
+  endpoint against a bound socket, a configured port against `postmaster.pid`, a unit's
+  `ExecStart=` against the process table.
+- **Two collectors reading the same source share the reader**, not the facet: `units` and
+  `exporters` over one `systemctl show` dump, and now `nginx` and `units` over one
+  `file_glob`.
+
+Those are three different rules and they were being conflated. A general "boundary rule"
+entry is still not written, and still should not be until something arrives that none of the
+three settles.
+
+# PAM gets a collector, because PAM is what reads those files
+
+Dated 2026-09-16. `/etc/environment` and `/etc/security/pam_env.conf` were going to be an
+extension of `accounts`. They are not, and the reason the earlier plan was wrong is worth
+recording, because it was a misapplication of a rule rather than a bad rule.
+
+**Environment belongs to its carrier.** That is what put a unit's `Environment=` in `units`
+and a crontab's variables in `cron`. `pam_env.so` is what reads these two files, at session
+setup — not the shell, and not anything that reads `/etc/passwd`. `accounts` was the nearest
+neighbour, not the owner, and putting them there would have broken the very rule that
+justified the other two placements.
+
+So the gap was never "environment has no home". It was **"PAM has no collector"**, which is a
+hole in Layer 2 independent of environment: the `pam.d` stack and `limits.conf` are real
+system state nothing reports. This collector is scoped to the session environment for now and
+those are its obvious next tenants, needing no new facet.
+
+**An `environment` collector was the alternative and is rejected.** It would be defined by
+exclusion — the environment sources no other collector owns — and a residual category shrinks
+and shifts every time another carrier gets a collector. Its name would also promise more than
+it delivers: holding neither unit nor cron environment, "the environment collector" would be
+the one place in the document without most of the environment.
+
+## `/etc/environment` is not the systemd format, and three rules are its opposite
+
+Measured against `libpam-modules` 1.7.0 on Debian 13 — a probe file written, a PAM login
+performed, the resulting environment read back. The file looks exactly like a unit's
+`EnvironmentFile=` and is read by a different program:
+
+| line | `pam_env` | systemd |
+|---|---|---|
+| `export V=x` | sets `V` | sets nothing; the name holds a space |
+| `V=x␠␠␠` | keeps the spaces | trims them |
+| `V=a # b` | truncates at the `#` | `# b` is part of the value |
+
+Two more that a shared parser would also get wrong: quoting does **not** protect a `#`
+(`V="a # b"` is `a `), and only one leading quote is stripped with a trailing one taken off
+solely when it ends the value, so `V="ab"␠␠` really is `ab"␠␠`. No escape is processed at all.
+So there are two parsers, and what they share is the vocabulary rather than the code: both key
+their result by `EnvironmentVariableName`.
+
+**What `pam_env.conf` records is the rule and not the result.** A value may hold `@{HOME}` or
+`${USER}`, expanded per session and per account at login — measured, `DEFAULT=@{HOME}/x`
+reaches one account as `/home/probe/x`. Recording a resolved value would mean naming one
+account's answer as though it were every account's, and resolving it honestly would mean
+performing a login, which is the mutation this project refuses. `DEFAULT` and `OVERRIDE` are
+both kept for the same reason: `OVERRIDE` wins, and a facet that reported only the winner
+could not show that removing it would change the value.
+
+**Presence is two-valued on `/etc/pam.d`.** A box without it does not run PAM, so there is no
+session environment for PAM to set. A box with no PAM may still have an `/etc/environment`,
+and this facet stays silent about it deliberately: that file would then be read by something
+else, and reporting it here would claim PAM does something it does not.
+
+**Cost, and it is the one to know about:** `envfile=` sources named in the PAM stack are not
+discovered. Debian's `/etc/pam.d/su` carries a second `pam_env.so` line reading
+`/etc/default/locale`, which is where `LANG` actually comes from on most Debian boxes. Finding
+it means parsing the `pam.d` stack — the collector's next step rather than this one — so the
+facet reports the two sources `pam_env` reads by default and says so rather than implying it
+has the lot.

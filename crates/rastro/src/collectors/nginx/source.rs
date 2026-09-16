@@ -3,7 +3,6 @@
 pub mod certificate_file;
 pub mod conf_syntax;
 mod configuration_files;
-mod file_glob;
 pub mod htpasswd;
 pub mod master_process;
 pub mod nginx_binary;

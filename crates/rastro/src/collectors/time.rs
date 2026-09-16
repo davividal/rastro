@@ -73,7 +73,7 @@ impl TimeCollector {
                 // Second version: the source changed from `timedatectl` to the files, and
                 // two of the five fields went with it. A consumer comparing fingerprints
                 // across the change needs to see that the collector, not the host, moved.
-                CollectorVersion::new("2").expect("`2` is a legal collector version"),
+                CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
             files,
         }

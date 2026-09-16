@@ -6,6 +6,7 @@ pub mod canonical_tool;
 pub mod containers;
 pub mod cron;
 pub mod exporters;
+pub mod file_glob;
 pub mod file_metadata;
 pub mod filesystem;
 pub mod firewall;
@@ -20,6 +21,7 @@ pub mod mounts;
 pub mod network;
 pub mod nginx;
 pub mod packages;
+pub mod pam;
 pub mod postgresql;
 pub mod processes;
 pub mod repositories;
@@ -46,6 +48,7 @@ pub use mounts::MountsCollector;
 pub use network::NetworkCollector;
 pub use nginx::NginxCollector;
 pub use packages::PackagesCollector;
+pub use pam::PamCollector;
 pub use postgresql::PostgresqlCollector;
 pub use processes::ProcessesCollector;
 pub use repositories::RepositoriesCollector;
@@ -210,6 +213,7 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
         Box::new(MountsCollector::new()),
         Box::new(NetworkCollector::new()),
         Box::new(NginxCollector::new()),
+        Box::new(PamCollector::new()),
         Box::new(PackagesCollector::new()),
         Box::new(PostgresqlCollector::new()),
         Box::new(ProcessesCollector::new()),

@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use rastro_collector::{CollectionError, Observation};
+use rastro_collector::{CollectionError, EnvironmentVariableName, Observation};
 
 use super::cron_job::CronJob;
-use crate::collectors::cron::value_objects::{ScriptName, VariableName};
+use crate::collectors::cron::value_objects::ScriptName;
 
 /// What one crontab file, or one run-parts directory, contributes.
 ///
@@ -18,7 +18,7 @@ pub struct CronTable {
     /// Variables the file sets for every job in it. `PATH` decides which binary a bare
     /// command name resolves to and `MAILTO` decides whether anybody hears about a failure,
     /// so neither is decoration.
-    pub environment: BTreeMap<VariableName, String>,
+    pub environment: BTreeMap<EnvironmentVariableName, String>,
     /// In the file's order, which is not a schedule but is how an operator reads it.
     pub jobs: Vec<CronJob>,
     /// Sorted. Only a run-parts directory has these.
@@ -31,7 +31,7 @@ impl CronTable {
     /// A repeated variable is refused: cron takes the last, so the file is ambiguous about
     /// what every job in it runs with, and resolving that quietly would hide it.
     pub fn crontab(
-        environment: impl IntoIterator<Item = (VariableName, String)>,
+        environment: impl IntoIterator<Item = (EnvironmentVariableName, String)>,
         jobs: impl IntoIterator<Item = CronJob>,
     ) -> Result<Self, CollectionError> {
         let mut assigned = BTreeMap::new();

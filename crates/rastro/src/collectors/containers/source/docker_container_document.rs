@@ -4,7 +4,9 @@ use serde::Deserialize;
 
 use std::collections::BTreeMap;
 
-use rastro_collector::{AbsolutePath, ByteSize, CollectionError, NonEmptyText};
+use rastro_collector::{
+    AbsolutePath, ByteSize, CollectionError, EnvironmentVariableName, NonEmptyText,
+};
 
 use crate::collectors::containers::model::{
     ContainerCapabilities, ContainerCommand, ContainerDevice, ContainerEnvironment,
@@ -16,7 +18,6 @@ use crate::collectors::containers::model::{
 use crate::collectors::containers::value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, EngineInstant,
     ExposedPort, ImageDigest, ImageReference, LabelName, MountKind, NetworkId, NetworkName,
-    VariableName,
 };
 use crate::collectors::inet::{HardwareAddress, InetHost, IpAddress, PortNumber};
 
@@ -406,7 +407,7 @@ impl DockerContainerDocument {
                 )));
             };
 
-            variables.push((VariableName::new(name)?, value.to_owned()));
+            variables.push((EnvironmentVariableName::new(name)?, value.to_owned()));
         }
 
         Ok(ContainerEnvironment::new(variables))

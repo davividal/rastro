@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-use rastro_fingerprint::View;
+use rastro_fingerprint::{Presentation, View};
 
 /// Emits a canonical, diffable fingerprint of the current host's state.
 #[derive(Debug, Parser)]
@@ -90,6 +90,20 @@ pub struct Cli {
     /// at the time: a summary taken yesterday cannot be expanded today.
     #[arg(long)]
     detail: bool,
+
+    /// Show values a collector marked sensitive as they stand, rather than as a
+    /// digest.
+    ///
+    /// Off by default, so a caller who has never thought about disclosure still
+    /// gets the safe document. What this produces is a file holding every secret
+    /// the collectors read, which is worth knowing before piping it anywhere: the
+    /// default `0600` is the only thing between it and the next reader.
+    ///
+    /// A redacted value still diffs. The digest moves when the value behind it
+    /// moves, so `--raw` buys the ability to *read* a secret, never the ability
+    /// to detect that one changed.
+    #[arg(long)]
+    raw: bool,
 }
 
 impl Cli {
@@ -98,17 +112,28 @@ impl Cli {
         self.config.as_deref()
     }
 
-    /// Which view the operator asked for.
+    /// How much of the document the operator asked for, on both axes.
     ///
-    /// The flag is named for what it *does*, the view for what it *is*. Calling
-    /// the flag `--complete` would have argued for itself: nobody wants an
-    /// incomplete picture of their server, so it would read as the obvious
-    /// choice rather than as the noisy one.
-    pub fn view(&self) -> View {
-        if self.include_volatile {
-            View::Complete
-        } else {
-            View::Diffable
+    /// One accessor rather than two, because [`Presentation`] is the pair and
+    /// nothing downstream ever wants one half of it. Building it through
+    /// `From<View>` and then opting out is what keeps redaction the default here
+    /// too: a branch that forgot `--raw` entirely would still produce the safe
+    /// document.
+    ///
+    /// Both flags are named for what they *do*, the axes for what they *are*.
+    /// Calling them `--complete` and `--redacted` would have argued for
+    /// themselves: nobody wants an incomplete or a redacted picture of their
+    /// server, so either would read as the obvious choice rather than as the
+    /// costly one.
+    pub fn presentation(&self) -> Presentation {
+        let view = match self.include_volatile {
+            true => View::Complete,
+            false => View::Diffable,
+        };
+
+        match self.raw {
+            true => Presentation::from(view).raw(),
+            false => Presentation::from(view),
         }
     }
 
