@@ -552,6 +552,10 @@ fn source_read<'a>(
 ) -> EnvironmentSource {
     EnvironmentSource {
         declared: EnvironmentFile::new(path, ignore_errors).expect("an absolute path"),
+        resolved: Some(
+            rastro_collector::AbsolutePath::new(path, "unit environment file")
+                .expect("an absolute path"),
+        ),
         reading: EnvironmentReading::Read {
             variables: variables
                 .into_iter()
@@ -611,6 +615,10 @@ fn a_file_the_unit_requires_and_that_is_not_there_is_absent_rather_than_a_failur
     // Act
     let rendered = unit_with(vec![EnvironmentSource {
         declared: EnvironmentFile::new("/etc/gone.env", false).expect("an absolute path"),
+        resolved: Some(
+            rastro_collector::AbsolutePath::new("/etc/gone.env", "unit environment file")
+                .expect("an absolute path"),
+        ),
         reading: EnvironmentReading::Absent,
     }]);
     let file = &items_of(&field(&rendered, "environment_files"))[0];
@@ -634,6 +642,10 @@ fn a_file_that_would_not_open_is_an_error_and_not_an_absence() {
     // Act
     let rendered = unit_with(vec![EnvironmentSource {
         declared: EnvironmentFile::new("/etc/secret.env", false).expect("an absolute path"),
+        resolved: Some(
+            rastro_collector::AbsolutePath::new("/etc/secret.env", "unit environment file")
+                .expect("an absolute path"),
+        ),
         reading: EnvironmentReading::Unreadable("Permission denied (os error 13)".to_owned()),
     }]);
     let file = &items_of(&field(&rendered, "environment_files"))[0];

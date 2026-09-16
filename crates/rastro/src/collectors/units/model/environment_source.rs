@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rastro_collector::{EnvironmentVariableName, Observation};
+use rastro_collector::{AbsolutePath, EnvironmentVariableName, Observation};
 
 use crate::collectors::systemd::EnvironmentFile;
 
@@ -15,6 +15,15 @@ use crate::collectors::systemd::EnvironmentFile;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentSource {
     pub declared: EnvironmentFile,
+    /// The concrete file this entry is about, which is the declaration itself unless it was
+    /// a wildcard.
+    ///
+    /// **`None` only where a pattern matched nothing.** systemd keeps the wildcard in the
+    /// property it reports, so the declaration and the file are two different facts as soon
+    /// as one path can name several files. A reader diffing needs both: the pattern changes
+    /// when somebody edits the unit, the matched set changes when somebody drops a file into
+    /// the directory, and those are different events.
+    pub resolved: Option<AbsolutePath>,
     pub reading: EnvironmentReading,
 }
 
@@ -79,13 +88,20 @@ impl From<&EnvironmentSource> for Observation {
             };
 
         Observation::object([
+            ("declared", Observation::text(source.declared.path.as_str())),
             ("error", error),
             (
                 "ignore_errors",
                 Observation::boolean(source.declared.ignore_errors),
             ),
             ("ignored_lines", ignored_lines),
-            ("path", Observation::text(source.declared.path.as_str())),
+            (
+                "path",
+                match &source.resolved {
+                    Some(path) => Observation::text(path.as_str()),
+                    None => Observation::null(),
+                },
+            ),
             ("status", Observation::text(source.reading.status())),
             ("variables", variables),
         ])

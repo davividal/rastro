@@ -1,9 +1,15 @@
-//! The files a pattern names, resolved the way nginx's `glob(3)` call resolves it.
+//! The files a pattern names, resolved the way `glob(3)` resolves it.
 //!
-//! nginx hands an `include` argument to `glob(3)` when it holds a wildcard and to `open(2)`
-//! when it does not, which is why the two cases fail so differently: a pattern that matches
-//! nothing is an ordinary empty result, and a literal path that is not there stops the
-//! server from starting. Only the pattern case lives here.
+//! Shared, because two collectors meet the same problem: nginx hands an `include` argument
+//! to `glob(3)` when it holds a wildcard and to `open(2)` when it does not, and systemd does
+//! the same with `EnvironmentFile=`. In both the two cases fail differently — a pattern that
+//! matches nothing is an ordinary empty result, while a literal path that is not there is a
+//! configuration error the service itself reports. Only the pattern case lives here; what a
+//! caller does with an empty result is the caller's own rule.
+//!
+//! Beside [`canonical_tool`](super::canonical_tool) rather than inside either collector, for
+//! the same reason: one place to be right about a fiddly host interface, rather than one per
+//! caller that can drift.
 //!
 //! **Sorted by bytes, and that is a choice rather than a copy.** `glob(3)` sorts with the
 //! caller's collation, so the same directory can order differently under two locales. rastro
@@ -18,13 +24,13 @@ use std::path::{Component, Path, PathBuf};
 
 use rastro_collector::CollectionError;
 
-/// The characters that make an `include` argument a pattern rather than a path.
+/// The characters that make an argument a pattern rather than a path.
 const WILDCARDS: [char; 2] = ['*', '?'];
 
 /// A bracket expression, which `glob(3)` understands and this does not.
 const CLASS: char = '[';
 
-/// Whether nginx would glob this argument rather than open it.
+/// Whether this argument would be globbed rather than opened.
 pub fn is_pattern(path: &Path) -> bool {
     path.components().any(|component| match component {
         Component::Normal(name) => holds_wildcard(&name.to_string_lossy()),
@@ -52,9 +58,9 @@ pub fn matching(pattern: &Path) -> Result<Vec<PathBuf>, CollectionError> {
         let name = name.to_string_lossy().into_owned();
         if name.contains(CLASS) {
             return Err(CollectionError::new(format!(
-                "the include pattern {} holds a bracket expression, which rastro does not \
-                 resolve; nginx does, so this facet would otherwise report a set of files \
-                 the server does not read",
+                "the pattern {} holds a bracket expression, which rastro does not resolve; \
+                 the services that read these patterns do, so this facet would otherwise \
+                 report a set of files the box does not read",
                 pattern.display()
             )));
         }

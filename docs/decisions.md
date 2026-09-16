@@ -3139,3 +3139,68 @@ design passes without a breaking change.
 facet had before, and it does it on every run. The files are small by construction — systemd
 reads them itself at every service start — so this is a cost in *surface* rather than in
 time: a unit file that names a path is now a path rastro will open.
+
+# What a review round found in the environment work
+
+Dated 2026-09-16. Seven findings against the three entries above. Recorded together because
+what they have in common is the lesson: **every one of them was a behaviour of systemd that
+the probe file did not contain.** The rules were measured, and measuring is not the same as
+measuring exhaustively.
+
+**`EnvironmentFile=` takes a wildcard, and `systemctl show` reports it unexpanded.** Measured:
+`EnvironmentFile=/etc/conf.d/*.env` comes back from the property with the `*` intact, so
+reading the declaration as a path found nothing and reported the whole set `absent` — losing
+exactly the variables the facet exists to name. Patterns are now expanded in byte order,
+which is the order systemd applies them in: a variable set in two matched files takes the
+later one's value. A pattern that matches nothing keeps one entry with a null `path`, because
+a *required* wildcard matching nothing stops the unit from starting, measured as
+`Result=resources`.
+
+That made the declaration and the file two different facts, so the entry carries both:
+`declared` changes when somebody edits the unit, `path` changes when somebody drops a file
+into the directory, and a facet that conflated them could not say which happened.
+`file_glob` moved out of the nginx collector to sit beside `canonical_tool`, since two
+collectors now meet the same `glob(3)` question.
+
+**`UnsetEnvironment=` is the last step of building a service's environment.** Measured: a
+unit with `Environment=TOKEN=secret` and `UnsetEnvironment=TOKEN` starts a process with no
+`TOKEN`. Without the property the facet claimed a service had a variable it never receives,
+which is the one thing a fingerprint must not do. Reported beside the declarations rather
+than applied to them: deleting the `Environment=` line and adding an `UnsetEnvironment=`
+reach the same process environment by different edits, and only a document carrying both can
+say which one happened.
+
+**Three corrections to the environment-file grammar**, each measured:
+
+- **The backslash before `$` and a backtick is stripped.** `"cost\$5"` reaches the process as
+  `cost$5`. The table had only `"` and `\`, so the document recorded a character the process
+  does not have — and the wrong redaction digest with it.
+- **A name is a C identifier.** `BADNAME-X=x` and `1BAD=y` set nothing at all; `OK_NAME=z`
+  arrives. Rejecting only whitespace let the facet claim variables the service does not have.
+  Checked in this parser rather than in `EnvironmentVariableName`, which is shared with cron
+  and deliberately imposes no character rule: the grammar is systemd's, so it belongs with
+  systemd's reader.
+- **What continues a line is the parity of the trailing backslash run**, not the last
+  character. `V=a\\` then `W=b` sets both; `V=a\` then `W=b` sets the one variable `V=aW=b`.
+  Treating an even run as a continuation swallowed the following line, so an assignment the
+  service really has vanished from the document with nothing to say it had been dropped. That
+  is the worst of the three, because the others mis-read a value and this one loses a name.
+
+**One finding was half right, and the half that was wrong is worth recording.** The review
+also held that a quoted value spans physical lines without a continuation. It does not:
+`MULTI='first` / `second'` gives systemd `MULTI=first` and sets nothing from the orphaned
+line, exactly as this parser already did. Checked rather than accepted, and there is now a
+test pinning it, so the next reader does not re-open it.
+
+**The declared path is not assumed to be a file.** A unit may name a FIFO, a character device
+such as `/dev/zero`, or something far larger than any environment file, and `read_to_string`
+on any of those blocks or exhausts memory — one such declaration anywhere on the box would
+stop the whole run. The type is checked by `stat` *before* anything is opened, because
+opening a FIFO blocks until a writer appears and a check made afterwards never runs. The read
+is then bounded twice, once on the size stat and once one byte past the limit, the second
+because a file being appended to between the two is exactly what a bound is for. The same
+reasoning as the execution seam's output bound.
+
+**Cost:** an environment file past a megabyte is now reported as an `error` rather than read.
+That is a misconfiguration by construction — systemd reads these itself at every service
+start — but it is a case rastro now declines rather than one it answers.

@@ -27,9 +27,11 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
+use std::path::Path;
 
-use rastro_collector::EnvironmentVariableName;
+use rastro_collector::{AbsolutePath, EnvironmentVariableName};
 
+use crate::collectors::file_glob;
 use crate::collectors::systemd::EnvironmentFile;
 use crate::collectors::units::model::{EnvironmentReading, EnvironmentSource};
 
@@ -73,16 +75,68 @@ const LARGEST_ENVIRONMENT_FILE: u64 = 1024 * 1024;
 /// environment file. Each would hang or exhaust a plain `read_to_string`, and one such
 /// declaration anywhere on the box would stop the whole run — so the type is checked before
 /// anything is opened, and the read is bounded.
-pub fn read(declared: EnvironmentFile) -> EnvironmentSource {
-    let reading = match contents_of(declared.path.as_str()) {
+/// **A declaration may be a wildcard**, and `systemctl show` reports it as written rather
+/// than expanded — measured, `EnvironmentFile=/etc/conf.d/*.env` comes back with the `*`
+/// intact. Reading that string directly finds nothing and would report the whole set as
+/// absent, which silently loses exactly the variables this facet exists to name. So a
+/// pattern is expanded here, in byte order, which is the order systemd applies them in: a
+/// variable set in two matched files takes the value from the later one.
+///
+/// A pattern that matches nothing still produces one entry, with no `path`. That is not
+/// tidiness: a *required* wildcard matching nothing stops the unit from starting, measured
+/// as `Result=resources`, so it is a finding rather than an empty set to omit.
+pub fn read(declared: EnvironmentFile) -> Vec<EnvironmentSource> {
+    let pattern = Path::new(declared.path.as_str());
+
+    if !file_glob::is_pattern(pattern) {
+        let reading = reading_of(declared.path.as_str());
+        let resolved = Some(declared.path.clone());
+
+        return vec![EnvironmentSource {
+            declared,
+            resolved,
+            reading,
+        }];
+    }
+
+    match file_glob::matching(pattern) {
+        Ok(matched) if matched.is_empty() => vec![EnvironmentSource {
+            declared,
+            resolved: None,
+            reading: EnvironmentReading::Absent,
+        }],
+        Ok(matched) => matched
+            .iter()
+            .map(|path| {
+                let path = path.to_string_lossy().into_owned();
+                let reading = reading_of(&path);
+
+                EnvironmentSource {
+                    declared: declared.clone(),
+                    resolved: AbsolutePath::new(path, "unit environment file").ok(),
+                    reading,
+                }
+            })
+            .collect(),
+        // A pattern rastro will not resolve, such as a bracket expression. Recorded against
+        // the declaration rather than guessed at, for the reason `file_glob` gives.
+        Err(refusal) => vec![EnvironmentSource {
+            declared,
+            resolved: None,
+            reading: EnvironmentReading::Unreadable(refusal.to_string()),
+        }],
+    }
+}
+
+/// What one concrete file yielded.
+fn reading_of(path: &str) -> EnvironmentReading {
+    match contents_of(path) {
         Ok(contents) => EnvironmentReading::Read {
             variables: contents.variables,
             ignored_lines: contents.ignored_lines,
         },
         Err(reading) => reading,
-    };
-
-    EnvironmentSource { declared, reading }
+    }
 }
 
 /// What the file holds, or the reading that stands in its place.

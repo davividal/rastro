@@ -12,8 +12,8 @@
 //! divergence risk is carried here, in tests, rather than in a claim.
 
 use rastro::collectors::systemd::EnvironmentFile;
-use rastro::collectors::units::EnvironmentReading;
 use rastro::collectors::units::environment_file_contents;
+use rastro::collectors::units::{EnvironmentReading, EnvironmentSource};
 
 /// The variables a file's text sets, as `(name, value)` pairs in name order.
 fn variables(text: &str) -> Vec<(String, String)> {
@@ -235,6 +235,18 @@ fn the_whole_probe_file_reads_as_systemd_read_it() {
     );
 }
 
+/// The single source a literal declaration yields.
+///
+/// A declaration expands to a list now, because a wildcard names several files. Every test
+/// below names a literal path, so exactly one entry is the expected shape and a second would
+/// be a defect this helper should surface rather than hide.
+fn one_source(declared: EnvironmentFile) -> EnvironmentSource {
+    let mut sources = environment_file_contents::read(declared);
+    assert_eq!(sources.len(), 1, "a literal path names one file");
+
+    sources.remove(0)
+}
+
 /// A scratch directory this test binary owns, under the target tree rather than the box.
 fn scratch(name: &str) -> std::path::PathBuf {
     let directory = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
@@ -253,7 +265,7 @@ fn reading_a_real_file_reports_what_it_sets() {
         .expect("an absolute path");
 
     // Act
-    let source = environment_file_contents::read(declared);
+    let source = one_source(declared);
 
     // Assert
     match source.reading {
@@ -280,7 +292,7 @@ fn a_missing_file_is_absent_rather_than_an_error() {
         EnvironmentFile::new(path.to_str().expect("a UTF-8 path"), true).expect("an absolute path");
 
     // Act
-    let source = environment_file_contents::read(declared);
+    let source = one_source(declared);
 
     // Assert
     assert_eq!(source.reading, EnvironmentReading::Absent);
@@ -296,7 +308,7 @@ fn a_directory_where_a_file_was_declared_is_an_error_and_not_an_absence() {
         .expect("an absolute path");
 
     // Act
-    let source = environment_file_contents::read(declared);
+    let source = one_source(declared);
 
     // Assert: rastro was able to look and what it found would not read, which is a different
     // statement about the box from "there is nothing here".
@@ -447,7 +459,7 @@ fn a_fifo_named_as_an_environment_file_is_refused_rather_than_opened() {
         .expect("an absolute path");
 
     // Act
-    let source = environment_file_contents::read(declared);
+    let source = one_source(declared);
 
     // Assert: an error and not an absence — rastro looked and found something it will not
     // read, which is a different statement about the box from "there is nothing here".
@@ -473,7 +485,7 @@ fn an_environment_file_past_the_bound_is_refused_rather_than_read() {
         .expect("an absolute path");
 
     // Act
-    let source = environment_file_contents::read(declared);
+    let source = one_source(declared);
 
     // Assert
     match source.reading {
@@ -483,4 +495,67 @@ fn an_environment_file_past_the_bound_is_refused_rather_than_read() {
         other => panic!("expected a refusal, got {other:?}"),
     }
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_wildcard_declaration_is_expanded_and_every_match_is_read() {
+    // Arrange: measured against systemd 257 — `systemctl show` reports the pattern with the
+    // `*` intact, so reading the declaration directly finds nothing and reports the whole
+    // set absent. That silently loses exactly the variables this facet exists to name.
+    let directory = scratch("glob");
+    std::fs::write(directory.join("a.env"), "FROM_A=alpha\nSHARED=from_a\n").expect("writable");
+    std::fs::write(directory.join("b.env"), "FROM_B=beta\nSHARED=from_b\n").expect("writable");
+    std::fs::write(directory.join("skip.txt"), "NOT_MINE=x\n").expect("writable");
+    let pattern = directory.join("*.env");
+    let declared = EnvironmentFile::new(pattern.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let sources = environment_file_contents::read(declared);
+
+    // Assert: one entry per matched file, in byte order, which is the order systemd applies
+    // them in — a variable set in two matched files takes the later file's value. Every
+    // entry still names the pattern it came from, because the pattern changes when the unit
+    // is edited and the matched set changes when a file appears in the directory.
+    let paths: Vec<String> = sources
+        .iter()
+        .map(|source| {
+            source
+                .resolved
+                .as_ref()
+                .expect("a matched file has a path")
+                .as_str()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(paths.len(), 2, "`skip.txt` does not match, got {paths:?}");
+    assert!(paths[0].ends_with("a.env"), "got {paths:?}");
+    assert!(paths[1].ends_with("b.env"), "got {paths:?}");
+    for source in &sources {
+        assert!(
+            source.declared.path.as_str().ends_with("*.env"),
+            "every entry names the declaration it came from"
+        );
+    }
+}
+
+#[test]
+fn a_wildcard_that_matches_nothing_is_still_one_entry() {
+    // Arrange: a *required* wildcard matching nothing stops the unit from starting —
+    // measured as `Result=resources` — so this is a finding rather than an empty set to
+    // omit. Absence is state, and the declaration has to stay visible to carry it.
+    let pattern = scratch("glob-empty").join("*.env");
+    let declared = EnvironmentFile::new(pattern.to_str().expect("a UTF-8 path"), false)
+        .expect("an absolute path");
+
+    // Act
+    let sources = environment_file_contents::read(declared);
+
+    // Assert
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].reading, EnvironmentReading::Absent);
+    assert!(
+        sources[0].resolved.is_none(),
+        "there is no file to name, and naming the pattern here would invent one"
+    );
 }

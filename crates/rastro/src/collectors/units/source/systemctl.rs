@@ -171,7 +171,7 @@ impl Systemctl {
                 environment_files: shown_unit
                     .environment_files
                     .into_iter()
-                    .map(environment_file_contents::read)
+                    .flat_map(environment_file_contents::read)
                     .collect(),
                 unset_environment: shown_unit.unset_environment,
             };
