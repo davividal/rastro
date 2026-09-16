@@ -73,6 +73,12 @@ pub struct Unit {
     /// file overrides a variable an earlier one set, so the order *is* part of the meaning.
     /// The same reasoning that keeps kernel order in `/proc/mounts`.
     pub environment_files: Vec<EnvironmentSource>,
+    /// The names systemd removes once everything above has been assembled.
+    ///
+    /// **A variable named here does not reach the process, whatever set it.** Without this
+    /// field the facet would report a service as having a variable it never receives, which
+    /// is the one thing a fingerprint must not do.
+    pub unset_environment: Vec<EnvironmentVariableName>,
 }
 
 impl From<&Unit> for Observation {
@@ -93,6 +99,14 @@ impl From<&Unit> for Observation {
             (
                 "exec_start",
                 Observation::list(unit.exec_start.iter().map(Observation::from)),
+            ),
+            (
+                "unset_environment",
+                Observation::list(
+                    unit.unset_environment
+                        .iter()
+                        .map(|name| Observation::text(name.as_str())),
+                ),
             ),
             (
                 "file",

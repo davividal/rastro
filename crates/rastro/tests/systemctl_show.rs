@@ -538,3 +538,47 @@ fn an_ignore_errors_value_systemd_does_not_print_is_refused() {
     // Assert
     assert!(failure.to_string().contains("maybe"), "got: {failure}");
 }
+
+#[test]
+fn the_names_a_unit_unsets_are_read_from_their_own_property() {
+    // Arrange: measured against systemd 257. `UnsetEnvironment=` is one space-separated
+    // line, and it is the last step of building a service's environment — a name here does
+    // not reach the process whatever set it, including an `Environment=` on the same unit.
+    let shown = "\
+Environment=TOKEN=secret KEEP=yes
+UnsetEnvironment=TOKEN
+Id=probe.service
+";
+    let unit = UnitName::new("probe.service").expect("a legal unit name");
+
+    // Act
+    let parsed = systemctl_show::parse(shown).expect("a well formed group");
+
+    // Assert: both facts survive, because removing the `Environment=` line and adding an
+    // `UnsetEnvironment=` reach the same process environment by different edits, and only a
+    // document carrying both can say which one happened.
+    let shown_unit = &parsed[&unit];
+    assert_eq!(
+        shown_unit
+            .unset_environment
+            .iter()
+            .map(|name| name.as_str())
+            .collect::<Vec<&str>>(),
+        ["TOKEN"]
+    );
+    assert_eq!(shown_unit.environment.len(), 2, "the declarations are kept");
+}
+
+#[test]
+fn a_unit_that_unsets_nothing_reports_an_empty_list() {
+    // Act & Assert: systemd prints the key with nothing after it, as it does for
+    // `Environment=`, so absence is an empty list rather than a parse failure.
+    let shown = "UnsetEnvironment=\nId=probe.service\n";
+    let unit = UnitName::new("probe.service").expect("a legal unit name");
+
+    assert!(
+        systemctl_show::parse(shown).expect("a well formed group")[&unit]
+            .unset_environment
+            .is_empty()
+    );
+}

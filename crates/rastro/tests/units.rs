@@ -309,7 +309,8 @@ fn a_unit_renders_both_sides_with_a_null_for_the_missing_one() {
             "environment_files",
             "exec_start",
             "file",
-            "runtime"
+            "runtime",
+            "unset_environment"
         ]
     );
     assert_eq!(
@@ -425,6 +426,7 @@ fn a_units_environment_values_are_withheld_and_its_names_are_not() {
         exec_start: Vec::new(),
         environment,
         environment_files: Vec::new(),
+        unset_environment: Vec::new(),
     };
 
     // Act
@@ -458,6 +460,7 @@ fn a_units_environment_value_is_readable_under_raw() {
         exec_start: Vec::new(),
         environment,
         environment_files: Vec::new(),
+        unset_environment: Vec::new(),
     };
 
     // Act
@@ -492,6 +495,7 @@ fn a_unit_configured_only_through_a_file_declares_no_variables_and_still_names_t
             ),
             source_read("/etc/myapp.local.env", true, [], 0),
         ],
+        unset_environment: Vec::new(),
     };
 
     // Act
@@ -526,6 +530,7 @@ fn an_environment_file_path_is_not_withheld() {
         exec_start: Vec::new(),
         environment: std::collections::BTreeMap::new(),
         environment_files: vec![source_read("/etc/myapp.env", false, [], 0)],
+        unset_environment: Vec::new(),
     };
 
     // Act
@@ -569,6 +574,7 @@ fn unit_with(environment_files: Vec<EnvironmentSource>) -> Observation {
         exec_start: Vec::new(),
         environment: std::collections::BTreeMap::new(),
         environment_files,
+        unset_environment: Vec::new(),
     };
 
     Observation::from(&unit)
@@ -654,5 +660,41 @@ fn a_line_systemd_would_set_nothing_from_is_counted_in_the_document() {
     assert_eq!(
         field(file, "ignored_lines").content(),
         &Content::Scalar(Scalar::Integer(2))
+    );
+}
+
+#[test]
+fn a_variable_the_unit_unsets_is_named_beside_the_one_that_declares_it() {
+    // Arrange: measured against systemd 257 — a unit declaring `Environment=TOKEN=secret`
+    // beside `UnsetEnvironment=TOKEN` starts a process with no `TOKEN` at all.
+    let mut environment = std::collections::BTreeMap::new();
+    environment.insert(
+        EnvironmentVariableName::new("TOKEN").expect("a legal name"),
+        "secret".to_owned(),
+    );
+    let unit = Unit {
+        file: None,
+        runtime: None,
+        exec_start: Vec::new(),
+        environment,
+        environment_files: Vec::new(),
+        unset_environment: vec![EnvironmentVariableName::new("TOKEN").expect("a legal name")],
+    };
+
+    // Act
+    let rendered = Observation::from(&unit)
+        .in_view(Presentation::complete())
+        .expect("nothing here is volatile");
+
+    // Assert: both facts are kept. Reporting only the declaration would claim the service
+    // has a variable it never receives; dropping the declaration would hide that removing
+    // the `UnsetEnvironment=` line would give it one.
+    assert_eq!(keys_of(&field(&rendered, "environment")), ["TOKEN"]);
+    assert_eq!(
+        items_of(&field(&rendered, "unset_environment"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        ["TOKEN"]
     );
 }

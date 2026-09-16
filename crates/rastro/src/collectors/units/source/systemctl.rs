@@ -60,6 +60,12 @@ const ENVIRONMENT_PROPERTY: &str = "--property=Environment";
 /// configured entirely through one declares an empty environment.
 const ENVIRONMENT_FILES_PROPERTY: &str = "--property=EnvironmentFiles";
 
+/// Ask which names the unit takes back out again.
+///
+/// The last step of building a service's environment, so without it the facet reports a
+/// variable the process never receives.
+const UNSET_ENVIRONMENT_PROPERTY: &str = "--property=UnsetEnvironment";
+
 /// Everything after this is a unit name, however much it looks like an option.
 ///
 /// **Not optional, and not defensive programming.** systemd's root slice and root mount are
@@ -130,6 +136,7 @@ impl Systemctl {
             EXEC_START_PROPERTY,
             ENVIRONMENT_PROPERTY,
             ENVIRONMENT_FILES_PROPERTY,
+            UNSET_ENVIRONMENT_PROPERTY,
             NO_PAGER,
             END_OF_OPTIONS,
         ];
@@ -166,6 +173,7 @@ impl Systemctl {
                     .into_iter()
                     .map(environment_file_contents::read)
                     .collect(),
+                unset_environment: shown_unit.unset_environment,
             };
 
             (name.clone(), unit)

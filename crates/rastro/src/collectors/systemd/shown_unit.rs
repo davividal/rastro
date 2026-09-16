@@ -31,4 +31,17 @@ pub struct ShownUnit {
     /// *is* part of the meaning. Sorting them would be the same mistake as sorting
     /// `/proc/mounts`.
     pub environment_files: Vec<EnvironmentFile>,
+    /// The names systemd removes after everything else has been assembled.
+    ///
+    /// **`UnsetEnvironment=` is the last step of building a service's environment**, and it
+    /// undoes a variable whatever set it — this unit's own `Environment=`, one of its
+    /// environment files, or the manager's inherited environment. Measured: a unit declaring
+    /// `Environment=TOKEN=secret` beside `UnsetEnvironment=TOKEN` starts a process with no
+    /// `TOKEN` at all.
+    ///
+    /// Recorded beside the declarations rather than applied to them, because the two are
+    /// different facts and a diff wants them separately: removing the `Environment=` line and
+    /// adding an `UnsetEnvironment=` reach the same process environment by different edits,
+    /// and a facet that collapsed them could not tell an operator which one happened.
+    pub unset_environment: Vec<EnvironmentVariableName>,
 }

@@ -28,6 +28,7 @@ const ID: &str = "Id=";
 const EXEC_START: &str = "ExecStartEx=";
 const ENVIRONMENT: &str = "Environment=";
 const ENVIRONMENT_FILES: &str = "EnvironmentFiles=";
+const UNSET_ENVIRONMENT: &str = "UnsetEnvironment=";
 
 /// What separates an environment file's path from systemd's note about it.
 ///
@@ -102,12 +103,26 @@ fn parse_group(group: &str) -> Result<(UnitName, ShownUnit), CollectionError> {
         .map(parse_environment_file)
         .collect::<Result<Vec<EnvironmentFile>, CollectionError>>()?;
 
+    // Space-separated names on one line, and empty where the unit unsets nothing. Sorted
+    // rather than kept in systemd's order: this is a set of names, not a sequence, so nothing
+    // is lost and a diff gets one ordering.
+    let mut unset_environment: Vec<EnvironmentVariableName> = group
+        .lines()
+        .find_map(|line| line.strip_prefix(UNSET_ENVIRONMENT))
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(EnvironmentVariableName::new)
+        .collect::<Result<Vec<EnvironmentVariableName>, CollectionError>>()?;
+    unset_environment.sort();
+    unset_environment.dedup();
+
     Ok((
         UnitName::new(name)?,
         ShownUnit {
             exec_start,
             environment,
             environment_files,
+            unset_environment,
         },
     ))
 }
