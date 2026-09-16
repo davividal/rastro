@@ -4260,3 +4260,50 @@ both distributions.
 **Cost:** an environment file past a megabyte is now reported as an `error` rather than read.
 That is a misconfiguration by construction — systemd reads these itself at every service
 start — but it is a case rastro now declines rather than one it answers.
+
+# One spelling for an environment variable name, across three carriers
+
+Dated 2026-09-16. The `containers` collector landed on master while this work was in flight,
+carrying its own `VariableName` for the same concept. Two spellings of one thing inside one
+document is exactly what the ubiquitous-language rule forbids, so `containers` now uses
+`rastro-collector`'s `EnvironmentVariableName` and its own type is gone.
+
+**The port's rule decided it rather than taste:** a value earns its place there by having
+consumers in more than one collector. `cron` had one, `units` made two, `containers` makes
+three. A crontab's `PATH`, a unit's `Environment=PATH` and a container's `PATH` are one
+concept observed on three carriers, and a reader diffing a document has to be able to compare
+them.
+
+**The merge went the stricter way on exactly one character.** `containers` refused `=` in a
+name and the shared type did not, so the shared type now does. That is not the stricter rule
+winning by default — it is the only character rule that is about the *format* rather than
+about taste: `=` separates the name from the value, so a name holding one means the entry was
+split in the wrong place and whatever landed either side of it is untrustworthy. Everything
+else stays permissive, because `execve(2)` carries any byte but `=` and NUL and a name that is
+really on the box must be reportable.
+
+**Where a stricter grammar does belong: with the parser that needs it.** systemd sets nothing
+from a name that is not a C identifier, so the environment-file reader drops `1BAD=y` and
+counts it — while a container engine reporting that same name is reporting something the
+process really has. Putting systemd's grammar in the shared type would have made two other
+facets lie. This is the general shape: **the shared type carries what is true of the concept,
+and a collector enforces what is true of its own source.**
+
+## What this settles about boundaries, and what it does not
+
+This is the first case where two collectors genuinely collided over one concept rather than
+over one *fact*, and it is worth separating the two, because an earlier round of this work
+deferred writing a general boundary rule on the grounds that the evidence was all one pattern.
+
+- **Two collectors observing the same concept share a type.** Settled here.
+- **Two collectors observing the same fact from different sources keep both**, because they
+  can disagree and the disagreement is the finding. Already settled three times: a configured
+  endpoint against a bound socket, a configured port against `postmaster.pid`, a unit's
+  `ExecStart=` against the process table.
+- **Two collectors reading the same source share the reader**, not the facet: `units` and
+  `exporters` over one `systemctl show` dump, and now `nginx` and `units` over one
+  `file_glob`.
+
+Those are three different rules and they were being conflated. A general "boundary rule"
+entry is still not written, and still should not be until something arrives that none of the
+three settles.

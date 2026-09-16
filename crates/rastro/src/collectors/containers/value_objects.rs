@@ -22,7 +22,6 @@ mod single_word;
 mod storage_driver;
 mod swarm_state;
 mod transport_protocol;
-mod variable_name;
 mod volume_name;
 
 pub use capability::Capability;
@@ -46,5 +45,4 @@ pub use network_name::NetworkName;
 pub use storage_driver::StorageDriver;
 pub use swarm_state::SwarmState;
 pub use transport_protocol::TransportProtocol;
-pub use variable_name::VariableName;
 pub use volume_name::VolumeName;

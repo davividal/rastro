@@ -84,7 +84,7 @@ pub use value_objects::{
     Capability, ContainerAccount, ContainerId, ContainerName, ContainerStatus, DaemonStatus,
     EngineFlavour, EngineInstance, EngineInstant, EngineVersion, ExposedPort, ImageDigest,
     ImageReference, LabelName, MountKind, NamespaceName, NetworkId, NetworkName, StorageDriver,
-    SwarmState, TransportProtocol, VariableName, VolumeName,
+    SwarmState, TransportProtocol, VolumeName,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs. A collector written
