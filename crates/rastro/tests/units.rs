@@ -710,3 +710,41 @@ fn a_variable_the_unit_unsets_is_named_beside_the_one_that_declares_it() {
         ["TOKEN"]
     );
 }
+
+#[test]
+fn an_environment_file_entry_always_carries_the_same_keys() {
+    // Arrange: the output format is the contract, and a key that appears only sometimes is
+    // awkward for every consumer. Three readings that differ as much as they can — read,
+    // absent, and a pattern that matched nothing — must still render one shape.
+    let read = source_read("/etc/a.env", false, [("A", "1")], 0);
+    let absent = EnvironmentSource {
+        declared: EnvironmentFile::new("/etc/gone.env", true).expect("an absolute path"),
+        resolved: Some(
+            rastro_collector::AbsolutePath::new("/etc/gone.env", "unit environment file")
+                .expect("an absolute path"),
+        ),
+        reading: EnvironmentReading::Absent,
+    };
+    let unmatched = EnvironmentSource {
+        declared: EnvironmentFile::new("/etc/none.d/*.env", false).expect("an absolute path"),
+        resolved: None,
+        reading: EnvironmentReading::Unreadable("refused".to_owned()),
+    };
+
+    // Act
+    let rendered = unit_with(vec![read, absent, unmatched]);
+
+    // Assert
+    let expected = [
+        "declared",
+        "error",
+        "ignore_errors",
+        "ignored_lines",
+        "path",
+        "status",
+        "variables",
+    ];
+    for entry in items_of(&field(&rendered, "environment_files")) {
+        assert_eq!(keys_of(&entry), expected, "got {entry:?}");
+    }
+}
