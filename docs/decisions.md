@@ -4307,3 +4307,64 @@ deferred writing a general boundary rule on the grounds that the evidence was al
 Those are three different rules and they were being conflated. A general "boundary rule"
 entry is still not written, and still should not be until something arrives that none of the
 three settles.
+
+# PAM gets a collector, because PAM is what reads those files
+
+Dated 2026-09-16. `/etc/environment` and `/etc/security/pam_env.conf` were going to be an
+extension of `accounts`. They are not, and the reason the earlier plan was wrong is worth
+recording, because it was a misapplication of a rule rather than a bad rule.
+
+**Environment belongs to its carrier.** That is what put a unit's `Environment=` in `units`
+and a crontab's variables in `cron`. `pam_env.so` is what reads these two files, at session
+setup — not the shell, and not anything that reads `/etc/passwd`. `accounts` was the nearest
+neighbour, not the owner, and putting them there would have broken the very rule that
+justified the other two placements.
+
+So the gap was never "environment has no home". It was **"PAM has no collector"**, which is a
+hole in Layer 2 independent of environment: the `pam.d` stack and `limits.conf` are real
+system state nothing reports. This collector is scoped to the session environment for now and
+those are its obvious next tenants, needing no new facet.
+
+**An `environment` collector was the alternative and is rejected.** It would be defined by
+exclusion — the environment sources no other collector owns — and a residual category shrinks
+and shifts every time another carrier gets a collector. Its name would also promise more than
+it delivers: holding neither unit nor cron environment, "the environment collector" would be
+the one place in the document without most of the environment.
+
+## `/etc/environment` is not the systemd format, and three rules are its opposite
+
+Measured against `libpam-modules` 1.7.0 on Debian 13 — a probe file written, a PAM login
+performed, the resulting environment read back. The file looks exactly like a unit's
+`EnvironmentFile=` and is read by a different program:
+
+| line | `pam_env` | systemd |
+|---|---|---|
+| `export V=x` | sets `V` | sets nothing; the name holds a space |
+| `V=x␠␠␠` | keeps the spaces | trims them |
+| `V=a # b` | truncates at the `#` | `# b` is part of the value |
+
+Two more that a shared parser would also get wrong: quoting does **not** protect a `#`
+(`V="a # b"` is `a `), and only one leading quote is stripped with a trailing one taken off
+solely when it ends the value, so `V="ab"␠␠` really is `ab"␠␠`. No escape is processed at all.
+So there are two parsers, and what they share is the vocabulary rather than the code: both key
+their result by `EnvironmentVariableName`.
+
+**What `pam_env.conf` records is the rule and not the result.** A value may hold `@{HOME}` or
+`${USER}`, expanded per session and per account at login — measured, `DEFAULT=@{HOME}/x`
+reaches one account as `/home/probe/x`. Recording a resolved value would mean naming one
+account's answer as though it were every account's, and resolving it honestly would mean
+performing a login, which is the mutation this project refuses. `DEFAULT` and `OVERRIDE` are
+both kept for the same reason: `OVERRIDE` wins, and a facet that reported only the winner
+could not show that removing it would change the value.
+
+**Presence is two-valued on `/etc/pam.d`.** A box without it does not run PAM, so there is no
+session environment for PAM to set. A box with no PAM may still have an `/etc/environment`,
+and this facet stays silent about it deliberately: that file would then be read by something
+else, and reporting it here would claim PAM does something it does not.
+
+**Cost, and it is the one to know about:** `envfile=` sources named in the PAM stack are not
+discovered. Debian's `/etc/pam.d/su` carries a second `pam_env.so` line reading
+`/etc/default/locale`, which is where `LANG` actually comes from on most Debian boxes. Finding
+it means parsing the `pam.d` stack — the collector's next step rather than this one — so the
+facet reports the two sources `pam_env` reads by default and says so rather than implying it
+has the lot.

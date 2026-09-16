@@ -107,7 +107,8 @@ collector over trees the operator names. See
 
 **Layer 2, the fixed runtime list.** Processes, listening sockets, established
 connections, systemd units and timers, kernel modules, runtime sysctl, the
-nftables/iptables ruleset, mounts, the package list, users and groups. A unit carries its effective `ExecStart=`, resolved by systemd rather than
+nftables/iptables ruleset, mounts, the package list, users and groups, and PAM's session
+environment. A unit carries its effective `ExecStart=`, resolved by systemd rather than
 read from the unit file, because "enabled and active" does not say which binary
 that amounts to. Read from `/proc` or netlink where cheap, shell out to the canonical tool
 where parsing its output is more honest than reimplementing it, and read a

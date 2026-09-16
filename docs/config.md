@@ -32,6 +32,7 @@ exclude = ["mounts"]
 | `network`      | state    | yes        |
 | `nginx`        | state    | yes        |
 | `packages`     | state    | yes        |
+| `pam`          | state    | yes        |
 | `postgresql`   | state    | yes        |
 | `processes`    | state    | yes        |
 | `repositories` | state    | yes        |
