@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod block_devices;
 pub mod canonical_tool;
+pub mod containers;
 pub mod cron;
 pub mod exporters;
 pub mod file_metadata;
@@ -32,6 +33,7 @@ pub mod units;
 
 pub use accounts::AccountsCollector;
 pub use block_devices::BlockDevicesCollector;
+pub use containers::ContainersCollector;
 pub use cron::CronCollector;
 pub use exporters::ExportersCollector;
 pub use filesystem::FilesystemCollector;
@@ -198,6 +200,7 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
     vec![
         Box::new(AccountsCollector::new()),
         Box::new(BlockDevicesCollector::new()),
+        Box::new(ContainersCollector::new()),
         Box::new(CronCollector::new()),
         Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
