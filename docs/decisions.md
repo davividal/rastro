@@ -3873,3 +3873,41 @@ Verified on a live box: `alice` and `root` discovered as separate instances, ans
 `/run/user/1001/podman/podman.sock` and `/run/podman/podman.sock`, with stores under
 `/home/alice/.local/share/containers/storage` and `/var/lib/containers/storage`, and their
 containers kept apart.
+
+## A logging option's value is withheld, like an environment value
+
+The log driver and its option *names* are recorded plainly; every option *value* is marked
+sensitive, so the default view carries a digest rather than the text.
+
+**Because some drivers require a credential there.** docker's splunk driver takes
+`splunk-token`, and the gelf and fluentd drivers take an address that can carry one. The
+names are open-ended — a logging plugin defines its own options — so a rule that judged by
+key would have to enumerate every driver's and would be wrong about the next one. That is the
+reasoning the container environment already gets, and the same answer: the keys stay public,
+the values do not.
+
+**Cost, accepted knowingly:** `max-size` and `max-file`, which are the options an operator
+actually reads, arrive as digests too. A diff still says they changed, which is most of what
+the fingerprint is for, and `--raw` is where the rest is paid back once it exists.
+
+## docker has two spellings of an empty `HostConfig` collection
+
+Measured, because it decides how every one of these fields is declared. On docker 26.1.5 a
+container with nothing there reports `"CapAdd": null`, `"SecurityOpt": null`, `"Binds": null`
+and `"ExtraHosts": null`, while `Tmpfs` and `Sysctls` are **absent from the document
+entirely**. The 29.8.0 fixtures show the other half: there `Sysctls` and `ExtraHosts` arrive
+as explicit `null`.
+
+**So both spellings have to be tolerated where either was seen, and `#[serde(default)]`
+alone does not.** It covers a field that is missing; an explicit `null` into a bare
+`BTreeMap` or `Vec` fails the *whole* document rather than the one field, so the container is
+recorded as unreadable and nothing else about it survives. Every field measured to arrive as
+`null` is `Option<...>` with `default`, read through `.flatten()`. `Tmpfs` was the one that
+was not, and a test now holds it.
+
+**The fields measured to always arrive as a list or a map are left as they are**, which is
+the standing rule here: what the host was seen to do, not what it might. The residual is
+named rather than guessed away — a docker that one day writes `null` where 26.1.5 and 29.8.0
+both write `[]` costs that container's entry, loudly, in `unreadable_containers` with serde's
+own message. That is the failure this facet is shaped for, and it is a better trade than
+declaring shapes nobody has observed.
