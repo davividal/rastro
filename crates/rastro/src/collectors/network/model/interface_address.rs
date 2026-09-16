@@ -2,8 +2,9 @@
 
 use rastro_collector::Observation;
 
+use crate::collectors::inet::IpAddress;
 use crate::collectors::network::value_objects::{
-    AddressFamily, AddressLifetime, AddressScope, IpAddress, PrefixLength,
+    AddressFamily, AddressLifetime, AddressScope, PrefixLength,
 };
 
 /// An address assigned to an interface.
