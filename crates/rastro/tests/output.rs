@@ -870,7 +870,7 @@ struct SecretKeeper {
 }
 
 impl SecretKeeper {
-    const SECRET: &'static str = "postgres://app:hunter2@localhost/app";
+    const SECRET: &str = "postgres://app:hunter2@localhost/app";
 
     fn new() -> Self {
         Self {
