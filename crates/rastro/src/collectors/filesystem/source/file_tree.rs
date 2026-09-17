@@ -164,6 +164,15 @@ impl FileTree {
                 }
             };
 
+            // A tree more than one claim named is in the document as the argument about it,
+            // not as a directory with nothing under it. The seal already stops the descent;
+            // what this adds is that the one path it costs says who argued and why, instead
+            // of reading like every other sealed tree.
+            if let Some(contested) = policy.contest_at(&recorded) {
+                unreadable.push(UnreadablePath::contested(&recorded, &contested.claimants));
+                continue;
+            }
+
             let entry = match self.entry_of(&path, &recorded, &metadata, policy) {
                 Ok(entry) => entry,
                 Err(refusal) => {

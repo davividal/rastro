@@ -23,7 +23,7 @@ use rastro::collectors::filesystem::{
     ContentPolicy, Detail, DigestAlgorithm, FileKind, FileTree, PolicyRule, UnspellablePath,
     WalkPolicy,
 };
-use rastro_collector::WalkedTree;
+use rastro_collector::{ClaimQualifier, FacetName, FilesystemClaim, WalkedTree};
 use rastro_fingerprint::{Observation, View};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, integer, is_null, keys_of, text};
@@ -31,6 +31,14 @@ use support::observation::{field, integer, is_null, keys_of, text};
 /// `sha256sum` of the four bytes below, which is the value the walk has to reproduce.
 const HELLO_DIGEST: &str = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
 const HELLO: &str = "hello\n";
+
+fn facet(name: &str) -> FacetName {
+    FacetName::new(name).expect("a legal facet name")
+}
+
+fn entry(key: &str) -> ClaimQualifier {
+    ClaimQualifier::new(key).expect("a legal qualifier")
+}
 
 fn hashing_everything() -> WalkPolicy {
     WalkPolicy::new(vec![PolicyRule::shipped(
@@ -258,6 +266,78 @@ fn walk_records_a_sealed_tree_as_its_own_directory_and_goes_no_further() {
     assert_eq!(names(&entries), vec!["", "etc"]);
     let sealed = entry_at(&entries, "etc");
     assert_eq!(sealed.kind, FileKind::Directory);
+}
+
+#[test]
+fn walk_reports_a_contested_tree_instead_of_describing_it() {
+    // Arrange: a tree two claims named, which the table sealed because rastro cannot say
+    // which of them owns it. The walk reaches it like any other path.
+    let root = tree_with_a_file("walk_reports_a_contested_tree");
+    write(&root, "etc/second", HELLO);
+    let contested =
+        WalkedTree::new(root.join("etc").to_str().expect("a UTF-8 path")).expect("a legal tree");
+    let policy = hashing_everything()
+        .claimed(
+            &facet("postgresql"),
+            &[FilesystemClaim::sealed(contested.clone()).for_entry(entry("11/main"))],
+        )
+        .expect("a tree no shipped rule names")
+        .claimed(
+            &facet("postgresql"),
+            &[FilesystemClaim::sealed(contested).for_entry(entry("14/main"))],
+        )
+        .expect("a contested tree is sealed, not refused");
+
+    // Act
+    let walked = FileTree::at(&root).walk(&policy).expect("a readable tree");
+
+    // Assert: the ordinary seal keeps the directory's own attributes, and this one does not.
+    // A tree rastro declined to account for is a path in the document as a reason rather
+    // than as a description, which is the same contract a directory it could not list gets,
+    // and the difference is what stops a reader skimming past it as a normal seal.
+    assert_eq!(
+        walked
+            .entries()
+            .iter()
+            .map(|entry| relative(&root, entry.path.as_str()))
+            .collect::<Vec<String>>(),
+        vec![""]
+    );
+    let refused = walked.unreadable();
+    assert_eq!(refused.len(), 1);
+    assert_eq!(relative(&root, refused[0].path.as_str()), "etc");
+    assert!(
+        refused[0].reason.as_str().contains("postgresql:11/main")
+            && refused[0].reason.as_str().contains("postgresql:14/main"),
+        "the reason must name every claimant, got {:?}",
+        refused[0].reason.as_str()
+    );
+}
+
+#[test]
+fn walk_describes_a_tree_one_claim_sealed() {
+    // Arrange: the same shape with one claimant, which is the ordinary seal.
+    let root = tree_with_a_file("walk_describes_a_sealed_tree");
+    let sealed =
+        WalkedTree::new(root.join("etc").to_str().expect("a UTF-8 path")).expect("a legal tree");
+    let policy = hashing_everything()
+        .claimed(&facet("postgresql"), &[FilesystemClaim::sealed(sealed)])
+        .expect("a tree no shipped rule names");
+
+    // Act
+    let walked = FileTree::at(&root).walk(&policy).expect("a readable tree");
+
+    // Assert: uncontested, so the directory keeps its own entry and nothing is refused. The
+    // effective table is what says why there is nothing under it.
+    assert_eq!(walked.unreadable().len(), 0);
+    assert_eq!(
+        walked
+            .entries()
+            .iter()
+            .map(|entry| relative(&root, entry.path.as_str()))
+            .collect::<Vec<String>>(),
+        vec!["", "etc"]
+    );
 }
 
 #[test]

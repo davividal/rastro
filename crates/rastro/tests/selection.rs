@@ -40,7 +40,10 @@ fn names(config: &str) -> Vec<String> {
 
 /// The claimants an effective-table entry names, which is a list however many there are.
 fn claimants_of(rule: &Observation) -> Vec<String> {
-    items_of(&field(rule, "claimed_by")).iter().map(text).collect()
+    items_of(&field(rule, "claimed_by"))
+        .iter()
+        .map(text)
+        .collect()
 }
 
 #[test]

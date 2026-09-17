@@ -162,6 +162,16 @@ impl WalkPolicy {
         self.rules.iter().filter(|rule| rule.is_contested())
     }
 
+    /// The contested rule this path is the root of, where it is one.
+    ///
+    /// The root of the tree and nothing below it, because a contested tree is sealed and
+    /// nothing below it is ever reached. One key carries the whole fact, which is what keeps
+    /// the blast radius at the directory the claims argued over.
+    pub fn contest_at(&self, path: &AbsolutePath) -> Option<&PolicyRule> {
+        self.contested()
+            .find(|rule| rule.tree.as_str() == path.as_str())
+    }
+
     /// The same table, with the operator's own rules folded in over everything else.
     ///
     /// **An operator's rule beats a collector's claim, and a shipped one.** A claim is rastro's
