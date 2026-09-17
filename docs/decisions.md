@@ -4539,26 +4539,27 @@ pair of fingerprints showed what the exception costs.
 box moved two databases from a migration role to `postgres` with `ALTER DATABASE … OWNER`.
 That statement does three things at once: it rewrites `granted_by` on every existing entry,
 it gives the new owner an explicit entry the ACL did not carry, and it takes the implicit
-owner rights off the old one. Three renderings of the same two documents, diffed with the
-same walker, over the `nightcrawler` database:
+owner rights off the old one. Three renderings of the same two real fingerprints, each
+flattened to leaf paths and diffed the same way, over the `nightcrawler` database:
 
-| shape | lines | the revoke |
+| shape | diff lines | where the revoke lands |
 |---|---|---|
-| a list of grants | 21 | at `grants[7]`, an index |
-| keyed by grantee **and grantor** | 28 | **not reported at all** |
-| keyed by grantee, grantor a field | 17 | at `grants/nc_migration[0]` |
+| a list of grants | 41 | `grants[7]/privileges/…`, an index naming nobody |
+| keyed by grantee **and grantor** | 73 | **nowhere: the grant is removed and re-added** |
+| keyed by grantee, grantor a field | 32 | `grants/nc_migration[0]/privileges/…` |
 
 **The list smears an insertion.** `postgres` gaining an entry at index nine shifted the tail
-along, so four grants were reported as changing hands, and the two lines that were the point
-sat at index seven among the artefacts. A reader skimming that sees rename noise and stops,
-which is what happened.
+along, so four grants reported a changed `grantee` and a fifth appeared whole, and the two
+lines that were the point sat at index seven among the artefacts. A reader skimming that sees
+rename noise and stops, which is what happened.
 
 **Keying on the grantor as well is worse, and that is the finding worth keeping.** It is the
-obvious shape, because a grant really is identified by the pair. But the grantor rewrite
-renames every key at once: each grant reads as one key removed and one key added, the diff
-never descends into the value, and the revoke the same statement performed is not in the
-output anywhere. A shape that hides the change it was adopted to reveal is worse than the one
-it replaced, and only running it against the real pair said so.
+obvious shape, because a grant really is identified by the pair, and it was built and
+measured before it was rejected. The grantor rewrite renames every key at once: each grant
+reads as one key removed and one key added, the diff never descends into either, and the
+revoke the same statement performed is not distinguishable from the rename anywhere in the
+output. A shape that hides the change it was adopted to reveal is worse than the one it
+replaced, and only running it against the real pair said so.
 
 **So the key is the grantee and the grantor is a field.** The insertion is one key appearing.
 The rewrite is one field per holder, stated once each instead of once per row. The revoke is
