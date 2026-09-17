@@ -6,9 +6,11 @@ use clap::Parser;
 
 use rastro_fingerprint::{Presentation, View};
 
+use crate::VERSION;
+
 /// Emits a canonical, diffable fingerprint of the current host's state.
 #[derive(Debug, Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = VERSION, about, long_about = None)]
 pub struct Cli {
     /// Also emit values that change on their own between runs, such as PIDs and
     /// the run timestamp.

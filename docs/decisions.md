@@ -4469,3 +4469,60 @@ wrong: a shape that changes with the data is a shape every reader has to branch 
 `/var/lib/postgresql/data` reading `claimed by postgresql:11/main, postgresql:14/main, so it
 was sealed rather than walked`, both clusters in the `postgresql` facet naming that directory,
 and every other path on the box still in the document.
+
+# A build names the commit it came from, in the version it reports
+
+Dated 2026-09-17. The `invocation` facet's job is to say what produced a document, and it
+could not. Every development build reports `0.0.0`, the workspace version, because both
+sites that report one read `CARGO_PKG_VERSION` at compile time. Two fingerprints taken by
+two different builds of rastro are indistinguishable in the field that exists to tell them
+apart, which was found the honest way: a pair of real fingerprints turned out to carry a
+collector set matching no commit in `master`, and nothing in either document could say which
+build had made them.
+
+**So a build may override the version, and the rolling build does.** `RASTRO_BUILD_VERSION`,
+when set at compile time, replaces the crate version:
+
+```
+$ rastro --version
+rastro 0.0.0-rolling+75068c4
+```
+
+**Semver, deliberately, and the identifier is `rolling` because the tag is.** The base is the
+crate version read from the manifest, so cutting a release needs no edit in the workflow.
+`-rolling` is a pre-release identifier and `+<commit>` is build metadata, which semver
+ignores for precedence — correct here, because the commit identifies a build rather than
+ordering it. The name matches the `rolling` pre-release the binary is published as, rather
+than introducing a second word for one artefact. `nightly` was considered and is wrong twice
+over: the build is published on every master push rather than daily, and the tag name is
+burned on this repository, as
+[the distribution entry](#distribution-getting-the-binary-before-there-is-a-release)
+records.
+
+**The trap this leaves for the first release.** `-rolling` is a pre-release, so
+`0.1.0-rolling+abc` sorts *below* a released `0.1.0` while actually being ahead of it. The
+answer is the ordinary one: bump the workspace version immediately after cutting a release,
+so master always carries the next unreleased number and a rolling build off it sorts above
+what shipped. Free to say now, expensive to discover later.
+
+**One constant, because two were one accident from disagreeing.** The command line and the
+`invocation` facet both report a version. They agreed because both read `CARGO_PKG_VERSION`;
+once a build can override it, agreement has to be built rather than assumed, so both read
+`rastro::VERSION` and a test asserts the printed string contains the documented one.
+
+**A build script, for two lines.** `option_env!` is read when the crate is compiled and cargo
+has no way to know it was consulted, so without `cargo::rerun-if-env-changed` a later build
+with a different commit silently keeps the old string. CI builds clean and would never
+notice; somebody reproducing a rolling build locally would, and would be debugging the wrong
+thing. Measured both ways before it was written down: with the build script, changing the
+variable changes the binary; the fallback to `0.0.0` still holds when it is unset.
+
+**CI asserts the commit arrived**, rather than running `--version` as a smoke test. A build
+script and an environment variable can both fail silently, and a version that quietly stayed
+`0.0.0` would reintroduce exactly the gap this entry closes.
+
+**Cost:** a fingerprint's `rastro_version` now differs between two builds of identical source
+from different commits, so a diff of two documents taken by two rolling builds shows one line
+in the `invocation` facet on an unchanged host. That is the intended reading — the builds
+really were different — and it is the same cost the disclosure entry accepted for the same
+facet.

@@ -9,10 +9,9 @@ use rastro_collector::{
     CollectorVersion, Disclosure, FacetName, Observation, Presence, Presentation, View,
 };
 
+use crate::VERSION;
 use crate::collectors::filesystem::Detail;
 use crate::config::Config;
-
-const RASTRO_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The settings this run resolved to, as the `invocation` facet reports them.
 ///
@@ -146,7 +145,7 @@ impl Collector for InvocationCollector {
         let started_at = self.started_at.as_ref().map_err(|error| error.clone())?;
 
         Ok(Observation::object([
-            ("rastro_version", Observation::text(RASTRO_VERSION)),
+            ("rastro_version", Observation::text(VERSION)),
             ("config", self.effective_config.clone()),
             (
                 "observer",
