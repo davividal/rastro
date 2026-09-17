@@ -368,6 +368,7 @@ impl PostgresqlClusters {
             status: cluster.status.clone(),
             port: cluster.port,
             owner: cluster.owner.clone(),
+            data_directory: cluster.data_directory.clone(),
             observed,
             lens: read.as_ref().map(|read| read.lens.clone()),
             settings: read.as_ref().map(|read| read.settings.clone()),

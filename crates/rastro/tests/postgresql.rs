@@ -498,6 +498,7 @@ fn clusters_render_in_one_deterministic_key_order() {
                 status: cluster.status,
                 port: cluster.port,
                 owner: cluster.owner,
+                data_directory: cluster.data_directory,
                 settings: None,
                 roles: None,
                 memberships: None,
@@ -530,6 +531,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         status: ClusterStatus::parse("online").expect("a legal status"),
         port: Some(5432),
         owner: "postgres".to_owned(),
+        data_directory: None,
         settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
         roles: Some(PsqlRoles::parse(ROLES).expect("well formed")),
         memberships: Some(PsqlMemberships::parse(MEMBERSHIPS).expect("well formed")),
@@ -551,6 +553,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         status: ClusterStatus::parse("down").expect("a legal status"),
         port: Some(5433),
         owner: "postgres".to_owned(),
+        data_directory: None,
         settings: None,
         roles: None,
         memberships: None,
@@ -646,6 +649,7 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         status: ClusterStatus::parse("online,recovery").expect("a legal status"),
         port: Some(5432),
         owner: "postgres".to_owned(),
+        data_directory: None,
         settings: None,
         roles: None,
         memberships: None,
@@ -720,6 +724,7 @@ fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
         status: ClusterStatus::parse("down,binaries_missing").expect("a legal status"),
         port: Some(5433),
         owner: "postgres".to_owned(),
+        data_directory: None,
         lens: None,
         settings: None,
         roles: None,
@@ -1052,6 +1057,7 @@ fn a_non_privileged_read_marks_the_settings_incomplete() {
         status: ClusterStatus::parse("online").expect("a legal status"),
         port: Some(5432),
         owner: "postgres".to_owned(),
+        data_directory: None,
         lens: Some(PsqlReadLens::parse("app,orders,f,f\n").expect("well formed")),
         settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
         roles: None,
@@ -1196,6 +1202,54 @@ fn read_carries_every_cluster_the_register_lists() {
         keys_of(&Observation::from(&clusters)),
         vec!["15/main", "17/main"]
     );
+}
+
+#[test]
+fn a_cluster_carries_the_data_directory_it_was_registered_with() {
+    // Arrange: the host from issue #41, where a down cluster left over from an upgrade names
+    // the directory the running one uses. Reading it from the register rather than from
+    // `pg_settings` is what makes it present for the stopped cluster too: nothing is running
+    // there to be asked, and the register still knows where it was pointed.
+    let listed = "\
+11  main    5432 down   postgres /var/lib/postgresql/data /var/log/pg-11.log
+14  main    5433 online postgres /var/lib/postgresql/data /var/log/pg-14.log";
+
+    // Act
+    let rendered = Observation::from(&read_with(
+        "shared-datadir",
+        listed,
+        &answering_every_query(),
+    ));
+
+    // Assert: both clusters say where they point, so two of them on one directory is a fact
+    // the facet states rather than one an operator has to infer from a sealed tree.
+    for cluster in ["11/main", "14/main"] {
+        assert_eq!(
+            text(&field(&field(&rendered, cluster), "data_directory")),
+            "/var/lib/postgresql/data",
+            "{cluster} should name the directory the register gave it"
+        );
+    }
+}
+
+#[test]
+fn a_cluster_the_register_gave_no_directory_says_so() {
+    // Arrange: a data directory with a space in it, which `pg_lsclusters` prints unquoted and
+    // no rule can rejoin. Absent beats a truncation that names a real but unrelated directory.
+    let listed = "14  main    5433 online postgres /srv/postgres data/main /var/log/pg.log";
+
+    // Act
+    let rendered = Observation::from(&read_with(
+        "unspellable-datadir",
+        listed,
+        &answering_every_query(),
+    ));
+
+    // Assert
+    assert!(is_null(&field(
+        &field(&rendered, "14/main"),
+        "data_directory"
+    )));
 }
 
 #[test]
