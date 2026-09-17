@@ -2,9 +2,7 @@
 
 use rastro_collector::{FacetName, Observation, WalkedTree};
 
-use crate::collectors::filesystem::value_objects::Claimant;
-
-use crate::collectors::filesystem::value_objects::ContentPolicy;
+use crate::collectors::filesystem::value_objects::{Claimant, ContentPolicy};
 
 /// A policy decision about a subtree, and the facet that made it.
 ///
@@ -13,19 +11,43 @@ use crate::collectors::filesystem::value_objects::ContentPolicy;
 /// be covered. That belongs to [`WalkPolicy`](super::WalkPolicy), which is the only type
 /// able to see the other rules.
 ///
-/// `claimant` is who asked, and it is never absent: rastro's own shipped rules name the
+/// `claimants` is who asked, and it is never empty: rastro's own shipped rules name the
 /// `filesystem` facet, a collector's claim names that collector, and an operator's config names
 /// `config`. Without it a reader of a tree with no entries cannot tell a shipped decision from
 /// a collector's claim from their own colleague's config file, and the one thing a sealed tree
 /// owes them is who removed it.
+///
+/// **More than one means the tree is contested**, and the rule holds every claimant rather
+/// than a winner. Nothing in a table can resolve that: rastro would be choosing which of two
+/// collectors, or which of one collector's two entries, was right about a tree neither should
+/// have been arguing over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyRule {
     pub tree: WalkedTree,
     pub content: ContentPolicy,
-    pub claimant: Claimant,
+    pub claimants: Vec<Claimant>,
 }
 
 impl PolicyRule {
+    /// Whether more than one claim named this tree.
+    pub fn is_contested(&self) -> bool {
+        self.claimants.len() > 1
+    }
+
+    /// Records another claimant of this tree, and stops the walk descending into it.
+    ///
+    /// The reading the claims asked for stops applying the moment there is more than one of
+    /// them, whether or not they agreed: what the walk does with a tree nobody can be shown
+    /// to own is not a question any of the claims answered.
+    ///
+    /// Sorted, because the claimants are a set of names rather than an order of arrival, and
+    /// two runs on an unchanged box must render the same bytes.
+    pub fn contested_by(&mut self, claimant: Claimant) {
+        self.claimants.push(claimant);
+        self.claimants.sort();
+        self.content = ContentPolicy::Sealed;
+    }
+
     /// A rule rastro ships, attributed to the facet whose walk it governs.
     ///
     /// The only claimant that is not a claim: `filesystem` decided it itself. Named here so
@@ -35,9 +57,9 @@ impl PolicyRule {
         Self {
             tree,
             content,
-            claimant: Claimant::facet(
+            claimants: vec![Claimant::facet(
                 FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
-            ),
+            )],
         }
     }
 
@@ -50,9 +72,9 @@ impl PolicyRule {
         Self {
             tree,
             content,
-            claimant: Claimant::facet(
+            claimants: vec![Claimant::facet(
                 FacetName::new("config").expect("`config` is a legal facet name"),
-            ),
+            )],
         }
     }
 }
@@ -61,9 +83,20 @@ impl From<&PolicyRule> for Observation {
     /// How the effective table renders, one object per rule.
     ///
     /// The tree is the key the table is built under, so it is not repeated here.
+    ///
+    /// `claimed_by` is a list however many claimants there are, rather than a scalar that
+    /// becomes a list on the boxes where something went wrong. A shape that changes with the
+    /// data is a shape every reader has to branch on.
     fn from(rule: &PolicyRule) -> Self {
         Observation::object([
-            ("claimed_by", Observation::text(rule.claimant.to_string())),
+            (
+                "claimed_by",
+                Observation::list(
+                    rule.claimants
+                        .iter()
+                        .map(|claimant| Observation::text(claimant.to_string())),
+                ),
+            ),
             ("reading", Observation::text(reading_of(&rule.content))),
         ])
     }

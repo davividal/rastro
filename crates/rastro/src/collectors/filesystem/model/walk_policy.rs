@@ -114,17 +114,26 @@ impl WalkPolicy {
 
     /// The same table, with one collector's claims folded in.
     ///
-    /// **A conflict fails rather than resolving.** Two rules for one tree leave no most
-    /// specific answer, and every way of picking a winner would be rastro deciding for the
-    /// operator which of two collectors was right about a tree neither of them should have
-    /// been arguing over. It is a bug in a collector pair, so it reads as one: the walk
-    /// fails, loudly, naming both claimants and the tree.
+    /// **A tree more than one claim names is sealed, and every claimant is kept.** Two rules
+    /// for one tree leave no most specific answer, and every way of picking a winner would be
+    /// rastro deciding for the operator which claim was right about a tree none of them should
+    /// have been arguing over.
     ///
-    /// A claim that merely repeats what the shipped table already says is still a conflict.
-    /// Agreeing by accident is not agreement, and the next release moving one of the two
-    /// would turn a silent duplicate into a silent disagreement.
+    /// Sealing is not rastro settling that argument. It is rastro declining to walk into a
+    /// tree it cannot account for, which is the one answer that needs no winner. What the
+    /// claims asked for stops applying, agreeing claims included: two clusters registered on
+    /// one data directory agree on the reading and are still a box in a state nobody intended,
+    /// and rastro cannot tell which of them owns the directory, nor whether the one that was
+    /// down while the walk ran is about to come back up.
     ///
-    /// **One claimant repeating itself is the exception**, and [`decided_once`] says why.
+    /// rastro's own shipped rules are claimants like any other, so a claim that repeats one
+    /// contests it. The root is a tree like any other too: a special case there would buy a
+    /// branch and nothing else, since a sealed root still leaves an entry that says what
+    /// happened.
+    ///
+    /// **Nothing here fails.** The tree is reported as contested, by
+    /// [`Self::contested`], and an operator's rule replaces the seal outright, so a tree
+    /// rastro declined to walk is never a dead end.
     pub fn claimed(
         self,
         claimant: &FacetName,
@@ -132,25 +141,25 @@ impl WalkPolicy {
     ) -> Result<Self, CollectionError> {
         let mut rules = self.rules;
 
-        for claim in decided_once(claimant, claims)? {
-            if let Some(existing) = rules.iter().find(|rule| &rule.tree == claim.tree()) {
-                return Err(CollectionError::new(format!(
-                    "{:?} is claimed by {} and already ruled by {}, so no rule for it is \
-                     the most specific one",
-                    claim.tree().as_str(),
-                    claimant_of(claimant, claim),
-                    existing.claimant
-                )));
-            }
+        for claim in claims {
+            let claimant = claimant_of(claimant, claim);
 
-            rules.push(PolicyRule {
-                tree: claim.tree().clone(),
-                content: ContentPolicy::from(claim.reading()),
-                claimant: claimant_of(claimant, claim),
-            });
+            match rules.iter_mut().find(|rule| &rule.tree == claim.tree()) {
+                Some(existing) => existing.contested_by(claimant),
+                None => rules.push(PolicyRule {
+                    tree: claim.tree().clone(),
+                    content: ContentPolicy::from(claim.reading()),
+                    claimants: vec![claimant],
+                }),
+            }
         }
 
         Self::new(rules)
+    }
+
+    /// The trees more than one claim named, which the walk seals and reports.
+    pub fn contested(&self) -> impl Iterator<Item = &PolicyRule> {
+        self.rules.iter().filter(|rule| rule.is_contested())
     }
 
     /// The same table, with the operator's own rules folded in over everything else.
@@ -161,10 +170,12 @@ impl WalkPolicy {
     /// tree this replaces rather than refuses, and the effective table records `config` as the
     /// claimant so the change is declared rather than silent.
     ///
-    /// That is the opposite resolution from [`Self::claimed`], and deliberately: two collectors
-    /// naming one tree is a bug in a collector pair, with no way to pick a winner. An operator
-    /// and a collector naming one tree is an operator correcting rastro, which has an obvious
-    /// winner.
+    /// That is a different resolution from [`Self::claimed`], and deliberately: claims naming
+    /// one tree have no winner to pick, so the tree is sealed and every claimant reported. An
+    /// operator and a collector naming one tree do have an obvious winner. So a config rule
+    /// replaces whatever it names, a contested seal included, and the tree stops being
+    /// contested rather than staying sealed with a note: the operator has said what to do
+    /// with it, which is the whole thing rastro was missing.
     ///
     /// **A config still cannot widen the walk.** Only the three narrowings can be spelled here,
     /// because that is all the config type can hold — there is no `hashed` key. The type is what
@@ -218,49 +229,6 @@ fn claimant_of(facet: &FacetName, claim: &FilesystemClaim) -> Claimant {
         Some(entry) => Claimant::entry(facet.clone(), entry.clone()),
         None => Claimant::facet(facet.clone()),
     }
-}
-
-/// One claimant's list as the set of decisions it is, or the contradiction inside it.
-///
-/// A collector resolves its trees from the host, and a host can answer twice: two
-/// postgresql-common clusters registered on one data directory print two rows naming it, so
-/// the list arrives saying `sealed` about that tree twice. That is one decision stated
-/// twice, with no winner to pick, and refusing it cost the largest facet in the document
-/// over a repeat.
-///
-/// **This is not the rule in [`WalkPolicy::claimed`] relaxed.** Two collectors, or a
-/// collector and the shipped table, are independent sources whose agreement is accidental
-/// and whose next release can move one of them apart. One claimant's two entries come from
-/// a single resolution in a single run, so they move together or not at all.
-///
-/// A tree named twice with two different readings still fails. That is the collector
-/// contradicting itself, and rastro has no more business choosing between one collector's
-/// two answers than between two collectors'.
-fn decided_once<'claims>(
-    claimant: &FacetName,
-    claims: &'claims [FilesystemClaim],
-) -> Result<Vec<&'claims FilesystemClaim>, CollectionError> {
-    let mut decided: Vec<&FilesystemClaim> = Vec::new();
-
-    for claim in claims {
-        match decided
-            .iter()
-            .find(|earlier| earlier.tree() == claim.tree())
-        {
-            Some(earlier) if earlier.reading() == claim.reading() => continue,
-            Some(_) => {
-                return Err(CollectionError::new(format!(
-                    "{} claims {:?} twice and reads it two ways, so no rule for it is the \
-                     most specific one",
-                    claimant.as_str(),
-                    claim.tree().as_str()
-                )));
-            }
-            None => decided.push(claim),
-        }
-    }
-
-    Ok(decided)
 }
 
 impl From<&WalkPolicy> for Observation {

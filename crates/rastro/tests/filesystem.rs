@@ -7,7 +7,7 @@ use rastro::collectors::filesystem::{ContentPolicy, DigestAlgorithm, PolicyRule,
 use rastro_collector::{
     AbsolutePath, ClaimQualifier, FacetName, FilesystemClaim, Observation, WalkedTree,
 };
-use support::observation::{field, text};
+use support::observation::{field, items_of, text};
 
 fn facet(name: &str) -> FacetName {
     FacetName::new(name).expect("a legal facet name")
@@ -24,6 +24,18 @@ fn rule_for<'a>(policy: &'a WalkPolicy, tree: &str) -> &'a PolicyRule {
 
 fn qualifier(value: &str) -> ClaimQualifier {
     ClaimQualifier::new(value).expect("a legal qualifier")
+}
+
+/// The claimants an effective-table entry renders, which is a list however many there are.
+fn texts_of(observation: &Observation) -> Vec<String> {
+    items_of(observation).iter().map(text).collect()
+}
+
+fn claimants_of(rule: &PolicyRule) -> Vec<String> {
+    rule.claimants
+        .iter()
+        .map(|claimant| claimant.to_string())
+        .collect()
 }
 
 fn tree(value: &str) -> WalkedTree {
@@ -237,7 +249,7 @@ fn claimed_reads_a_claimed_tree_the_way_its_claimant_asked() {
     // reader of a tree with no entries under it is owed the name of whoever removed them.
     let rule = rule_for(&policy, "/var/lib/postgresql/17/main");
     assert_eq!(rule.content, ContentPolicy::Sealed);
-    assert_eq!(rule.claimant.to_string(), "postgresql");
+    assert_eq!(claimants_of(rule), vec!["postgresql"]);
 }
 
 #[test]
@@ -287,7 +299,7 @@ fn claimed_carries_the_shipped_rules_through_untouched() {
 }
 
 #[test]
-fn claimed_refuses_a_tree_another_rule_already_governs() {
+fn claimed_seals_a_tree_two_facets_claim() {
     // Arrange: two collectors claiming one tree is a bug in a collector pair, and the box
     // that produces it is real: a MySQL and a MariaDB collector both naming the same data
     // directory because neither resolved it from the host.
@@ -300,123 +312,129 @@ fn claimed_refuses_a_tree_another_rule_already_governs() {
         .expect("the first claim stands");
 
     // Act
-    let refused = claimed.claimed(&facet("mariadb"), &[FilesystemClaim::sealed(contested)]);
+    let policy = claimed
+        .claimed(&facet("mariadb"), &[FilesystemClaim::churns(contested)])
+        .expect("a contested tree is sealed, not refused");
 
-    // Assert: no winner is picked. The message names the tree and both claimants, because
-    // that is what makes it fixable, and the walk fails rather than reading a table with no
-    // most specific answer.
-    let message = refused.expect_err("one tree, two rules").to_string();
-    assert!(message.contains("/var/lib/mysql"), "got {message}");
-    assert!(message.contains("mariadb"), "got {message}");
-    assert!(message.contains("mysql"), "got {message}");
+    // Assert: no winner is picked, and neither reading is honoured. Sealing is not rastro
+    // settling the argument, it is rastro declining to walk into a tree it cannot account
+    // for. Both claimants are kept, because that is what makes the argument fixable.
+    let rule = rule_for(&policy, "/var/lib/mysql");
+    assert_eq!(rule.content, ContentPolicy::Sealed);
+    assert_eq!(claimants_of(rule), vec!["mariadb", "mysql"]);
 }
 
 #[test]
-fn claimed_refuses_a_claim_that_repeats_a_shipped_rule() {
-    // Act
-    let refused = WalkPolicy::built_in().claimed(
-        &facet("journald"),
-        &[FilesystemClaim::churns(tree("/var/log"))],
-    );
-
-    // Assert: agreeing by accident is not agreement. Accepting the duplicate would leave the
-    // table silently ambiguous the moment either side moved.
-    assert!(refused.is_err());
-}
-
-#[test]
-fn claimed_names_the_entry_of_a_claimant_that_asked() {
-    // Arrange: a facet that keys several subjects claims a tree on behalf of one of them.
-    let claim =
-        FilesystemClaim::sealed(tree("/var/lib/postgresql/data")).for_entry(qualifier("14/main"));
-
-    // Act
-    let policy = WalkPolicy::built_in()
-        .claimed(&facet("postgresql"), &[claim])
-        .expect("a tree no shipped rule names");
-
-    // Assert: the facet name is composed by the gatherer and the qualifier by the claimant,
-    // so a collector can say which of its entries asked without being able to name a peer.
-    // The qualifier is the key that entry has in its own facet, so the reader can follow it.
-    let rule = rule_for(&policy, "/var/lib/postgresql/data");
-    assert_eq!(rule.claimant.to_string(), "postgresql:14/main");
-}
-
-#[test]
-fn an_unqualified_claim_is_named_by_its_facet_alone() {
-    // Act
-    let policy = WalkPolicy::built_in()
-        .claimed(
-            &facet("nginx"),
-            &[FilesystemClaim::churns(tree("/srv/www"))],
-        )
-        .expect("a tree no shipped rule names");
-
-    // Assert: a facet with one subject has nothing to qualify, and gains no empty punctuation.
-    assert_eq!(rule_for(&policy, "/srv/www").claimant.to_string(), "nginx");
-}
-
-#[test]
-fn a_qualifier_may_not_carry_the_separator_that_joins_it() {
-    // Act & Assert: `postgresql:17:main` would not say where the facet name ends, and the
-    // composed name is read by a person looking an entry up in that facet.
-    assert!(ClaimQualifier::new("17:main").is_err());
-    assert!(ClaimQualifier::new("").is_err());
-}
-
-#[test]
-fn claimed_collapses_a_tree_one_claimant_names_twice_over() {
-    // Arrange: the host from issue #41. Two postgresql-common clusters registered on one
-    // data directory print two rows naming it, and the collector resolves each row, so the
-    // list it hands over says `sealed` about that tree twice.
+fn claimed_seals_a_tree_two_entries_of_one_facet_claim() {
+    // Arrange: the host from issue #41. Two postgresql-common clusters registered on one data
+    // directory, which is impossible as a running state and a real one as a registration.
     let shared = tree("/var/lib/postgresql/data");
     let claims = [
-        FilesystemClaim::sealed(shared.clone()),
-        FilesystemClaim::sealed(shared),
+        FilesystemClaim::sealed(shared.clone()).for_entry(qualifier("11/main")),
+        FilesystemClaim::sealed(shared).for_entry(qualifier("14/main")),
     ];
 
     // Act
     let policy = WalkPolicy::built_in()
         .claimed(&facet("postgresql"), &claims)
-        .expect("one decision stated twice is still one decision");
+        .expect("a contested tree is sealed, not refused");
 
-    // Assert: one rule, saying what both rows said. There was never a winner to pick here,
-    // and losing the largest facet in the document over a repeat would be a cost paid for
-    // nothing.
+    // Assert: agreeing on the reading settles nothing. rastro cannot tell which cluster owns
+    // the directory, and a cluster that was down while the walk ran may own it all the same,
+    // so two claims on one tree is a fact rather than a duplicate to be tidied away.
     let rule = rule_for(&policy, "/var/lib/postgresql/data");
     assert_eq!(rule.content, ContentPolicy::Sealed);
-    assert_eq!(rule.claimant.to_string(), "postgresql");
     assert_eq!(
-        policy
-            .rules()
-            .iter()
-            .filter(|rule| rule.tree.as_str() == "/var/lib/postgresql/data")
-            .count(),
-        1
+        claimants_of(rule),
+        vec!["postgresql:11/main", "postgresql:14/main"]
     );
 }
 
 #[test]
-fn claimed_refuses_a_claimant_that_contradicts_itself_about_a_tree() {
-    // Arrange: the same tree, two readings, from one list.
-    let contested = tree("/var/lib/postgresql/data");
-    let claims = [
-        FilesystemClaim::sealed(contested.clone()),
-        FilesystemClaim::churns(contested),
-    ];
+fn claimed_seals_a_tree_a_shipped_rule_already_governs() {
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("journald"),
+            &[FilesystemClaim::churns(tree("/var/log"))],
+        )
+        .expect("a contested tree is sealed, not refused");
+
+    // Assert: rastro's own shipped rule is a claimant like any other, so a collector that
+    // duplicates one contests it. That is either a bug in rastro or a misconfigured box, and
+    // both are worth the subtree until somebody fixes it.
+    let rule = rule_for(&policy, "/var/log");
+    assert_eq!(rule.content, ContentPolicy::Sealed);
+    assert_eq!(claimants_of(rule), vec!["filesystem", "journald"]);
+}
+
+#[test]
+fn claimed_seals_the_root_like_any_other_contested_tree() {
+    // Arrange: nobody should claim the root, and the rule does not need to know that.
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("overlay"), &[FilesystemClaim::sealed(tree("/"))])
+        .expect("a contested tree is sealed, not refused");
+
+    // Assert: a special case here would buy a branch and nothing else. A sealed root leaves
+    // one entry in the facet carrying both claimants, which says what happened; the carve-out
+    // it would replace exists for a failure that could not say anything at all.
+    let rule = rule_for(&policy, "/");
+    assert_eq!(rule.content, ContentPolicy::Sealed);
+    assert_eq!(claimants_of(rule), vec!["filesystem", "overlay"]);
+}
+
+#[test]
+fn a_contested_tree_is_reported_as_contested() {
+    // Arrange
+    let contested = tree("/var/lib/mysql");
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("mysql"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("the first claim stands")
+        .claimed(&facet("mariadb"), &[FilesystemClaim::sealed(contested)])
+        .expect("a contested tree is sealed, not refused");
 
     // Act
-    let refused = WalkPolicy::built_in().claimed(&facet("postgresql"), &claims);
+    let contested: Vec<&str> = policy.contested().map(|rule| rule.tree.as_str()).collect();
 
-    // Assert: a repeat collapses, a disagreement does not. rastro has no more business
-    // picking a winner between one collector's two answers than between two collectors, and
-    // the message says which collector contradicted itself rather than naming it twice.
-    let message = refused.expect_err("one tree, two readings").to_string();
-    assert!(
-        message.contains("/var/lib/postgresql/data"),
-        "got {message}"
-    );
-    assert!(message.contains("postgresql"), "got {message}");
+    // Assert: one question, asked of the table rather than reconstructed by counting names,
+    // because the walk reports every contested tree and must not miss one.
+    assert_eq!(contested, vec!["/var/lib/mysql"]);
+}
+
+#[test]
+fn an_operators_rule_settles_a_contested_tree() {
+    // Arrange: a tree two collectors argued over, which rastro sealed.
+    let contested = tree("/var/lib/mysql");
+    let sealed = WalkPolicy::built_in()
+        .claimed(
+            &facet("mysql"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("the first claim stands")
+        .claimed(
+            &facet("mariadb"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("a contested tree is sealed, not refused");
+
+    // Act
+    let policy = sealed
+        .configured(vec![PolicyRule::configured(
+            contested,
+            ContentPolicy::MetadataOnly,
+        )])
+        .expect("the operator's rule replaces what it names");
+
+    // Assert: the escape hatch, and the reason sealing a tree is never a dead end. The
+    // operator knows their box, so their rule replaces the seal outright and the tree stops
+    // being contested rather than staying sealed with a note.
+    let rule = rule_for(&policy, "/var/lib/mysql");
+    assert_eq!(rule.content, ContentPolicy::MetadataOnly);
+    assert_eq!(claimants_of(rule), vec!["config"]);
+    assert_eq!(policy.contested().count(), 0);
 }
 
 #[test]
@@ -436,11 +454,11 @@ fn the_effective_table_renders_every_rule_with_its_claimant() {
     // tree as its key, the reading, and the facet that asked for it.
     let cluster = field(&rendered, "/var/lib/postgresql/17/main");
     assert_eq!(text(&field(&cluster, "reading")), "sealed");
-    assert_eq!(text(&field(&cluster, "claimed_by")), "postgresql");
+    assert_eq!(texts_of(&field(&cluster, "claimed_by")), vec!["postgresql"]);
 
     let root = field(&rendered, "/");
     assert_eq!(text(&field(&root, "reading")), "metadata_only");
-    assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
+    assert_eq!(texts_of(&field(&root, "claimed_by")), vec!["filesystem"]);
 }
 
 #[test]
@@ -471,7 +489,7 @@ fn an_operators_rule_beats_a_collectors_claim() {
     // Assert
     let rule = rule_for(&configured, "/var/lib/postgresql/17/main");
     assert_eq!(rule.content, ContentPolicy::MetadataOnly);
-    assert_eq!(rule.claimant.to_string(), "config");
+    assert_eq!(claimants_of(rule), vec!["config"]);
 }
 
 #[test]
@@ -545,5 +563,5 @@ fn the_effective_table_says_when_the_operator_decided() {
     // reckoning from their own colleague's config.
     let sealed = field(&rendered, "/home/runner/work");
     assert_eq!(text(&field(&sealed, "reading")), "sealed");
-    assert_eq!(text(&field(&sealed, "claimed_by")), "config");
+    assert_eq!(texts_of(&field(&sealed, "claimed_by")), vec!["config"]);
 }

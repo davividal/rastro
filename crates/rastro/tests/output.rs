@@ -523,7 +523,7 @@ fn a_config_can_seal_a_tree_so_the_walk_stops_there() {
     // Assert: and the envelope says the operator decided it, not rastro.
     let table = &facet(&document, "metadata", "invocation")["data"]["walk_policy"];
     assert_eq!(table[named(&noisy)]["reading"], "sealed");
-    assert_eq!(table[named(&noisy)]["claimed_by"], "config");
+    assert_eq!(table[named(&noisy)]["claimed_by"][0], "config");
 }
 
 #[test]

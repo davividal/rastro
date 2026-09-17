@@ -10,7 +10,7 @@ use rastro::collectors::{InvocationCollector, effective_config, seconds_since_ep
 use rastro::config::Config;
 use rastro_collector::{Collector, FacetName, FilesystemClaim, Observation, WalkedTree};
 use rastro_fingerprint::{Presentation, Volatility};
-use support::observation::{field, is_null, text};
+use support::observation::{field, is_null, items_of, text};
 
 #[test]
 fn seconds_since_epoch_counts_from_1970() {
@@ -75,7 +75,13 @@ fn the_invocation_facet_carries_the_effective_walk_table() {
     let table = field(&reported, "walk_policy");
     let cluster = field(&table, "/var/lib/postgresql/17/main");
     assert_eq!(text(&field(&cluster, "reading")), "sealed");
-    assert_eq!(text(&field(&cluster, "claimed_by")), "postgresql");
+    assert_eq!(
+        items_of(&field(&cluster, "claimed_by"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["postgresql"]
+    );
 }
 
 #[test]

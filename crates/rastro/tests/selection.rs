@@ -38,6 +38,11 @@ fn names(config: &str) -> Vec<String> {
         .collect()
 }
 
+/// The claimants an effective-table entry names, which is a list however many there are.
+fn claimants_of(rule: &Observation) -> Vec<String> {
+    items_of(&field(rule, "claimed_by")).iter().map(text).collect()
+}
+
 #[test]
 fn every_collector_runs_when_nothing_is_excluded() {
     // Act
@@ -240,15 +245,14 @@ fn a_default_config_leaves_the_walk_total() {
     // Assert: the root is walked, and rastro is the one that decided so.
     let root = field(&table, "/");
     assert_eq!(text(&field(&root, "reading")), "metadata_only");
-    assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
+    assert_eq!(claimants_of(&root), vec!["filesystem"]);
 
     // Assert: and no tree in the table was narrowed by a config. This is what a seal in a test
     // config would have destroyed rather than demonstrated.
     for tree in keys_of(&table) {
         let rule = field(&table, &tree);
-        assert_ne!(
-            text(&field(&rule, "claimed_by")),
-            "config",
+        assert!(
+            !claimants_of(&rule).contains(&"config".to_owned()),
             "{tree:?} was narrowed with no config to narrow it"
         );
     }
