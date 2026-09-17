@@ -4,15 +4,16 @@ use std::collections::BTreeMap;
 
 use rastro_collector::Observation;
 
-use crate::collectors::postgresql::model::DatabaseExtensions;
+use crate::collectors::postgresql::model::{DatabaseExtensions, DatabaseGrants};
 use crate::collectors::postgresql::value_objects::{
     DatabaseName, DatabasePrivilege, Grantee, RoleName,
 };
 
 /// One aclitem: what one grantee was granted, by whom.
 ///
-/// Kept as its own entry rather than merged per grantee, because the same grantee can hold
-/// grants made by two different grantors and merging them would lose which is which.
+/// Both the grantee and the grantor are carried, because the pair is what identifies a
+/// grant: the same grantee can hold grants made by two different grantors, and a `REVOKE`
+/// has to name the grantor to take either away. [`DatabaseGrants`] keys on that pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub grantee: Grantee,
@@ -28,10 +29,10 @@ pub struct Grant {
 /// A database in a cluster.
 ///
 /// **A null ACL is not an empty one**, which is why `grants` is an option rather than a
-/// list that happens to be empty. Postgres leaves `datacl` null until somebody grants or
-/// revokes something, and null means the built-in defaults apply: the owner holds
-/// everything and `PUBLIC` holds `CONNECT` and `TEMPORARY`. Rendering that as an empty list
-/// would claim nobody may connect, which is the opposite of what it means.
+/// [`DatabaseGrants`] that happens to hold nothing. Postgres leaves `datacl` null until
+/// somebody grants or revokes something, and null means the built-in defaults apply: the
+/// owner holds everything and `PUBLIC` holds `CONNECT` and `TEMPORARY`. Rendering that as an
+/// empty object would claim nobody may connect, which is the opposite of what it means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Database {
     pub name: DatabaseName,
@@ -41,31 +42,13 @@ pub struct Database {
     /// How many concurrent connections the database allows, or `None` for no limit.
     pub connection_limit: Option<i64>,
 
-    pub grants: Option<Vec<Grant>>,
+    pub grants: Option<DatabaseGrants>,
 
     /// What is installed in it, or `None` where it refuses connections.
     ///
     /// Absent means nobody could ask rather than nothing is installed: `template0` is kept
     /// unconnectable on purpose.
     pub extensions: Option<DatabaseExtensions>,
-}
-
-impl From<&Grant> for Observation {
-    fn from(grant: &Grant) -> Self {
-        Observation::object([
-            ("grantee", Observation::text(grant.grantee.as_str())),
-            ("granted_by", Observation::text(grant.granted_by.as_str())),
-            (
-                "privileges",
-                Observation::object(grant.privileges.iter().map(|(privilege, grantable)| {
-                    (
-                        privilege.as_str(),
-                        Observation::object([("grantable", Observation::boolean(*grantable))]),
-                    )
-                })),
-            ),
-        ])
-    }
 }
 
 impl From<&Database> for Observation {
@@ -86,7 +69,7 @@ impl From<&Database> for Observation {
             (
                 "grants",
                 match &database.grants {
-                    Some(grants) => Observation::list(grants.iter().map(Observation::from)),
+                    Some(grants) => Observation::from(grants),
                     None => Observation::null(),
                 },
             ),

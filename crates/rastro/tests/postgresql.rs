@@ -1158,6 +1158,7 @@ orders,postgres,t,-1,f
             .grants
             .as_ref()
             .expect("an ACL that is not the default")
+            .grants()
             .is_empty(),
         "the grants read has to use the database that answered"
     );

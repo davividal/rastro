@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use rastro_collector::CollectionError;
 
 use super::psql_result_set::PsqlResultSet;
-use crate::collectors::postgresql::model::{DatabaseGrants, Grant};
+use crate::collectors::postgresql::model::{Grant, GrantsByDatabase};
 use crate::collectors::postgresql::value_objects::{
     DatabaseName, DatabasePrivilege, Grantee, RoleName,
 };
@@ -34,7 +34,7 @@ impl PsqlDatabaseGrants {
     /// One row is one privilege, so rows are gathered per database, grantee and grantor: a
     /// reader wants what one grantee holds in one place, and the grant option belongs to the
     /// privilege rather than to the grantee.
-    pub fn parse(output: &str) -> Result<DatabaseGrants, CollectionError> {
+    pub fn parse(output: &str) -> Result<GrantsByDatabase, CollectionError> {
         let mut gathered: BTreeMap<
             (DatabaseName, Grantee, RoleName),
             BTreeMap<DatabasePrivilege, bool>,
@@ -63,7 +63,7 @@ impl PsqlDatabaseGrants {
             }
         }
 
-        Ok(DatabaseGrants::new(gathered.into_iter().map(
+        Ok(GrantsByDatabase::new(gathered.into_iter().map(
             |((database, grantee, granted_by), privileges)| {
                 (
                     database,

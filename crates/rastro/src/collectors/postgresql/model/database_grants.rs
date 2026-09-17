@@ -1,53 +1,72 @@
-//! The grants of every database in a cluster, before they are joined to the databases.
+//! Every grant on one database, and the shape a reader diffs them in.
 
 use std::collections::BTreeMap;
 
-use crate::collectors::postgresql::model::Grant;
-use crate::collectors::postgresql::value_objects::DatabaseName;
+use rastro_collector::Observation;
 
-/// Grants gathered per database.
+use crate::collectors::postgresql::model::Grant;
+
+/// What one database's ACL holds, keyed by grantee and then by the role that granted it.
 ///
-/// A step between two reads rather than part of the document: `pg_database` says which
-/// databases exist and whether each has an ACL at all, and `aclexplode` says what is in
-/// those ACLs. Joining them is what produces a database's grants, and a database with a null
-/// ACL takes none of this.
+/// **Keyed rather than listed, and that is a readability decision with a correctness edge.**
+/// An `ALTER DATABASE … OWNER` gives the new owner an explicit entry the ACL did not carry
+/// before. In a list every entry after the insertion shifts along, so a diff of two
+/// fingerprints reports the shift as though each of those grants had changed hands, and the
+/// revoke that same statement performs is one line among a dozen artefacts. Keyed, the
+/// insertion is one key appearing and the revoke is one key leaving, at a path that names the
+/// grantee it was taken from.
+///
+/// **Two levels, because a grantee is not a unique key.** The same role can hold `CONNECT`
+/// from one grantor and `CREATE` from another, and a `REVOKE` has to name the grantor to take
+/// either away, so merging the two would lose which is which.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DatabaseGrants {
-    grants: BTreeMap<DatabaseName, Vec<Grant>>,
+    grants: Vec<Grant>,
 }
 
 impl DatabaseGrants {
-    pub fn new(grants: impl IntoIterator<Item = (DatabaseName, Grant)>) -> Self {
-        let mut gathered: BTreeMap<DatabaseName, Vec<Grant>> = BTreeMap::new();
+    pub fn new(grants: impl IntoIterator<Item = Grant>) -> Self {
+        Self {
+            grants: grants.into_iter().collect(),
+        }
+    }
 
-        for (database, grant) in grants {
-            gathered.entry(database).or_default().push(grant);
+    pub fn grants(&self) -> &[Grant] {
+        &self.grants
+    }
+}
+
+impl From<&DatabaseGrants> for Observation {
+    /// Grouped by grantee, then by grantor.
+    ///
+    /// Ordering is the map's rather than the collector's, so `PUBLIC` heads the grants of
+    /// every database whose roles are lowercase, which is the convention Postgres itself
+    /// follows for an unquoted identifier. A role deliberately named in uppercase sorts
+    /// against it; that is a rendering order, not a claim about privilege.
+    fn from(grants: &DatabaseGrants) -> Self {
+        let mut grouped: BTreeMap<&str, BTreeMap<&str, Observation>> = BTreeMap::new();
+
+        for grant in grants.grants() {
+            grouped
+                .entry(grant.grantee.as_str())
+                .or_default()
+                .insert(grant.granted_by.as_str(), privileges_of(grant));
         }
 
-        // `PUBLIC` first and then by name, because `Grantee` orders that way and every
-        // login role's `CONNECT` rests on the `PUBLIC` grant.
-        for grants in gathered.values_mut() {
-            grants.sort_by(|left, right| {
-                left.grantee
-                    .cmp(&right.grantee)
-                    .then_with(|| left.granted_by.cmp(&right.granted_by))
-            });
-        }
-
-        Self { grants: gathered }
+        Observation::object(
+            grouped
+                .into_iter()
+                .map(|(grantee, granted)| (grantee, Observation::object(granted))),
+        )
     }
+}
 
-    /// The grants on one database, or `None` where the server reported none for it.
-    pub fn of_database(&self, database: &str) -> Option<&[Grant]> {
-        self.grants
-            .iter()
-            .find(|(name, _)| name.as_str() == database)
-            .map(|(_, grants)| grants.as_slice())
-    }
-
-    /// Every database the grants mention, so a name the database list does not have can be
-    /// reported rather than dropped.
-    pub fn databases(&self) -> impl Iterator<Item = &DatabaseName> {
-        self.grants.keys()
-    }
+/// Each privilege held, and whether it may be passed on.
+fn privileges_of(grant: &Grant) -> Observation {
+    Observation::object(grant.privileges.iter().map(|(privilege, grantable)| {
+        (
+            privilege.as_str(),
+            Observation::object([("grantable", Observation::boolean(*grantable))]),
+        )
+    }))
 }

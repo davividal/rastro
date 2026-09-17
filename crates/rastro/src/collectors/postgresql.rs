@@ -32,8 +32,8 @@ pub use model::{
     AvailableExtension, Cluster, ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings,
     ClusterHbaRules, ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings,
     ClusterRoles, ClusterSettings, Clusters, ControlData, Database, DatabaseExtensions,
-    DatabaseGrants, Extension, FileSetting, Grant, HbaRule, Membership, Postmaster, ReadLens,
-    ReplicationSlot, Role, RoleSetting, Setting,
+    DatabaseGrants, Extension, FileSetting, Grant, GrantsByDatabase, HbaRule, Membership,
+    Postmaster, ReadLens, ReplicationSlot, Role, RoleSetting, Setting,
 };
 pub use source::{
     ClusterInventory, PostgresqlClusters, PostmasterPid, PsqlAvailableExtensions, PsqlControlData,
