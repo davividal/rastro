@@ -48,7 +48,8 @@ use sha2::{Digest as _, Sha256};
 
 use crate::collectors::file_metadata::FileMode;
 use crate::collectors::filesystem::model::{
-    FileEntry, FilesystemInventory, Refusal, UnreadablePath, UnspellablePath, WalkPolicy,
+    FileEntry, FilesystemInventory, PolicyRule, Refusal, UnreadablePath, UnspellablePath,
+    WalkPolicy,
 };
 use crate::collectors::filesystem::value_objects::{
     ContentPolicy, DeviceNumber, Digest, DigestAlgorithm, FileKind, NanosecondsSinceEpoch,
@@ -168,8 +169,8 @@ impl FileTree {
             // not as a directory with nothing under it. The seal already stops the descent;
             // what this adds is that the one path it costs says who argued and why, instead
             // of reading like every other sealed tree.
-            if let Some(contested) = policy.contest_at(&recorded) {
-                unreadable.push(UnreadablePath::contested(&recorded, &contested.claimants));
+            if let Some(contest) = policy.contest_at(&recorded).and_then(PolicyRule::contest) {
+                unreadable.push(UnreadablePath::contested(&recorded, contest));
                 continue;
             }
 

@@ -405,6 +405,46 @@ fn a_contested_tree_is_reported_as_contested() {
 }
 
 #[test]
+fn a_contested_rule_says_why_the_tree_was_sealed() {
+    // Arrange
+    let contested = tree("/var/lib/postgresql/data");
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("postgresql"),
+            &[FilesystemClaim::sealed(contested.clone()).for_entry(qualifier("11/main"))],
+        )
+        .expect("a tree no shipped rule names")
+        .claimed(
+            &facet("postgresql"),
+            &[FilesystemClaim::sealed(contested).for_entry(qualifier("14/main"))],
+        )
+        .expect("a contested tree is sealed, not refused");
+
+    // Act
+    let said = rule_for(&policy, "/var/lib/postgresql/data")
+        .contest()
+        .expect("a contested rule says so");
+
+    // Assert: one sentence, stated once, for the operator watching the run and for the reader
+    // of the entry it cost. Two wordings of one fact is two things to keep true.
+    assert_eq!(
+        said,
+        "claimed by postgresql:11/main, postgresql:14/main, so it was sealed rather than walked"
+    );
+}
+
+#[test]
+fn an_uncontested_rule_has_nothing_to_say() {
+    // Act & Assert: every table has rules, and almost none of them are contested, so the
+    // question answers absent rather than making every caller test the count itself.
+    assert!(
+        rule_for(&WalkPolicy::built_in(), "/var/log")
+            .contest()
+            .is_none()
+    );
+}
+
+#[test]
 fn an_operators_rule_settles_a_contested_tree() {
     // Arrange: a tree two collectors argued over, which rastro sealed.
     let contested = tree("/var/lib/mysql");

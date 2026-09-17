@@ -34,6 +34,26 @@ impl PolicyRule {
         self.claimants.len() > 1
     }
 
+    /// Why this tree was sealed, for a reader who already knows which tree it is.
+    ///
+    /// Absent where nothing was contested, so a caller asks one question rather than counting
+    /// claimants and composing the sentence itself. Said once because it is said twice: to the
+    /// operator watching the run, and in the entry the seal cost.
+    pub fn contest(&self) -> Option<String> {
+        self.is_contested().then(|| {
+            let named: Vec<String> = self
+                .claimants
+                .iter()
+                .map(|claimant| claimant.to_string())
+                .collect();
+
+            format!(
+                "claimed by {}, so it was sealed rather than walked",
+                named.join(", ")
+            )
+        })
+    }
+
     /// Records another claimant of this tree, and stops the walk descending into it.
     ///
     /// The reading the claims asked for stops applying the moment there is more than one of
