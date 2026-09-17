@@ -6,19 +6,22 @@ use rastro_collector::Observation;
 
 use crate::collectors::postgresql::model::Grant;
 
-/// What one database's ACL holds, keyed by grantee and then by the role that granted it.
+/// What one database's ACL holds, keyed by grantee.
 ///
-/// **Keyed rather than listed, and that is a readability decision with a correctness edge.**
-/// An `ALTER DATABASE … OWNER` gives the new owner an explicit entry the ACL did not carry
-/// before. In a list every entry after the insertion shifts along, so a diff of two
-/// fingerprints reports the shift as though each of those grants had changed hands, and the
-/// revoke that same statement performs is one line among a dozen artefacts. Keyed, the
-/// insertion is one key appearing and the revoke is one key leaving, at a path that names the
-/// grantee it was taken from.
+/// **Keyed rather than listed, and the key is the grantee alone.** Both halves of that were
+/// measured against a real pair of fingerprints, over an `ALTER DATABASE … OWNER` that
+/// rewrote the grantor of thirteen entries, gave the new owner an entry the ACL did not
+/// carry, and revoked `CONNECT` and `TEMPORARY` from the old one. Listed, the insertion
+/// shifted every later element and four grants were reported as changing hands. Keyed by
+/// grantee *and grantor*, worse: the grantor rewrite renames every key, so each grant reads
+/// as one removed and one added and a diff never descends far enough to show the revoke at
+/// all. Keyed by grantee, the insertion is one key, the rewrite is one field per holder, and
+/// the revoke is two keys leaving a path that names the role they were taken from.
 ///
-/// **Two levels, because a grantee is not a unique key.** The same role can hold `CONNECT`
-/// from one grantor and `CREATE` from another, and a `REVOKE` has to name the grantor to take
-/// either away, so merging the two would lose which is which.
+/// **So the grantor is a field and not a key, and a grantee holds a list.** The same role can
+/// hold `CONNECT` from one grantor and `CREATE` from another, which is why the list is there;
+/// it is one element wide in every ordinary ACL, and a position only shifts within one
+/// grantee's own grants rather than across the database's.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DatabaseGrants {
     grants: Vec<Grant>,
@@ -37,12 +40,12 @@ impl DatabaseGrants {
 }
 
 impl From<&DatabaseGrants> for Observation {
-    /// Grouped by grantee, then by grantor.
+    /// Grouped by grantee, each holder's grants ordered by the role that made them.
     ///
-    /// Ordering is the map's rather than the collector's, so `PUBLIC` heads the grants of
-    /// every database whose roles are lowercase, which is the convention Postgres itself
-    /// follows for an unquoted identifier. A role deliberately named in uppercase sorts
-    /// against it; that is a rendering order, not a claim about privilege.
+    /// Ordering is the map's rather than the collector's, so `PUBLIC` heads a database's
+    /// grants because it is uppercase and Postgres folds an unquoted identifier to lowercase.
+    /// A role deliberately created as `"ANALYST"` sorts above it; that is a rendering order,
+    /// not a claim about privilege.
     fn from(grants: &DatabaseGrants) -> Self {
         let mut grouped: BTreeMap<&str, BTreeMap<&str, Observation>> = BTreeMap::new();
 
@@ -50,23 +53,33 @@ impl From<&DatabaseGrants> for Observation {
             grouped
                 .entry(grant.grantee.as_str())
                 .or_default()
-                .insert(grant.granted_by.as_str(), privileges_of(grant));
+                .insert(grant.granted_by.as_str(), Observation::from(grant));
         }
 
         Observation::object(
-            grouped
-                .into_iter()
-                .map(|(grantee, granted)| (grantee, Observation::object(granted))),
+            grouped.into_iter().map(|(grantee, by_grantor)| {
+                (grantee, Observation::list(by_grantor.into_values()))
+            }),
         )
     }
 }
 
-/// Each privilege held, and whether it may be passed on.
-fn privileges_of(grant: &Grant) -> Observation {
-    Observation::object(grant.privileges.iter().map(|(privilege, grantable)| {
-        (
-            privilege.as_str(),
-            Observation::object([("grantable", Observation::boolean(*grantable))]),
-        )
-    }))
+impl From<&Grant> for Observation {
+    /// One aclitem: who made the grant, and what it carries.
+    ///
+    /// The grantee is the key this sits under, so it is not repeated here.
+    fn from(grant: &Grant) -> Self {
+        Observation::object([
+            ("granted_by", Observation::text(grant.granted_by.as_str())),
+            (
+                "privileges",
+                Observation::object(grant.privileges.iter().map(|(privilege, grantable)| {
+                    (
+                        privilege.as_str(),
+                        Observation::object([("grantable", Observation::boolean(*grantable))]),
+                    )
+                })),
+            ),
+        ])
+    }
 }

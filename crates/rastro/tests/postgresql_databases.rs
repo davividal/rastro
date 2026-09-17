@@ -7,17 +7,18 @@
 //! `""reporting` as the grantee, so the text form is not parseable in general and
 //! `aclexplode` is asked for rows instead.
 //!
-//! **The grants of a database are keyed, not listed**, and the tests below pin that because
-//! it is what makes a diff of two fingerprints readable. A grantee gaining an explicit entry
+//! **The grants of a database are keyed by grantee**, and the tests below pin that because it
+//! is what makes a diff of two fingerprints readable. A grantee gaining an explicit entry
 //! shifts every later element of a list along, so a plain diff reports the shift as though
 //! every grant after it had changed hands, and a revoke buried among those lines is the one
-//! thing a reader is looking for.
+//! thing a reader is looking for. The grantor stays a field: keyed on it too, an
+//! `ALTER DATABASE … OWNER` renames every key at once and the revoke disappears entirely.
 
 mod support;
 
 use rastro::collectors::postgresql::{Database, PsqlDatabaseGrants, PsqlDatabases};
 use rastro_collector::Observation;
-use support::observation::{boolean, field, is_null, keys_of, text};
+use support::observation::{boolean, field, is_null, items_of, keys_of, text};
 
 /// The five columns the databases query asks for. The last is `datacl IS NULL`.
 const DATABASES: &str = "\
@@ -59,6 +60,14 @@ fn grants_of(csv: &str, database: &str) -> Observation {
         .expect("the fixture grants on this database");
 
     Observation::from(&grants)
+}
+
+/// The one grant a grantee holds, for the ordinary ACL where nobody granted twice.
+fn only_grant(grants: &Observation, grantee: &str) -> Observation {
+    let held = items_of(&field(grants, grantee));
+    assert_eq!(held.len(), 1, "{grantee:?} holds one grant in this fixture");
+
+    held[0].clone()
 }
 
 #[test]
@@ -129,19 +138,23 @@ fn parse_reads_a_grant_made_to_public() {
 
     // Assert: grantee zero is `PUBLIC`, which is what every role's `CONNECT` actually rests
     // on.
-    let public = field(&field(&grants, "PUBLIC"), "postgres");
-    assert_eq!(keys_of(&public), vec!["CONNECT", "TEMPORARY"]);
+    let public = only_grant(&grants, "PUBLIC");
+    assert_eq!(text(&field(&public, "granted_by")), "postgres");
+    assert_eq!(
+        keys_of(&field(&public, "privileges")),
+        vec!["CONNECT", "TEMPORARY"]
+    );
 }
 
 #[test]
-fn parse_gathers_one_grantees_privileges_under_the_role_that_granted_them() {
+fn parse_gathers_one_grantees_privileges_into_one_grant() {
     // Act
     let grants = grants_of(GRANTS, "orders");
 
     // Assert: `aclexplode` returns a row per privilege, and a reader wants a grantee's
     // privileges together. The grant option belongs to the privilege, not the grantee, so
     // `CREATE` carries it and `CONNECT` does not.
-    let privileges = field(&field(&grants, "migrator"), "postgres");
+    let privileges = field(&only_grant(&grants, "migrator"), "privileges");
     assert_eq!(keys_of(&privileges), vec!["CONNECT", "CREATE"]);
     assert!(boolean(&field(&field(&privileges, "CREATE"), "grantable")));
     assert!(!boolean(&field(
@@ -151,7 +164,7 @@ fn parse_gathers_one_grantees_privileges_under_the_role_that_granted_them() {
 }
 
 #[test]
-fn parse_keys_one_grantees_grants_by_the_role_that_made_them() {
+fn parse_orders_one_grantees_grants_by_the_role_that_made_them() {
     // Arrange: legal, and the reason a grantee alone cannot be the key. One role holds
     // `CONNECT` from `postgres` and `CREATE` from `migrator`, and a `REVOKE` has to name the
     // grantor to take either away.
@@ -163,11 +176,13 @@ orders,app,CREATE,f,migrator
     // Act
     let grants = grants_of(two_grantors, "orders");
 
-    // Assert
-    let app = field(&grants, "app");
-    assert_eq!(keys_of(&app), vec!["migrator", "postgres"]);
-    assert_eq!(keys_of(&field(&app, "migrator")), vec!["CREATE"]);
-    assert_eq!(keys_of(&field(&app, "postgres")), vec!["CONNECT"]);
+    // Assert: one key, holding both grants, ordered by the role that made them.
+    let app = items_of(&field(&grants, "app"));
+    assert_eq!(app.len(), 2);
+    assert_eq!(text(&field(&app[0], "granted_by")), "migrator");
+    assert_eq!(keys_of(&field(&app[0], "privileges")), vec!["CREATE"]);
+    assert_eq!(text(&field(&app[1], "granted_by")), "postgres");
+    assert_eq!(keys_of(&field(&app[1], "privileges")), vec!["CONNECT"]);
 }
 
 #[test]
@@ -223,13 +238,37 @@ fn a_revoked_privilege_is_the_only_thing_that_moves() {
     // Assert: the revoke is one key leaving one object, at a path naming the grantee it was
     // taken from.
     assert_eq!(
-        keys_of(&field(&field(&before, "migrator"), "postgres")),
+        keys_of(&field(&only_grant(&before, "migrator"), "privileges")),
         vec!["CONNECT", "CREATE"]
     );
     assert_eq!(
-        keys_of(&field(&field(&after, "migrator"), "postgres")),
+        keys_of(&field(&only_grant(&after, "migrator"), "privileges")),
         vec!["CREATE"]
     );
+}
+
+#[test]
+fn a_change_of_owner_leaves_each_grantee_one_field_rewritten() {
+    // Arrange: the grantor is a field rather than half the key, and this is why. `ALTER
+    // DATABASE … OWNER` rewrites `granted_by` on every entry at once. Keyed on the grantor,
+    // that renames every key, each grant reads as one removed and one added, and a diff never
+    // descends far enough to report the privileges the same statement revoked.
+    let before = "orders,app,CONNECT,f,migrator\norders,app,CREATE,f,migrator\n";
+    let after = "orders,app,CREATE,f,postgres\n";
+
+    // Act
+    let before = only_grant(&grants_of(before, "orders"), "app");
+    let after = only_grant(&grants_of(after, "orders"), "app");
+
+    // Assert: the grantee keeps its key, so the rewrite and the revoke are both visible under
+    // it rather than the second being swallowed by the first.
+    assert_eq!(text(&field(&before, "granted_by")), "migrator");
+    assert_eq!(text(&field(&after, "granted_by")), "postgres");
+    assert_eq!(
+        keys_of(&field(&before, "privileges")),
+        vec!["CONNECT", "CREATE"]
+    );
+    assert_eq!(keys_of(&field(&after, "privileges")), vec!["CREATE"]);
 }
 
 #[test]

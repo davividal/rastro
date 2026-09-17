@@ -4527,7 +4527,7 @@ in the `invocation` facet on an unchanged host. That is the intended reading —
 really were different — and it is the same cost the disclosure entry accepted for the same
 facet.
 
-# A database's grants are keyed, because a list smears the diff
+# A database's grants are keyed by grantee, and the grantor stays a field
 
 Dated 2026-09-17. The `postgresql` facet rendered each database's ACL as a list of grant
 objects, each carrying its `grantee`, its `granted_by` and its privileges. Every other
@@ -4535,27 +4535,40 @@ collection in that facet is keyed: `databases` by name, `roles` by name, `member
 member and then by granted role, `extensions` by name. Grants were the exception, and a real
 pair of fingerprints showed what the exception costs.
 
-**The measurement.** A Secrets-Manager cutover on a live box moved two databases from a
-migration role to `postgres` with `ALTER DATABASE … OWNER`. That statement does three things
-at once: it rewrites `granted_by` on every existing entry, it gives the new owner an explicit
-entry the ACL did not carry, and it takes the implicit owner rights off the old one. Diffed
-positionally, one database produced twenty lines: thirteen `granted_by` rewrites, one length
-change, **four entries reported as changing hands** because the insertion at index nine
-shifted the tail along, and — at index seven, among the artefacts — the two lines
-that were the point, `CONNECT` and `TEMPORARY` leaving the old owner's grant. A reader
-skimming that sees rename noise and stops.
+**The case, and it is measured rather than imagined.** A Secrets-Manager cutover on a live
+box moved two databases from a migration role to `postgres` with `ALTER DATABASE … OWNER`.
+That statement does three things at once: it rewrites `granted_by` on every existing entry,
+it gives the new owner an explicit entry the ACL did not carry, and it takes the implicit
+owner rights off the old one. Three renderings of the same two documents, diffed with the
+same walker, over the `nightcrawler` database:
 
-**So the shape is an object, keyed by grantee and then by the role that granted it.** The
-insertion becomes one key appearing. The revoke becomes two keys leaving an object at a path
-that names the grantee they were taken from. The `granted_by` rewrite becomes one key
-renamed per grantee rather than a field rewritten thirteen times, which is the same fact
-stated once per holder instead of once per row.
+| shape | lines | the revoke |
+|---|---|---|
+| a list of grants | 21 | at `grants[7]`, an index |
+| keyed by grantee **and grantor** | 28 | **not reported at all** |
+| keyed by grantee, grantor a field | 17 | at `grants/nc_migration[0]` |
 
-**Two levels rather than one, because a grantee is not a unique key.** The same role can hold
+**The list smears an insertion.** `postgres` gaining an entry at index nine shifted the tail
+along, so four grants were reported as changing hands, and the two lines that were the point
+sat at index seven among the artefacts. A reader skimming that sees rename noise and stops,
+which is what happened.
+
+**Keying on the grantor as well is worse, and that is the finding worth keeping.** It is the
+obvious shape, because a grant really is identified by the pair. But the grantor rewrite
+renames every key at once: each grant reads as one key removed and one key added, the diff
+never descends into the value, and the revoke the same statement performed is not in the
+output anywhere. A shape that hides the change it was adopted to reveal is worse than the one
+it replaced, and only running it against the real pair said so.
+
+**So the key is the grantee and the grantor is a field.** The insertion is one key appearing.
+The rewrite is one field per holder, stated once each instead of once per row. The revoke is
+two keys leaving an object at a path naming the role they were taken from.
+
+**A grantee holds a list, because a grantee is not a unique key.** The same role can hold
 `CONNECT` from one grantor and `CREATE` from another; Postgres keeps them as separate
-aclitems and a `REVOKE` has to name the grantor. Keying on the grantee alone would have to
-merge them and lose which is which, which is the reason the list existed. The pair is the
-identity, so the pair is the key.
+aclitems and a `REVOKE` has to name the grantor. The list is one element wide in every
+ordinary ACL, and a position in it only shifts within one grantee's own grants rather than
+across the whole database's, which is the smearing this entry exists to stop.
 
 **What is given up, and it is small but real.** `Grantee::Public` ordered first by
 construction, so `PUBLIC` headed a database's grants whatever it was called — the grant every
@@ -4571,8 +4584,8 @@ ordering back in collector discipline, which the document's shape exists to keep
 stays at `1` like everything else until rastro has a release. This entry is where the format
 change is recorded until then.
 
-**Cost:** a fingerprint taken before this change cannot be diffed against one taken after
-for the `grants` of any database, because the shape under that key is different. That is the
+**Cost:** a fingerprint taken before this change cannot be diffed against one taken after for
+the `grants` of any database, because the shape under that key is different. That is the
 whole population of documents produced by an unreleased build, and the change is worth more
 than they are.
 
