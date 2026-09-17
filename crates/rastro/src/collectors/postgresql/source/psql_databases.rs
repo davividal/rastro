@@ -16,7 +16,7 @@
 use rastro_collector::CollectionError;
 
 use super::psql_result_set::PsqlResultSet;
-use crate::collectors::postgresql::model::{ClusterDatabases, Database};
+use crate::collectors::postgresql::model::{ClusterDatabases, Database, DatabaseGrants};
 use crate::collectors::postgresql::value_objects::{DatabaseName, RoleName};
 
 /// The columns the collector's query asks for, in order.
@@ -51,7 +51,7 @@ impl PsqlDatabases {
                 grants: if acl_is_default {
                     None
                 } else {
-                    Some(Vec::new())
+                    Some(DatabaseGrants::default())
                 },
                 // Filled in by a second pass: `pg_extension` is per database, so it needs a
                 // connection to that database rather than to the cluster.

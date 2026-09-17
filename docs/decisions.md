@@ -4526,3 +4526,73 @@ from different commits, so a diff of two documents taken by two rolling builds s
 in the `invocation` facet on an unchanged host. That is the intended reading — the builds
 really were different — and it is the same cost the disclosure entry accepted for the same
 facet.
+
+# A database's grants are keyed by grantee, and the grantor stays a field
+
+Dated 2026-09-17. The `postgresql` facet rendered each database's ACL as a list of grant
+objects, each carrying its `grantee`, its `granted_by` and its privileges. Every other
+collection in that facet is keyed: `databases` by name, `roles` by name, `memberships` by
+member and then by granted role, `extensions` by name. Grants were the exception, and a real
+pair of fingerprints showed what the exception costs.
+
+**The case, and it is measured rather than imagined.** A secrets-management cutover on a
+live box moved two databases off their migration roles onto `postgres` with
+`ALTER DATABASE … OWNER`. That statement does three things at once: it rewrites `granted_by`
+on every existing entry, it gives the new owner an explicit entry the ACL did not carry, and
+it takes the implicit owner rights off the old one. Three renderings of the same two real
+fingerprints, each flattened to leaf paths and diffed the same way, over one of those
+databases. The counts are that database's; the role is renamed here to the vocabulary the
+test fixtures use, because the box it came from is not this project's to name:
+
+| shape | diff lines | where the revoke lands |
+|---|---|---|
+| a list of grants | 41 | `grants[7]/privileges/…`, an index naming nobody |
+| keyed by grantee **and grantor** | 73 | **nowhere: the grant is removed and re-added** |
+| keyed by grantee, grantor a field | 32 | `grants/migrator[0]/privileges/…` |
+
+**The list smears an insertion.** `postgres` gaining an entry at index nine shifted the tail
+along, so four grants reported a changed `grantee` and a fifth appeared whole, and the two
+lines that were the point sat at index seven among the artefacts. A reader skimming that sees
+rename noise and stops, which is what happened.
+
+**Keying on the grantor as well is worse, and that is the finding worth keeping.** It is the
+obvious shape, because a grant really is identified by the pair, and it was built and
+measured before it was rejected. The grantor rewrite renames every key at once: each grant
+reads as one key removed and one key added, the diff never descends into either, and the
+revoke the same statement performed is not distinguishable from the rename anywhere in the
+output. A shape that hides the change it was adopted to reveal is worse than the one it
+replaced, and only running it against the real pair said so.
+
+**So the key is the grantee and the grantor is a field.** The insertion is one key appearing.
+The rewrite is one field per holder, stated once each instead of once per row. The revoke is
+two keys leaving an object at a path naming the role they were taken from.
+
+**A grantee holds a list, because a grantee is not a unique key.** The same role can hold
+`CONNECT` from one grantor and `CREATE` from another; Postgres keeps them as separate
+aclitems and a `REVOKE` has to name the grantor. The list is one element wide in every
+ordinary ACL, and a position in it only shifts within one grantee's own grants rather than
+across the whole database's, which is the smearing this entry exists to stop.
+
+**What is given up, and it is small but real.** `Grantee::Public` ordered first by
+construction, so `PUBLIC` headed a database's grants whatever it was called — the grant every
+login role's `CONNECT` actually rests on, at the top where a reader looks. Object keys are
+sorted as strings by the document's own structure, so `PUBLIC` now heads a database's grants
+only because it is uppercase and Postgres folds an unquoted identifier to lowercase. A role
+deliberately created as `"ANALYST"` would sort above it. That is a rendering order rather
+than a claim about privilege, and paying for it with a hand-maintained key order would put
+ordering back in collector discipline, which the document's shape exists to keep out.
+
+**No collector version bump**, per
+[the release rule](#every-collector-is-version-1-until-rastro-has-a-release): `postgresql`
+stays at `1` like everything else until rastro has a release. This entry is where the format
+change is recorded until then.
+
+**Cost:** a fingerprint taken before this change cannot be diffed against one taken after for
+the `grants` of any database, because the shape under that key is different. That is the
+whole population of documents produced by an unreleased build, and the change is worth more
+than they are.
+
+**What this does not fix.** The facet reads `datacl` and nothing else: no `nspacl`, no
+`relacl`, no `pg_default_acl`. If that same cutover had re-owned a schema or re-granted a
+table, no shape of rendering would have shown it, because the collector never asked. That is
+a gap in coverage rather than in presentation, and it stays open.

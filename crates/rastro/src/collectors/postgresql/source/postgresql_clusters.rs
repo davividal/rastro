@@ -25,7 +25,7 @@ use crate::collectors::canonical_tool::{CanonicalTool, TargetUser, ToolAsUser};
 use crate::collectors::postgresql::model::{
     Cluster, ClusterAvailableExtensions, ClusterDatabases, ClusterFileSettings, ClusterHbaRules,
     ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings, ClusterRoles,
-    ClusterSettings, Clusters, ControlData, Database, DatabaseGrants, Postmaster, ReadLens,
+    ClusterSettings, Clusters, ControlData, Database, GrantsByDatabase, Postmaster, ReadLens,
 };
 use crate::collectors::postgresql::value_objects::{ClusterId, PostmasterStatus};
 
@@ -589,7 +589,7 @@ impl PostgresqlClusters {
     /// describes one moment of the cluster.
     fn joined(
         databases: &ClusterDatabases,
-        grants: &DatabaseGrants,
+        grants: &GrantsByDatabase,
     ) -> Result<ClusterDatabases, CollectionError> {
         let joined = databases
             .databases()
@@ -599,7 +599,6 @@ impl PostgresqlClusters {
                     grants
                         .of_database(database.name.as_str())
                         .unwrap_or_default()
-                        .to_vec()
                 }),
                 ..database.clone()
             })

@@ -1,0 +1,43 @@
+//! The grants of every database in a cluster, before they are joined to the databases.
+
+use std::collections::BTreeMap;
+
+use crate::collectors::postgresql::model::{DatabaseGrants, Grant};
+use crate::collectors::postgresql::value_objects::DatabaseName;
+
+/// Grants gathered per database.
+///
+/// A step between two reads rather than part of the document: `pg_database` says which
+/// databases exist and whether each has an ACL at all, and `aclexplode` says what is in
+/// those ACLs. Joining them is what produces a database's grants, and a database with a null
+/// ACL takes none of this.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GrantsByDatabase {
+    grants: BTreeMap<DatabaseName, Vec<Grant>>,
+}
+
+impl GrantsByDatabase {
+    pub fn new(grants: impl IntoIterator<Item = (DatabaseName, Grant)>) -> Self {
+        let mut gathered: BTreeMap<DatabaseName, Vec<Grant>> = BTreeMap::new();
+
+        for (database, grant) in grants {
+            gathered.entry(database).or_default().push(grant);
+        }
+
+        Self { grants: gathered }
+    }
+
+    /// The grants on one database, or `None` where the server reported none for it.
+    pub fn of_database(&self, database: &str) -> Option<DatabaseGrants> {
+        self.grants
+            .iter()
+            .find(|(name, _)| name.as_str() == database)
+            .map(|(_, grants)| DatabaseGrants::new(grants.iter().cloned()))
+    }
+
+    /// Every database the grants mention, so a name the database list does not have can be
+    /// reported rather than dropped.
+    pub fn databases(&self) -> impl Iterator<Item = &DatabaseName> {
+        self.grants.keys()
+    }
+}
