@@ -13,7 +13,8 @@ use crate::collectors::postgresql::value_objects::{
 ///
 /// Both the grantee and the grantor are carried, because the pair is what identifies a
 /// grant: the same grantee can hold grants made by two different grantors, and a `REVOKE`
-/// has to name the grantor to take either away. [`DatabaseGrants`] keys on that pair.
+/// has to name the grantor to take either away. [`DatabaseGrants`] keys on the grantee and
+/// keeps the grantor a field, for the reason recorded there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub grantee: Grantee,
