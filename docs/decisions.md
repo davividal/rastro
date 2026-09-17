@@ -4368,3 +4368,45 @@ discovered. Debian's `/etc/pam.d/su` carries a second `pam_env.so` line reading
 it means parsing the `pam.d` stack — the collector's next step rather than this one — so the
 facet reports the two sources `pam_env` reads by default and says so rather than implying it
 has the lot.
+
+---
+
+# A claimant that names one tree twice
+
+Dated 2026-09-17. From issue #41: a `filesystem` facet that came back `error` while
+every other facet was `ok`, on a box where `invocation.data.walk_policy` was `null`
+because the run stopped while building the table. The document was written and the
+command succeeded; the only outward sign was that it was a quarter of its usual size.
+
+## A repeat inside one claimant's list collapses, a disagreement still fails
+
+`pg_lsclusters` printed `/var/lib/postgresql/data` on two rows: two postgresql-common
+clusters registered on one data directory, which only one postmaster can hold at a time,
+so the second was down and the register carried both regardless. The `postgresql`
+collector resolves a claim per row, as it must, so the list it handed over sealed that
+tree twice and the fold refused it. The message named `postgresql` as both claimants,
+which is the tell that this was never the case
+[a contested tree](#a-tree-two-collectors-claim-fails-the-filesystem-facet) was written
+for.
+
+**Two entries from one claimant are one decision stated twice.** There is no winner to
+pick: they came from a single resolution in a single run and say the same word about the
+same tree. So a claim list is read as the set of decisions it is, and the largest facet
+in the document survives a repeat.
+
+**This does not relax the rule it refines.** Two collectors, or a collector and the
+shipped table, are independent sources whose agreement is accidental, and agreeing by
+accident is still not agreement: the next release moving one of the two would turn a
+silent duplicate into a silent disagreement. One claimant cannot drift from itself that
+way. A tree it names twice with two *different* readings still fails, because that is the
+collector contradicting itself, and rastro has no more business choosing between one
+collector's two answers than between two collectors'.
+
+**The duplicate still reaches the document**, in the `postgresql` facet, because two
+clusters sharing a data directory is the host's state and worth seeing. The collector
+does not quietly deduplicate its own claims to make the fold succeed: what it read is
+what it reports, and the table is where a tree is decided.
+
+**Cost:** a collector that resolves one tree twice by mistake no longer says so anywhere,
+where before it said so loudly. The trade is deliberate, because the loud version cost
+that host every path on the box.
