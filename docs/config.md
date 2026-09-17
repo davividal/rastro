@@ -111,15 +111,24 @@ rastro cannot know which.
 
 **Every rule appears in the `invocation` facet**, keyed by tree, with the reading and who asked
 for it — `filesystem` for a shipped rule, a collector's name for a claim, `config` for one of
-these. A tree with no entries under it owes the reader that much:
+these. A collector that keys several subjects names the one that asked, as
+`postgresql:14/main`. A tree with no entries under it owes the reader that much:
 
 ```json
 "walk_policy": {
-  "/": { "claimed_by": "filesystem", "reading": "metadata_only" },
-  "/usr/share/doc": { "claimed_by": "config", "reading": "sealed" },
-  "/var/lib/postgresql/17/main": { "claimed_by": "config", "reading": "sealed" }
+  "/": { "claimed_by": ["filesystem"], "reading": "metadata_only" },
+  "/usr/share/doc": { "claimed_by": ["config"], "reading": "sealed" },
+  "/var/lib/postgresql/data": {
+    "claimed_by": ["postgresql:11/main", "postgresql:14/main"],
+    "reading": "sealed"
+  }
 }
 ```
+
+`claimed_by` is a list at every rule, because a tree can be claimed more than once. More than
+one name means rastro sealed the tree rather than walking into one it could not account for,
+and the `filesystem` facet carries that path as the reason instead of a description. Your own
+rule over that tree replaces the seal, which is how you settle it.
 
 ## What a config cannot do
 
