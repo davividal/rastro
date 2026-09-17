@@ -4535,18 +4535,20 @@ collection in that facet is keyed: `databases` by name, `roles` by name, `member
 member and then by granted role, `extensions` by name. Grants were the exception, and a real
 pair of fingerprints showed what the exception costs.
 
-**The case, and it is measured rather than imagined.** A Secrets-Manager cutover on a live
-box moved two databases from a migration role to `postgres` with `ALTER DATABASE … OWNER`.
-That statement does three things at once: it rewrites `granted_by` on every existing entry,
-it gives the new owner an explicit entry the ACL did not carry, and it takes the implicit
-owner rights off the old one. Three renderings of the same two real fingerprints, each
-flattened to leaf paths and diffed the same way, over the `nightcrawler` database:
+**The case, and it is measured rather than imagined.** A secrets-management cutover on a
+live box moved two databases off their migration roles onto `postgres` with
+`ALTER DATABASE … OWNER`. That statement does three things at once: it rewrites `granted_by`
+on every existing entry, it gives the new owner an explicit entry the ACL did not carry, and
+it takes the implicit owner rights off the old one. Three renderings of the same two real
+fingerprints, each flattened to leaf paths and diffed the same way, over one of those
+databases. The counts are that database's; the role is renamed here to the vocabulary the
+test fixtures use, because the box it came from is not this project's to name:
 
 | shape | diff lines | where the revoke lands |
 |---|---|---|
 | a list of grants | 41 | `grants[7]/privileges/…`, an index naming nobody |
 | keyed by grantee **and grantor** | 73 | **nowhere: the grant is removed and re-added** |
-| keyed by grantee, grantor a field | 32 | `grants/nc_migration[0]/privileges/…` |
+| keyed by grantee, grantor a field | 32 | `grants/migrator[0]/privileges/…` |
 
 **The list smears an insertion.** `postgres` gaining an entry at index nine shifted the tail
 along, so four grants reported a changed `grantee` and a fifth appeared whole, and the two
