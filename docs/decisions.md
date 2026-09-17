@@ -4526,3 +4526,57 @@ from different commits, so a diff of two documents taken by two rolling builds s
 in the `invocation` facet on an unchanged host. That is the intended reading — the builds
 really were different — and it is the same cost the disclosure entry accepted for the same
 facet.
+
+# A database's grants are keyed, because a list smears the diff
+
+Dated 2026-09-17. The `postgresql` facet rendered each database's ACL as a list of grant
+objects, each carrying its `grantee`, its `granted_by` and its privileges. Every other
+collection in that facet is keyed: `databases` by name, `roles` by name, `memberships` by
+member and then by granted role, `extensions` by name. Grants were the exception, and a real
+pair of fingerprints showed what the exception costs.
+
+**The measurement.** A Secrets-Manager cutover on a live box moved two databases from a
+migration role to `postgres` with `ALTER DATABASE … OWNER`. That statement does three things
+at once: it rewrites `granted_by` on every existing entry, it gives the new owner an explicit
+entry the ACL did not carry, and it takes the implicit owner rights off the old one. Diffed
+positionally, one database produced twenty lines: thirteen `granted_by` rewrites, one length
+change, **four entries reported as changing hands** because the insertion at index nine
+shifted the tail along, and — at index seven, among the artefacts — the two lines
+that were the point, `CONNECT` and `TEMPORARY` leaving the old owner's grant. A reader
+skimming that sees rename noise and stops.
+
+**So the shape is an object, keyed by grantee and then by the role that granted it.** The
+insertion becomes one key appearing. The revoke becomes two keys leaving an object at a path
+that names the grantee they were taken from. The `granted_by` rewrite becomes one key
+renamed per grantee rather than a field rewritten thirteen times, which is the same fact
+stated once per holder instead of once per row.
+
+**Two levels rather than one, because a grantee is not a unique key.** The same role can hold
+`CONNECT` from one grantor and `CREATE` from another; Postgres keeps them as separate
+aclitems and a `REVOKE` has to name the grantor. Keying on the grantee alone would have to
+merge them and lose which is which, which is the reason the list existed. The pair is the
+identity, so the pair is the key.
+
+**What is given up, and it is small but real.** `Grantee::Public` ordered first by
+construction, so `PUBLIC` headed a database's grants whatever it was called — the grant every
+login role's `CONNECT` actually rests on, at the top where a reader looks. Object keys are
+sorted as strings by the document's own structure, so `PUBLIC` now heads a database's grants
+only because it is uppercase and Postgres folds an unquoted identifier to lowercase. A role
+deliberately created as `"ANALYST"` would sort above it. That is a rendering order rather
+than a claim about privilege, and paying for it with a hand-maintained key order would put
+ordering back in collector discipline, which the document's shape exists to keep out.
+
+**No collector version bump**, per
+[the release rule](#every-collector-is-version-1-until-rastro-has-a-release): `postgresql`
+stays at `1` like everything else until rastro has a release. This entry is where the format
+change is recorded until then.
+
+**Cost:** a fingerprint taken before this change cannot be diffed against one taken after
+for the `grants` of any database, because the shape under that key is different. That is the
+whole population of documents produced by an unreleased build, and the change is worth more
+than they are.
+
+**What this does not fix.** The facet reads `datacl` and nothing else: no `nspacl`, no
+`relacl`, no `pg_default_acl`. If that same cutover had re-owned a schema or re-granted a
+table, no shape of rendering would have shown it, because the collector never asked. That is
+a gap in coverage rather than in presentation, and it stays open.
