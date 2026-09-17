@@ -39,7 +39,7 @@ pub use source::{
     ClusterInventory, PostgresqlClusters, PostmasterPid, PsqlAvailableExtensions, PsqlControlData,
     PsqlDatabaseGrants, PsqlDatabases, PsqlExtensions, PsqlFileSettings, PsqlHbaRules,
     PsqlMemberships, PsqlReadLens, PsqlReplicationSlots, PsqlResultSet, PsqlRoleSettings,
-    PsqlRoles, PsqlSettings, RegisteredCluster,
+    PsqlRoles, PsqlSettings, RegisteredCluster, RegisteredDirectory,
 };
 pub use value_objects::{
     ClusterId, ClusterStatus, DatabaseName, DatabasePrivilege, ExtensionName, Grantee,
@@ -49,7 +49,7 @@ pub use value_objects::{
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
-    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    ClaimQualifier, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
@@ -138,17 +138,28 @@ impl Collector for PostgresqlCollector {
     /// nothing is under it.
     ///
     /// One claim per registered cluster, because a box legitimately runs several and an
-    /// upgrade leaves `16/main` beside `17/main`, each with its own directory.
+    /// upgrade leaves `16/main` beside `17/main`, each with its own directory. Each names the
+    /// cluster it was made for, so a directory two of them point at says which two.
     fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
         let Some(clusters) = &self.clusters else {
             return Vec::new();
         };
 
         clusters
-            .data_directories()
+            .registered_directories()
             .into_iter()
-            .filter_map(|directory| WalkedTree::new(directory).ok())
-            .map(FilesystemClaim::sealed)
+            .filter_map(|registered| {
+                let tree = WalkedTree::new(registered.directory).ok()?;
+                let sealed = FilesystemClaim::sealed(tree);
+
+                // A cluster whose key cannot be a qualifier still gets its directory sealed.
+                // Losing which cluster asked costs precision in a report; losing the claim
+                // would put a live database back under the walk.
+                Some(match ClaimQualifier::new(registered.cluster.as_str()) {
+                    Ok(qualifier) => sealed.for_entry(qualifier),
+                    Err(_) => sealed,
+                })
+            })
             .collect()
     }
 }

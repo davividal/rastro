@@ -30,11 +30,22 @@ fn run(effective_config: Observation) -> collectors::Run {
 
 fn names(config: &str) -> Vec<String> {
     let config = Config::parse(config).expect("this config is well formed");
-    collectors::selected(collectors::built_in(run(effective(&config))), &config)
-        .expect("this config is acceptable")
-        .running()
+    collectors::selected(
+        collectors::built_in(run(effective(&config))).collectors,
+        &config,
+    )
+    .expect("this config is acceptable")
+    .running()
+    .iter()
+    .map(|collector| collector.name().as_str().to_owned())
+    .collect()
+}
+
+/// The claimants an effective-table entry names, which is a list however many there are.
+fn claimants_of(rule: &Observation) -> Vec<String> {
+    items_of(&field(rule, "claimed_by"))
         .iter()
-        .map(|collector| collector.name().as_str().to_owned())
+        .map(text)
         .collect()
 }
 
@@ -47,7 +58,9 @@ fn every_collector_runs_when_nothing_is_excluded() {
     // nobody documented.
     assert_eq!(
         running.len(),
-        collectors::built_in(run(Observation::null())).len()
+        collectors::built_in(run(Observation::null()))
+            .collectors
+            .len()
     );
 }
 
@@ -60,7 +73,10 @@ fn an_excluded_collector_does_not_run() {
     assert!(!running.contains(&"mounts".to_owned()));
     assert_eq!(
         running.len(),
-        collectors::built_in(run(Observation::null())).len() - 1
+        collectors::built_in(run(Observation::null()))
+            .collectors
+            .len()
+            - 1
     );
 }
 
@@ -70,8 +86,11 @@ fn selected_reports_what_it_excluded_so_the_operator_can_be_told() {
     let config = Config::parse("[collectors]\nexclude = [\"mounts\"]\n").expect("well formed");
 
     // Act
-    let selection = collectors::selected(collectors::built_in(run(effective(&config))), &config)
-        .expect("acceptable");
+    let selection = collectors::selected(
+        collectors::built_in(run(effective(&config))).collectors,
+        &config,
+    )
+    .expect("acceptable");
 
     // Assert: omitted from the document entirely, so the only trace is the
     // warning and the effective config in the envelope.
@@ -85,7 +104,10 @@ fn selected_refuses_a_collector_name_that_does_not_exist() {
     let config = Config::parse("[collectors]\nexclude = [\"mount\"]\n").expect("well formed");
 
     // Act
-    let result = collectors::selected(collectors::built_in(run(effective(&config))), &config);
+    let result = collectors::selected(
+        collectors::built_in(run(effective(&config))).collectors,
+        &config,
+    );
 
     // Assert
     let failure = result.expect_err("an unknown collector must not be ignored");
@@ -103,7 +125,10 @@ fn selected_refuses_to_exclude_a_metadata_collector() {
     let config = Config::parse("[collectors]\nexclude = [\"invocation\"]\n").expect("well formed");
 
     // Act
-    let result = collectors::selected(collectors::built_in(run(effective(&config))), &config);
+    let result = collectors::selected(
+        collectors::built_in(run(effective(&config))).collectors,
+        &config,
+    );
 
     // Assert: without it a fingerprint cannot be told apart from another, so
     // asking is a config mistake rather than something to quietly ignore.
@@ -117,7 +142,13 @@ fn the_host_collector_cannot_be_excluded_either() {
     let config = Config::parse("[collectors]\nexclude = [\"host\"]\n").expect("well formed");
 
     // Act & Assert
-    assert!(collectors::selected(collectors::built_in(run(effective(&config))), &config).is_err());
+    assert!(
+        collectors::selected(
+            collectors::built_in(run(effective(&config))).collectors,
+            &config
+        )
+        .is_err()
+    );
 }
 
 /// The collector of this name, from a run built as the composition root builds it.
@@ -130,6 +161,7 @@ fn collector_of(
     resolved.narrowed = narrowed;
 
     collectors::built_in(resolved)
+        .collectors
         .into_iter()
         .find(|collector| collector.name().as_str() == name)
         .expect("a built-in collector of this name")
@@ -184,8 +216,11 @@ fn a_selection_names_its_collectors_when_a_test_prints_it() {
     // satisfy an assertion in this crate. It only ever runs inside a failure message, which is
     // exactly why nothing else would notice it going wrong.
     let config = Config::parse("[collectors]\nexclude = [\"timers\"]\n").expect("well formed");
-    let selection = collectors::selected(collectors::built_in(run(effective(&config))), &config)
-        .expect("this config is acceptable");
+    let selection = collectors::selected(
+        collectors::built_in(run(effective(&config))).collectors,
+        &config,
+    )
+    .expect("this config is acceptable");
 
     // Act
     let printed = format!("{selection:?}");
@@ -240,15 +275,14 @@ fn a_default_config_leaves_the_walk_total() {
     // Assert: the root is walked, and rastro is the one that decided so.
     let root = field(&table, "/");
     assert_eq!(text(&field(&root, "reading")), "metadata_only");
-    assert_eq!(text(&field(&root, "claimed_by")), "filesystem");
+    assert_eq!(claimants_of(&root), vec!["filesystem"]);
 
     // Assert: and no tree in the table was narrowed by a config. This is what a seal in a test
     // config would have destroyed rather than demonstrated.
     for tree in keys_of(&table) {
         let rule = field(&table, &tree);
-        assert_ne!(
-            text(&field(&rule, "claimed_by")),
-            "config",
+        assert!(
+            !claimants_of(&rule).contains(&"config".to_owned()),
             "{tree:?} was narrowed with no config to narrow it"
         );
     }

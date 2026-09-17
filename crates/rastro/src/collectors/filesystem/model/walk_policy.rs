@@ -7,7 +7,7 @@ use rastro_collector::{
 };
 
 use crate::collectors::filesystem::model::PolicyRule;
-use crate::collectors::filesystem::value_objects::ContentPolicy;
+use crate::collectors::filesystem::value_objects::{Claimant, ContentPolicy};
 
 /// The trees whose content changes on an idle host without its meaning changing.
 ///
@@ -114,15 +114,26 @@ impl WalkPolicy {
 
     /// The same table, with one collector's claims folded in.
     ///
-    /// **A conflict fails rather than resolving.** Two rules for one tree leave no most
-    /// specific answer, and every way of picking a winner would be rastro deciding for the
-    /// operator which of two collectors was right about a tree neither of them should have
-    /// been arguing over. It is a bug in a collector pair, so it reads as one: the walk
-    /// fails, loudly, naming both claimants and the tree.
+    /// **A tree more than one claim names is sealed, and every claimant is kept.** Two rules
+    /// for one tree leave no most specific answer, and every way of picking a winner would be
+    /// rastro deciding for the operator which claim was right about a tree none of them should
+    /// have been arguing over.
     ///
-    /// A claim that merely repeats what the shipped table already says is still a conflict.
-    /// Agreeing by accident is not agreement, and the next release moving one of the two
-    /// would turn a silent duplicate into a silent disagreement.
+    /// Sealing is not rastro settling that argument. It is rastro declining to walk into a
+    /// tree it cannot account for, which is the one answer that needs no winner. What the
+    /// claims asked for stops applying, agreeing claims included: two clusters registered on
+    /// one data directory agree on the reading and are still a box in a state nobody intended,
+    /// and rastro cannot tell which of them owns the directory, nor whether the one that was
+    /// down while the walk ran is about to come back up.
+    ///
+    /// rastro's own shipped rules are claimants like any other, so a claim that repeats one
+    /// contests it. The root is a tree like any other too: a special case there would buy a
+    /// branch and nothing else, since a sealed root still leaves an entry that says what
+    /// happened.
+    ///
+    /// **Nothing here fails.** The tree is reported as contested, by
+    /// [`Self::contested`], and an operator's rule replaces the seal outright, so a tree
+    /// rastro declined to walk is never a dead end.
     pub fn claimed(
         self,
         claimant: &FacetName,
@@ -131,24 +142,38 @@ impl WalkPolicy {
         let mut rules = self.rules;
 
         for claim in claims {
-            if let Some(existing) = rules.iter().find(|rule| &rule.tree == claim.tree()) {
-                return Err(CollectionError::new(format!(
-                    "{:?} is claimed by {} and already ruled by {}, so no rule for it is \
-                     the most specific one",
-                    claim.tree().as_str(),
-                    claimant.as_str(),
-                    existing.claimant.as_str()
-                )));
-            }
+            let claimant = claimant_of(claimant, claim);
 
-            rules.push(PolicyRule {
-                tree: claim.tree().clone(),
-                content: ContentPolicy::from(claim.reading()),
-                claimant: claimant.clone(),
-            });
+            match rules.iter_mut().find(|rule| &rule.tree == claim.tree()) {
+                Some(existing) => existing.contested_by(claimant),
+                None => rules.push(PolicyRule {
+                    tree: claim.tree().clone(),
+                    content: ContentPolicy::from(claim.reading()),
+                    claimants: vec![claimant],
+                }),
+            }
         }
 
         Self::new(rules)
+    }
+
+    /// The trees more than one claim named, which the walk seals and reports.
+    pub fn contested(&self) -> impl Iterator<Item = &PolicyRule> {
+        self.rules.iter().filter(|rule| rule.is_contested())
+    }
+
+    /// The contested rule governing this path, where one does.
+    ///
+    /// **The most specific rule containing the path, not an exact match**, because the walk is
+    /// one traversal per mount. A traversal never reaches a contested tree's children, but a
+    /// mount inside one is the root of a walk of its own, and an exact-path answer would let
+    /// that root be described as an ordinary directory while its parent said nothing below it
+    /// was read.
+    ///
+    /// Specificity still decides, so an operator's rule over a subtree of a contested tree
+    /// settles that subtree and leaves the argument standing for the rest.
+    pub fn contest_at(&self, path: &AbsolutePath) -> Option<&PolicyRule> {
+        Some(self.rule_for(path)).filter(|rule| rule.is_contested())
     }
 
     /// The same table, with the operator's own rules folded in over everything else.
@@ -159,10 +184,12 @@ impl WalkPolicy {
     /// tree this replaces rather than refuses, and the effective table records `config` as the
     /// claimant so the change is declared rather than silent.
     ///
-    /// That is the opposite resolution from [`Self::claimed`], and deliberately: two collectors
-    /// naming one tree is a bug in a collector pair, with no way to pick a winner. An operator
-    /// and a collector naming one tree is an operator correcting rastro, which has an obvious
-    /// winner.
+    /// That is a different resolution from [`Self::claimed`], and deliberately: claims naming
+    /// one tree have no winner to pick, so the tree is sealed and every claimant reported. An
+    /// operator and a collector naming one tree do have an obvious winner. So a config rule
+    /// replaces whatever it names, a contested seal included, and the tree stops being
+    /// contested rather than staying sealed with a note: the operator has said what to do
+    /// with it, which is the whole thing rastro was missing.
     ///
     /// **A config still cannot widen the walk.** Only the three narrowings can be spelled here,
     /// because that is all the config type can hold — there is no `hashed` key. The type is what
@@ -182,18 +209,21 @@ impl WalkPolicy {
     }
 
     /// What to do with a path, according to the most specific tree that contains it.
-    ///
-    /// Total, because [`Self::new`] guarantees a rule for the root. Ties cannot happen:
-    /// every matching tree is an ancestor of the same path, so no two of them share a
-    /// depth once each tree appears only once.
     pub fn policy_for(&self, path: &AbsolutePath) -> &ContentPolicy {
-        &self
-            .rules
+        &self.rule_for(path).content
+    }
+
+    /// The rule that answers for a path: the most specific tree containing it.
+    ///
+    /// Total, because [`Self::new`] guarantees a rule for the root. Ties cannot happen: every
+    /// matching tree is an ancestor of the same path, so no two of them share a depth once
+    /// each tree appears only once.
+    fn rule_for(&self, path: &AbsolutePath) -> &PolicyRule {
+        self.rules
             .iter()
             .filter(|rule| rule.tree.contains(path))
             .max_by_key(|rule| rule.tree.depth())
             .expect("a rule for /, which the constructor requires")
-            .content
     }
 
     pub fn rules(&self) -> &[PolicyRule] {
@@ -206,6 +236,15 @@ impl WalkPolicy {
             WalkedTree::new(tree).expect("a built-in tree is an absolute path"),
             content,
         )
+    }
+}
+
+/// Who a claim is filed under: the facet it came from, and the entry of that facet that
+/// asked, where the claim named one.
+fn claimant_of(facet: &FacetName, claim: &FilesystemClaim) -> Claimant {
+    match claim.qualifier() {
+        Some(entry) => Claimant::entry(facet.clone(), entry.clone()),
+        None => Claimant::facet(facet.clone()),
     }
 }
 

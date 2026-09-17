@@ -49,31 +49,38 @@ fn run() -> Result<Written, Box<dyn Error>> {
     warn_if_the_document_may_crowd_the_disk(&resolved);
     warn_if_secrets_are_not_being_withheld(&resolved, invocation.presentation());
 
-    let selection = collectors::selected(
-        collectors::built_in(collectors::Run {
-            effective_config: collectors::effective_config(
-                &resolved.config,
-                invocation.presentation(),
-                invocation.staged_binary(),
-                resolved.detail,
-            ),
-            staged_binary: invocation.staged_binary(),
-            detail: resolved.detail,
-            started_at: resolved.started_at.clone(),
-            hostname: resolved.hostname.clone(),
-            output: walked_output(&resolved.destination),
-            narrowed: collectors::Narrowed {
-                metadata_only: resolved.config.walk_metadata_only().to_vec(),
-                churns: resolved.config.walk_churns().to_vec(),
-                sealed: resolved.config.walk_sealed().to_vec(),
-            },
-            progress: resolved
-                .reporting
-                .clone()
-                .map(|sink| sink as Arc<dyn WalkProgress>),
-        }),
-        &resolved.config,
-    )?;
+    let assembled = collectors::built_in(collectors::Run {
+        effective_config: collectors::effective_config(
+            &resolved.config,
+            invocation.presentation(),
+            invocation.staged_binary(),
+            resolved.detail,
+        ),
+        staged_binary: invocation.staged_binary(),
+        detail: resolved.detail,
+        started_at: resolved.started_at.clone(),
+        hostname: resolved.hostname.clone(),
+        output: walked_output(&resolved.destination),
+        narrowed: collectors::Narrowed {
+            metadata_only: resolved.config.walk_metadata_only().to_vec(),
+            churns: resolved.config.walk_churns().to_vec(),
+            sealed: resolved.config.walk_sealed().to_vec(),
+        },
+        progress: resolved
+            .reporting
+            .clone()
+            .map(|sink| sink as Arc<dyn WalkProgress>),
+    });
+
+    // Before the run rather than after, on the same reasoning the other two warnings give: an
+    // operator who is told at the end learns it from the document just as well.
+    for rule in &assembled.contested {
+        if let Some(contest) = rule.contest() {
+            say(&resolved, &format!("{} {contest}", rule.tree.as_str()));
+        }
+    }
+
+    let selection = collectors::selected(assembled.collectors, &resolved.config)?;
 
     for name in selection.excluded() {
         say(

@@ -25,6 +25,16 @@ pub struct Cluster {
     pub port: Option<u16>,
     pub owner: String,
 
+    /// Where postgresql-common registered this cluster's data directory, or `None` where the
+    /// row did not spell one.
+    ///
+    /// From the register rather than from `pg_settings`, which is what makes it present for a
+    /// stopped cluster: nothing is running there to be asked, and the register still knows
+    /// where it was pointed. It is also the tree the facet claims, so a reader can see what
+    /// the walk was asked to seal, and see two clusters pointed at one directory for what it
+    /// is.
+    pub data_directory: Option<String>,
+
     /// What the running server observes of itself, from `postmaster.pid`, kept apart from the
     /// configured facts above so the two can disagree.
     pub observed: Option<Postmaster>,
@@ -67,6 +77,13 @@ impl From<&Cluster> for Observation {
                 },
             ),
             ("owner", Observation::text(cluster.owner.as_str())),
+            (
+                "data_directory",
+                match &cluster.data_directory {
+                    Some(directory) => Observation::text(directory),
+                    None => Observation::null(),
+                },
+            ),
         ];
 
         // The observed half, kept apart from the configured facts so a stale-config port or a

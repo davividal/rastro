@@ -10,6 +10,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
+use rastro::collectors::filesystem::{ContentPolicy, WalkPolicy};
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
     PostgresqlCollector, PostmasterStatus, PsqlAvailableExtensions, PsqlControlData, PsqlDatabases,
@@ -17,7 +18,7 @@ use rastro::collectors::postgresql::{
     PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster, Setting, SettingName,
     SettingSource,
 };
-use rastro_collector::{ClaimedReading, Collector, Observation, Presence};
+use rastro_collector::{AbsolutePath, ClaimedReading, Collector, FacetName, Observation, Presence};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
@@ -497,6 +498,7 @@ fn clusters_render_in_one_deterministic_key_order() {
                 status: cluster.status,
                 port: cluster.port,
                 owner: cluster.owner,
+                data_directory: cluster.data_directory,
                 settings: None,
                 roles: None,
                 memberships: None,
@@ -529,6 +531,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         status: ClusterStatus::parse("online").expect("a legal status"),
         port: Some(5432),
         owner: "postgres".to_owned(),
+        data_directory: None,
         settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
         roles: Some(PsqlRoles::parse(ROLES).expect("well formed")),
         memberships: Some(PsqlMemberships::parse(MEMBERSHIPS).expect("well formed")),
@@ -550,6 +553,7 @@ fn a_running_cluster_carries_its_settings_and_a_stopped_one_carries_none() {
         status: ClusterStatus::parse("down").expect("a legal status"),
         port: Some(5433),
         owner: "postgres".to_owned(),
+        data_directory: None,
         settings: None,
         roles: None,
         memberships: None,
@@ -645,6 +649,7 @@ fn recovery_reaches_the_facet_as_its_own_fact() {
         status: ClusterStatus::parse("online,recovery").expect("a legal status"),
         port: Some(5432),
         owner: "postgres".to_owned(),
+        data_directory: None,
         settings: None,
         roles: None,
         memberships: None,
@@ -719,6 +724,7 @@ fn a_status_qualifier_reaches_the_facet_as_its_own_list() {
         status: ClusterStatus::parse("down,binaries_missing").expect("a legal status"),
         port: Some(5433),
         owner: "postgres".to_owned(),
+        data_directory: None,
         lens: None,
         settings: None,
         roles: None,
@@ -1051,6 +1057,7 @@ fn a_non_privileged_read_marks_the_settings_incomplete() {
         status: ClusterStatus::parse("online").expect("a legal status"),
         port: Some(5432),
         owner: "postgres".to_owned(),
+        data_directory: None,
         lens: Some(PsqlReadLens::parse("app,orders,f,f\n").expect("well formed")),
         settings: Some(PsqlSettings::parse(SETTINGS).expect("well formed")),
         roles: None,
@@ -1195,6 +1202,54 @@ fn read_carries_every_cluster_the_register_lists() {
         keys_of(&Observation::from(&clusters)),
         vec!["15/main", "17/main"]
     );
+}
+
+#[test]
+fn a_cluster_carries_the_data_directory_it_was_registered_with() {
+    // Arrange: the host from issue #41, where a down cluster left over from an upgrade names
+    // the directory the running one uses. Reading it from the register rather than from
+    // `pg_settings` is what makes it present for the stopped cluster too: nothing is running
+    // there to be asked, and the register still knows where it was pointed.
+    let listed = "\
+11  main    5432 down   postgres /var/lib/postgresql/data /var/log/pg-11.log
+14  main    5433 online postgres /var/lib/postgresql/data /var/log/pg-14.log";
+
+    // Act
+    let rendered = Observation::from(&read_with(
+        "shared-datadir",
+        listed,
+        &answering_every_query(),
+    ));
+
+    // Assert: both clusters say where they point, so two of them on one directory is a fact
+    // the facet states rather than one an operator has to infer from a sealed tree.
+    for cluster in ["11/main", "14/main"] {
+        assert_eq!(
+            text(&field(&field(&rendered, cluster), "data_directory")),
+            "/var/lib/postgresql/data",
+            "{cluster} should name the directory the register gave it"
+        );
+    }
+}
+
+#[test]
+fn a_cluster_the_register_gave_no_directory_says_so() {
+    // Arrange: a data directory with a space in it, which `pg_lsclusters` prints unquoted and
+    // no rule can rejoin. Absent beats a truncation that names a real but unrelated directory.
+    let listed = "14  main    5433 online postgres /srv/postgres data/main /var/log/pg.log";
+
+    // Act
+    let rendered = Observation::from(&read_with(
+        "unspellable-datadir",
+        listed,
+        &answering_every_query(),
+    ));
+
+    // Assert
+    assert!(is_null(&field(
+        &field(&rendered, "14/main"),
+        "data_directory"
+    )));
 }
 
 #[test]
@@ -1381,6 +1436,19 @@ Ver Cluster Port Status Owner    Datadir                      Logfile
         trees,
         vec!["/var/lib/postgresql/16/main", "/srv/pgdata/17/main"]
     );
+
+    // Each claim names the cluster it was made for, by the key that cluster has in this
+    // facet, so a tree two of them point at says which two.
+    let asked_for: Vec<&str> = claims
+        .iter()
+        .map(|claim| {
+            claim
+                .qualifier()
+                .expect("a cluster's claim names its cluster")
+                .as_str()
+        })
+        .collect();
+    assert_eq!(asked_for, vec!["16/main", "17/main"]);
     assert!(
         claims
             .iter()
@@ -1406,12 +1474,89 @@ fn the_collector_claims_nothing_when_the_register_cannot_be_read() {
 }
 
 #[test]
+fn the_collector_claims_nothing_when_the_register_cannot_be_parsed() {
+    // Arrange: a register that ran and printed a row too short to tell a cluster from, which
+    // is a different failure from a register that would not run at all.
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-unparsable",
+        "16 main 5432",
+    ))));
+
+    // Act & Assert: the facet reports its own failure and the walk keeps its default, on the
+    // same reasoning as a register that could not run. Half a register is not half a claim.
+    assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn a_cluster_whose_key_cannot_qualify_a_claim_is_still_sealed() {
+    // Arrange: a cluster name holding the separator that joins a qualifier to its facet.
+    // `pg_createcluster` does not stop one, and the composed claimant could not be read back.
+    let listed = "\
+Ver Cluster    Port Status Owner    Datadir       Logfile
+17  my:cluster 5432 online postgres /srv/pg/17    /var/log/pg-17.log";
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-unqualifiable",
+        listed,
+    ))));
+
+    // Act
+    let claims = collector.filesystem_claims();
+
+    // Assert: the seal survives and only the precision is lost. Dropping the claim instead
+    // would put a live database back under the walk to protect a label.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    assert_eq!(trees, vec!["/srv/pg/17"]);
+    assert_eq!(claims[0].reading(), ClaimedReading::Sealed);
+    assert!(claims[0].qualifier().is_none());
+}
+
+#[test]
 fn the_collector_claims_nothing_without_postgresql_common() {
     // Arrange
     let collector = PostgresqlCollector::reading(None);
 
     // Act & Assert: no cluster to own means no tree to claim.
     assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn the_claims_of_two_clusters_on_one_data_directory_still_fold_into_the_walk() {
+    // Arrange: the host from issue #41, where `pg_lsclusters` prints one data directory on
+    // two rows. Only one postmaster can hold a directory at a time, so the second cluster is
+    // down, and the register carries both regardless.
+    let listed = "\
+Ver Cluster Port Status Owner    Datadir                  Logfile
+11  main    5432 online postgres /var/lib/postgresql/data /var/log/pg-11.log
+14  main    5433 down   postgres /var/lib/postgresql/data /var/log/pg-14.log";
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-shared",
+        listed,
+    ))));
+
+    // Act: the collector reports what it read, and the table folds it.
+    let claims = collector.filesystem_claims();
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &FacetName::new("postgresql").expect("a legal facet name"),
+            &claims,
+        )
+        .expect("one tree claimed twice by one collector is one decision");
+
+    // Assert: the facet reports the directory each row named, because two clusters sharing
+    // one is the host's state and not this collector's to tidy away, and the walk still
+    // seals that tree rather than losing the whole filesystem facet over the repeat.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    assert_eq!(
+        trees,
+        vec!["/var/lib/postgresql/data", "/var/lib/postgresql/data"]
+    );
+    assert_eq!(
+        policy.policy_for(
+            &AbsolutePath::new("/var/lib/postgresql/data/base", "walked path")
+                .expect("a legal path")
+        ),
+        &ContentPolicy::Sealed
+    );
 }
 
 #[test]

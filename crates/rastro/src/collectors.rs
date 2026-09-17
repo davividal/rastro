@@ -167,9 +167,25 @@ impl Narrowed {
     }
 }
 
-pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
+/// The collectors a run will use, and what resolving their claims turned up.
+///
+/// The contested trees travel out with the collectors because the composition root is the only
+/// place that can tell the operator about them while the run is happening, and by the time the
+/// walk reports one the document is already being written.
+pub struct BuiltIn {
+    pub collectors: Vec<Box<dyn Collector>>,
+
+    /// The trees more than one claim named, which the walk sealed rather than entering.
+    pub contested: Vec<PolicyRule>,
+}
+
+pub fn built_in(run: Run) -> BuiltIn {
     let mut collectors = state_collectors(run.hostname);
     let policy = claimed_policy(&collectors, &run.narrowed);
+    let contested = match &policy {
+        Ok(resolved) => resolved.contested().cloned().collect(),
+        Err(_) => Vec::new(),
+    };
     let table = match &policy {
         Ok(resolved) => Observation::from(resolved),
         Err(_) => Observation::null(),
@@ -195,7 +211,11 @@ pub fn built_in(run: Run) -> Vec<Box<dyn Collector>> {
         run.started_at,
         run.output.map(|path| path.to_string_lossy().into_owned()),
     )));
-    collectors
+
+    BuiltIn {
+        collectors,
+        contested,
+    }
 }
 
 /// The collectors that observe the host, filesystem aside.

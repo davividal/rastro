@@ -35,8 +35,8 @@ pub use source::{
     sha256_of_stream,
 };
 pub use value_objects::{
-    CanonicalBytes, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm, FileKind,
-    NanosecondsSinceEpoch,
+    CanonicalBytes, Claimant, ContentPolicy, Detail, DeviceNumber, Digest, DigestAlgorithm,
+    FileKind, NanosecondsSinceEpoch,
 };
 
 use std::path::{Path, PathBuf};

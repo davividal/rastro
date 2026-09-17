@@ -4368,3 +4368,104 @@ discovered. Debian's `/etc/pam.d/su` carries a second `pam_env.so` line reading
 it means parsing the `pam.d` stack — the collector's next step rather than this one — so the
 facet reports the two sources `pam_env` reads by default and says so rather than implying it
 has the lot.
+
+---
+
+# A tree more than one claim names
+
+Dated 2026-09-17. From issue #41: a `filesystem` facet that came back `error` while every
+other facet was `ok`, and `invocation.data.walk_policy` null, because the run stopped while
+building the table. The document was written and the command succeeded. The only outward sign
+was that it was a quarter of its usual size.
+
+## Two clusters registered on one data directory is a state a box really reaches
+
+Measured on the reporter's own document rather than guessed. `14/main` is online and its
+`data_directory` is `/var/lib/postgresql/data`, set at `/etc/postgresql/14/main/postgresql.conf`
+line 45. `11/main` is `down,binaries_missing`, which is the shape a purged old-version package
+leaves, and its surviving config names the same directory. Both are registered, so
+`pg_lsclusters` prints that directory on two rows and the collector resolves a claim per row.
+
+Impossible as a *running* state, because `postmaster.pid` lets only one server hold a
+directory. Entirely possible as a *registration*, and an upgrade nobody finished with
+`pg_dropcluster` is how a box gets there.
+
+**Nothing about it can be resolved from the outside.** A cluster that is down while the walk
+runs may own the directory and be about to come back up, so "the running one owns it" is a
+guess, not a reading. rastro is looking at two registrations that cannot both be right and has
+no way to tell which one is wrong.
+
+## A cluster's registered data directory is in the facet
+
+Read from `pg_lsclusters` rather than from `pg_settings`, and that is the whole point: a
+stopped cluster has nothing running to ask. `11/main` would otherwise say nothing at all about
+where it points, and the collision would be invisible in the document even after the walk
+stopped failing over it.
+
+Two clusters on one directory is now a fact the facet states, beside the trees the walk sealed
+and the entry that says who argued. The collector does not deduplicate its own claims to make
+the fold succeed: what it read is what it reports.
+
+## A claim names which of its claimant's entries asked
+
+A claim carried a tree and a reading, and the claimant was supplied by whoever gathered the
+claims, because a collector naming itself could name somebody else. That left `postgresql`
+claiming one tree twice, which reads as a bug in rastro rather than as the misconfiguration it
+is.
+
+So a claim may carry a **qualifier**: the key the asking entry has in its own facet's `data`.
+The gatherer still supplies the facet half, so the property that mattered is untouched — a
+collector can mislabel its own entry and can never file a decision under a peer's name. The
+composed claimant is `postgresql:14/main`, and the colon is reserved in a qualifier so the
+composed name can always be read back. A facet with one subject has nothing to qualify and
+gains no punctuation.
+
+## A tree more than one claim names is sealed, and every claimant is kept
+
+Supersedes [A tree two collectors claim fails the `filesystem` facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet).
+The reasoning there was right about the resolution and wrong about the price: there is no way
+to pick a winner, and the answer to that was to fail the largest facet in the document.
+
+**Sealing is not rastro settling the argument.** It is rastro declining to walk into a tree it
+cannot account for, which is the one answer that needs no winner. What the claims asked for
+stops applying, and that includes claims that agreed: two clusters registered on one directory
+both say `sealed` and are still a box in a state nobody intended. Agreement between claimants
+is not evidence that anything is well.
+
+**No special cases.** rastro's own shipped rules are claimants like any other, so a collector
+that duplicates one contests it. The root is a tree like any other: a carve-out there would
+buy a branch and nothing else, because a sealed root still leaves one entry saying what
+happened, which is exactly what the `/`-stat carve-out exists to prevent and this case does
+not need.
+
+**Never a dead end.** An operator's rule replaces whatever it names, a contested seal
+included, and the tree stops being contested rather than staying sealed with a note. The
+operator knows their box, which is the thing rastro was missing.
+
+**Cost, and it is accepted rather than argued away:** a collector pair that both resolve one
+tree correctly now costs that subtree until somebody fixes one of them. That is either a bug
+in rastro or a misconfigured box; both want fixing, and both are worth a subtree that is loud
+about being missing.
+
+## The contest is reported at the entry, not at the facet
+
+The third rung of a ladder this log already built: the run, then
+[the facet](#a-tree-two-collectors-claim-fails-the-filesystem-facet), then
+[the entry](#a-path-that-is-gone-is-omitted-a-path-that-will-not-be-read-is-recorded).
+A contested tree is the entry.
+
+The `filesystem` facet is keyed by path, and a path rastro could not read is already rendered
+at its own key as a reason rather than a description. A contested tree joins it, on the same
+contract: an entry is its attributes or the reason it has none. An ordinary seal keeps the
+directory's own mode and owner; a contested one does not, and that difference is what stops a
+reader skimming past it as a normal seal.
+
+The sentence is the rule's own, so the line the operator sees on stderr while the run happens
+and the reason in the document cannot drift apart. `claimed_by` in the effective table is a
+list at every rule rather than a scalar that becomes a list on the boxes where something went
+wrong: a shape that changes with the data is a shape every reader has to branch on.
+
+**What the reporter's box would now produce:** the `filesystem` facet `ok`, one entry at
+`/var/lib/postgresql/data` reading `claimed by postgresql:11/main, postgresql:14/main, so it
+was sealed rather than walked`, both clusters in the `postgresql` facet naming that directory,
+and every other path on the box still in the document.
