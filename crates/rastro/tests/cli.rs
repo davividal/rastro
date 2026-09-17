@@ -66,16 +66,44 @@ fn facet<'a>(document: &'a Value, section: &str, name: &str) -> &'a Value {
 }
 
 #[test]
-fn run_with_version_flag_prints_the_crate_version() {
+fn run_with_version_flag_prints_the_build_version() {
     // Act
     let output = run(&["--version", "--config", without_walking()]);
 
-    // Assert
+    // Assert: `rastro::VERSION`, not the crate version, because a rolling build carries the
+    // commit it was built from and the crate version alone cannot say which build this is.
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("version output should be UTF-8");
     assert!(
-        stdout.contains(env!("CARGO_PKG_VERSION")),
-        "reported version should match the crate version, got: {stdout}"
+        stdout.contains(rastro::VERSION),
+        "reported version should be the build version, got: {stdout}"
+    );
+}
+
+#[test]
+fn the_reported_version_and_the_documents_version_are_one_string() {
+    // Arrange: two sites read the version, the command line and the `invocation` facet, and
+    // nothing but a shared constant stops them drifting. They agreed by accident while both
+    // read `CARGO_PKG_VERSION`; once a build can override it, an accident is not enough.
+    let output = run(&["--version", "--config", without_walking()]);
+    let printed = String::from_utf8(output.stdout).expect("version output should be UTF-8");
+
+    // Act
+    let invocation = facet(
+        &document(&["--config", without_walking()]),
+        "metadata",
+        "invocation",
+    )
+    .clone();
+
+    // Assert
+    let documented = invocation["data"]["rastro_version"]
+        .as_str()
+        .expect("the facet reports a version string");
+    assert_eq!(documented, rastro::VERSION);
+    assert!(
+        printed.contains(documented),
+        "the command line printed {printed:?}, the document says {documented:?}"
     );
 }
 
@@ -226,10 +254,7 @@ fn a_bare_run_omits_the_run_timestamp() {
     .clone();
 
     // Assert
-    assert_eq!(
-        invocation["data"]["rastro_version"],
-        env!("CARGO_PKG_VERSION")
-    );
+    assert_eq!(invocation["data"]["rastro_version"], rastro::VERSION);
     assert!(
         invocation["data"].get("started_at").is_none(),
         "the run timestamp is volatile and must not reach the diffable view"

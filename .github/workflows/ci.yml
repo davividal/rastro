@@ -186,6 +186,15 @@ jobs:
           key: ${{ matrix.target }}
       - name: Install the musl linker
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # Every development build carries the crate version, which is `0.0.0` and says nothing
+      # about which build it is. The `invocation` facet exists to say what produced a
+      # document, so the commit goes into the version the binary reports. Read from the
+      # manifest rather than written out, so cutting a release needs no edit here.
+      - name: Name the build after the commit it came from
+        run: |
+          base=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "rastro") | .version')
+          echo "RASTRO_BUILD_VERSION=${base}-rolling+${GITHUB_SHA::7}" >> "$GITHUB_ENV"
       - run: cargo build --locked --release --target ${{ matrix.target }} -p rastro
       # The single static binary is the product's core promise, so CI asserts it
       # rather than trusting the target triple.
@@ -193,7 +202,12 @@ jobs:
         run: |
           file target/${{ matrix.target }}/release/rastro
           file target/${{ matrix.target }}/release/rastro | grep -q 'static'
-      - run: ./target/${{ matrix.target }}/release/rastro --version
+      # Not a smoke test of `--version`: it asserts the commit actually reached the binary,
+      # which a build script and an environment variable can silently fail to do.
+      - name: Assert the binary names the commit it came from
+        run: |
+          ./target/${{ matrix.target }}/release/rastro --version
+          ./target/${{ matrix.target }}/release/rastro --version | grep -q "+${GITHUB_SHA::7}\$"
       # Keeps the binary downloadable from the run that built it, which is what a
       # pull request gets: `rolling-build` publishes master only.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
