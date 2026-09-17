@@ -19,7 +19,7 @@ mod psql_roles;
 mod psql_settings;
 
 pub use cluster_inventory::{ClusterInventory, RegisteredCluster};
-pub use postgresql_clusters::PostgresqlClusters;
+pub use postgresql_clusters::{PostgresqlClusters, RegisteredDirectory};
 pub use postmaster_pid::PostmasterPid;
 pub use psql_available_extensions::PsqlAvailableExtensions;
 pub use psql_control_data::PsqlControlData;

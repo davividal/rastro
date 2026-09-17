@@ -4,7 +4,9 @@
 mod support;
 
 use rastro::collectors::filesystem::{ContentPolicy, DigestAlgorithm, PolicyRule, WalkPolicy};
-use rastro_collector::{AbsolutePath, FacetName, FilesystemClaim, Observation, WalkedTree};
+use rastro_collector::{
+    AbsolutePath, ClaimQualifier, FacetName, FilesystemClaim, Observation, WalkedTree,
+};
 use support::observation::{field, text};
 
 fn facet(name: &str) -> FacetName {
@@ -18,6 +20,10 @@ fn rule_for<'a>(policy: &'a WalkPolicy, tree: &str) -> &'a PolicyRule {
         .iter()
         .find(|rule| rule.tree.as_str() == tree)
         .unwrap_or_else(|| panic!("expected a rule for {tree:?}"))
+}
+
+fn qualifier(value: &str) -> ClaimQualifier {
+    ClaimQualifier::new(value).expect("a legal qualifier")
 }
 
 fn tree(value: &str) -> WalkedTree {
@@ -231,7 +237,7 @@ fn claimed_reads_a_claimed_tree_the_way_its_claimant_asked() {
     // reader of a tree with no entries under it is owed the name of whoever removed them.
     let rule = rule_for(&policy, "/var/lib/postgresql/17/main");
     assert_eq!(rule.content, ContentPolicy::Sealed);
-    assert_eq!(rule.claimant.as_str(), "postgresql");
+    assert_eq!(rule.claimant.to_string(), "postgresql");
 }
 
 #[test]
@@ -319,6 +325,46 @@ fn claimed_refuses_a_claim_that_repeats_a_shipped_rule() {
 }
 
 #[test]
+fn claimed_names_the_entry_of_a_claimant_that_asked() {
+    // Arrange: a facet that keys several subjects claims a tree on behalf of one of them.
+    let claim =
+        FilesystemClaim::sealed(tree("/var/lib/postgresql/data")).for_entry(qualifier("14/main"));
+
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("postgresql"), &[claim])
+        .expect("a tree no shipped rule names");
+
+    // Assert: the facet name is composed by the gatherer and the qualifier by the claimant,
+    // so a collector can say which of its entries asked without being able to name a peer.
+    // The qualifier is the key that entry has in its own facet, so the reader can follow it.
+    let rule = rule_for(&policy, "/var/lib/postgresql/data");
+    assert_eq!(rule.claimant.to_string(), "postgresql:14/main");
+}
+
+#[test]
+fn an_unqualified_claim_is_named_by_its_facet_alone() {
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("nginx"),
+            &[FilesystemClaim::churns(tree("/srv/www"))],
+        )
+        .expect("a tree no shipped rule names");
+
+    // Assert: a facet with one subject has nothing to qualify, and gains no empty punctuation.
+    assert_eq!(rule_for(&policy, "/srv/www").claimant.to_string(), "nginx");
+}
+
+#[test]
+fn a_qualifier_may_not_carry_the_separator_that_joins_it() {
+    // Act & Assert: `postgresql:17:main` would not say where the facet name ends, and the
+    // composed name is read by a person looking an entry up in that facet.
+    assert!(ClaimQualifier::new("17:main").is_err());
+    assert!(ClaimQualifier::new("").is_err());
+}
+
+#[test]
 fn claimed_collapses_a_tree_one_claimant_names_twice_over() {
     // Arrange: the host from issue #41. Two postgresql-common clusters registered on one
     // data directory print two rows naming it, and the collector resolves each row, so the
@@ -339,7 +385,7 @@ fn claimed_collapses_a_tree_one_claimant_names_twice_over() {
     // nothing.
     let rule = rule_for(&policy, "/var/lib/postgresql/data");
     assert_eq!(rule.content, ContentPolicy::Sealed);
-    assert_eq!(rule.claimant.as_str(), "postgresql");
+    assert_eq!(rule.claimant.to_string(), "postgresql");
     assert_eq!(
         policy
             .rules()
@@ -425,7 +471,7 @@ fn an_operators_rule_beats_a_collectors_claim() {
     // Assert
     let rule = rule_for(&configured, "/var/lib/postgresql/17/main");
     assert_eq!(rule.content, ContentPolicy::MetadataOnly);
-    assert_eq!(rule.claimant.as_str(), "config");
+    assert_eq!(rule.claimant.to_string(), "config");
 }
 
 #[test]

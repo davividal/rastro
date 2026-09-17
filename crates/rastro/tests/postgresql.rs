@@ -1436,6 +1436,19 @@ Ver Cluster Port Status Owner    Datadir                      Logfile
         trees,
         vec!["/var/lib/postgresql/16/main", "/srv/pgdata/17/main"]
     );
+
+    // Each claim names the cluster it was made for, by the key that cluster has in this
+    // facet, so a tree two of them point at says which two.
+    let asked_for: Vec<&str> = claims
+        .iter()
+        .map(|claim| {
+            claim
+                .qualifier()
+                .expect("a cluster's claim names its cluster")
+                .as_str()
+        })
+        .collect();
+    assert_eq!(asked_for, vec!["16/main", "17/main"]);
     assert!(
         claims
             .iter()

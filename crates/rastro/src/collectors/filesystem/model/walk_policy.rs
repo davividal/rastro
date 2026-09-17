@@ -7,7 +7,7 @@ use rastro_collector::{
 };
 
 use crate::collectors::filesystem::model::PolicyRule;
-use crate::collectors::filesystem::value_objects::ContentPolicy;
+use crate::collectors::filesystem::value_objects::{Claimant, ContentPolicy};
 
 /// The trees whose content changes on an idle host without its meaning changing.
 ///
@@ -138,15 +138,15 @@ impl WalkPolicy {
                     "{:?} is claimed by {} and already ruled by {}, so no rule for it is \
                      the most specific one",
                     claim.tree().as_str(),
-                    claimant.as_str(),
-                    existing.claimant.as_str()
+                    claimant_of(claimant, claim),
+                    existing.claimant
                 )));
             }
 
             rules.push(PolicyRule {
                 tree: claim.tree().clone(),
                 content: ContentPolicy::from(claim.reading()),
-                claimant: claimant.clone(),
+                claimant: claimant_of(claimant, claim),
             });
         }
 
@@ -208,6 +208,15 @@ impl WalkPolicy {
             WalkedTree::new(tree).expect("a built-in tree is an absolute path"),
             content,
         )
+    }
+}
+
+/// Who a claim is filed under: the facet it came from, and the entry of that facet that
+/// asked, where the claim named one.
+fn claimant_of(facet: &FacetName, claim: &FilesystemClaim) -> Claimant {
+    match claim.qualifier() {
+        Some(entry) => Claimant::entry(facet.clone(), entry.clone()),
+        None => Claimant::facet(facet.clone()),
     }
 }
 

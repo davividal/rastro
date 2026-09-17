@@ -4,6 +4,7 @@
 //! which is what keeps the source replaceable.
 
 mod canonical_bytes;
+mod claimant;
 mod content_policy;
 mod detail;
 mod device_number;
@@ -13,6 +14,7 @@ mod file_kind;
 mod nanoseconds_since_epoch;
 
 pub use canonical_bytes::CanonicalBytes;
+pub use claimant::Claimant;
 pub use content_policy::ContentPolicy;
 pub use detail::Detail;
 pub use device_number::DeviceNumber;

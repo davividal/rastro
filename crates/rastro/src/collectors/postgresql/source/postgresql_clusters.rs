@@ -27,7 +27,17 @@ use crate::collectors::postgresql::model::{
     ClusterMemberships, ClusterReplicationSlots, ClusterRoleSettings, ClusterRoles,
     ClusterSettings, Clusters, ControlData, Database, DatabaseGrants, Postmaster, ReadLens,
 };
-use crate::collectors::postgresql::value_objects::PostmasterStatus;
+use crate::collectors::postgresql::value_objects::{ClusterId, PostmasterStatus};
+
+/// One registered data directory, and the cluster postgresql-common registered it for.
+///
+/// Named rather than a pair, because the directory alone is what the earlier reading handed
+/// over and it is exactly what left a duplicate unable to say which clusters collided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisteredDirectory {
+    pub cluster: ClusterId,
+    pub directory: String,
+}
 
 /// postgresql-common's register of the box.
 const INVENTORY_PROGRAM: &str = "pg_lsclusters";
@@ -289,7 +299,8 @@ impl PostgresqlClusters {
         &self.inventory
     }
 
-    /// The data directories postgresql-common registered, for the trees the facet claims.
+    /// The data directories postgresql-common registered, each with the cluster that
+    /// registered it, for the trees the facet claims.
     ///
     /// Resolved rather than assumed, because `/var/lib/postgresql/<version>/<cluster>` is
     /// Debian's default and not a rule: `pg_createcluster --datadir` puts a cluster
@@ -301,10 +312,14 @@ impl PostgresqlClusters {
     /// over a missing PostgreSQL. The walk's own default is the safe direction to be wrong
     /// in, and it is loud rather than silent.
     ///
+    /// **The cluster travels with the directory** so a claim can say which of them asked.
+    /// Two clusters registered on one directory is a misconfiguration a box really produces,
+    /// and "postgresql claims this tree" twice says nothing an operator can act on.
+    ///
     /// This runs `pg_lsclusters` a second time in a run, since claims are gathered before
     /// any facet is collected. One bounded tool invocation is the honest price of not
     /// caching a host reading between two questions that are asked at different times.
-    pub fn data_directories(&self) -> Vec<String> {
+    pub fn registered_directories(&self) -> Vec<RegisteredDirectory> {
         let Ok(listed) = self.inventory.run(&[]) else {
             return Vec::new();
         };
@@ -315,7 +330,12 @@ impl PostgresqlClusters {
 
         registered
             .into_iter()
-            .filter_map(|cluster| cluster.data_directory)
+            .filter_map(|cluster| {
+                cluster.data_directory.map(|directory| RegisteredDirectory {
+                    cluster: cluster.id,
+                    directory,
+                })
+            })
             .collect()
     }
 

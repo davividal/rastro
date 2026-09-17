@@ -20,7 +20,7 @@ use thiserror::Error;
 /// The vocabulary collectors share, re-exported so a collector's needs are still one
 /// import: the value objects, and the claim types a collector uses to say which trees it
 /// owns.
-pub use claims::{ClaimedReading, FilesystemClaim};
+pub use claims::{ClaimQualifier, ClaimedReading, FilesystemClaim};
 pub use value_objects::{
     AbsolutePath, ByteSize, EnvironmentVariableName, NonEmptyText, ProcessName, SettingValue,
     WalkedTree, Xxh3Digest,

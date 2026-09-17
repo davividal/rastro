@@ -14,8 +14,10 @@
 //! can reduce what the walk reads and never enlarge it. The config layer follows the same
 //! rule by policy; here the type enforces it.
 
+mod claim_qualifier;
 mod claimed_reading;
 mod filesystem_claim;
 
+pub use claim_qualifier::ClaimQualifier;
 pub use claimed_reading::ClaimedReading;
 pub use filesystem_claim::FilesystemClaim;

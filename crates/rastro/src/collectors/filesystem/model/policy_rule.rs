@@ -2,6 +2,8 @@
 
 use rastro_collector::{FacetName, Observation, WalkedTree};
 
+use crate::collectors::filesystem::value_objects::Claimant;
+
 use crate::collectors::filesystem::value_objects::ContentPolicy;
 
 /// A policy decision about a subtree, and the facet that made it.
@@ -20,7 +22,7 @@ use crate::collectors::filesystem::value_objects::ContentPolicy;
 pub struct PolicyRule {
     pub tree: WalkedTree,
     pub content: ContentPolicy,
-    pub claimant: FacetName,
+    pub claimant: Claimant,
 }
 
 impl PolicyRule {
@@ -33,7 +35,9 @@ impl PolicyRule {
         Self {
             tree,
             content,
-            claimant: FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
+            claimant: Claimant::facet(
+                FacetName::new("filesystem").expect("`filesystem` is a legal facet name"),
+            ),
         }
     }
 
@@ -46,7 +50,9 @@ impl PolicyRule {
         Self {
             tree,
             content,
-            claimant: FacetName::new("config").expect("`config` is a legal facet name"),
+            claimant: Claimant::facet(
+                FacetName::new("config").expect("`config` is a legal facet name"),
+            ),
         }
     }
 }
@@ -57,7 +63,7 @@ impl From<&PolicyRule> for Observation {
     /// The tree is the key the table is built under, so it is not repeated here.
     fn from(rule: &PolicyRule) -> Self {
         Observation::object([
-            ("claimed_by", Observation::text(rule.claimant.as_str())),
+            ("claimed_by", Observation::text(rule.claimant.to_string())),
             ("reading", Observation::text(reading_of(&rule.content))),
         ])
     }
