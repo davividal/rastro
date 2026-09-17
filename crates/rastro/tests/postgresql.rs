@@ -10,6 +10,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use rastro::collectors::canonical_tool::{CanonicalTool, TargetUser as ClusterOwner, ToolAsUser};
+use rastro::collectors::filesystem::{ContentPolicy, WalkPolicy};
 use rastro::collectors::postgresql::{
     Cluster, ClusterId, ClusterInventory, ClusterStatus, Clusters, PostgresqlClusters,
     PostgresqlCollector, PostmasterStatus, PsqlAvailableExtensions, PsqlControlData, PsqlDatabases,
@@ -17,7 +18,7 @@ use rastro::collectors::postgresql::{
     PsqlRoleSettings, PsqlRoles, PsqlSettings, RegisteredCluster, Setting, SettingName,
     SettingSource,
 };
-use rastro_collector::{ClaimedReading, Collector, Observation, Presence};
+use rastro_collector::{AbsolutePath, ClaimedReading, Collector, FacetName, Observation, Presence};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
@@ -1412,6 +1413,46 @@ fn the_collector_claims_nothing_without_postgresql_common() {
 
     // Act & Assert: no cluster to own means no tree to claim.
     assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn the_claims_of_two_clusters_on_one_data_directory_still_fold_into_the_walk() {
+    // Arrange: the host from issue #41, where `pg_lsclusters` prints one data directory on
+    // two rows. Only one postmaster can hold a directory at a time, so the second cluster is
+    // down, and the register carries both regardless.
+    let listed = "\
+Ver Cluster Port Status Owner    Datadir                  Logfile
+11  main    5432 online postgres /var/lib/postgresql/data /var/log/pg-11.log
+14  main    5433 down   postgres /var/lib/postgresql/data /var/log/pg-14.log";
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-shared",
+        listed,
+    ))));
+
+    // Act: the collector reports what it read, and the table folds it.
+    let claims = collector.filesystem_claims();
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &FacetName::new("postgresql").expect("a legal facet name"),
+            &claims,
+        )
+        .expect("one tree claimed twice by one collector is one decision");
+
+    // Assert: the facet reports the directory each row named, because two clusters sharing
+    // one is the host's state and not this collector's to tidy away, and the walk still
+    // seals that tree rather than losing the whole filesystem facet over the repeat.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    assert_eq!(
+        trees,
+        vec!["/var/lib/postgresql/data", "/var/lib/postgresql/data"]
+    );
+    assert_eq!(
+        policy.policy_for(
+            &AbsolutePath::new("/var/lib/postgresql/data/base", "walked path")
+                .expect("a legal path")
+        ),
+        &ContentPolicy::Sealed
+    );
 }
 
 #[test]

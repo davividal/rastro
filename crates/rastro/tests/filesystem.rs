@@ -319,6 +319,61 @@ fn claimed_refuses_a_claim_that_repeats_a_shipped_rule() {
 }
 
 #[test]
+fn claimed_collapses_a_tree_one_claimant_names_twice_over() {
+    // Arrange: the host from issue #41. Two postgresql-common clusters registered on one
+    // data directory print two rows naming it, and the collector resolves each row, so the
+    // list it hands over says `sealed` about that tree twice.
+    let shared = tree("/var/lib/postgresql/data");
+    let claims = [
+        FilesystemClaim::sealed(shared.clone()),
+        FilesystemClaim::sealed(shared),
+    ];
+
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("postgresql"), &claims)
+        .expect("one decision stated twice is still one decision");
+
+    // Assert: one rule, saying what both rows said. There was never a winner to pick here,
+    // and losing the largest facet in the document over a repeat would be a cost paid for
+    // nothing.
+    let rule = rule_for(&policy, "/var/lib/postgresql/data");
+    assert_eq!(rule.content, ContentPolicy::Sealed);
+    assert_eq!(rule.claimant.as_str(), "postgresql");
+    assert_eq!(
+        policy
+            .rules()
+            .iter()
+            .filter(|rule| rule.tree.as_str() == "/var/lib/postgresql/data")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn claimed_refuses_a_claimant_that_contradicts_itself_about_a_tree() {
+    // Arrange: the same tree, two readings, from one list.
+    let contested = tree("/var/lib/postgresql/data");
+    let claims = [
+        FilesystemClaim::sealed(contested.clone()),
+        FilesystemClaim::churns(contested),
+    ];
+
+    // Act
+    let refused = WalkPolicy::built_in().claimed(&facet("postgresql"), &claims);
+
+    // Assert: a repeat collapses, a disagreement does not. rastro has no more business
+    // picking a winner between one collector's two answers than between two collectors, and
+    // the message says which collector contradicted itself rather than naming it twice.
+    let message = refused.expect_err("one tree, two readings").to_string();
+    assert!(
+        message.contains("/var/lib/postgresql/data"),
+        "got {message}"
+    );
+    assert!(message.contains("postgresql"), "got {message}");
+}
+
+#[test]
 fn the_effective_table_renders_every_rule_with_its_claimant() {
     // Arrange
     let policy = WalkPolicy::built_in()

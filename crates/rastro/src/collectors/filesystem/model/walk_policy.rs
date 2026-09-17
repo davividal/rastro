@@ -123,6 +123,8 @@ impl WalkPolicy {
     /// A claim that merely repeats what the shipped table already says is still a conflict.
     /// Agreeing by accident is not agreement, and the next release moving one of the two
     /// would turn a silent duplicate into a silent disagreement.
+    ///
+    /// **One claimant repeating itself is the exception**, and [`decided_once`] says why.
     pub fn claimed(
         self,
         claimant: &FacetName,
@@ -130,7 +132,7 @@ impl WalkPolicy {
     ) -> Result<Self, CollectionError> {
         let mut rules = self.rules;
 
-        for claim in claims {
+        for claim in decided_once(claimant, claims)? {
             if let Some(existing) = rules.iter().find(|rule| &rule.tree == claim.tree()) {
                 return Err(CollectionError::new(format!(
                     "{:?} is claimed by {} and already ruled by {}, so no rule for it is \
@@ -207,6 +209,49 @@ impl WalkPolicy {
             content,
         )
     }
+}
+
+/// One claimant's list as the set of decisions it is, or the contradiction inside it.
+///
+/// A collector resolves its trees from the host, and a host can answer twice: two
+/// postgresql-common clusters registered on one data directory print two rows naming it, so
+/// the list arrives saying `sealed` about that tree twice. That is one decision stated
+/// twice, with no winner to pick, and refusing it cost the largest facet in the document
+/// over a repeat.
+///
+/// **This is not the rule in [`WalkPolicy::claimed`] relaxed.** Two collectors, or a
+/// collector and the shipped table, are independent sources whose agreement is accidental
+/// and whose next release can move one of them apart. One claimant's two entries come from
+/// a single resolution in a single run, so they move together or not at all.
+///
+/// A tree named twice with two different readings still fails. That is the collector
+/// contradicting itself, and rastro has no more business choosing between one collector's
+/// two answers than between two collectors'.
+fn decided_once<'claims>(
+    claimant: &FacetName,
+    claims: &'claims [FilesystemClaim],
+) -> Result<Vec<&'claims FilesystemClaim>, CollectionError> {
+    let mut decided: Vec<&FilesystemClaim> = Vec::new();
+
+    for claim in claims {
+        match decided
+            .iter()
+            .find(|earlier| earlier.tree() == claim.tree())
+        {
+            Some(earlier) if earlier.reading() == claim.reading() => continue,
+            Some(_) => {
+                return Err(CollectionError::new(format!(
+                    "{} claims {:?} twice and reads it two ways, so no rule for it is the \
+                     most specific one",
+                    claimant.as_str(),
+                    claim.tree().as_str()
+                )));
+            }
+            None => decided.push(claim),
+        }
+    }
+
+    Ok(decided)
 }
 
 impl From<&WalkPolicy> for Observation {
