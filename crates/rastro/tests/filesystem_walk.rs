@@ -315,6 +315,43 @@ fn walk_reports_a_contested_tree_instead_of_describing_it() {
 }
 
 #[test]
+fn a_walk_rooted_inside_a_contested_tree_reports_the_contest() {
+    // Arrange: what a mount inside a contested tree looks like to the collector. Each mount
+    // gets its own traversal, so this one starts below the sealed parent and never passes
+    // through it. Rooting the walk at the subdirectory is that shape without needing a mount.
+    let root = tree_with_a_file("walk_rooted_inside_a_contested_tree");
+    write(&root, "etc/nested/payload", HELLO);
+    let contested =
+        WalkedTree::new(root.join("etc").to_str().expect("a UTF-8 path")).expect("a legal tree");
+    let policy = hashing_everything()
+        .claimed(
+            &facet("mysql"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("a tree no shipped rule names")
+        .claimed(&facet("mariadb"), &[FilesystemClaim::sealed(contested)])
+        .expect("a contested tree is sealed, not refused");
+
+    // Act
+    let walked = FileTree::at(&root.join("etc/nested"))
+        .walk(&policy)
+        .expect("a readable tree");
+
+    // Assert: the contested ancestor governs it, so this root is a reason too rather than an
+    // ordinary directory the parent's own entry claims was never read.
+    assert!(walked.entries().is_empty());
+    assert_eq!(walked.unreadable().len(), 1);
+    assert!(
+        walked.unreadable()[0]
+            .reason
+            .as_str()
+            .contains("mariadb, mysql"),
+        "got {:?}",
+        walked.unreadable()[0].reason.as_str()
+    );
+}
+
+#[test]
 fn walk_describes_a_tree_one_claim_sealed() {
     // Arrange: the same shape with one claimant, which is the ordinary seal.
     let root = tree_with_a_file("walk_describes_a_sealed_tree");

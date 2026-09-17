@@ -162,14 +162,18 @@ impl WalkPolicy {
         self.rules.iter().filter(|rule| rule.is_contested())
     }
 
-    /// The contested rule this path is the root of, where it is one.
+    /// The contested rule governing this path, where one does.
     ///
-    /// The root of the tree and nothing below it, because a contested tree is sealed and
-    /// nothing below it is ever reached. One key carries the whole fact, which is what keeps
-    /// the blast radius at the directory the claims argued over.
+    /// **The most specific rule containing the path, not an exact match**, because the walk is
+    /// one traversal per mount. A traversal never reaches a contested tree's children, but a
+    /// mount inside one is the root of a walk of its own, and an exact-path answer would let
+    /// that root be described as an ordinary directory while its parent said nothing below it
+    /// was read.
+    ///
+    /// Specificity still decides, so an operator's rule over a subtree of a contested tree
+    /// settles that subtree and leaves the argument standing for the rest.
     pub fn contest_at(&self, path: &AbsolutePath) -> Option<&PolicyRule> {
-        self.contested()
-            .find(|rule| rule.tree.as_str() == path.as_str())
+        Some(self.rule_for(path)).filter(|rule| rule.is_contested())
     }
 
     /// The same table, with the operator's own rules folded in over everything else.
@@ -205,18 +209,21 @@ impl WalkPolicy {
     }
 
     /// What to do with a path, according to the most specific tree that contains it.
-    ///
-    /// Total, because [`Self::new`] guarantees a rule for the root. Ties cannot happen:
-    /// every matching tree is an ancestor of the same path, so no two of them share a
-    /// depth once each tree appears only once.
     pub fn policy_for(&self, path: &AbsolutePath) -> &ContentPolicy {
-        &self
-            .rules
+        &self.rule_for(path).content
+    }
+
+    /// The rule that answers for a path: the most specific tree containing it.
+    ///
+    /// Total, because [`Self::new`] guarantees a rule for the root. Ties cannot happen: every
+    /// matching tree is an ancestor of the same path, so no two of them share a depth once
+    /// each tree appears only once.
+    fn rule_for(&self, path: &AbsolutePath) -> &PolicyRule {
+        self.rules
             .iter()
             .filter(|rule| rule.tree.contains(path))
             .max_by_key(|rule| rule.tree.depth())
             .expect("a rule for /, which the constructor requires")
-            .content
     }
 
     pub fn rules(&self) -> &[PolicyRule] {

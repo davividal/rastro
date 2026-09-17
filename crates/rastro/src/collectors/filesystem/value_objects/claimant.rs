@@ -32,15 +32,6 @@ impl Claimant {
             entry: Some(entry),
         }
     }
-
-    /// The facet, whichever of its entries asked.
-    ///
-    /// What "two collectors are arguing" is decided on: two entries of one facet pointed at
-    /// one tree is a misconfigured host, two facets pointed at it is a bug in a collector
-    /// pair, and a reader of the table needs to tell them apart.
-    pub fn facet_name(&self) -> &FacetName {
-        &self.facet
-    }
 }
 
 impl fmt::Display for Claimant {

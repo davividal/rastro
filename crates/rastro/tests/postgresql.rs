@@ -1474,6 +1474,43 @@ fn the_collector_claims_nothing_when_the_register_cannot_be_read() {
 }
 
 #[test]
+fn the_collector_claims_nothing_when_the_register_cannot_be_parsed() {
+    // Arrange: a register that ran and printed a row too short to tell a cluster from, which
+    // is a different failure from a register that would not run at all.
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-unparsable",
+        "16 main 5432",
+    ))));
+
+    // Act & Assert: the facet reports its own failure and the walk keeps its default, on the
+    // same reasoning as a register that could not run. Half a register is not half a claim.
+    assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn a_cluster_whose_key_cannot_qualify_a_claim_is_still_sealed() {
+    // Arrange: a cluster name holding the separator that joins a qualifier to its facet.
+    // `pg_createcluster` does not stop one, and the composed claimant could not be read back.
+    let listed = "\
+Ver Cluster    Port Status Owner    Datadir       Logfile
+17  my:cluster 5432 online postgres /srv/pg/17    /var/log/pg-17.log";
+    let collector = PostgresqlCollector::reading(Some(PostgresqlClusters::using(fake_inventory(
+        "claims-unqualifiable",
+        listed,
+    ))));
+
+    // Act
+    let claims = collector.filesystem_claims();
+
+    // Assert: the seal survives and only the precision is lost. Dropping the claim instead
+    // would put a live database back under the walk to protect a label.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    assert_eq!(trees, vec!["/srv/pg/17"]);
+    assert_eq!(claims[0].reading(), ClaimedReading::Sealed);
+    assert!(claims[0].qualifier().is_none());
+}
+
+#[test]
 fn the_collector_claims_nothing_without_postgresql_common() {
     // Arrange
     let collector = PostgresqlCollector::reading(None);

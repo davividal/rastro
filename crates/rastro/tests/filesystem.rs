@@ -253,6 +253,54 @@ fn claimed_reads_a_claimed_tree_the_way_its_claimant_asked() {
 }
 
 #[test]
+fn claimed_names_the_entry_of_a_claimant_that_asked() {
+    // Arrange: a facet that keys several subjects claims a tree on behalf of one of them.
+    let claim =
+        FilesystemClaim::sealed(tree("/var/lib/postgresql/data")).for_entry(qualifier("14/main"));
+
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(&facet("postgresql"), &[claim])
+        .expect("a tree no shipped rule names");
+
+    // Assert: the facet name is composed by the gatherer and the qualifier by the claimant, so
+    // a collector can say which of its entries asked without being able to name a peer. The
+    // qualifier is the key that entry has in its own facet, so a reader can follow it there.
+    assert_eq!(
+        claimants_of(rule_for(&policy, "/var/lib/postgresql/data")),
+        vec!["postgresql:14/main"]
+    );
+}
+
+#[test]
+fn an_unqualified_claim_is_named_by_its_facet_alone() {
+    // Act
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("nginx"),
+            &[FilesystemClaim::churns(tree("/srv/www"))],
+        )
+        .expect("a tree no shipped rule names");
+
+    // Assert: a facet with one subject has nothing to qualify, and gains no empty punctuation.
+    assert_eq!(claimants_of(rule_for(&policy, "/srv/www")), vec!["nginx"]);
+}
+
+#[test]
+fn a_qualifier_may_not_carry_the_separator_that_joins_it() {
+    // Act & Assert: `postgresql:17:main` would not say where the facet name ends, and the
+    // composed name is read by a person looking that entry up in its own facet.
+    assert!(ClaimQualifier::new("17:main").is_err());
+}
+
+#[test]
+fn an_empty_qualifier_is_refused_because_it_names_no_entry() {
+    // Act & Assert: it would compose to `postgresql:`, which is trailing punctuation pointing
+    // at nothing, and the whole reason a qualifier exists is to be followed.
+    assert!(ClaimQualifier::new("").is_err());
+}
+
+#[test]
 fn claimed_reads_a_metadata_only_claim_as_metadata_only() {
     // Arrange: the level no built-in claimant uses yet, for a tree too large to hash whose
     // stamps are still the signal: a media store, where a new file arriving is exactly what
@@ -402,6 +450,51 @@ fn a_contested_tree_is_reported_as_contested() {
     // Assert: one question, asked of the table rather than reconstructed by counting names,
     // because the walk reports every contested tree and must not miss one.
     assert_eq!(contested, vec!["/var/lib/mysql"]);
+}
+
+#[test]
+fn a_mount_inside_a_contested_tree_is_contested_too() {
+    // Arrange: the walk is one traversal per mount, so a mount under a contested tree is
+    // reached by a fresh walk rooted at it rather than through the parent that was sealed.
+    let contested = tree("/srv/data");
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("mysql"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("a tree no shipped rule names")
+        .claimed(&facet("mariadb"), &[FilesystemClaim::sealed(contested)])
+        .expect("a contested tree is sealed, not refused");
+
+    // Act & Assert: the contest is the most specific rule containing that root, so the mount
+    // is refused like its parent. An exact-path answer would describe it as an ordinary
+    // directory while the parent said nothing below it was read.
+    assert!(policy.contest_at(&walked("/srv/data/volume")).is_some());
+    assert!(policy.contest_at(&walked("/srv/other")).is_none());
+}
+
+#[test]
+fn an_operators_rule_under_a_contested_tree_is_not_contested() {
+    // Arrange: a contested tree with the operator's own rule over one subtree of it.
+    let contested = tree("/srv/data");
+    let policy = WalkPolicy::built_in()
+        .claimed(
+            &facet("mysql"),
+            &[FilesystemClaim::sealed(contested.clone())],
+        )
+        .expect("a tree no shipped rule names")
+        .claimed(&facet("mariadb"), &[FilesystemClaim::sealed(contested)])
+        .expect("a contested tree is sealed, not refused")
+        .configured(vec![PolicyRule::configured(
+            tree("/srv/data/volume"),
+            ContentPolicy::MetadataOnly,
+        )])
+        .expect("the operator's rule stands");
+
+    // Act & Assert: specificity still decides, so the operator settles the subtree they named
+    // and the argument above it is left to stand for the rest.
+    assert!(policy.contest_at(&walked("/srv/data/volume")).is_none());
+    assert!(policy.contest_at(&walked("/srv/data")).is_some());
 }
 
 #[test]
