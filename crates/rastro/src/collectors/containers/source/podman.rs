@@ -249,6 +249,10 @@ impl Podman {
 /// passed it the socket instead, which is what socket activation does, the command line
 /// names nothing and the documented default for that account applies: `/run/podman` for
 /// root, and the user's own runtime directory otherwise.
+///
+/// **One account running two services keeps the lower pid**, since `running` hands them
+/// over in pid order and the first is kept. Arbitrary between two equally real services,
+/// and the same arbitrary answer on the next run, which is what the document needs.
 fn serving(processes: Vec<RunningProcess>) -> BTreeMap<u32, AbsolutePath> {
     let mut services = BTreeMap::new();
 
@@ -268,7 +272,7 @@ fn serving(processes: Vec<RunningProcess>) -> BTreeMap<u32, AbsolutePath> {
             .unwrap_or_else(|| default_socket(process.user_id));
 
         if let Ok(socket) = AbsolutePath::new(named, "podman service socket") {
-            services.insert(process.user_id, socket);
+            services.entry(process.user_id).or_insert(socket);
         }
     }
 
