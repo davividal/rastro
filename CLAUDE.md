@@ -12,9 +12,11 @@ server, via before/after fingerprints and a plain diff.
 **It runs.** Both views work, config narrows a run. `built_in()` in
 `crates/rastro/src/collectors.rs` says which collectors ship.
 
-**Not built:** the rest of Layer 2, the rest of Layer 3, the exec contract,
-redaction, and the opt-in collector that hashes file content over trees the
-operator names.
+**Not built:** a native `nft` ruleset in `firewall`, which reads the four
+`iptables*-save` backends and nothing else; the exec contract; the opt-in
+collector that hashes file content over trees the operator names; and the
+tag-triggered release job. Layer 3 grows by one service at a time and is never
+"finished". Redaction *is* built: `--raw` opts out of it.
 
 The toolchain is pinned in `mise.toml`, and CI reads the same file.
 
