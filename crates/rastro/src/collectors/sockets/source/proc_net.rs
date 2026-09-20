@@ -108,7 +108,7 @@ impl ProcNet {
                 kind: row.kind,
                 state: row.state,
                 address: row.address,
-                processes: holders.of(row.inode),
+                holders: holders.of(row.inode),
             })
             .collect()
     }

@@ -1,22 +1,16 @@
-//! Which process holds a socket open.
+//! One process holding a socket open.
 
 use rastro_collector::Observation;
 
-use crate::collectors::sockets::value_objects::ProcessName;
-
-/// One process holding a listening socket.
+/// A process holding a listening socket, as a pid and the descriptor it holds it on.
 ///
-/// **The name is stable and the other two are not, which is the whole reason all three
-/// are kept.** A pid changes every time a service restarts and a file descriptor number
-/// changes with it, so both are volatile and neither reaches the diffable view. The name
-/// is what survives, and it is what a diff needs: `postgres` no longer holding 5432 is a
-/// change, `postgres` holding it under a new pid is not.
+/// **Nameless on purpose.** The name lives on the [`SocketHolder`] this sits under,
+/// because the name is the durable half of the join and these two are not: a pid changes
+/// every time a service restarts and the descriptor number changes with it.
 ///
-/// Recording the volatile pair rather than dropping it is what makes
-/// `--include-volatile` useful for an operator standing in front of the box.
+/// [`SocketHolder`]: super::socket_holder::SocketHolder
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SocketProcess {
-    pub name: ProcessName,
     pub process_id: i64,
     pub file_descriptor: i64,
 }
@@ -26,13 +20,9 @@ impl From<&SocketProcess> for Observation {
         Observation::object([
             (
                 "file_descriptor",
-                Observation::integer(process.file_descriptor).volatile(),
+                Observation::integer(process.file_descriptor),
             ),
-            ("name", Observation::from(&process.name)),
-            (
-                "process_id",
-                Observation::integer(process.process_id).volatile(),
-            ),
+            ("process_id", Observation::integer(process.process_id)),
         ])
     }
 }

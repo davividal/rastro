@@ -15,7 +15,7 @@ use rastro::collectors::sockets::{
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
 use support::fs_tree::{scratch_tree, write};
-use support::observation::{field, items_of, object_of};
+use support::observation::{field, items_of, keys_of, text};
 
 const TCP: &str = "\
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
@@ -37,12 +37,13 @@ const UDP6: &str = "\
 ";
 
 /// A stream socket held by two processes, a sequenced-packet socket held by none that the
-/// fixture admits to, and an abstract socket.
+/// fixture admits to, an abstract socket, and a socket two processes of one program hold.
 const UNIX: &str = "\
 Num       RefCount Protocol Flags    Type St Inode Path
 000000004bfa98b1: 00000002 00000000 00010000 0001 01 11955 /run/systemd/journal/stdout
 00000000256667e3: 00000002 00000000 00010000 0005 01 11958 /run/udev/control
 0000000033f7d9c3: 00000002 00000000 00000000 0002 01 22346 @/var/spool/exim4/exim_daemon_notify
+00000000e39c8a71: 00000002 00000000 00010000 0001 01 31447 /run/docker.sock
 ";
 
 /// One descriptor a process holds open, and the socket it points at.
@@ -62,7 +63,7 @@ struct Holder {
 ///
 /// The last entry holds nothing and gets no `fd` directory at all, which is what rastro
 /// meets when a process exits between being listed and being read.
-const HOLDERS: [Holder; 6] = [
+const HOLDERS: [Holder; 8] = [
     Holder {
         process_id: "1",
         name: "systemd",
@@ -108,6 +109,23 @@ const HOLDERS: [Holder; 6] = [
                 inode: 22348,
             },
         ],
+    },
+    Holder {
+        process_id: "812",
+        name: "dockerd",
+        sockets: &[HeldSocket {
+            descriptor: "3",
+            inode: 31447,
+        }],
+    },
+    // The child dockerd forks as it starts, holding the listening descriptor it inherited.
+    Holder {
+        process_id: "1034",
+        name: "dockerd",
+        sockets: &[HeldSocket {
+            descriptor: "3",
+            inode: 31447,
+        }],
     },
     Holder {
         process_id: "9999",
@@ -181,10 +199,18 @@ fn at_path(table: &SocketTable, path: &str) -> ListeningSocket {
 
 fn names_of(socket: &ListeningSocket) -> Vec<&str> {
     socket
-        .processes
+        .holders
         .iter()
-        .map(|process| process.name.as_str())
+        .map(|holder| holder.name.as_str())
         .collect()
+}
+
+/// The path a rendered local socket carries, or nothing for an inet one.
+fn path_of(socket: &Observation) -> Option<String> {
+    match field(&field(socket, "address"), "path").content() {
+        Content::Scalar(Scalar::Text(path)) => Some(path.clone()),
+        _ => None,
+    }
 }
 
 #[test]
@@ -214,6 +240,41 @@ fn a_socket_held_by_more_than_one_process_names_both() {
 }
 
 #[test]
+fn two_processes_of_one_program_are_one_holder() {
+    // Arrange: a daemon that forks leaves parent and child holding the same listening
+    // descriptor, and how many of them exist at the moment `/proc` is scanned is not a
+    // fact about the host. Measured on a box where dockerd had just started (#37).
+
+    // Act
+    let docker = at_path(&table("sockets_one_program"), "/run/docker.sock");
+
+    // Assert
+    assert_eq!(names_of(&docker), ["dockerd"]);
+}
+
+#[test]
+fn a_holder_survives_the_diffable_view_once_however_many_processes_it_has() {
+    // Arrange: the pids and descriptors are volatile and leave the diffable view, so
+    // without grouping the two dockerd processes render as two identical entries and the
+    // facet stops being byte-identical across two runs of an unchanged host.
+    let observation = Observation::from(&table("sockets_one_program_diffable"));
+
+    // Act
+    let diffable = observation
+        .in_view(View::Diffable)
+        .expect("the facet survives the diffable view");
+
+    // Assert
+    let docker = items_of(&diffable)
+        .into_iter()
+        .find(|socket| path_of(socket) == Some("/run/docker.sock".to_owned()))
+        .expect("the docker socket is in the document");
+    let holders = items_of(&field(&docker, "holders"));
+    assert_eq!(holders.len(), 1);
+    assert_eq!(text(&field(&holders[0], "name")), "dockerd");
+}
+
+#[test]
 fn a_socket_no_visible_process_holds_is_reported_without_one() {
     // Arrange: the holder exited between the two reads, or an unprivileged run cannot open
     // that process's descriptors. `ss -p` gives the same partial view under the same
@@ -223,7 +284,7 @@ fn a_socket_no_visible_process_holds_is_reported_without_one() {
     let udev = at_path(&table("sockets_no_holder"), "/run/udev/control");
 
     // Assert
-    assert!(udev.processes.is_empty());
+    assert!(udev.holders.is_empty());
 }
 
 #[test]
@@ -231,8 +292,8 @@ fn both_families_land_in_one_table() {
     // Act
     let table = table("sockets_families");
 
-    // Assert: two TCP, two TCP over IPv6, one UDP, one UDP over IPv6, three unix.
-    assert_eq!(table.len(), 9);
+    // Assert: two TCP, two TCP over IPv6, one UDP, one UDP over IPv6, four unix.
+    assert_eq!(table.len(), 10);
 }
 
 #[test]
@@ -299,7 +360,7 @@ fn a_missing_address_family_is_state_rather_than_a_failure() {
         .expect("a kernel without IPv6 is not a failure");
 
     // Assert
-    assert_eq!(table.len(), 5);
+    assert_eq!(table.len(), 6);
 }
 
 #[test]
@@ -312,12 +373,8 @@ fn a_process_id_is_volatile_and_its_name_is_not() {
         .expect("the facet survives the diffable view");
 
     // Assert
-    let holders = items_of(&field(&items_of(&diffable)[0], "processes"));
-    let keys: Vec<String> = object_of(&holders[0])
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect();
-    assert_eq!(keys, ["name"]);
+    let holders = items_of(&field(&items_of(&diffable)[0], "holders"));
+    assert_eq!(keys_of(&holders[0]), ["name"]);
 }
 
 #[test]
@@ -330,12 +387,10 @@ fn an_address_renders_the_same_keys_for_either_family() {
     // no `/proc` column carries it, and a key that is always null would assert rastro
     // looked.
     for socket in items_of(&observation) {
-        let address = field(&socket, "address");
-        let keys: Vec<String> = object_of(&address)
-            .into_iter()
-            .map(|(key, _)| key)
-            .collect();
-        assert_eq!(keys, ["host", "path", "port"]);
+        assert_eq!(
+            keys_of(&field(&socket, "address")),
+            ["host", "path", "port"]
+        );
     }
 }
 
@@ -425,11 +480,11 @@ fn a_process_tree_rastro_cannot_read_leaves_the_sockets_unattributed() {
         .expect("an unreadable process tree is not a failure");
 
     // Assert
-    assert_eq!(table.len(), 5);
+    assert_eq!(table.len(), 6);
     assert!(
         table
             .sockets()
             .iter()
-            .all(|socket| socket.processes.is_empty())
+            .all(|socket| socket.holders.is_empty())
     );
 }

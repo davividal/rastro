@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use rastro_collector::Observation;
 
 use super::socket_address::SocketAddress;
-use super::socket_process::SocketProcess;
+use super::socket_holder::SocketHolder;
 use crate::collectors::sockets::value_objects::{SocketKind, SocketState};
 
 /// A listening socket, in rastro's terms rather than `ss`'s.
@@ -21,21 +21,22 @@ pub struct ListeningSocket {
     pub kind: SocketKind,
     pub state: SocketState,
     pub address: SocketAddress,
-    /// A set, so the order `ss` happened to list two holders in never reaches the
-    /// document. More than one is ordinary: `/run/systemd/journal/stdout` is held by both
-    /// `systemd-journal` and `systemd` itself.
-    pub processes: BTreeSet<SocketProcess>,
+    /// A set keyed by name, so neither the order `ss` happened to list two holders in nor
+    /// the number of processes behind one name reaches the document. More than one holder
+    /// is ordinary: `/run/systemd/journal/stdout` is held by both `systemd-journal` and
+    /// `systemd` itself.
+    pub holders: BTreeSet<SocketHolder>,
 }
 
 impl From<&ListeningSocket> for Observation {
     fn from(socket: &ListeningSocket) -> Self {
         Observation::object([
             ("address", Observation::from(&socket.address)),
-            ("kind", Observation::from(&socket.kind)),
             (
-                "processes",
-                Observation::list(socket.processes.iter().map(Observation::from)),
+                "holders",
+                Observation::list(socket.holders.iter().map(Observation::from)),
             ),
+            ("kind", Observation::from(&socket.kind)),
             ("state", Observation::from(&socket.state)),
         ])
     }
