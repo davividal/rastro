@@ -14,7 +14,7 @@ use super::resident_runtime::ResidentRuntime;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::proc_sockets::{SocketHolders, listening_inodes};
 use crate::collectors::rabbitmq::model::{Definitions, Installation, Node, NodeStatus};
-use crate::collectors::rabbitmq::value_objects::NodeName;
+use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, NodeName};
 
 /// The program that keeps the register of Erlang nodes.
 const REGISTER_PROGRAM: &str = "epmd";
@@ -101,12 +101,12 @@ impl NodeInventory {
             .into_iter()
             .map(|node| {
                 let name = NodeName::new(node.name, hostname.as_str())?;
-                let runs_rabbitmq = self.is_broker(node.distribution_port, &holders, &resident);
+                let evidence = self.evidence_for(node.distribution_port, &holders, &resident);
 
                 // Asked only where a RabbitMQ process holds the port, and only with a client
                 // to ask with. Every other case is a node reported as what the box knows of
                 // it, which is the whole restraint this facet is arranged around.
-                let asked = match (runs_rabbitmq, client) {
+                let asked = match (evidence.may_be_addressed(), client) {
                     (true, Some(client)) => Some(Asked {
                         status: client.status(&name)?,
                         definitions: client.definitions(&name)?,
@@ -118,7 +118,7 @@ impl NodeInventory {
                     name,
                     Node {
                         distribution_port: node.distribution_port,
-                        runs_rabbitmq,
+                        evidence,
                         status: asked.as_ref().map(|asked| asked.status.clone()),
                         definitions: asked.map(|asked| asked.definitions),
                     },
@@ -129,29 +129,53 @@ impl NodeInventory {
         Ok(Installation::new(true, brokers, nodes))
     }
 
-    /// Whether a process that booted RabbitMQ is the one offering this node's port.
+    /// What the box's own evidence says about this node, without addressing it.
     ///
-    /// **Two reads, and neither of them addresses anything.** The socket table says which
+    /// **Three reads, none of which asks anything of anybody.** The socket table says which
     /// inodes are offered on the port, the descriptor walk says which processes hold those
     /// inodes, and the process table has already said which processes booted RabbitMQ. The
     /// intersection is the answer, and it is the whole reason this facet can address a node
     /// without first poking every node in the register to find out what it is.
     ///
-    /// **False is the safe answer and it is reached by three different host states**: another
-    /// Erlang application holding the port, a stale registration whose process is gone, and
-    /// an unprivileged run that cannot read another user's descriptors. All three mean the
-    /// same thing here, which is that rastro has no evidence it is talking to a broker and
-    /// therefore does not talk.
-    fn is_broker(&self, port: u16, holders: &SocketHolders, resident: &ResidentRuntime) -> bool {
-        listening_inodes(&self.proc.join(NET), port)
+    /// **Each way of not knowing is kept apart from the others**, because they are different
+    /// facts about the box. A first version folded them into `false` and a live broker in a
+    /// capability-reduced container reported `runs_rabbitmq: false`: rastro could not read the
+    /// beam's descriptors, so it could not see who held the port. The behaviour was right and
+    /// the report was wrong, which is the worse of the two failures.
+    fn evidence_for(
+        &self,
+        port: u16,
+        holders: &SocketHolders,
+        resident: &ResidentRuntime,
+    ) -> BrokerEvidence {
+        let Some(inodes) = listening_inodes(&self.proc.join(NET), port) else {
+            return BrokerEvidence::TablesUnreadable;
+        };
+
+        if inodes.is_empty() {
+            return BrokerEvidence::NotOffered;
+        }
+
+        let holding: Vec<i64> = inodes
             .into_iter()
             .flat_map(|inode| holders.process_ids_of(inode))
-            .any(|held| {
-                resident
-                    .broker_process_ids()
-                    .iter()
-                    .any(|broker| i64::from(*broker) == held)
-            })
+            .collect();
+
+        if holding.is_empty() {
+            return BrokerEvidence::HolderUnreadable;
+        }
+
+        let booted_rabbit = holding.iter().any(|held| {
+            resident
+                .broker_process_ids()
+                .iter()
+                .any(|broker| i64::from(*broker) == *held)
+        });
+
+        match booted_rabbit {
+            true => BrokerEvidence::RabbitmqProcess,
+            false => BrokerEvidence::OtherApplication,
+        }
     }
 }
 

@@ -11,7 +11,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use rastro::collectors::canonical_tool::CanonicalTool;
-use rastro::collectors::rabbitmq::{BrokerClient, NodeInventory};
+use rastro::collectors::rabbitmq::{BrokerClient, BrokerEvidence, NodeInventory};
 
 mod support;
 
@@ -26,6 +26,9 @@ const OTHER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0ejabberd
 
 /// `/proc/net/tcp` with one socket offered on 25672, whose inode the fixture hands to a
 /// process below.
+/// The same table with no rows, which is a readable answer that nothing is being offered.
+const EMPTY_TCP: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
 const TCP: &str = "\
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 00000000:6448 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 787924 1 0000000000000000 100 0 0 10 0
@@ -139,7 +142,7 @@ fn a_node_whose_port_a_broker_holds_is_asked() {
     assert!(host.asked());
 
     let node = installation.nodes().values().next().expect("one node");
-    assert!(node.runs_rabbitmq);
+    assert_eq!(node.evidence, BrokerEvidence::RabbitmqProcess);
     assert_eq!(
         node.status.as_ref().expect("a status").rabbitmq_version,
         "4.0.5"
@@ -176,15 +179,17 @@ fn a_node_held_by_another_erlang_application_is_not_asked() {
     );
 
     let node = installation.nodes().values().next().expect("one node");
-    assert!(!node.runs_rabbitmq);
+    assert_eq!(node.evidence, BrokerEvidence::OtherApplication);
+    assert_eq!(node.evidence.runs_rabbitmq(), Some(false));
     assert!(node.status.is_none());
     assert!(node.definitions.is_none());
 }
 
 #[test]
-fn a_node_whose_port_nobody_holds_is_not_asked() {
-    // Arrange: a registration whose process is gone, or one whose holder an unprivileged run
-    // cannot see. Both look like this.
+fn a_node_whose_holder_cannot_be_read_is_undetermined_rather_than_denied() {
+    // Arrange: the port is offered and no descriptor of any process names its inode. That is
+    // what an unprivileged run meets, and what a container with reduced capabilities meets
+    // even as root. Found that way: a live broker reported `runs_rabbitmq: false`.
     let host = box_with("rabbitmq-asking-unheld", &[("748", EPMD_ARGV)], None);
 
     // Act
@@ -193,15 +198,58 @@ fn a_node_whose_port_nobody_holds_is_not_asked() {
         .read(Some(&host.client()))
         .expect("an unattributable node is not a failure");
 
+    // Assert: still not addressed, which is the safe behaviour, and now the document says
+    // rastro could not tell rather than asserting the node is not a broker.
+    assert!(!host.asked());
+
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.evidence, BrokerEvidence::HolderUnreadable);
+    assert_eq!(node.evidence.runs_rabbitmq(), None);
+}
+
+#[test]
+fn a_node_whose_port_nothing_offers_is_a_stale_registration() {
+    // Arrange: epmd still names the node, and no socket in the table offers its port.
+    let host = box_with("rabbitmq-asking-stale", &[("748", EPMD_ARGV)], None);
+    fs::write(host.proc.join("net/tcp"), EMPTY_TCP).expect("a writable scratch table");
+
+    // Act
+    let installation = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect("a stale registration is not a failure");
+
+    // Assert: a confident negative, unlike the case above, because the table was read and
+    // says nothing is listening there.
+    assert!(!host.asked());
+
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.evidence, BrokerEvidence::NotOffered);
+    assert_eq!(node.evidence.runs_rabbitmq(), Some(false));
+}
+
+#[test]
+fn a_box_whose_socket_tables_cannot_be_read_says_so() {
+    // Arrange
+    let host = box_with("rabbitmq-asking-tableless", &[("748", EPMD_ARGV)], None);
+    fs::remove_file(host.proc.join("net/tcp")).expect("a removable scratch table");
+
+    // Act
+    let installation = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect("an unreadable table is not a failure of the facet");
+
     // Assert
     assert!(!host.asked());
-    assert!(
-        !installation
+    assert_eq!(
+        installation
             .nodes()
             .values()
             .next()
             .expect("one node")
-            .runs_rabbitmq
+            .evidence,
+        BrokerEvidence::TablesUnreadable
     );
 }
 
@@ -242,7 +290,7 @@ fn nothing_is_asked_where_no_client_is_installed() {
     // Assert: the register is still readable and still worth reporting, and a box with a
     // broker and no CLI tool is a real state rather than a failed look.
     let node = installation.nodes().values().next().expect("one node");
-    assert!(node.runs_rabbitmq);
+    assert_eq!(node.evidence, BrokerEvidence::RabbitmqProcess);
     assert!(node.status.is_none());
 }
 

@@ -3,6 +3,7 @@
 use rastro_collector::Observation;
 
 use crate::collectors::rabbitmq::model::{Definitions, NodeStatus};
+use crate::collectors::rabbitmq::value_objects::BrokerEvidence;
 
 /// A node of the Erlang distribution on this box.
 ///
@@ -20,18 +21,18 @@ pub struct Node {
     /// change to it is a change to how the box can be clustered and administered.
     pub distribution_port: u16,
 
-    /// Whether a process that booted RabbitMQ holds that port.
+    /// What the box's own evidence says about whether this node is a broker.
     ///
-    /// False covers three host states a reader can tell apart from the rest of the document:
-    /// another Erlang application, a registration whose process is gone, and a port whose
-    /// holder an unprivileged run could not see.
-    pub runs_rabbitmq: bool,
+    /// Renders as two keys: `runs_rabbitmq`, which is null where the box could not say, and
+    /// the evidence itself in words. One field rather than two, so the answer and the reason
+    /// for it cannot drift apart.
+    pub evidence: BrokerEvidence,
 
     /// What the node said about itself, where it was asked and answered.
     ///
-    /// Absent where the node is not a broker, or where this box has no client to ask with.
-    /// A broker that was asked and refused fails the facet instead, because rastro could see
-    /// it and could not read it.
+    /// Absent where the node was not addressed at all, which the evidence beside it explains,
+    /// and where this box has no client to ask with. A broker that was asked and refused
+    /// fails the facet instead, because rastro could see it and could not read it.
     pub status: Option<NodeStatus>,
 
     /// The durable half: vhosts, users, permissions, policies, parameters and topology.
@@ -45,7 +46,14 @@ impl From<&Node> for Observation {
                 "distribution_port",
                 Observation::integer(i64::from(node.distribution_port)),
             ),
-            ("runs_rabbitmq", Observation::boolean(node.runs_rabbitmq)),
+            (
+                "runs_rabbitmq",
+                match node.evidence.runs_rabbitmq() {
+                    Some(runs) => Observation::boolean(runs),
+                    None => Observation::null(),
+                },
+            ),
+            ("broker_evidence", Observation::text(node.evidence.as_str())),
             (
                 "status",
                 match &node.status {

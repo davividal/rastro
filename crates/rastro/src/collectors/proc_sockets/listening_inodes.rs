@@ -37,19 +37,22 @@ const INODE: usize = 9;
 /// A word of the header, used to tell it from a row rather than counting lines.
 const HEADER_MARKER: &str = "local_address";
 
-/// The inodes of the sockets being offered on `port`, from a `/proc/net` the caller names.
+/// The inodes of the sockets being offered on `port`, or nothing where no table could be read.
 ///
-/// **A missing or unreadable table is an empty answer rather than a failure.** A kernel with
-/// IPv6 disabled has no `tcp6`, which is state; and the caller of this is deciding whether it
-/// may address a service at all, so the safe direction to be wrong in is to find nothing and
-/// ask nobody.
-pub fn listening_inodes(net: &Path, port: u16) -> BTreeSet<u64> {
+/// **The two answers are different and the caller needs both.** A kernel with IPv6 disabled
+/// has no `tcp6` and a readable `tcp` that simply does not carry the port: that is an answer,
+/// and it means nothing is offering it. A `/proc/net` that could not be read at all answers
+/// nothing, and a caller that treated the two alike would report a service as absent on the
+/// strength of a read it never managed.
+pub fn listening_inodes(net: &Path, port: u16) -> Option<BTreeSet<u64>> {
     let mut inodes = BTreeSet::new();
+    let mut read_a_table = false;
 
     for table in TABLES {
         let Ok(text) = fs::read_to_string(net.join(table)) else {
             continue;
         };
+        read_a_table = true;
 
         for line in text.lines() {
             let line = line.trim();
@@ -72,7 +75,10 @@ pub fn listening_inodes(net: &Path, port: u16) -> BTreeSet<u64> {
         }
     }
 
-    inodes
+    match read_a_table {
+        true => Some(inodes),
+        false => None,
+    }
 }
 
 /// The port of an `<address>:<port>` column, where the port is hexadecimal.

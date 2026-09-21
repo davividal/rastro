@@ -57,7 +57,7 @@ fn listening_inodes_finds_the_socket_offered_on_a_port() {
     let net = net_with("proc-sockets-listener", &[("tcp", TCP)]);
 
     // Act
-    let found = listening_inodes(&net, 25672);
+    let found = listening_inodes(&net, 25672).expect("a readable table");
 
     // Assert
     assert_eq!(found, [787924].into_iter().collect());
@@ -66,7 +66,8 @@ fn listening_inodes_finds_the_socket_offered_on_a_port() {
 #[test]
 fn listening_inodes_ignores_a_connection_to_that_port() {
     // Act
-    let found = listening_inodes(&net_with("proc-sockets-remote", &[("tcp", TCP)]), 39270);
+    let found = listening_inodes(&net_with("proc-sockets-remote", &[("tcp", TCP)]), 39270)
+        .expect("a readable table");
 
     // Assert: the remote column of row 1 holds 6448 and its local column does not, so a
     // reader that looked at both would attribute the listener to a peer's ephemeral port.
@@ -79,7 +80,7 @@ fn listening_inodes_ignores_an_established_connection_on_the_same_local_port() {
     let net = net_with("proc-sockets-client", &[("tcp", TCP_WITH_A_CLIENT)]);
 
     // Act
-    let found = listening_inodes(&net, 25672);
+    let found = listening_inodes(&net, 25672).expect("a readable table");
 
     // Assert: a client talking to the broker has the broker's port as its *local* port too,
     // and only the listening row says which socket is the one being offered.
@@ -92,7 +93,7 @@ fn listening_inodes_reads_the_ipv6_table_as_well() {
     let net = net_with("proc-sockets-six", &[("tcp", TCP), ("tcp6", TCP6)]);
 
     // Act
-    let found = listening_inodes(&net, 5672);
+    let found = listening_inodes(&net, 5672).expect("a readable table");
 
     // Assert: a dual-stack wildcard listener appears in `tcp6` alone, so a reader of `tcp`
     // only would report the broker's AMQP port as unheld.
@@ -100,11 +101,24 @@ fn listening_inodes_reads_the_ipv6_table_as_well() {
 }
 
 #[test]
-fn listening_inodes_treats_a_missing_table_as_an_empty_one() {
-    // Act & Assert: a kernel with IPv6 disabled has no `tcp6`, which is state rather than
-    // failure, and a caller asking about a port gets the honest answer that nothing in the
-    // table it could read offers it.
-    assert!(listening_inodes(Path::new("/nonexistent/net"), 25672).is_empty());
+fn listening_inodes_says_nothing_where_no_table_could_be_read() {
+    // Act & Assert: distinct from a readable table that does not carry the port. A caller
+    // deciding whether to address a service has to tell "nothing offers this" from "I could
+    // not look", and reporting the second as the first is how a facet ends up asserting a
+    // service is absent on the strength of a read it never managed.
+    assert!(listening_inodes(Path::new("/nonexistent/net"), 25672).is_none());
+}
+
+#[test]
+fn listening_inodes_answers_emptily_where_a_readable_table_lacks_the_port() {
+    // Arrange
+    let net = net_with("proc-sockets-absent", &[("tcp", TCP)]);
+
+    // Act
+    let found = listening_inodes(&net, 9999).expect("a readable table");
+
+    // Assert
+    assert!(found.is_empty());
 }
 
 #[test]
