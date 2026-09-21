@@ -63,6 +63,53 @@ fn config_holding(root: &Path, grpc: &str, own_root: &str, own_state: &str) -> S
     path.to_str().expect("a UTF-8 scratch path").to_owned()
 }
 
+/// Every pid this fixture's containerds run under, written in descending order.
+///
+/// Several rather than two, and descending on purpose: `read_dir` returns entries in
+/// whatever order the filesystem keeps them, so a search taking the first match answers
+/// differently depending on how the directory was built. Six entries make a directory that
+/// happens to enumerate lowest-first an unlikely accident rather than an even chance.
+const CONTAINERD_PIDS: [&str; 6] = ["1297", "1176", "1055", "934", "812", "701"];
+
+/// A `/proc` holding one containerd per pid above, each naming a socket after its own.
+fn proc_with_several_containerds(name: &str) -> std::path::PathBuf {
+    let root = scratch_tree(&format!("containerd-proc-{name}"), &CONTAINERD_PIDS);
+
+    for process_id in CONTAINERD_PIDS {
+        symlink("/usr/bin/containerd", root.join(process_id).join("exe"))
+            .expect("a writable scratch link");
+        fs::write(
+            root.join(process_id).join("cmdline"),
+            [
+                "/usr/bin/containerd",
+                "--address",
+                &format!("/run/{process_id}/containerd.sock"),
+            ]
+            .join("\0"),
+        )
+        .expect("a writable fixture");
+    }
+
+    root
+}
+
+#[test]
+fn several_containerds_are_read_from_the_lowest_pid() {
+    // Arrange: docker runs its own containerd and a box can have a standalone one beside
+    // it, so more than one is a state a real box reaches. Which one rastro asks must not
+    // depend on the order the process table happened to be listed in.
+    let proc = proc_with_several_containerds("several");
+
+    // Act
+    let address = ContainerdLayout::under(&proc).address;
+
+    // Assert
+    assert_eq!(
+        address.map(|address| address.as_str().to_owned()),
+        Some("/run/701/containerd.sock".to_owned())
+    );
+}
+
 #[test]
 fn the_address_comes_from_the_running_containerds_own_flag() {
     // Arrange

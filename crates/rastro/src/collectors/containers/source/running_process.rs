@@ -12,6 +12,9 @@ use std::path::Path;
 /// what tells a rootless engine from the system one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningProcess {
+    /// What the list is ordered by, so that a box running two of an engine answers the
+    /// same one twice rather than whichever `/proc` happened to be listed first.
+    pub process_id: i64,
     pub user_id: u32,
     pub arguments: Vec<String>,
 }
@@ -26,6 +29,12 @@ pub struct RunningProcess {
 ///
 /// A process that vanishes between being listed and being read is skipped, which is the
 /// same race every `/proc` walk has and the same treatment the `processes` facet gives it.
+///
+/// **Ordered by pid, because `read_dir` is ordered by nothing.** Both callers reduce this
+/// list to one answer per engine — containerd takes the process that names the socket to
+/// ask on, podman one service per account — so an unimposed order would let two runs of an
+/// unchanged box pick different processes and record different sockets. The lowest pid is
+/// the same choice `nginx`'s master search makes, for the same reason.
 pub fn running(proc: impl AsRef<Path>, program: &str) -> Vec<RunningProcess> {
     let Ok(entries) = fs::read_dir(proc.as_ref()) else {
         return Vec::new();
@@ -35,13 +44,13 @@ pub fn running(proc: impl AsRef<Path>, program: &str) -> Vec<RunningProcess> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let is_process = path
+        let Some(process_id) = path
             .file_name()
             .and_then(OsStr::to_str)
-            .is_some_and(|name| name.chars().all(|character| character.is_ascii_digit()));
-        if !is_process {
+            .and_then(|name| name.parse::<i64>().ok())
+        else {
             continue;
-        }
+        };
 
         let Ok(executable) = fs::read_link(path.join("exe")) else {
             continue;
@@ -55,6 +64,7 @@ pub fn running(proc: impl AsRef<Path>, program: &str) -> Vec<RunningProcess> {
         };
 
         found.push(RunningProcess {
+            process_id,
             user_id: owner.uid(),
             arguments: String::from_utf8_lossy(&raw)
                 .split('\0')
@@ -64,5 +74,6 @@ pub fn running(proc: impl AsRef<Path>, program: &str) -> Vec<RunningProcess> {
         });
     }
 
+    found.sort_by_key(|process| process.process_id);
     found
 }
