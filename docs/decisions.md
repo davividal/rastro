@@ -4978,3 +4978,57 @@ cannot correct is worth less than one that admits the gap.
 `--cap-add=SYS_PTRACE`, which is why the live-broker workflow passes it and says so in a
 comment. The fixtures cover all five states, because a test builds its own `/proc` and can
 therefore produce a port whose holder is unreadable without needing a kernel that refuses.
+
+## The store is sealed from a descriptor the broker holds open, not from a second read
+
+The tree to seal is the node's message store, and the claim phase is the awkward place to
+learn its path. Claims are gathered before any collector runs and before the walk,
+*sequentially*, in the composition root, so anything a claim needs is paid on the critical
+path of every run. A `status` read there costs 303, 326, 303, 310 and 308 ms across five
+consecutive measurements, each one an Erlang VM boot.
+
+**Three options were weighed and the measurement produced a fourth.**
+
+| | invocations | wall clock | path |
+| --- | --- | --- | --- |
+| ask twice, claim and collect each reading `status` | 2 | ~310 ms | resolved |
+| read once and memoise it for both phases | 1 | ~310 ms | resolved, slightly staler |
+| claim nothing | 0 | 0 | nothing sealed |
+| **read `/proc`** | **0** | **~0** | **resolved** |
+
+The first two are nearly identical in wall clock, which is not how this started out being
+argued. The collect-phase read happens on a pool of four alongside twenty-two other
+collectors, so it is hidden; the claim-phase read is not, because that phase is serial. So
+memoising saves an invocation and almost no time, and the only real question was whether the
+claim phase has to ask the broker at all.
+
+**It does not, because a running broker holds its own store open.** Measured on a live node:
+ten descriptors under the store, `cwd` at the mnesia base, and the shallowest descriptor a
+quorum queue's write-ahead log at
+`/var/lib/rabbitmq/mnesia/rabbit@<node>/quorum/rabbit@<node>/00000001.wal`. rastro already
+walks those descriptors to attribute the node, so the path costs one `readlink` it was going
+to make anyway.
+
+**The first component named for the node decides the root**, which is not fussiness: the node
+name appears twice in that path, and taking the last occurrence would seal a subtree of the
+store and leave the rest of it in the walk.
+
+**Resolved rather than assumed, and the usual escape is shut.**
+`/var/lib/rabbitmq/mnesia/<node>` is Debian's default and not a rule, since
+`RABBITMQ_MNESIA_DIR` moves it, and
+[the postgres claim](#a-clusters-registered-data-directory-is-in-the-facet) records what a
+claim over an assumed default costs. The environment variables that would say where the store
+really is cannot be read off the process either: the broker's beam carries **no environment
+variables at all**, measured.
+
+**`cwd` was considered and rejected as the fallback.** It is resolved, it is one `readlink`,
+and it is the mnesia *base* rather than the store: sealing it would also cover
+`.erlang.cookie`, whose mode the walk reports today and which this facet does not yet describe
+itself. So a broker holding nothing under its store makes no claim, on the postgres rule that
+a failed read makes none.
+
+**Cost:** a run that cannot read the broker's descriptors seals nothing, which is the same
+capability that decides
+[whether a node can be attributed at all](#a-boolean-could-not-say-could-not-tell-and-a-live-broker-proved-it),
+and it fails in the safe direction: a noisy subtree in the document rather than a tree sealed
+on a guess.

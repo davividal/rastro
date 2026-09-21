@@ -11,6 +11,7 @@ use rastro_collector::CollectionError;
 use super::broker_client::BrokerClient;
 use super::epmd_register::EpmdRegister;
 use super::resident_runtime::ResidentRuntime;
+use super::store_directory;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::proc_sockets::{SocketHolders, listening_inodes};
 use crate::collectors::rabbitmq::model::{Definitions, Installation, Node, NodeStatus};
@@ -127,6 +128,57 @@ impl NodeInventory {
             .collect::<Result<Vec<_>, CollectionError>>()?;
 
         Ok(Installation::new(true, brokers, nodes))
+    }
+
+    /// The store each node keeps, for the trees the facet claims.
+    ///
+    /// **The claim phase, which is not the collect phase.** Claims are gathered before any
+    /// collector runs and before the walk, sequentially, so this is on the critical path of
+    /// every run and pays for nothing it does not need: the register, which is 2 ms and was
+    /// measured not to start the daemon it may fail to reach, and then `/proc`. The broker is
+    /// never asked, because it holds its own store open and a `status` read here would cost
+    /// ~310 ms of every run to learn a path that is already on the box.
+    ///
+    /// **The same gate as everywhere else.** No port mapper resident means no register read,
+    /// which means no claim: a box with nothing up has no store to seal, and speculatively
+    /// invoking anything is what this facet is arranged to avoid.
+    ///
+    /// **A failed read makes no claim**, which is the postgres rule and for its reason: an
+    /// unreadable register or a broker whose descriptors rastro may not see is a fact this
+    /// facet reports as its own, and making it fail the walk as well would cost the whole
+    /// filesystem over a missing RabbitMQ.
+    ///
+    /// This reads `epmd -names` a second time in a run, since claims are gathered before any
+    /// facet is collected. One 2 ms probe is the honest price of not caching a host reading
+    /// between two questions asked at different times.
+    pub fn store_directories(&self) -> Vec<(NodeName, String)> {
+        let resident = ResidentRuntime::read_in(&self.proc);
+        if !resident.port_mapper_running() {
+            return Vec::new();
+        }
+
+        let Ok(hostname) = self.hostname.as_ref() else {
+            return Vec::new();
+        };
+
+        let Ok(listed) = self.port_mapper.run(&[NAMES]) else {
+            return Vec::new();
+        };
+
+        let Ok(registered) = EpmdRegister::parse(&listed) else {
+            return Vec::new();
+        };
+
+        registered
+            .into_iter()
+            .filter_map(|node| {
+                let name = NodeName::new(node.name, hostname.as_str()).ok()?;
+                let directory =
+                    store_directory::under(&self.proc, resident.broker_process_ids(), &name)?;
+
+                Some((name, directory))
+            })
+            .collect()
     }
 
     /// What the box's own evidence says about this node, without addressing it.

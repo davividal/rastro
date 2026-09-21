@@ -23,8 +23,8 @@ pub use value_objects::{BrokerEvidence, DefinitionValue, NodeName, PasswordHashi
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
-    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    ClaimQualifier, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 pub struct RabbitmqCollector {
@@ -86,6 +86,46 @@ impl Collector for RabbitmqCollector {
             Some(_) => Presence::Present,
             None => Presence::Absent,
         }
+    }
+
+    /// Each node's store, sealed.
+    ///
+    /// **Sealed rather than merely unhashed**, the strongest claim in the vocabulary, for the
+    /// reasons the postgres cluster directory gets it: on a real broker it is most of the
+    /// files, every attribute the walk would record moves on the next write, and a fingerprint
+    /// whose contract is that two runs of an unchanged box are byte-identical cannot carry a
+    /// tree that rewrites itself. Measured with no client connected and nothing published:
+    /// three files under it moved in ten idle seconds.
+    ///
+    /// What is actually in there, the vhosts, the users, the permissions, the policies and the
+    /// topology, this facet reports properly, from the node rather than from its files. The
+    /// root entry stays, so a reader still sees the directory, its mode and its owner, and the
+    /// effective table in the `invocation` facet names this facet as the reason nothing is
+    /// under it.
+    ///
+    /// One claim per node, each naming the node it was made for, because a box legitimately
+    /// runs several and a directory two of them point at should say which two.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        let Some(inventory) = &self.inventory else {
+            return Vec::new();
+        };
+
+        inventory
+            .store_directories()
+            .into_iter()
+            .filter_map(|(node, directory)| {
+                let tree = WalkedTree::new(directory).ok()?;
+                let sealed = FilesystemClaim::sealed(tree);
+
+                // A node whose name cannot be a qualifier still gets its store sealed. Losing
+                // which node asked costs precision in a report; losing the claim would put a
+                // live message store back under the walk.
+                Some(match ClaimQualifier::new(node.as_str()) {
+                    Ok(qualifier) => sealed.for_entry(qualifier),
+                    Err(_) => sealed,
+                })
+            })
+            .collect()
     }
 
     fn collect(&self) -> Result<Observation, CollectionError> {

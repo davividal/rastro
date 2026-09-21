@@ -147,6 +147,11 @@ one holding the distribution port epmd named for it. Addressing another
 application's node would make it log an authentication failure, which is a write
 to a box rastro was asked to read.
 
+Each node's message store is sealed, resolved from a descriptor the broker holds
+open rather than from the conventional path or from a second `status` read: claims
+are gathered before the walk and sequentially, so a read there is paid on the
+critical path of every run.
+
 Each way of *not* knowing is kept apart from the others rather than folded into a
 denial: a port whose holder cannot be read, and a socket table that cannot be read
 at all, both report `runs_rabbitmq: null` with the evidence in words beside it. The
