@@ -4793,12 +4793,31 @@ the verifier is the one value `--raw` cannot cover for `postgresql`, because opt
 means asking the server a different question. Here it is an ordinary annotation, and the
 difference is the source rather than the policy.
 
-**Fail closed on the algorithm, one level up from where postgresql does it.** The condition
-that makes a digest defensible is the salt inside the verifier, so the value is emitted only
-for a hashing algorithm somebody has checked as salted.
-`rabbit_password_hashing_sha256` is what the measured broker reported for both its users;
-anything else, `rabbit_password_hashing_md5` included, is `null` with the algorithm beside it
-saying why. A scheme a later RabbitMQ adds gets nothing until it has been read.
+**Fail closed on the algorithm, and the salt is not the discriminator here.** The
+PostgreSQL entry turns on SCRAM having a random salt where md5 has none. RabbitMQ has no such
+split: its documented algorithm is the same for all three schemes, a random **32-bit** salt
+prepended to the password, hashed, the salt prepended again, base64 encoded. So every scheme
+is salted and the question the entry has to answer is a different one.
+
+What differs is the cost of testing one candidate password against what the document carries.
+The stand-in hides the salt, so a guess has to be tried against all 2^32 of them: four billion
+hashes per candidate. Under SHA-256 and SHA-512 that is a real per-candidate cost. Under MD5
+it is seconds of ordinary GPU time, which makes the stand-in for an md5 verifier a fast
+offline oracle over any guessable password, and no further hashing by rastro repairs it,
+because everything needed to recompute it is published beside it.
+
+**So the verifier is carried under SHA-256 and SHA-512 and withheld under anything else**,
+md5 included, and a scheme a later RabbitMQ adds included, until somebody has read how it
+works. `rabbit_password_hashing_sha256` is what the measured broker reported for both its
+users. A withheld verifier is `null` with the scheme beside it saying which case it is, and
+the rule lives in one `match` so that adding a scheme makes the compiler ask the question at
+the only site that answers it.
+
+**A 32-bit salt is weak, and stating it is part of the decision.** Even carried, this
+facet's stand-in is a weaker protection than the PostgreSQL one, whose SCRAM verifier brings
+a large random salt and an iteration count. The honest summary is that the stand-in proves a
+rotation happened and is not a vault; `--raw` is what the operator uses when they want the
+value, and the security policy already says redaction is an option rather than a guarantee.
 
 **Cost, and it is a real weakening.** Credential material lives in rastro's heap from parse to
 render, which the postgresql design was built to avoid. Two guards follow, and both are
