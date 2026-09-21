@@ -9,4 +9,4 @@
 //! the register named. See `docs/decisions.md`.
 pub mod source;
 
-pub use source::{EpmdRegister, RegisteredNode};
+pub use source::{EpmdRegister, RegisteredNode, ResidentRuntime};
