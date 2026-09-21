@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use rastro_collector::Observation;
 
-use crate::collectors::rabbitmq::model::{Permission, TopicPermission, User, Vhost};
+use crate::collectors::rabbitmq::model::{
+    Parameter, Permission, Policy, TopicPermission, User, Vhost,
+};
 
 /// The durable half of a node: the tenancy and the accounts.
 ///
@@ -34,6 +36,18 @@ pub struct Definitions {
     ///
     /// Three levels, because this grant has a third key: the exchange it applies to.
     pub topic_permissions: BTreeMap<String, BTreeMap<String, BTreeMap<String, TopicPermission>>>,
+
+    /// Policies, by vhost and then name.
+    pub policies: BTreeMap<String, BTreeMap<String, Policy>>,
+
+    /// Runtime parameters, by vhost, then component, then name.
+    ///
+    /// The component is a key of its own because it is what decides how a value is read, and
+    /// because two plugins can name a parameter the same thing.
+    pub parameters: BTreeMap<String, BTreeMap<String, BTreeMap<String, Parameter>>>,
+
+    /// Cluster-wide parameters, by name, which belong to no vhost.
+    pub global_parameters: BTreeMap<String, Parameter>,
 }
 
 impl From<&Definitions> for Observation {
@@ -92,6 +106,44 @@ impl From<&Definitions> for Observation {
                         })),
                     )
                 })),
+            ),
+            (
+                "policies",
+                Observation::object(definitions.policies.iter().map(|(vhost, policies)| {
+                    (
+                        vhost.as_str(),
+                        Observation::object(
+                            policies
+                                .iter()
+                                .map(|(name, policy)| (name.as_str(), Observation::from(policy))),
+                        ),
+                    )
+                })),
+            ),
+            (
+                "parameters",
+                Observation::object(definitions.parameters.iter().map(|(vhost, components)| {
+                    (
+                        vhost.as_str(),
+                        Observation::object(components.iter().map(|(component, parameters)| {
+                            (
+                                component.as_str(),
+                                Observation::object(parameters.iter().map(|(name, parameter)| {
+                                    (name.as_str(), Observation::from(parameter))
+                                })),
+                            )
+                        })),
+                    )
+                })),
+            ),
+            (
+                "global_parameters",
+                Observation::object(
+                    definitions
+                        .global_parameters
+                        .iter()
+                        .map(|(name, parameter)| (name.as_str(), Observation::from(parameter))),
+                ),
             ),
         ])
     }

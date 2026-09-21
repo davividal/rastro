@@ -12,14 +12,14 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    Definitions, Installation, Listener, Node, NodeStatus, Permission, TopicPermission, User,
-    UserLimit, Vhost,
+    Definitions, Installation, Listener, Node, NodeStatus, Parameter, Permission, Policy,
+    TopicPermission, User, UserLimit, Vhost,
 };
 pub use source::{
     EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlStatus, RegisteredNode,
     ResidentRuntime,
 };
-pub use value_objects::{NodeName, PasswordHashing};
+pub use value_objects::{DefinitionValue, NodeName, PasswordHashing};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{

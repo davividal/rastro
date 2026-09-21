@@ -4888,3 +4888,52 @@ than discovered.
   find, and the `containers` facet already reports the tenant.
 - **The collector ships as version `1`**, per
   [the release rule](#every-collector-is-version-1-until-rastro-has-a-release).
+
+## A runtime parameter's value is withheld whole, and no component is trusted by name
+
+Measured, by seeding the entries the first export had none of:
+
+| parameter | what its value carries |
+| --- | --- |
+| `shovel/my-shovel` | `"src-uri": "amqp://shovel-user:hunter2@upstream.example.com"` |
+| `federation-upstream/my-upstream` | `"uri": "amqp://fed-user:s3cret@peer.example.com"` |
+| `operator_policy/capped` | `[["max-length", 5000]]`, no credential at all |
+
+So a parameter is credential-bearing by nature rather than by exception, and the credential is
+*inside* a URI rather than in a field a reader could name. The whole value is therefore one
+`sensitive` text scalar carrying its own JSON spelling, which is the rule
+[the container facet applies to an environment variable](#every-environment-value-is-sensitive-and-none-of-them-is-judged-by-name)
+and for the reason that entry gives: a plugin may define any component, so an allowlist would
+have to be right about software rastro has never seen.
+
+**Withholding the value whole settles two problems beside the credential.** A parameter's
+value is arbitrary JSON and arrives in more than one shape: an object for a shovel, and an
+Erlang proplist of two-element lists for a global parameter, `[["answer",42],["fraction",0.5],
+["on",true]]`. That `0.5` is a floating-point number, which
+[the format does not admit](#the-format-admits-no-floating-point-numbers). Carried as text
+there is no shape to interpret and no float to render, and the stand-in still changes whenever
+the parameter does.
+
+**Cost, and it is a real loss rather than a tidy one.** An operator policy is exported as a
+runtime parameter: the document has no `operator_policies` key at all, which was measured
+rather than assumed, and `component: "operator_policy"` is where one arrives. Its definition
+holds no secret and is now withheld along with everything else, so a diff says an operator
+policy changed without saying how. An allowlist of components whose values are structural
+would recover it, and it is deliberately not in this change: it needs the same fail-closed
+argument the password schemes got, and the safe direction to be wrong in meanwhile is this
+one.
+
+## A policy definition keeps its own types, and a number the format cannot carry keeps its spelling
+
+A policy's `definition` is a proper JSON object, unlike the proplist a parameter's value can
+be, so its values are read rather than withheld: `"max-length": 1000` stays an integer and
+`"queue-mode": "lazy"` stays text. **Typed rather than all-text, because a value that changed
+type would otherwise read as unchanged**, which is the same argument
+[the redaction digest makes](#redacting-a-sensitive-value) for tagging its own domains.
+
+A non-integer number becomes text carrying the spelling the broker printed. Rounding it would
+report a policy the broker does not have, and the format admits no float; the spelling still
+changes when the value does, which is what the document is for. A nested list or object does
+the same, as its compact JSON spelling: policy definitions are flat in every shape RabbitMQ
+documents, so that branch is an honest fallback for a shape nobody has measured rather than a
+model of one.

@@ -19,8 +19,9 @@ use serde::Deserialize;
 use rastro_collector::CollectionError;
 
 use crate::collectors::rabbitmq::model::{
-    Definitions, Permission, TopicPermission, User, UserLimit, Vhost,
+    Definitions, Parameter, Permission, Policy, TopicPermission, User, UserLimit, Vhost,
 };
+use crate::collectors::rabbitmq::value_objects::DefinitionValue;
 use crate::collectors::rabbitmq::value_objects::PasswordHashing;
 
 /// The subset of the export rastro reads, spelled as RabbitMQ spells it.
@@ -38,6 +39,38 @@ struct DefinitionsDocument {
     permissions: Vec<PermissionDocument>,
     #[serde(default)]
     topic_permissions: Vec<TopicPermissionDocument>,
+    #[serde(default)]
+    policies: Vec<PolicyDocument>,
+    #[serde(default)]
+    parameters: Vec<ParameterDocument>,
+    #[serde(default)]
+    global_parameters: Vec<GlobalParameterDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PolicyDocument {
+    name: Option<String>,
+    vhost: Option<String>,
+    pattern: Option<String>,
+    #[serde(rename = "apply-to")]
+    apply_to: Option<String>,
+    priority: Option<i64>,
+    #[serde(default)]
+    definition: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ParameterDocument {
+    name: Option<String>,
+    vhost: Option<String>,
+    component: Option<String>,
+    value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GlobalParameterDocument {
+    name: Option<String>,
+    value: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +149,13 @@ impl RabbitmqctlDefinitions {
             users: document.users.into_iter().filter_map(user_of).collect(),
             permissions: permissions_of(document.permissions),
             topic_permissions: topic_permissions_of(document.topic_permissions),
+            policies: policies_of(document.policies),
+            parameters: parameters_of(document.parameters),
+            global_parameters: document
+                .global_parameters
+                .into_iter()
+                .filter_map(|parameter| Some((parameter.name?, parameter_of(parameter.value))))
+                .collect(),
         })
     }
 }
@@ -235,4 +275,86 @@ fn topic_permissions_of(
     }
 
     permissions
+}
+
+/// The policies, nested by vhost and then name.
+fn policies_of(documents: Vec<PolicyDocument>) -> BTreeMap<String, BTreeMap<String, Policy>> {
+    let mut policies: BTreeMap<String, BTreeMap<String, Policy>> = BTreeMap::new();
+
+    for document in documents {
+        let (Some(vhost), Some(name)) = (document.vhost, document.name) else {
+            continue;
+        };
+
+        policies.entry(vhost).or_default().insert(
+            name,
+            Policy {
+                pattern: document.pattern.unwrap_or_default(),
+                apply_to: document.apply_to,
+                priority: document.priority,
+                definition: document
+                    .definition
+                    .into_iter()
+                    .map(|(key, value)| (key, definition_value_of(&value)))
+                    .collect(),
+            },
+        );
+    }
+
+    policies
+}
+
+/// The parameters, nested by vhost, component and name.
+fn parameters_of(
+    documents: Vec<ParameterDocument>,
+) -> BTreeMap<String, BTreeMap<String, BTreeMap<String, Parameter>>> {
+    let mut parameters: BTreeMap<String, BTreeMap<String, BTreeMap<String, Parameter>>> =
+        BTreeMap::new();
+
+    for document in documents {
+        let (Some(vhost), Some(component), Some(name)) =
+            (document.vhost, document.component, document.name)
+        else {
+            continue;
+        };
+
+        parameters
+            .entry(vhost)
+            .or_default()
+            .entry(component)
+            .or_default()
+            .insert(name, parameter_of(document.value));
+    }
+
+    parameters
+}
+
+/// A parameter, carrying its value's own JSON spelling and nothing interpreted.
+///
+/// Compact rather than pretty, so that the same parameter renders the same bytes whatever
+/// the exporter's own formatting does.
+fn parameter_of(value: Option<serde_json::Value>) -> Parameter {
+    Parameter {
+        value: match value {
+            Some(value) => value.to_string(),
+            None => String::new(),
+        },
+    }
+}
+
+/// One definition value in the three shapes the document can carry.
+///
+/// A number that is not an integer keeps its own spelling as text, because the format admits
+/// no floating point and rounding one would report a policy the broker does not have. A
+/// nested shape does the same, for a shape nobody has measured.
+fn definition_value_of(value: &serde_json::Value) -> DefinitionValue {
+    match value {
+        serde_json::Value::Bool(flag) => DefinitionValue::Boolean(*flag),
+        serde_json::Value::Number(number) => match number.as_i64() {
+            Some(integer) => DefinitionValue::Integer(integer),
+            None => DefinitionValue::Text(number.to_string()),
+        },
+        serde_json::Value::String(text) => DefinitionValue::Text(text.clone()),
+        other => DefinitionValue::Text(other.to_string()),
+    }
 }
