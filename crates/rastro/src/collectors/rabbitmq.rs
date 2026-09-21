@@ -7,6 +7,10 @@
 //! root and as the broker's own user. So the dispatch starts from what is already resident:
 //! epmd in the process list, then the register it keeps, then a CLI tool addressed at a node
 //! the register named. See `docs/decisions.md`.
+pub mod model;
 pub mod source;
+pub mod value_objects;
 
-pub use source::{EpmdRegister, RegisteredNode, ResidentRuntime};
+pub use model::{Installation, Node};
+pub use source::{EpmdRegister, NodeInventory, RegisteredNode, ResidentRuntime};
+pub use value_objects::NodeName;
