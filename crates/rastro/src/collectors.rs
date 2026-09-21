@@ -23,6 +23,7 @@ pub mod nginx;
 pub mod packages;
 pub mod pam;
 pub mod postgresql;
+pub mod proc_sockets;
 pub mod processes;
 pub mod rabbitmq;
 pub mod repositories;

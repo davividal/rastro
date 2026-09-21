@@ -4,6 +4,14 @@
 //! it: every open file descriptor on the box is a symlink, and one holding a socket points
 //! at `socket:[<inode>]`. Joining that against the inode in a socket table gives the
 //! holder, and it costs nothing but reads.
+//!
+//! **Grouped by program name, and the grouping is not this module's idea.** It is the
+//! `sockets` facet's decision about its own document, recorded in `docs/decisions.md`: a
+//! daemon that forks leaves parent and child holding one listening descriptor, and how many
+//! of them exist at the moment `/proc` is scanned is a fact about that moment rather than
+//! about the host. The shape is kept here because the walk is what produces it, and because
+//! a caller that only wants to know *which* processes hold a socket should not have to
+//! reassemble it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -11,14 +19,23 @@ use std::path::Path;
 
 use rastro_collector::ProcessName;
 
-use crate::collectors::sockets::model::{SocketHolder, SocketProcess};
-
 /// What a file descriptor pointing at a socket reads as.
 const SOCKET_PREFIX: &str = "socket:[";
 
 /// Where a process publishes its name, which is the same 15-character-truncated string
 /// `ss` prints.
 const COMM: &str = "comm";
+
+/// One process's hold on a socket: which process, and on which descriptor.
+///
+/// Nameless, because the name is the key it sits under. Both of these move when a service
+/// restarts, which is why the facet that renders them annotates them volatile and this
+/// module does not care either way.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HeldDescriptor {
+    pub process_id: i64,
+    pub file_descriptor: i64,
+}
 
 /// Every socket inode on the box, and the programs holding it open, each with its own
 /// processes.
@@ -29,18 +46,18 @@ const COMM: &str = "comm";
 /// against 7 ms for the two `ss` invocations it replaces, and it is the difference between
 /// reading the host and changing it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SocketHolders(BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<SocketProcess>>>);
+pub struct SocketHolders(BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<HeldDescriptor>>>);
 
 impl SocketHolders {
-    /// The same over a tree the caller chose.
+    /// The holders on a `/proc` the caller names.
     ///
     /// **Every failure here is expected and skipped.** A process may exit between being
     /// listed and being read, and an unprivileged run cannot open another user's
     /// descriptors at all. Neither is an error: it is the same partial view `ss -p` gives
-    /// under the same conditions, and failing the facet over it would make an unprivileged
+    /// under the same conditions, and failing a facet over it would make an unprivileged
     /// run report nothing rather than less.
     pub fn at(proc: impl AsRef<Path>) -> Self {
-        let mut holders: BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<SocketProcess>>> =
+        let mut holders: BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<HeldDescriptor>>> =
             BTreeMap::new();
 
         let Ok(entries) = fs::read_dir(proc.as_ref()) else {
@@ -62,7 +79,7 @@ impl SocketHolders {
                     .or_default()
                     .entry(name.clone())
                     .or_default()
-                    .insert(SocketProcess {
+                    .insert(HeldDescriptor {
                         process_id,
                         file_descriptor,
                     });
@@ -72,19 +89,26 @@ impl SocketHolders {
         Self(holders)
     }
 
-    /// The programs holding one socket, which may be none.
+    /// The programs holding one socket, each with the processes of it that do.
     ///
-    /// None is a real answer rather than a failure: a socket whose holder exited between
-    /// the two reads, or one held by a process an unprivileged run cannot see.
-    pub fn of(&self, inode: u64) -> BTreeSet<SocketHolder> {
+    /// An empty answer is a real one rather than a failure: a socket whose holder exited
+    /// between the two reads, or one held by a process an unprivileged run cannot see.
+    pub fn of(&self, inode: u64) -> BTreeMap<ProcessName, BTreeSet<HeldDescriptor>> {
+        self.0.get(&inode).cloned().unwrap_or_default()
+    }
+
+    /// The processes holding one socket, whatever they are called.
+    ///
+    /// For a caller asking *which* process holds a socket rather than what to print about
+    /// it: the `rabbitmq` facet joins this against the processes that booted a broker, to
+    /// decide whether the node behind a distribution port may be addressed at all.
+    pub fn process_ids_of(&self, inode: u64) -> BTreeSet<i64> {
         self.0
             .get(&inode)
             .into_iter()
+            .flat_map(BTreeMap::values)
             .flatten()
-            .map(|(name, processes)| SocketHolder {
-                name: name.clone(),
-                processes: processes.clone(),
-            })
+            .map(|held| held.process_id)
             .collect()
     }
 }

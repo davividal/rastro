@@ -21,7 +21,7 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{ListeningSocket, SocketAddress, SocketProcess, SocketTable};
-pub use source::{InetTable, ProcNet, SocketHolders, SocketRow, proc_net_inet, proc_net_unix};
+pub use source::{InetTable, ProcNet, SocketRow, proc_net_inet, proc_net_unix};
 pub use value_objects::{InetHost, PortNumber, ProcessName, SocketKind, SocketPath, SocketState};
 
 // One import, because `rastro-collector` re-exports what an author needs. A
