@@ -57,3 +57,10 @@ rastro-fingerprint = { workspace = true }
 [[test]]
 name = "containers_conformance"
 test = false
+
+# Kept out of the ordinary suite for the same reason, and one more: it needs a live broker,
+# and attributing a node to its process needs a capability an ordinary container does not
+# grant even to root. `.github/workflows/live-broker.yml` runs it where both hold.
+[[test]]
+name = "rabbitmq_conformance"
+test = false

@@ -98,12 +98,19 @@ That label is a *tier*, not this workflow. It says two things at once: this chan
 needs more than the ordinary gates, and the deeper checks are now running for it.
 Every workflow in the tier reacts to that one label, so you never have to work out
 which deep check your change needs — that is a reviewer's question. The tier holds the
-distributions run and the live-engine conformance run today, and `docs/design.md`'s
-"Planned, not yet running" list is what joins it next.
+distributions run, the live-engine conformance run and the live-broker conformance run
+today, and `docs/design.md`'s "Planned, not yet running" list is what joins it next.
 
 **A change to the `containers` facet wants the label**, because the fixture tests pass
 anywhere and only the live-engine run asks docker whether rastro's answer matches its
 own.
+
+**A change to the `rabbitmq` facet wants it too**, and for a sharper reason than
+fixtures being fixtures: the facet decides whether it may address a node at all by
+reading the descriptors of the process holding that node's distribution port, and no
+container in this project's suite is allowed to do that. Every ordinary run therefore
+exercises the *undetermined* path only. The live-broker job is the one place the
+confirmed path is reachable.
 
 ## Working conventions
 

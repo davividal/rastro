@@ -4937,3 +4937,44 @@ changes when the value does, which is what the document is for. A nested list or
 the same, as its compact JSON spelling: policy definitions are flat in every shape RabbitMQ
 documents, so that branch is an honest fallback for a shape nobody has measured rather than a
 model of one.
+
+## A boolean could not say "could not tell", and a live broker proved it
+
+The node attribution above shipped as a boolean: either a process that booted RabbitMQ holds
+the distribution port or it does not. The first run of the finished facet against a live
+broker reported `runs_rabbitmq: false` for a broker that was plainly running.
+
+**The behaviour was right and the report was wrong**, which is the worse of the two failures.
+rastro had declined to address the node, which is the safe thing to do with no evidence, and
+had then written a confident denial about the box. The cause was measured rather than guessed:
+in a container whose capabilities are reduced, `/proc/<pid>/fd` of a process owned by another
+account cannot be read even as root, and `CapEff: 800405fb` is what podman gives by default.
+Without those descriptors nothing can be joined to the socket the port names, so the holder is
+invisible and a boolean has nowhere to put that.
+
+So the answer is three-valued, the way
+[`Presence`](../crates/rastro-collector/src/lib.rs) already is, over five named host states:
+
+| evidence | `runs_rabbitmq` | addressed |
+| --- | --- | --- |
+| a process that booted rabbitmq holds the port | `true` | yes |
+| another erlang application holds the port | `false` | no |
+| no socket in the table offers the port | `false` | no |
+| the holder of the port could not be read | `null` | no |
+| no socket table could be read | `null` | no |
+
+The document carries the tri-state and the evidence in words, rendered from **one** field, so
+the answer and the reason for it cannot drift apart. The two `null` cases are the ones this
+entry exists for, and they are different facts: a descriptor rastro may not read, and a
+`/proc/net` that is not there at all.
+
+**Why this is not merely a nicety.** The facet's whole restraint is that it does not address a
+node it cannot vouch for. That restraint is invisible in the output unless the output can say
+why it held back, and an operator reading `false` would reasonably conclude the broker they
+can see running is not a broker. A fingerprint that is wrong about a box in a way the box
+cannot correct is worth less than one that admits the gap.
+
+**Where this cannot be tested.** A container cannot exercise the confirmed case at all without
+`--cap-add=SYS_PTRACE`, which is why the live-broker workflow passes it and says so in a
+comment. The fixtures cover all five states, because a test builds its own `/proc` and can
+therefore produce a port whose holder is unreadable without needing a kernel that refuses.

@@ -35,6 +35,7 @@ exclude = ["mounts"]
 | `pam`          | state    | yes        |
 | `postgresql`   | state    | yes        |
 | `processes`    | state    | yes        |
+| `rabbitmq`     | state    | yes        |
 | `repositories` | state    | yes        |
 | `sockets`      | state    | yes        |
 | `ssh_access`   | state    | yes        |

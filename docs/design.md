@@ -129,10 +129,30 @@ stdout, or both streams for the tools that answer on the wrong one — two of th
 telemetry agents print `--version` to stderr and exit zero.
 
 **Layer 3 starters:** nginx, read from its own configuration files and its
-running master; `pg_dumpall --globals-only` plus `SHOW ALL`; and the container
-engines. Enough to prove the detect-and-dispatch pattern exec-contract authors
-will copy, and between them the two shapes it comes in: a service that will
-report its effective state, and a service that will not.
+running master; `pg_dumpall --globals-only` plus `SHOW ALL`; RabbitMQ, asked for
+its status and its definitions; and the container engines. Enough to prove the
+detect-and-dispatch pattern exec-contract authors will copy, and between them the
+two shapes it comes in: a service that will report its effective state, and a
+service that will not.
+
+**Layer 3, RabbitMQ.** One `rabbitmq` facet keyed by node, because a box can run
+several and a CLI tool addresses exactly one. It is the strictest case of
+observe-and-do-not-cause in the codebase: a RabbitMQ CLI tool boots an Erlang VM
+and joins the broker's distribution cluster, and a call that finds nothing still
+leaves an `epmd -daemon` behind, measured as root and as the broker's own user. So
+nothing is asked speculatively. The dispatch reads what is already resident, in
+order: epmd in the process table, then the register epmd keeps, then the node
+itself, and a node is addressed only where a process that booted RabbitMQ is the
+one holding the distribution port epmd named for it. Addressing another
+application's node would make it log an authentication failure, which is a write
+to a box rastro was asked to read.
+
+Each way of *not* knowing is kept apart from the others rather than folded into a
+denial: a port whose holder cannot be read, and a socket table that cannot be read
+at all, both report `runs_rabbitmq: null` with the evidence in words beside it. The
+facet's two halves are the node's own account of itself, `status`, and the durable
+half somebody declared, `export_definitions`, whose credential-bearing values are
+withheld by default. See [decisions.md](decisions.md#a-cli-invocation-starts-epmd-so-nothing-is-asked-speculatively).
 
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
@@ -310,6 +330,12 @@ unannotated volatile fields at CI time instead of on a production box.
   between siblings in one crate.
 - That a collector can be written against `rastro-collector` alone
   (`tests/one_dependency_is_enough.rs`).
+- The `rabbitmq` facet against a live broker, behind the `extended-verification`
+  label: the node the broker names, the vhosts and users it lists, its data
+  directory, its listeners, and that a running broker reaches the *confirmed*
+  attribution rather than one of the two undetermined ones. It cannot run in the
+  container suite, because attributing a node means reading the broker process's
+  descriptors and a default container refuses that even to root.
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.
