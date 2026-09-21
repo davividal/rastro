@@ -4644,3 +4644,228 @@ settable by the process itself, so two genuinely unrelated programs sharing a na
 holder entry. That was equally true of the old shape, which listed them as two entries
 without being able to say they were different. Grouping makes the ambiguity one entry rather
 than two, and neither shape can resolve it, because the kernel does not offer the fact.
+# RabbitMQ: what a read of a broker costs, measured before the collector
+
+_2026-09._ The `rabbitmq` collector is not built. These entries are the measurements that
+shape it, taken before a line of it was written, because a Layer 3 collector for this service
+has to answer one question before any other: whether reading the thing is allowed at all. A
+RabbitMQ CLI tool is not a client that opens a socket and asks. It boots an Erlang VM,
+registers with the port mapper daemon and joins the broker's own distribution cluster, which
+makes it the most invasive read this codebase has considered.
+
+Measured on Debian 13, RabbitMQ 4.0.5, Erlang 27 (erts 15.2.7), aarch64, in a container and
+therefore without systemd. The recipe: install `rabbitmq-server`, leave it stopped, invoke,
+then compare a marker file against every path on the filesystem. The epmd findings are the
+kind that hold across versions; the output shapes are the kind that do not.
+
+## A CLI invocation starts epmd, so nothing is asked speculatively
+
+| invocation | exit | wall | left behind |
+| --- | --- | --- | --- |
+| `epmd -names`, with no epmd running | 1 | 2 ms | nothing |
+| `rabbitmqctl status` as root, node down | 69 | 342 ms | `epmd -daemon` |
+| `rabbitmqctl status` as `rabbitmq`, node down | 69 | 351 ms | `epmd -daemon` |
+
+The failing invocations are the finding. Each achieved nothing, reported that the node was
+unreachable, and left `/usr/lib/erlang/erts-15.2.7/bin/epmd -daemon` running on a box that had
+no such process a moment earlier. epmd outlives the invocation by design: it double forks and
+detaches, which is how the broker's own start script gets one.
+
+This is [the invariant](#rastro-does-not-change-the-host-it-describes) and the failure mode
+[the `timedatectl` reversal](#the-time-collector-reads-files-because-timedatectl-starts-a-unit)
+already named: starting a daemon is a mutation however small, and a before-and-after pair an
+operator takes around a change would carry rastro's own footprint as part of the change.
+
+**So the collector never invokes a CLI tool to find out whether it can.** epmd has to be
+resident already, established by reading the process list, which is
+[the rule the firewall backends follow](#a-firewall-backend-is-read-only-where-its-subsystem-is-already-resident):
+a subsystem-specific tool runs only where its subsystem is up. A box with RabbitMQ installed
+and nothing running is `present` with a node reported down, from files and `/proc`, and no
+invocation at all.
+
+**Cost:** a node that is somehow up while epmd is not would be reported as down. A
+distributed Erlang node registers with epmd as part of coming up, so this is a state the
+runtime does not produce, and the direction to be wrong in is the one that changes nothing.
+
+## epmd is the register, because a node cannot be named from `/proc`
+
+The plan for this collector had `/proc` as the register, on the reasoning that a pure read
+cannot start anything. The reasoning was right and the premise was wrong:
+
+- the beam's `environ` holds **zero variables**, not merely no `RABBITMQ_*` ones;
+- its `argv` carries `-home /var/lib/rabbitmq` and `-s rabbit boot` and **no node name**.
+
+So `/proc` can say a RabbitMQ node is running and cannot say what it is called, which is the
+one thing a CLI invocation must be told.
+
+**epmd answers exactly that, and the probe is free.** `epmd -names` prints a line per
+registered node with its distribution port, works for an unprivileged caller, and, measured
+above, does not start the daemon it fails to reach. A CLI call also deregisters its own hidden
+node cleanly: the register is byte-identical before and after one.
+
+```
+epmd: up and running on port 4369 with data:
+name rabbit at port 25672
+```
+
+The dispatch is therefore three steps, none of which may be reordered: epmd resident in the
+process list, then `epmd -names` for the node names, then the CLI addressed at a named node.
+
+**What `/proc` keeps** is the job it can do: a beam whose `argv` names `rabbit` is evidence a
+broker rather than some other Erlang application is what epmd registered.
+
+**Unresolved, and not to be depended on until it is measured on a real host.** Resolving a
+distribution port back to its holding process failed in the container: epmd named port 25672,
+`/proc/net/tcp` gave the socket inode, and no descriptor of any beam matched it. In the same
+reading `readlink` of that process's `exe` and `cwd` returned nothing as root, so the
+container's `/proc` is the likelier culprit than the method, which
+[the sockets facet](#the-sockets-facet-is-read-from-proc-and-loses-the-interface-scope) relies
+on and exercises elsewhere. Nothing in the dispatch above needs it.
+
+## A read of a live broker touches nothing, and an idle window is why that means anything
+
+Nineteen read commands against a running node: `status`, `cluster_status`, `environment`,
+`export_definitions -`, eleven `list_*` commands, four `rabbitmq-diagnostics` reads and
+`rabbitmq-plugins list`. Between a marker file set before them and the check after, **no path
+on the filesystem moved**, and the broker's log file digested identically before and after.
+
+That zero means nothing on its own, which is the point of the control: watched for ten idle
+seconds with no read in it, the same broker touched three `.dets` files under its data
+directory and its own log. A store that writes to itself is the background any read of it is
+measured against, and
+[clearing a tool by inspection](#rastro-does-not-change-the-host-it-describes) is how two
+collectors in this codebase were wrongly cleared already.
+
+Wall clock per invocation, which is an Erlang VM boot each time: 243 ms to 458 ms, about five
+seconds for all nineteen. `/proc/modules` was unchanged across the whole run.
+
+**What this buys the design:** the expensive-looking read is the cheap one. It argues for few
+fat commands over many thin ones, `export_definitions` carrying most of the facet in a single
+254 ms call, and it says the hardened seam's existing bounds are adequate without a special
+case.
+
+## The node is asked by name, as root or as the broker's own user
+
+`rabbitmqctl -n rabbit@<short-host> list_users` answers, and the node name comes from epmd
+while the host half comes from the box. Who may ask:
+
+| caller | outcome |
+| --- | --- |
+| root, holding no cookie of its own | exit 0 |
+| the `rabbitmq` user | exit 0 |
+| an unprivileged user with no cookie | exit 1, and a usage dump |
+
+Root answered while holding no cookie of its own, which is measured; *why* it answered is
+not. The package's `/var/lib/rabbitmq/.erlang.cookie` is mode `400 rabbitmq:rabbitmq` and root
+reads through a mode, so that is the likely route and it was not confirmed. The collector
+therefore does not rely on it: where root is refused, the broker's own user is reached through
+the `ToolAsUser` seam the `postgresql` collector already runs `psql` under.
+
+**No cookie is ever created.** `/root/.erlang.cookie` stayed absent through every invocation,
+including the root call that had none to use, so the Erlang VM's habit of generating one when
+it starts distribution is not reachable this way. It was the second thing this spike was built
+to catch, and it is a measurement rather than a promise: the cookie file itself is
+**described and never read**, the way
+[nginx describes a private key it will not open](#the-certificate-is-read-the-key-is-only-described).
+
+**The unprivileged failure prints a usage dump rather than a reason**, so the facet supplies
+its own: an `error` naming root or the broker's user as the requirement. Passing a tool's
+misleading text through as rastro's reason would make the document's own failures unreadable.
+
+## The password hash is carried and withheld, which `postgresql` cannot do
+
+`export_definitions` prints a user as a name, its tags, its `hashing_algorithm` and a base64
+`password_hash`. The material arrives in rastro's process whether it is wanted or not, which
+is precisely the property
+[the role verifier entry](#a-role-password-change-is-visible-and-is-hashed-twice-to-get-there)
+secured by hashing on the server and never reading the verifier at all.
+
+**That structural guarantee is unavailable here, and the render-time mechanism is available
+instead.** The hash is carried as a value marked `sensitive`, so the default document renders
+`redacted:sha256+xxh3:<digest>` and `--raw` prints the hash. No second field beside it: the
+redaction recipe *is* the postgresql digest, sha256 of the material then
+[the port's one digest spelling](#one-digest-spelling-lives-in-the-port) over the hex, so a
+collector-side digest would duplicate the stand-in while being unable to opt out of itself.
+
+This facet is therefore the counter-example to the gap recorded in
+[`--raw`, and a document that admits which one it is](#--raw-and-a-document-that-admits-which-one-it-is):
+the verifier is the one value `--raw` cannot cover for `postgresql`, because opting out there
+means asking the server a different question. Here it is an ordinary annotation, and the
+difference is the source rather than the policy.
+
+**Fail closed on the algorithm, one level up from where postgresql does it.** The condition
+that makes a digest defensible is the salt inside the verifier, so the value is emitted only
+for a hashing algorithm somebody has checked as salted.
+`rabbit_password_hashing_sha256` is what the measured broker reported for both its users;
+anything else, `rabbit_password_hashing_md5` included, is `null` with the algorithm beside it
+saying why. A scheme a later RabbitMQ adds gets nothing until it has been read.
+
+**Cost, and it is a real weakening.** Credential material lives in rastro's heap from parse to
+render, which the postgresql design was built to avoid. Two guards follow, and both are
+testable rather than disciplinary: no error path or debug rendering may carry a user record,
+and a test asserts the fixture's hash appears nowhere in the default document and does appear
+in the `--raw` one.
+
+## `status` is half volatile, and `environment` is Erlang-shaped
+
+`rabbitmqctl status --formatter json` is the node's own account of itself and mixes two kinds
+of value in one object:
+
+- **state:** `rabbitmq_version`, `erlang_version`, `config_files`, `log_files`,
+  `data_directory`, `raft_data_directory`, `enabled_plugin_file`, `active_plugins`,
+  `listeners`, `net_ticktime`, the memory watermark settings, `is_under_maintenance`;
+- **moving on its own:** `memory` whole, `uptime`, `pid`, `run_queue`, `processes.used`,
+  `file_descriptors`, `disk_free`, `totals.connection_count`.
+
+The second list is annotated `volatile` and leaves the diffable view, which is
+[the rule a moving catalogue already gets](#only-the-stable-columns-of-a-moving-catalogue-are-read).
+
+**`rabbitmqctl environment` is the truest effective read and the most treacherous shape.** It
+is small, 6.7 KB on a stock node, and its JSON is a projection of Erlang terms that does not
+round trip: a string arrives as a list of character codes, so `mnesia.dir` reads
+`[47,118,97,114,...]`, and a tuple arrives as an array. Nothing may be read out of it by
+shape; every key taken from it needs a type somebody checked. So the effective read is
+`status` plus the targeted `rabbitmq-diagnostics` commands, and `environment` contributes only
+named keys.
+
+**A stock Debian install has no `rabbitmq.conf` and no `enabled_plugins`, only
+`rabbitmq-env.conf`**, and `status` reports `config_files: []` accordingly. On most boxes the
+service's own account is not merely preferable to reading its configuration, it is the only
+account there is.
+
+## The node's data directory is sealed, and ten idle seconds are the argument
+
+`/var/lib/rabbitmq/mnesia/<node>`, resolved from `status.data_directory` rather than assumed,
+and sealed: the walk records the directory and does not descend.
+
+The measurement is the idle control window above. With no client connected, no message
+published and nothing asked of the node, three files under that tree moved in ten seconds.
+Every attribute the walk would record of them moves again on the next write, which is noise in
+a fingerprint whose whole claim is that two runs of an unchanged host are byte-identical. What
+is actually in there, the vhosts, the users, the policies, the durable topology, this facet
+reports properly from the node.
+
+Same reasoning as [the trees nginx writes into](#the-trees-nginx-writes-into-are-sealed) and
+the cluster directory `postgresql` seals, and the same qualifier applies: one claim per node,
+each naming the node that asked, so a directory two of them point at says which two.
+
+**A stopped node makes no claim**, because `status` cannot be asked and the default path is a
+guess. The walk's own default is the safe direction to be wrong in, and the effective table in
+the `invocation` facet says what happened.
+
+## What v1 of the facet does not model
+
+Following [the nginx precedent](#what-this-facet-does-not-model), the gaps are stated rather
+than discovered.
+
+- **No message counts, connections, channels or consumers.** Workload rather than host state,
+  and not volatile fields to be annotated either: a default view reporting queue depth teaches
+  the operator that the tool is noisy. `export_definitions` helps by carrying durable
+  entities only.
+- **No `environment` beyond named keys**, for the shape reason above.
+- **Clustering is this node's view of its cluster**, not a cluster-wide read. rastro
+  fingerprints one box.
+- **A broker in a container is not this facet's subject.** There is no CLI on the host to
+  find, and the `containers` facet already reports the tenant.
+- **The collector ships as version `1`**, per
+  [the release rule](#every-collector-is-version-1-until-rastro-has-a-release).
