@@ -1,12 +1,17 @@
-//! One node, as the box knows it before anything has been asked of it.
+//! One node: what the box knows of it, and what it said when asked.
 
 use rastro_collector::Observation;
 
-/// What is known about a node from the register alone.
+use crate::collectors::rabbitmq::model::{Definitions, NodeStatus};
+
+/// A node of the Erlang distribution on this box.
 ///
-/// Deliberately thin. Everything a node knows about itself, its version, its listeners, its
-/// vhosts and its users, arrives from the node itself and is added here as the reads that
-/// fetch it land. What this carries is the part that is true without asking.
+/// **A registered node is not necessarily a RabbitMQ node**, which is why `runs_rabbitmq` is
+/// here and is not merely the answer to "did the read succeed". The register names every
+/// Erlang node, so the same list can hold an ejabberd or a CouchDB, and addressing one of
+/// those with a RabbitMQ CLI tool would make it log an authentication failure: a write to a
+/// box rastro was asked to read. The flag is what rastro established before asking, from the
+/// process holding this node's distribution port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     /// The port this node accepts distribution connections on.
@@ -14,13 +19,47 @@ pub struct Node {
     /// State rather than noise: it is fixed by configuration, `25672` by default, and a
     /// change to it is a change to how the box can be clustered and administered.
     pub distribution_port: u16,
+
+    /// Whether a process that booted RabbitMQ holds that port.
+    ///
+    /// False covers three host states a reader can tell apart from the rest of the document:
+    /// another Erlang application, a registration whose process is gone, and a port whose
+    /// holder an unprivileged run could not see.
+    pub runs_rabbitmq: bool,
+
+    /// What the node said about itself, where it was asked and answered.
+    ///
+    /// Absent where the node is not a broker, or where this box has no client to ask with.
+    /// A broker that was asked and refused fails the facet instead, because rastro could see
+    /// it and could not read it.
+    pub status: Option<NodeStatus>,
+
+    /// The durable half: vhosts, users, permissions, policies, parameters and topology.
+    pub definitions: Option<Definitions>,
 }
 
 impl From<&Node> for Observation {
     fn from(node: &Node) -> Self {
-        Observation::object([(
-            "distribution_port",
-            Observation::integer(i64::from(node.distribution_port)),
-        )])
+        Observation::object([
+            (
+                "distribution_port",
+                Observation::integer(i64::from(node.distribution_port)),
+            ),
+            ("runs_rabbitmq", Observation::boolean(node.runs_rabbitmq)),
+            (
+                "status",
+                match &node.status {
+                    Some(status) => Observation::from(status),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "definitions",
+                match &node.definitions {
+                    Some(definitions) => Observation::from(definitions),
+                    None => Observation::null(),
+                },
+            ),
+        ])
     }
 }

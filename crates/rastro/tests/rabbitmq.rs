@@ -1,6 +1,6 @@
 //! The facet itself: what it says about a box, and what it declines to say.
 
-use rastro::collectors::rabbitmq::{NodeInventory, RabbitmqCollector};
+use rastro::collectors::rabbitmq::{BrokerClient, NodeInventory, RabbitmqCollector};
 use rastro_collector::{Collector, CollectorCategory, Presence};
 
 mod support;
@@ -33,7 +33,11 @@ fn collector_over(
         "epmd",
         &format!("#!/bin/sh\ncat <<'OUT'\n{REGISTER}OUT\n"),
     );
-    let client = shim::executable(&scratch.join("bin"), "rabbitmqctl", "#!/bin/sh\nexit 0\n");
+    let client = BrokerClient::using(shim::executable(
+        &scratch.join("bin"),
+        "rabbitmqctl",
+        "#!/bin/sh\nexit 0\n",
+    ));
 
     RabbitmqCollector::reading(
         Some(client),

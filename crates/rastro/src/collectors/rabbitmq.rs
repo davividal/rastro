@@ -16,8 +16,8 @@ pub use model::{
     Permission, Policy, Queue, TopicPermission, User, UserLimit, Vhost,
 };
 pub use source::{
-    EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlStatus, RegisteredNode,
-    ResidentRuntime,
+    BrokerClient, EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlStatus,
+    RegisteredNode, ResidentRuntime,
 };
 pub use value_objects::{DefinitionValue, NodeName, PasswordHashing};
 
@@ -27,11 +27,6 @@ use rastro_collector::{
     CollectorVersion, FacetName, Observation, Presence,
 };
 
-use crate::collectors::canonical_tool::CanonicalTool;
-
-/// The client whose presence says RabbitMQ was installed here.
-const CLIENT_PROGRAM: &str = "rabbitmqctl";
-
 pub struct RabbitmqCollector {
     name: FacetName,
     identity: CollectorIdentity,
@@ -39,23 +34,21 @@ pub struct RabbitmqCollector {
     /// The CLI tool, located but not yet run.
     ///
     /// Holding it is what makes presence and a later read agree about which binary they are
-    /// talking about, the way every other shelling collector does. Nothing invokes it until
-    /// a node has been named, which is the facet's whole gate.
-    client: Option<CanonicalTool>,
+    /// talking about, the way every other shelling collector does. Nothing invokes it until a
+    /// node has been named *and* attributed to a RabbitMQ process, which is the facet's whole
+    /// gate.
+    client: Option<BrokerClient>,
 
     inventory: Option<NodeInventory>,
 }
 
 impl RabbitmqCollector {
     pub fn new(hostname: Result<String, String>) -> Self {
-        Self::reading(
-            CanonicalTool::located(CLIENT_PROGRAM),
-            NodeInventory::detect(hostname),
-        )
+        Self::reading(BrokerClient::located(), NodeInventory::detect(hostname))
     }
 
     /// The same collector over sources the caller chose.
-    pub fn reading(client: Option<CanonicalTool>, inventory: Option<NodeInventory>) -> Self {
+    pub fn reading(client: Option<BrokerClient>, inventory: Option<NodeInventory>) -> Self {
         Self {
             name: FacetName::new("rabbitmq").expect("`rabbitmq` is a legal facet name"),
             identity: CollectorIdentity::new(
@@ -103,6 +96,6 @@ impl Collector for RabbitmqCollector {
             )
         })?;
 
-        Ok(Observation::from(&inventory.read()?))
+        Ok(Observation::from(&inventory.read(self.client.as_ref())?))
     }
 }

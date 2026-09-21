@@ -58,7 +58,7 @@ fn read_asks_nothing_where_the_port_mapper_is_not_resident() {
 
     // Act
     let installation = inventory
-        .read()
+        .read(None)
         .expect("a box with no RabbitMQ is not a failure");
 
     // Assert: the gate, and the reason the whole facet is arranged this way.
@@ -82,7 +82,7 @@ fn read_keys_a_node_by_the_name_a_cli_tool_would_be_given() {
     .in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
 
     // Act
-    let installation = inventory.read().expect("the shim answers like epmd");
+    let installation = inventory.read(None).expect("the shim answers like epmd");
 
     // Assert: the local part comes from the register, the host from the box, because epmd
     // prints only the half before the `@` and the CLI needs both.
@@ -108,7 +108,7 @@ fn read_records_the_distribution_port_and_the_brokers_it_counted() {
     ));
 
     // Act
-    let installation = inventory.read().expect("the shim answers like epmd");
+    let installation = inventory.read(None).expect("the shim answers like epmd");
     let rendered = Observation::from(&installation);
 
     // Assert: the count rather than the pids, which move on every restart of an unchanged
@@ -137,5 +137,5 @@ fn read_reports_a_register_that_would_not_answer_as_a_failure() {
 
     // Act & Assert: epmd is resident and will not say what it holds, which rastro cannot
     // tell apart from a node it failed to find. Loud, per the absence-is-state rule.
-    assert!(inventory.read().is_err());
+    assert!(inventory.read(None).is_err());
 }
