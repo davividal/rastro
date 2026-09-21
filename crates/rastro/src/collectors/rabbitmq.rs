@@ -11,8 +11,8 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{Installation, Node};
-pub use source::{EpmdRegister, NodeInventory, RegisteredNode, ResidentRuntime};
+pub use model::{Installation, Listener, Node, NodeStatus};
+pub use source::{EpmdRegister, NodeInventory, RabbitmqctlStatus, RegisteredNode, ResidentRuntime};
 pub use value_objects::NodeName;
 
 // One import, because `rastro-collector` re-exports what an author needs.
