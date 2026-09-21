@@ -547,3 +547,72 @@ fn the_rich_fixture_holds_real_passwords_so_the_withholding_is_worth_asserting()
     assert!(RICH.contains(SHOVEL_PASSWORD));
     assert!(RICH.contains(UPSTREAM_PASSWORD));
 }
+
+#[test]
+fn parse_keys_an_exchange_by_vhost_and_name() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let exchanges = field(&Observation::from(&definitions), "exchanges");
+
+    // Assert
+    let direct = field(&field(&exchanges, "spike"), "spike.direct");
+    assert_eq!(text(&field(&direct, "exchange_type")), "direct");
+    assert!(support::observation::boolean(&field(&direct, "durable")));
+    assert!(!support::observation::boolean(&field(
+        &direct,
+        "auto_delete"
+    )));
+}
+
+#[test]
+fn parse_records_the_type_a_queue_ended_up_with_beside_the_argument_that_asked() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let work = field(
+        &field(&field(&Observation::from(&definitions), "queues"), "spike"),
+        "work",
+    );
+
+    // Assert: the export carries both, and they are different facts. `x-queue-type` is what
+    // the declaration asked for; `type` is what the broker made, which a vhost's default or a
+    // policy can decide instead.
+    assert_eq!(text(&field(&work, "queue_type")), "quorum");
+    assert_eq!(
+        text(&field(&field(&work, "arguments"), "x-queue-type")),
+        "quorum"
+    );
+    assert!(support::observation::boolean(&field(&work, "durable")));
+}
+
+#[test]
+fn parse_lists_the_bindings_of_a_vhost_rather_than_keying_them() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let bindings = items_of(&field(
+        &field(&Observation::from(&definitions), "bindings"),
+        "spike",
+    ));
+
+    // Assert: a binding has no unique name. One source and one destination can be bound
+    // several times over with different routing keys, and a headers exchange can carry two
+    // bindings with the same routing key and different arguments, so there is no key that
+    // would not collide. A list with a defined order is the honest shape.
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(text(&field(&bindings[0], "source")), "spike.direct");
+    assert_eq!(text(&field(&bindings[0], "destination")), "work");
+    assert_eq!(text(&field(&bindings[0], "destination_type")), "queue");
+    assert_eq!(text(&field(&bindings[0], "routing_key")), "k");
+}
+
+#[test]
+fn parse_reports_a_vhost_with_no_topology_as_having_none() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let rendered = Observation::from(&definitions);
+
+    // Assert: the default vhost held nothing durable on the measured box, and the export says
+    // so by not mentioning it. An absent key is the reading, not a gap: `/` is in `vhosts`
+    // where a reader can see it exists.
+    assert!(!keys_of(&field(&rendered, "queues")).contains(&"/".to_owned()));
+    assert!(keys_of(&field(&rendered, "vhosts")).contains(&"/".to_owned()));
+}

@@ -14,7 +14,11 @@
 /// **A nested list or object becomes text too**, as its compact JSON spelling. Policy
 /// definitions are flat in every shape RabbitMQ documents, so this is the honest fallback for
 /// a shape nobody has seen rather than a modelling of one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Ordered so that a [`Binding`](crate::collectors::rabbitmq::model::Binding) carrying one can
+/// live in a sorted collection. The order between variants is arbitrary and exists only to be
+/// stable: what the document promises is that two runs of an unchanged box render the same
+/// bytes, not that an integer sorts before a word for a reason.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DefinitionValue {
     Integer(i64),
     Boolean(bool),

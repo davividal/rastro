@@ -4,8 +4,10 @@ use std::collections::BTreeMap;
 
 use rastro_collector::Observation;
 
+use std::collections::BTreeSet;
+
 use crate::collectors::rabbitmq::model::{
-    Parameter, Permission, Policy, TopicPermission, User, Vhost,
+    Binding, Exchange, Parameter, Permission, Policy, Queue, TopicPermission, User, Vhost,
 };
 
 /// The durable half of a node: the tenancy and the accounts.
@@ -48,6 +50,19 @@ pub struct Definitions {
 
     /// Cluster-wide parameters, by name, which belong to no vhost.
     pub global_parameters: BTreeMap<String, Parameter>,
+
+    /// Durable exchanges, by vhost and then name.
+    pub exchanges: BTreeMap<String, BTreeMap<String, Exchange>>,
+
+    /// Durable queues, by vhost and then name.
+    pub queues: BTreeMap<String, BTreeMap<String, Queue>>,
+
+    /// Bindings, by vhost, as a set that orders itself.
+    ///
+    /// A set rather than a list because the ordering is structural: nothing in the source can
+    /// hand the document an order that came from the export rather than from the bindings
+    /// themselves.
+    pub bindings: BTreeMap<String, BTreeSet<Binding>>,
 }
 
 impl From<&Definitions> for Observation {
@@ -144,6 +159,41 @@ impl From<&Definitions> for Observation {
                         .iter()
                         .map(|(name, parameter)| (name.as_str(), Observation::from(parameter))),
                 ),
+            ),
+            (
+                "exchanges",
+                Observation::object(definitions.exchanges.iter().map(|(vhost, exchanges)| {
+                    (
+                        vhost.as_str(),
+                        Observation::object(
+                            exchanges.iter().map(|(name, exchange)| {
+                                (name.as_str(), Observation::from(exchange))
+                            }),
+                        ),
+                    )
+                })),
+            ),
+            (
+                "queues",
+                Observation::object(definitions.queues.iter().map(|(vhost, queues)| {
+                    (
+                        vhost.as_str(),
+                        Observation::object(
+                            queues
+                                .iter()
+                                .map(|(name, queue)| (name.as_str(), Observation::from(queue))),
+                        ),
+                    )
+                })),
+            ),
+            (
+                "bindings",
+                Observation::object(definitions.bindings.iter().map(|(vhost, bindings)| {
+                    (
+                        vhost.as_str(),
+                        Observation::list(bindings.iter().map(Observation::from)),
+                    )
+                })),
             ),
         ])
     }

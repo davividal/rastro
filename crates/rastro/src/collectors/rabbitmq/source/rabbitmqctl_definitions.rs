@@ -12,14 +12,15 @@
 //! Nothing here logs a user record or renders one into an error, because the material cannot
 //! be unpublished once a document carries it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
 use crate::collectors::rabbitmq::model::{
-    Definitions, Parameter, Permission, Policy, TopicPermission, User, UserLimit, Vhost,
+    Binding, Definitions, Exchange, Parameter, Permission, Policy, Queue, TopicPermission, User,
+    UserLimit, Vhost,
 };
 use crate::collectors::rabbitmq::value_objects::DefinitionValue;
 use crate::collectors::rabbitmq::value_objects::PasswordHashing;
@@ -45,6 +46,51 @@ struct DefinitionsDocument {
     parameters: Vec<ParameterDocument>,
     #[serde(default)]
     global_parameters: Vec<GlobalParameterDocument>,
+    #[serde(default)]
+    exchanges: Vec<ExchangeDocument>,
+    #[serde(default)]
+    queues: Vec<QueueDocument>,
+    #[serde(default)]
+    bindings: Vec<BindingDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExchangeDocument {
+    name: Option<String>,
+    vhost: Option<String>,
+    #[serde(rename = "type")]
+    exchange_type: Option<String>,
+    #[serde(default)]
+    durable: bool,
+    #[serde(default)]
+    auto_delete: bool,
+    #[serde(default)]
+    arguments: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueueDocument {
+    name: Option<String>,
+    vhost: Option<String>,
+    #[serde(rename = "type")]
+    queue_type: Option<String>,
+    #[serde(default)]
+    durable: bool,
+    #[serde(default)]
+    auto_delete: bool,
+    #[serde(default)]
+    arguments: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BindingDocument {
+    vhost: Option<String>,
+    source: Option<String>,
+    destination: Option<String>,
+    destination_type: Option<String>,
+    routing_key: Option<String>,
+    #[serde(default)]
+    arguments: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +202,9 @@ impl RabbitmqctlDefinitions {
                 .into_iter()
                 .filter_map(|parameter| Some((parameter.name?, parameter_of(parameter.value))))
                 .collect(),
+            exchanges: exchanges_of(document.exchanges),
+            queues: queues_of(document.queues),
+            bindings: bindings_of(document.bindings),
         })
     }
 }
@@ -357,4 +406,81 @@ fn definition_value_of(value: &serde_json::Value) -> DefinitionValue {
         serde_json::Value::String(text) => DefinitionValue::Text(text.clone()),
         other => DefinitionValue::Text(other.to_string()),
     }
+}
+
+/// The durable exchanges, nested by vhost and then name.
+fn exchanges_of(documents: Vec<ExchangeDocument>) -> BTreeMap<String, BTreeMap<String, Exchange>> {
+    let mut exchanges: BTreeMap<String, BTreeMap<String, Exchange>> = BTreeMap::new();
+
+    for document in documents {
+        let (Some(vhost), Some(name)) = (document.vhost, document.name) else {
+            continue;
+        };
+
+        exchanges.entry(vhost).or_default().insert(
+            name,
+            Exchange {
+                exchange_type: document.exchange_type.unwrap_or_default(),
+                durable: document.durable,
+                auto_delete: document.auto_delete,
+                arguments: arguments_of(document.arguments),
+            },
+        );
+    }
+
+    exchanges
+}
+
+/// The durable queues, nested by vhost and then name.
+fn queues_of(documents: Vec<QueueDocument>) -> BTreeMap<String, BTreeMap<String, Queue>> {
+    let mut queues: BTreeMap<String, BTreeMap<String, Queue>> = BTreeMap::new();
+
+    for document in documents {
+        let (Some(vhost), Some(name)) = (document.vhost, document.name) else {
+            continue;
+        };
+
+        queues.entry(vhost).or_default().insert(
+            name,
+            Queue {
+                queue_type: document.queue_type.unwrap_or_default(),
+                durable: document.durable,
+                auto_delete: document.auto_delete,
+                arguments: arguments_of(document.arguments),
+            },
+        );
+    }
+
+    queues
+}
+
+/// The bindings of each vhost, as sets that order themselves.
+fn bindings_of(documents: Vec<BindingDocument>) -> BTreeMap<String, BTreeSet<Binding>> {
+    let mut bindings: BTreeMap<String, BTreeSet<Binding>> = BTreeMap::new();
+
+    for document in documents {
+        let Some(vhost) = document.vhost else {
+            continue;
+        };
+
+        bindings.entry(vhost).or_default().insert(Binding {
+            source: document.source.unwrap_or_default(),
+            destination_type: document.destination_type.unwrap_or_default(),
+            destination: document.destination.unwrap_or_default(),
+            routing_key: document.routing_key.unwrap_or_default(),
+            arguments: arguments_of(document.arguments),
+        });
+    }
+
+    bindings
+}
+
+/// The `x-` arguments of a declaration, in rastro's own value vocabulary.
+fn arguments_of(
+    arguments: BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, DefinitionValue> {
+    arguments
+        .into_iter()
+        .map(|(name, value)| (name, definition_value_of(&value)))
+        .collect()
 }

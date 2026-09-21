@@ -12,8 +12,8 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    Definitions, Installation, Listener, Node, NodeStatus, Parameter, Permission, Policy,
-    TopicPermission, User, UserLimit, Vhost,
+    Binding, Definitions, Exchange, Installation, Listener, Node, NodeStatus, Parameter,
+    Permission, Policy, Queue, TopicPermission, User, UserLimit, Vhost,
 };
 pub use source::{
     EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlStatus, RegisteredNode,

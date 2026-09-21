@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use rastro_collector::Observation;
 
+use crate::collectors::rabbitmq::model::arguments_observation;
 use crate::collectors::rabbitmq::value_objects::DefinitionValue;
 
 /// A policy as the definitions export describes it.
@@ -44,19 +45,7 @@ impl From<&Policy> for Observation {
                     None => Observation::null(),
                 },
             ),
-            (
-                "definition",
-                Observation::object(policy.definition.iter().map(|(name, value)| {
-                    (
-                        name.as_str(),
-                        match value {
-                            DefinitionValue::Integer(number) => Observation::integer(*number),
-                            DefinitionValue::Boolean(flag) => Observation::boolean(*flag),
-                            DefinitionValue::Text(text) => Observation::text(text.as_str()),
-                        },
-                    )
-                })),
-            ),
+            ("definition", arguments_observation(&policy.definition)),
         ])
     }
 }
