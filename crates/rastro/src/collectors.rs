@@ -52,6 +52,7 @@ pub use packages::PackagesCollector;
 pub use pam::PamCollector;
 pub use postgresql::PostgresqlCollector;
 pub use processes::ProcessesCollector;
+pub use rabbitmq::RabbitmqCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
 pub use ssh_access::SshAccessCollector;
@@ -228,7 +229,7 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
         Box::new(CronCollector::new()),
         Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
-        Box::new(HostCollector::reading(hostname)),
+        Box::new(HostCollector::reading(hostname.clone())),
         Box::new(LocaleCollector::new()),
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
@@ -238,6 +239,7 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
         Box::new(PackagesCollector::new()),
         Box::new(PostgresqlCollector::new()),
         Box::new(ProcessesCollector::new()),
+        Box::new(RabbitmqCollector::new(hostname)),
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),
         Box::new(SshAccessCollector::new()),
