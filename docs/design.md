@@ -33,7 +33,7 @@ offers no non-mutating account of itself, with the measurement attached. See
 
 A collector, built-in or exec, produces exactly one **facet**:
 
-- `name`: stable identifier (`fs`, `processes`, `nginx`, …).
+- `name`: stable identifier (`filesystem`, `processes`, `nginx`, …).
 - `category`: **metadata** or **state**. Metadata describes the run and the box;
   state describes what is on it. Same contract, different placement, and
   metadata collectors cannot be switched off.
@@ -105,17 +105,21 @@ because ctime has no userspace setter. Content hashing returns as an opt-in
 collector over trees the operator names. See
 [docs/decisions.md](decisions.md#metadata-everywhere-content-nowhere-by-default).
 
-**Layer 2, the fixed runtime list.** Processes, listening sockets, established
-connections, systemd units and timers, kernel modules, runtime sysctl, the
-nftables/iptables ruleset, mounts, the package list, users and groups, and PAM's session
-environment. A unit carries its effective `ExecStart=`, resolved by systemd rather than
-read from the unit file, because "enabled and active" does not say which binary
-that amounts to. Read from `/proc` or netlink where cheap, shell out to the canonical tool
-where parsing its output is more honest than reimplementing it, and read a
-manager's own database where the tool offers no format rastro controls. apk is
-that case: it prints no machine-readable form, and every text form fuses name and
-version into one token. The principle is to prefer the source that is unambiguous,
-not to shell out on reflex.
+**Layer 2, the fixed runtime list.** Processes, listening sockets and bound
+datagram ports, systemd units and timers, kernel modules, runtime sysctl, the
+iptables ruleset, mounts, the package list, users and groups, and PAM's session
+environment. An *established* connection is deliberately absent: it is traffic
+rather than state, and it would differ between two runs of an unchanged box. A
+ruleset written natively with `nft` is a gap rather than a decision, and the four
+`iptables*-save` backends are what the facet reads today. A unit carries its
+effective `ExecStart=`, resolved by systemd rather than read from the unit file,
+because "enabled and active" does not say which binary that amounts to. Read from
+`/proc` or netlink where cheap, shell out to the canonical tool where parsing its
+output is more honest than reimplementing it, and read a manager's own database
+where the tool offers no format rastro controls. apk is that case: it prints no
+machine-readable form, and every text form fuses name and version into one token.
+The principle is to prefer the source that is unambiguous, not to shell out on
+reflex.
 
 Shelling out is confined to one hardened seam, `collectors::canonical_tool`:
 absolute path, no shell, cleared environment, bounded in time and output, and a
@@ -309,6 +313,15 @@ unannotated volatile fields at CI time instead of on a production box.
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.
+- The suite on Debian and on Alpine, as root and unprivileged, since the package
+  sources differ and three defects have hidden behind a run that was only ever
+  root (`distributions.yml`).
+- rastro's account of a box's containers against docker's own, on a runner with a
+  real daemon, which is the one check a captured fixture cannot make
+  (`live-engine.yml`).
+
+The last two are the `extended-verification` tier: every push to master, nightly,
+and on a pull request that asks for them by label.
 
 Crate boundaries need no test: cargo will not compile a cycle.
 
