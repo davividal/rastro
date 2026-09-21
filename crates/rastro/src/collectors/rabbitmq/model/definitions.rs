@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use rastro_collector::Observation;
 
-use crate::collectors::rabbitmq::model::{User, Vhost};
+use crate::collectors::rabbitmq::model::{Permission, TopicPermission, User, Vhost};
 
 /// The durable half of a node: the tenancy and the accounts.
 ///
@@ -21,6 +21,19 @@ pub struct Definitions {
 
     pub vhosts: BTreeMap<String, Vhost>,
     pub users: BTreeMap<String, User>,
+
+    /// Permissions, by vhost and then by user.
+    ///
+    /// Nested rather than listed, because a permission is a fact about a pair and neither
+    /// half is unique on its own: one user holds different permissions in each vhost, and one
+    /// vhost grants different permissions to each user. Nesting lets a reader open either
+    /// question without scanning a list.
+    pub permissions: BTreeMap<String, BTreeMap<String, Permission>>,
+
+    /// Topic permissions, by vhost, then user, then exchange.
+    ///
+    /// Three levels, because this grant has a third key: the exchange it applies to.
+    pub topic_permissions: BTreeMap<String, BTreeMap<String, BTreeMap<String, TopicPermission>>>,
 }
 
 impl From<&Definitions> for Observation {
@@ -50,6 +63,35 @@ impl From<&Definitions> for Observation {
                         .iter()
                         .map(|(name, user)| (name.as_str(), Observation::from(user))),
                 ),
+            ),
+            (
+                "permissions",
+                Observation::object(definitions.permissions.iter().map(|(vhost, users)| {
+                    (
+                        vhost.as_str(),
+                        Observation::object(users.iter().map(|(user, permission)| {
+                            (user.as_str(), Observation::from(permission))
+                        })),
+                    )
+                })),
+            ),
+            (
+                "topic_permissions",
+                Observation::object(definitions.topic_permissions.iter().map(|(vhost, users)| {
+                    (
+                        vhost.as_str(),
+                        Observation::object(users.iter().map(|(user, exchanges)| {
+                            (
+                                user.as_str(),
+                                Observation::object(exchanges.iter().map(
+                                    |(exchange, permission)| {
+                                        (exchange.as_str(), Observation::from(permission))
+                                    },
+                                )),
+                            )
+                        })),
+                    )
+                })),
             ),
         ])
     }

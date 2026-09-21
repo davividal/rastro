@@ -275,3 +275,49 @@ fn the_fixture_holds_a_real_verifier_so_the_withholding_is_worth_asserting() {
     // its verifier, every assertion above would pass while proving nothing.
     assert!(MEASURED.contains(GUEST_VERIFIER));
 }
+
+#[test]
+fn parse_nests_a_permission_under_its_vhost_and_user() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let permissions = field(&Observation::from(&definitions), "permissions");
+
+    // Assert: a permission is a fact about a pair, and neither half is unique on its own:
+    // one user holds different permissions in each vhost, and one vhost grants different
+    // permissions to each user. Nesting is what lets a reader open either question.
+    assert_eq!(keys_of(&permissions), ["/", "spike"]);
+
+    let spike = field(&field(&permissions, "spike"), "spikeuser");
+    assert_eq!(text(&field(&spike, "configure")), "^spike.*");
+    assert_eq!(text(&field(&spike, "write")), ".*");
+    assert_eq!(text(&field(&spike, "read")), ".*");
+}
+
+#[test]
+fn parse_nests_a_topic_permission_under_its_exchange_too() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let topics = field(&Observation::from(&definitions), "topic_permissions");
+
+    // Assert: three levels, because a topic permission is per exchange as well: one user can
+    // hold different routing-key patterns on `amq.topic` and on an exchange of their own.
+    let spike = field(&field(&field(&topics, "spike"), "spikeuser"), "amq.topic");
+    assert_eq!(text(&field(&spike, "write")), "^a");
+    assert_eq!(text(&field(&spike, "read")), "^b");
+}
+
+#[test]
+fn parse_keeps_a_permission_pattern_as_the_text_it_is() {
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
+    let guest = field(
+        &field(&field(&Observation::from(&definitions), "permissions"), "/"),
+        "guest",
+    );
+
+    // Assert: `.*` is a regular expression the broker compiles, and rastro neither compiles
+    // nor normalises it. What changed is whether the text changed, which is the question a
+    // fingerprint answers, and a normalised pattern would hide an edit that meant the same
+    // thing while still being a change somebody made.
+    assert_eq!(text(&field(&guest, "configure")), ".*");
+}

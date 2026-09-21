@@ -12,11 +12,15 @@
 //! Nothing here logs a user record or renders one into an error, because the material cannot
 //! be unpublished once a document carries it.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
-use crate::collectors::rabbitmq::model::{Definitions, User, UserLimit, Vhost};
+use crate::collectors::rabbitmq::model::{
+    Definitions, Permission, TopicPermission, User, UserLimit, Vhost,
+};
 use crate::collectors::rabbitmq::value_objects::PasswordHashing;
 
 /// The subset of the export rastro reads, spelled as RabbitMQ spells it.
@@ -30,6 +34,28 @@ struct DefinitionsDocument {
     vhosts: Vec<VhostDocument>,
     #[serde(default)]
     users: Vec<UserDocument>,
+    #[serde(default)]
+    permissions: Vec<PermissionDocument>,
+    #[serde(default)]
+    topic_permissions: Vec<TopicPermissionDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PermissionDocument {
+    user: Option<String>,
+    vhost: Option<String>,
+    configure: Option<String>,
+    write: Option<String>,
+    read: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TopicPermissionDocument {
+    user: Option<String>,
+    vhost: Option<String>,
+    exchange: Option<String>,
+    write: Option<String>,
+    read: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +114,8 @@ impl RabbitmqctlDefinitions {
             rabbitmq_version,
             vhosts: document.vhosts.into_iter().filter_map(vhost_of).collect(),
             users: document.users.into_iter().filter_map(user_of).collect(),
+            permissions: permissions_of(document.permissions),
+            topic_permissions: topic_permissions_of(document.topic_permissions),
         })
     }
 }
@@ -146,4 +174,65 @@ fn user_of(document: UserDocument) -> Option<(String, User)> {
             limits,
         },
     ))
+}
+
+/// The permissions, nested by vhost and then user.
+///
+/// An entry naming neither is dropped rather than failing the read, on the same reasoning a
+/// nameless vhost is: it can only come from a RabbitMQ that changed the document's shape, and
+/// one unplaceable grant is not worth every other grant in the export. A dropped entry is
+/// visible as a permission that is simply not there, which is what an operator would then
+/// investigate.
+fn permissions_of(
+    documents: Vec<PermissionDocument>,
+) -> BTreeMap<String, BTreeMap<String, Permission>> {
+    let mut permissions: BTreeMap<String, BTreeMap<String, Permission>> = BTreeMap::new();
+
+    for document in documents {
+        let (Some(vhost), Some(user)) = (document.vhost, document.user) else {
+            continue;
+        };
+
+        permissions.entry(vhost).or_default().insert(
+            user,
+            Permission {
+                configure: document.configure.unwrap_or_default(),
+                write: document.write.unwrap_or_default(),
+                read: document.read.unwrap_or_default(),
+            },
+        );
+    }
+
+    permissions
+}
+
+/// The topic permissions, nested by vhost, user and exchange.
+fn topic_permissions_of(
+    documents: Vec<TopicPermissionDocument>,
+) -> BTreeMap<String, BTreeMap<String, BTreeMap<String, TopicPermission>>> {
+    let mut permissions: BTreeMap<String, BTreeMap<String, BTreeMap<String, TopicPermission>>> =
+        BTreeMap::new();
+
+    for document in documents {
+        let (Some(vhost), Some(user), Some(exchange)) =
+            (document.vhost, document.user, document.exchange)
+        else {
+            continue;
+        };
+
+        permissions
+            .entry(vhost)
+            .or_default()
+            .entry(user)
+            .or_default()
+            .insert(
+                exchange,
+                TopicPermission {
+                    write: document.write.unwrap_or_default(),
+                    read: document.read.unwrap_or_default(),
+                },
+            );
+    }
+
+    permissions
 }
