@@ -24,6 +24,7 @@ pub mod packages;
 pub mod pam;
 pub mod postgresql;
 pub mod processes;
+pub mod rabbitmq;
 pub mod repositories;
 pub mod sockets;
 pub mod ssh_access;
