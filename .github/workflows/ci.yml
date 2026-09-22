@@ -36,7 +36,7 @@ jobs:
           # every job here 404'd; the release list only ever names releases that are published.
           minimum_release_age: 24h
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
         with:
           # nextest runs each test in its own process, which is what keeps tests that
           # invoke the real binary from interfering through the filesystem. Measured at
@@ -135,7 +135,7 @@ jobs:
           name: lcov
           path: target/llvm-cov
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
