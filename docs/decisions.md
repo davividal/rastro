@@ -4596,3 +4596,51 @@ than they are.
 `relacl`, no `pg_default_acl`. If that same cutover had re-owned a schema or re-granted a
 table, no shape of rendering would have shown it, because the collector never asked. That is
 a gap in coverage rather than in presentation, and it stays open.
+
+# A socket's holders are keyed by the program name, not listed per process
+
+Dated 2026-09-20. From issue #37: the `sockets` facet rendered each socket's `processes` as
+a flat list of `(name, pid, file_descriptor)` triples, with the pid and the descriptor
+annotated volatile. Both annotations are right: a pid changes every time a service restarts
+and the descriptor number changes with it. What reached the diffable view was therefore a
+list of bare names, and its **length** was a property of the moment `/proc` was scanned
+rather than of the host.
+
+**The failure, measured.** The determinism harness caught it in a container where dockerd
+had just started and forked a child that inherited the listening descriptors. One run
+carried `/var/run/docker.sock` with two identical `{"name":"dockerd"}` entries, the next
+carried one, and two further sockets of the same daemon differed the same way. Two runs of
+an unchanged host stopped being byte-identical, which is the contract every other facet
+rests on and the reason there is no diff verb. Nothing about it is particular to docker:
+any forking daemon does it, and nginx's master and its workers are the next case.
+
+**The fix is the cardinality, not the annotation.** A socket is held open by one or more
+*programs*, and each of those has one or more live processes behind it. The old shape
+flattened the two levels into one, so the volatile half could not fall away without taking
+the list's shape with it. The facet now carries `holders`, a set keyed by the name, and
+each holder carries its own `processes` set of pid-and-descriptor pairs annotated volatile
+*whole*. The diffable view is then one object per distinct name, whatever is underneath it,
+and `--include-volatile` still answers which processes those are for an operator standing
+in front of the box.
+
+**Rejected: a stable list of names beside the volatile triples**, which is the direction the
+issue sketched. Two lists that have to agree, derived from one reading, and the complete
+view would carry both — so a reader diffing the complete view meets the duplicate names
+again. Grouping removes the duplication from both views instead of hiding it in one.
+
+**Rejected: dropping the pid and the descriptor.** It would fix the same thing by recording
+less, and the pair is what makes the complete view worth asking for: `ss -p` exists because
+an operator chasing a port wants the pid.
+
+**No collector version bump**, per
+[the release rule](#every-collector-is-version-1-until-rastro-has-a-release).
+
+**Cost:** a fingerprint taken before this change cannot be diffed against one taken after on
+the `sockets` facet, because the key is `holders` rather than `processes` and the shape under
+it is different. That is the whole population of documents produced by an unreleased build.
+
+**What this does not fix.** The name is `/proc/<pid>/comm`: truncated to 15 characters and
+settable by the process itself, so two genuinely unrelated programs sharing a name share a
+holder entry. That was equally true of the old shape, which listed them as two entries
+without being able to say they were different. Grouping makes the ambiguity one entry rather
+than two, and neither shape can resolve it, because the kernel does not offer the fact.

@@ -11,7 +11,7 @@ use std::path::Path;
 
 use rastro_collector::ProcessName;
 
-use crate::collectors::sockets::model::SocketProcess;
+use crate::collectors::sockets::model::{SocketHolder, SocketProcess};
 
 /// What a file descriptor pointing at a socket reads as.
 const SOCKET_PREFIX: &str = "socket:[";
@@ -20,7 +20,8 @@ const SOCKET_PREFIX: &str = "socket:[";
 /// `ss` prints.
 const COMM: &str = "comm";
 
-/// Every socket inode on the box, and the processes holding it open.
+/// Every socket inode on the box, and the programs holding it open, each with its own
+/// processes.
 ///
 /// **Built in one pass rather than searched per socket.** There are a few hundred sockets
 /// and a few thousand descriptors, so asking the question once per socket would walk
@@ -28,7 +29,7 @@ const COMM: &str = "comm";
 /// against 7 ms for the two `ss` invocations it replaces, and it is the difference between
 /// reading the host and changing it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SocketHolders(BTreeMap<u64, BTreeSet<SocketProcess>>);
+pub struct SocketHolders(BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<SocketProcess>>>);
 
 impl SocketHolders {
     /// The same over a tree the caller chose.
@@ -39,7 +40,8 @@ impl SocketHolders {
     /// under the same conditions, and failing the facet over it would make an unprivileged
     /// run report nothing rather than less.
     pub fn at(proc: impl AsRef<Path>) -> Self {
-        let mut holders: BTreeMap<u64, BTreeSet<SocketProcess>> = BTreeMap::new();
+        let mut holders: BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<SocketProcess>>> =
+            BTreeMap::new();
 
         let Ok(entries) = fs::read_dir(proc.as_ref()) else {
             return Self(holders);
@@ -55,23 +57,35 @@ impl SocketHolders {
             };
 
             for (inode, file_descriptor) in sockets_of(&path.join("fd")) {
-                holders.entry(inode).or_default().insert(SocketProcess {
-                    name: name.clone(),
-                    process_id,
-                    file_descriptor,
-                });
+                holders
+                    .entry(inode)
+                    .or_default()
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(SocketProcess {
+                        process_id,
+                        file_descriptor,
+                    });
             }
         }
 
         Self(holders)
     }
 
-    /// The processes holding one socket, which may be none.
+    /// The programs holding one socket, which may be none.
     ///
     /// None is a real answer rather than a failure: a socket whose holder exited between
     /// the two reads, or one held by a process an unprivileged run cannot see.
-    pub fn of(&self, inode: u64) -> BTreeSet<SocketProcess> {
-        self.0.get(&inode).cloned().unwrap_or_default()
+    pub fn of(&self, inode: u64) -> BTreeSet<SocketHolder> {
+        self.0
+            .get(&inode)
+            .into_iter()
+            .flatten()
+            .map(|(name, processes)| SocketHolder {
+                name: name.clone(),
+                processes: processes.clone(),
+            })
+            .collect()
     }
 }
 
