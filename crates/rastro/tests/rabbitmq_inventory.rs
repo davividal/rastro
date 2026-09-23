@@ -159,3 +159,41 @@ fn read_reports_a_register_that_would_not_answer_as_a_failure() {
     // tell apart from a node it failed to find. Loud, per the absence-is-state rule.
     assert!(inventory.read(None).is_err());
 }
+
+#[test]
+fn a_cli_tools_own_node_is_not_a_node_on_the_box() {
+    // Arrange: the register as it reads while somebody runs `rabbitmqctl`. Measured by
+    // sampling it continuously during six calls, and caught in CI from the other side, where
+    // the facet reported `["rabbit", "rabbitmqcli-819-rabbit"]` as two nodes.
+    let both = "epmd: up and running on port 4369 with data:\n\
+                name rabbit at port 25672\n\
+                name rabbitmqcli-308-rabbit at port 35672\n";
+    let scratch = scratch_tree("rabbitmq-inventory-cli-node", &["bin"]);
+    let epmd = shim::executable(
+        &scratch.join("bin"),
+        "epmd",
+        &format!("#!/bin/sh\ncat <<'OUT'\n{both}OUT\n"),
+    );
+    let inventory = NodeInventory::using(epmd).in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
+
+    // Act
+    let installation = inventory.read(None).expect("the shim answers like epmd");
+
+    // Assert: the entry exists only while a tool is running, so reporting it would make two
+    // runs of an unchanged box differ, which is the one thing the document promises not to do.
+    let keys: Vec<&str> = installation.nodes().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["rabbit"]);
+}
+
+#[test]
+fn the_register_itself_still_reports_what_epmd_printed() {
+    // Act & Assert: the filtering belongs to what rastro calls a node, not to the reading of
+    // the tool's output. A source that quietly dropped rows would make the two disagree about
+    // what epmd said.
+    let both = "epmd: up and running on port 4369 with data:\n\
+                name rabbit at port 25672\n\
+                name rabbitmqcli-308-rabbit at port 35672\n";
+    let registered = rastro::collectors::rabbitmq::EpmdRegister::parse(both).expect("well formed");
+
+    assert_eq!(registered.len(), 2);
+}

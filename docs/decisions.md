@@ -5212,3 +5212,37 @@ a recording shim captured, and the first invocation satisfied it; the shim also 
 so the reads that were wrong were never even attempted. It now asserts the count of
 invocations and checks each one, and putting the bug back makes it fail naming the offending
 call.
+
+## A CLI tool's own node is in the register while it runs, and is not a node on the box
+
+The live-broker job failed with the facet reporting two nodes:
+
+```text
+["rabbit", "rabbitmqcli-819-rabbit"]
+```
+
+Every `rabbitmqctl` invocation boots an Erlang VM that registers a hidden node with epmd for as
+long as the call lasts. Measured by sampling the register continuously while six calls ran:
+`name rabbitmqcli-308-rabbit at port 35672`, and nothing but the broker once they finished. A
+single sample a second apart misses it, which is why the first attempt to reproduce it found
+nothing.
+
+**Reporting it is not an option**, and the reason is the contract rather than tidiness: the
+entry exists only while somebody is running a CLI tool, so two runs of an unchanged box would
+differ. It would also drag a second facet with it, since that node's ephemeral distribution
+port is a socket the `sockets` facet can see.
+
+**Filtered by name, which is the tool's own naming**: `rabbitmqcli-`, the caller's process id,
+then the node being addressed. Judging by name is usually the reflex this codebase refuses,
+and it is right here because the name is not a heuristic about what the thing might be: it is
+what RabbitMQ's CLI calls the node it creates.
+
+**The filter belongs to the inventory, not to the register's parse.** What epmd printed is
+what the source reports; which of those registrations is a node *on the box* is a question
+about the facet's own subject. A source that quietly dropped rows would make the two disagree
+about what the tool said.
+
+**Being [exclusive](#the-facet-runs-alone-because-it-is-what-the-other-collectors-would-notice)
+does not cover this**, which is worth stating because it looks as though it should. rastro's
+own calls are sequenced; an operator at a shell, a monitoring script or a deployment running
+`rabbitmqctl` at that moment is not, and on a busy box that is not a remote possibility.

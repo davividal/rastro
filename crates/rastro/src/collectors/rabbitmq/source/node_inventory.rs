@@ -23,6 +23,23 @@ const REGISTER_PROGRAM: &str = "epmd";
 /// The argument that prints the register, and the only argument rastro ever gives it.
 const NAMES: &str = "-names";
 
+/// What a CLI tool calls its own hidden node, which is in the register while it runs.
+///
+/// **Measured, because a conformance run caught one**: with the register sampled continuously
+/// while six `rabbitmqctl` calls ran, it held `name rabbitmqcli-308-rabbit at port 35672`, and
+/// nothing but the broker once they finished. CI saw the same thing from the other side, the
+/// facet reporting `["rabbit", "rabbitmqcli-819-rabbit"]` as two nodes.
+///
+/// **Filtered by name, which is the tool's own naming rather than a guess**: `rabbitmqcli-`
+/// then the caller's process id then the node it is addressing. The alternative is to report
+/// it, and that cannot be right: the entry exists only while somebody is running a CLI tool,
+/// so two runs of an unchanged box would differ, which the document's contract forbids.
+///
+/// **Being exclusive does not cover this.** rastro's own calls are sequenced, but an operator
+/// at a shell, a monitoring script or a deployment can be running `rabbitmqctl` at the moment
+/// the register is read, and on a busy box that is not a remote possibility.
+const CLI_NODE_PREFIX: &str = "rabbitmqcli-";
+
 /// Where the kernel publishes its process table, and its socket tables under it.
 const PROC: &str = "/proc";
 const NET: &str = "net";
@@ -89,6 +106,7 @@ impl NodeInventory {
         let holders = SocketHolders::at(&self.proc);
         let nodes = registered
             .into_iter()
+            .filter(|node| !is_a_cli_tool(&node.name))
             .map(|node| {
                 let evidence = self.evidence_for(node.distribution_port, &holders, &resident);
                 let name = self.named(&node.name, &resident);
@@ -148,6 +166,7 @@ impl NodeInventory {
 
         registered
             .into_iter()
+            .filter(|node| !is_a_cli_tool(&node.name))
             .filter_map(|node| {
                 let layout =
                     node_layout::read(&self.proc, resident.broker_process_ids(), &node.name)?;
@@ -213,6 +232,11 @@ impl NodeInventory {
             false => BrokerEvidence::OtherApplication,
         }
     }
+}
+
+/// Whether a registration belongs to a CLI tool rather than to a broker.
+fn is_a_cli_tool(name: &str) -> bool {
+    name.starts_with(CLI_NODE_PREFIX)
 }
 
 /// What a node answered, kept together so a half-read node cannot be assembled.
