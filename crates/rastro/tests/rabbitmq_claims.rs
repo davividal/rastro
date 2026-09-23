@@ -177,3 +177,48 @@ fn a_box_with_no_rabbitmq_claims_nothing() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_box_that_cannot_say_what_it_is_called_claims_nothing() {
+    // Arrange: the run resolves the hostname once, and a node cannot be named without it.
+    let host = box_with(
+        "rabbitmq-claims-nameless",
+        &[("748", EPMD_ARGV, &[]), ("966", BROKER_ARGV, &[WAL])],
+    );
+    let inventory =
+        NodeInventory::using(host.epmd(None), Err("no hostname could be read".to_owned()))
+            .in_proc(&host.proc);
+
+    // Act & Assert: no claim rather than a tree sealed under a guessed key.
+    assert!(inventory.store_directories().is_empty());
+}
+
+#[test]
+fn a_register_that_will_not_answer_claims_nothing() {
+    // Arrange
+    let host = box_with(
+        "rabbitmq-claims-refusal",
+        &[("748", EPMD_ARGV, &[]), ("966", BROKER_ARGV, &[WAL])],
+    );
+    let refusing = shim::executable(&host.root.join("bin"), "epmd", "#!/bin/sh\nexit 1\n");
+    let inventory = NodeInventory::using(refusing, Ok("box".to_owned())).in_proc(&host.proc);
+
+    // Act & Assert: the claim phase reports nothing rather than failing the walk. An
+    // unreadable register is a fact the facet reports as its own error when it collects.
+    assert!(inventory.store_directories().is_empty());
+}
+
+#[test]
+fn a_descriptor_that_is_not_a_path_is_not_a_store() {
+    // Arrange: a socket, which is most of what a broker holds open.
+    let host = box_with(
+        "rabbitmq-claims-socket",
+        &[
+            ("748", EPMD_ARGV, &[]),
+            ("966", BROKER_ARGV, &["socket:[787924]"]),
+        ],
+    );
+
+    // Act & Assert
+    assert!(host.inventory().store_directories().is_empty());
+}

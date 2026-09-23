@@ -616,3 +616,47 @@ fn parse_reports_a_vhost_with_no_topology_as_having_none() {
     assert!(!keys_of(&field(&rendered, "queues")).contains(&"/".to_owned()));
     assert!(keys_of(&field(&rendered, "vhosts")).contains(&"/".to_owned()));
 }
+
+#[test]
+fn parse_drops_an_entry_the_export_could_not_name() {
+    // Arrange: every shape whose key is missing. Only a RabbitMQ that changed the document
+    // produces these, and one unnameable entry is not worth every other entry in the export.
+    let nameless = r#"{"rabbitmq_version":"4.0.5",
+      "vhosts":[{"default_queue_type":"classic"}],
+      "users":[{"tags":["administrator"]}],
+      "permissions":[{"vhost":"/","configure":".*"}],
+      "topic_permissions":[{"vhost":"/","user":"guest"}],
+      "policies":[{"vhost":"/","pattern":"^x"}],
+      "parameters":[{"vhost":"/","name":"nameless"}],
+      "global_parameters":[{"value":{}}],
+      "exchanges":[{"vhost":"/","type":"direct"}],
+      "queues":[{"vhost":"/","type":"quorum"}],
+      "bindings":[{"source":"x","destination":"y"}]}"#;
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(nameless).expect("a readable document");
+
+    // Assert: read, and empty, rather than failed.
+    assert!(definitions.vhosts.is_empty());
+    assert!(definitions.users.is_empty());
+    assert!(definitions.permissions.is_empty());
+    assert!(definitions.topic_permissions.is_empty());
+    assert!(definitions.policies.is_empty());
+    assert!(definitions.parameters.is_empty());
+    assert!(definitions.global_parameters.is_empty());
+    assert!(definitions.exchanges.is_empty());
+    assert!(definitions.queues.is_empty());
+    assert!(definitions.bindings.is_empty());
+}
+
+#[test]
+fn parse_reads_past_a_preamble_here_too() {
+    // Arrange: the same runtime report that precedes a status document can precede this one,
+    // and both reads go through the same tool.
+    let noisy = format!(
+        "=ERROR REPORT==== 23-Sep-2026::14:03:05.184639 ===\nfile:path_eval([]): permission denied\n\n{MEASURED}"
+    );
+
+    // Act & Assert
+    assert!(RabbitmqctlDefinitions::parse(&noisy).is_ok());
+}
