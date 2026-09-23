@@ -5032,3 +5032,39 @@ capability that decides
 [whether a node can be attributed at all](#a-boolean-could-not-say-could-not-tell-and-a-live-broker-proved-it),
 and it fails in the safe direction: a noisy subtree in the document rather than a tree sealed
 on a guess.
+
+## The Erlang runtime can speak before the document does
+
+The first run of the live-broker job failed every read of the facet with
+`rabbitmqctl status did not answer with a JSON document`. The tool had written this to stdout
+ahead of its document:
+
+```text
+=ERROR REPORT==== 23-Sep-2026::14:03:05.184639 ===
+file:path_eval(["/var/lib/rabbitmq","/home/runner/.config/erlang"],".erlang"): permission denied
+```
+
+A parse that started at the first byte saw `=` where it wanted `{`.
+
+**It could not be reproduced**, and that is what decided the shape of the fix rather than a
+taste for leniency. The same version, 3.12.1, on Ubuntu 24.04 in a container answers at byte
+0: as root with `HOME` set, with a cleared environment, and with `HOME` pointing at a
+directory that does not exist. Whatever the runner does differently, the runtime's report is a
+property of the host rather than of the version, so rastro cannot know in advance which boxes
+produce it and has to be able to read past it.
+
+**Past it, and no further.** The document begins at the first line that starts with `{`, so a
+preamble is skipped whole lines at a time rather than by hunting for a brace, which an Erlang
+term inside a report could perfectly well contain. Output with no such line is handed to the
+parser unchanged, so the failure still quotes what the tool actually said: a usage dump is
+still a failed read rather than an empty document.
+
+**Both JSON reads go through it**, status and definitions, because both come from the same
+tool on the same stdout.
+
+**What this also caught: the facet had only ever met one RabbitMQ.** Every measurement behind
+these entries was taken on Debian 13 with 4.0.5, and the runner has Ubuntu's 3.12.1. The
+document differs in two ways the parse now has a fixture for: 3.12 carries
+`release_series_support_status`, which 4.0 does not, and it has no `tags` key at all. Both
+were already handled, by ignoring unknown fields and defaulting absent ones, but *handled by
+construction* and *shown to work* are different claims and only one of them is worth making.

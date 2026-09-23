@@ -253,3 +253,140 @@ fn parse_refuses_a_status_that_names_no_rabbitmq_version() {
         RabbitmqctlStatus::parse(r#"{"os":"Linux","erlang_version":"Erlang/OTP 27"}"#).is_err()
     );
 }
+
+/// `rabbitmqctl status --formatter json` from RabbitMQ **3.12.1** on Ubuntu 24.04, verbatim.
+/// Older than the box the rest of these fixtures came from, and different in two ways that
+/// matter: it carries `release_series_support_status`, which 4.0 does not, and it has no
+/// `tags` key at all.
+const OLDER: &str = r#"{
+  "active_plugins": [],
+  "alarms": [],
+  "config_files": [],
+  "crypto_lib_version": "OpenSSL 3.0.13 30 Jan 2024",
+  "data_directory": "/var/lib/rabbitmq/mnesia/rabbit@c75013d4b192",
+  "disk_free": 51814764544,
+  "disk_free_limit": 50000000,
+  "enabled_plugin_file": "/etc/rabbitmq/enabled_plugins",
+  "erlang_version": "Erlang/OTP 25 [erts-13.2.2.5] [source] [64-bit] [smp:7:7] [ds:7:7:10] [async-threads:1] [jit]",
+  "file_descriptors": {
+    "sockets_limit": 943629,
+    "sockets_used": 0,
+    "total_limit": 1048479,
+    "total_used": 2
+  },
+  "is_under_maintenance": false,
+  "listeners": [
+    {
+      "interface": "[::]",
+      "node": "rabbit@c75013d4b192",
+      "port": 25672,
+      "protocol": "clustering",
+      "purpose": "inter-node and CLI tool communication"
+    },
+    {
+      "interface": "[::]",
+      "node": "rabbit@c75013d4b192",
+      "port": 5672,
+      "protocol": "amqp",
+      "purpose": "AMQP 0-9-1 and AMQP 1.0"
+    }
+  ],
+  "log_files": [
+    "/var/log/rabbitmq/rabbit@c75013d4b192.log",
+    "<stdout>"
+  ],
+  "memory": {
+    "allocated_unused": 0,
+    "atom": 1376577,
+    "binary": 160464,
+    "code": 28577582,
+    "connection_channels": 0,
+    "connection_other": 0,
+    "connection_readers": 0,
+    "connection_writers": 0,
+    "metrics": 966944,
+    "mgmt_db": 0,
+    "mnesia": 73264,
+    "msg_index": 209936,
+    "other_ets": 2207288,
+    "other_proc": 18095008,
+    "other_system": 16231209,
+    "plugins": 34040,
+    "queue_procs": 0,
+    "queue_slave_procs": 0,
+    "quorum_ets": 25480,
+    "quorum_queue_dlx_procs": 2760,
+    "quorum_queue_procs": 2760,
+    "reserved_unallocated": 85037056,
+    "strategy": "rss",
+    "stream_queue_coordinator_procs": 0,
+    "stream_queue_procs": 1312,
+    "stream_queue_replica_reader_procs": 1312,
+    "total": {
+      "allocated": 52629504,
+      "erlang": 67965936,
+      "rss": 137666560
+    }
+  },
+  "net_ticktime": 60,
+  "os": "Linux",
+  "pid": 1085,
+  "processes": {
+    "limit": 1048576,
+    "used": 284
+  },
+  "product_name": "",
+  "product_version": "",
+  "rabbitmq_version": "3.12.1",
+  "raft_data_directory": "/var/lib/rabbitmq/mnesia/rabbit@c75013d4b192/quorum/rabbit@c75013d4b192",
+  "release_series_support_status": "supported",
+  "run_queue": 1,
+  "totals": {
+    "connection_count": 0,
+    "queue_count": 0,
+    "virtual_host_count": 1
+  },
+  "uptime": 6,
+  "vm_memory_calculation_strategy": "rss",
+  "vm_memory_high_watermark_limit": 3082623385,
+  "vm_memory_high_watermark_setting": {
+    "relative": 0.4
+  }
+}"#;
+
+/// What the Erlang runtime wrote ahead of the document on a GitHub runner, verbatim.
+const PREAMBLE: &str = "=ERROR REPORT==== 23-Sep-2026::14:03:05.184639 ===\nfile:path_eval([\"/var/lib/rabbitmq\",\"/home/runner/.config/erlang\"],\".erlang\"): permission denied\n\n";
+
+#[test]
+fn parse_reads_a_status_from_an_older_broker() {
+    // Act
+    let status = RabbitmqctlStatus::parse(OLDER).expect("3.12 is still a RabbitMQ");
+
+    // Assert: a key the newer version does not have is ignored rather than refused, and one
+    // it does not carry at all defaults. An upgrade of a box nobody touched must not fail
+    // this facet.
+    assert_eq!(status.rabbitmq_version, "3.12.1");
+    assert!(status.tags.is_empty());
+    assert!(!status.data_directory.is_empty());
+}
+
+#[test]
+fn parse_reads_past_what_the_erlang_runtime_said_first() {
+    // Arrange: the exact bytes a GitHub runner put ahead of the document, which failed every
+    // read of this facet in CI while the same version answered cleanly in a container.
+    let noisy = format!("{PREAMBLE}{MEASURED}");
+
+    // Act
+    let status = RabbitmqctlStatus::parse(&noisy).expect("the document is still in there");
+
+    // Assert
+    assert_eq!(status.rabbitmq_version, "4.0.5");
+}
+
+#[test]
+fn parse_still_refuses_output_with_no_document_in_it_at_all() {
+    // Act & Assert: reading past a preamble is not the same as tolerating anything. A usage
+    // dump carries no line beginning with a brace, so the failure still names what the tool
+    // actually said.
+    assert!(RabbitmqctlStatus::parse(&format!("{PREAMBLE}Usage\n\nrabbitmqctl [--node]")).is_err());
+}

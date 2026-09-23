@@ -18,6 +18,8 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
+use super::json_document::document_in;
+
 use crate::collectors::rabbitmq::model::{
     Binding, Definitions, Exchange, Parameter, Permission, Policy, Queue, TopicPermission, User,
     UserLimit, Vhost,
@@ -172,12 +174,13 @@ impl RabbitmqctlDefinitions {
     /// read refuses one: the register names every Erlang node on the box, and an answer that
     /// does not say which RabbitMQ wrote it is not evidence about a broker.
     pub fn parse(output: &str) -> Result<Definitions, CollectionError> {
-        let document: DefinitionsDocument = serde_json::from_str(output).map_err(|failure| {
-            CollectionError::new(format!(
-                "rabbitmqctl export_definitions did not answer with a JSON document, so this \
+        let document: DefinitionsDocument =
+            serde_json::from_str(document_in(output)).map_err(|failure| {
+                CollectionError::new(format!(
+                    "rabbitmqctl export_definitions did not answer with a JSON document, so this \
                  node's definitions could not be read: {failure}"
-            ))
-        })?;
+                ))
+            })?;
 
         let rabbitmq_version = document
             .rabbitmq_version

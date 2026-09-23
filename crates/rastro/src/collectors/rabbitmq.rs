@@ -17,7 +17,7 @@ pub use model::{
 };
 pub use source::{
     BrokerClient, EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlStatus,
-    RegisteredNode, ResidentRuntime,
+    RegisteredNode, ResidentRuntime, document_in,
 };
 pub use value_objects::{BrokerEvidence, DefinitionValue, NodeName, PasswordHashing};
 
