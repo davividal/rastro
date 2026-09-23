@@ -22,7 +22,7 @@ use std::process::Command;
 
 mod support;
 
-use rastro::collectors::rabbitmq::RabbitmqCollector;
+use rastro::collectors::rabbitmq::{RabbitmqCollector, document_in};
 use rastro::collectors::read_hostname;
 use rastro_collector::Collector;
 use support::observation::{boolean, field, items_of, keys_of, text};
@@ -75,7 +75,7 @@ fn rabbitmq_diagnostics(arguments: &[&str]) -> String {
 /// `rabbitmqctl list_vhosts` prints an informational preamble *before* its header, so a
 /// reader that skipped one line kept `name` as though it were a vhost.
 fn column_in(output: &str, column: &str) -> BTreeSet<String> {
-    let rows: Vec<serde_json::Value> = serde_json::from_str(output)
+    let rows: Vec<serde_json::Value> = serde_json::from_str(document_in(output))
         .unwrap_or_else(|error| panic!("a --formatter json answer is a JSON array: {error}"));
 
     let found: BTreeSet<String> = rows
@@ -106,7 +106,7 @@ fn rastro_names_the_node_the_broker_names() {
     let nodes = keys_of(&field(&observed, "nodes"));
 
     // Act: the broker's own name for itself, which `status` carries in every listener.
-    let reported = rabbitmqctl(&["eval", "node()."]).trim().to_owned();
+    let reported = evaluated(&rabbitmqctl(&["eval", "node()."]));
 
     // Assert: rastro composes the key from the register and the box's hostname, and the
     // broker knows its own name. A disagreement here is the long-names case, which this
@@ -175,8 +175,7 @@ fn rastro_reports_the_data_directory_the_broker_reports() {
     );
 
     // Act
-    let directory = rabbitmqctl(&["eval", "rabbit_mnesia:dir()."])
-        .trim()
+    let directory = evaluated(&rabbitmqctl(&["eval", "rabbit_mnesia:dir()."]))
         .trim_matches('"')
         .to_owned();
 
@@ -200,7 +199,7 @@ fn rastro_reports_every_listener_the_broker_is_offering() {
     // rastro's reading of one report matches the broker's other account of the same thing.
     let answer = rabbitmq_diagnostics(&["listeners", "--formatter", "json"]);
     let document: serde_json::Value =
-        serde_json::from_str(&answer).expect("a --formatter json answer");
+        serde_json::from_str(document_in(&answer)).expect("a --formatter json answer");
     let reported: BTreeSet<i64> = document
         .get("listeners")
         .and_then(serde_json::Value::as_array)
@@ -222,6 +221,23 @@ fn rastro_reports_every_listener_the_broker_is_offering() {
             "rastro recorded a listener on {port} that the broker does not report: {reported:?}"
         );
     }
+}
+
+/// The value an `eval` printed, with anything the runtime said first left behind.
+///
+/// **The last non-empty line, which is where the value is.** An Erlang report can precede it,
+/// and on a GitHub runner one does: `file:path_eval([...],".erlang"): permission denied`. The
+/// collector reads past the same noise with `document_in`; that works on a document with a
+/// recognisable opening, and an `eval` answer is a bare term with none, so this is the same
+/// problem needing its own answer rather than a second use of the first.
+fn evaluated(output: &str) -> String {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// The one node key in the facet, for a box running one broker.

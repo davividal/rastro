@@ -4,7 +4,7 @@
 //! footprint was measured on: RabbitMQ 4.0.5 on Debian 13, Erlang 27. Kept whole, volatile
 //! halves included, because half of what this parse has to get right is what it leaves out.
 
-use rastro::collectors::rabbitmq::RabbitmqctlStatus;
+use rastro::collectors::rabbitmq::{RabbitmqctlStatus, document_in};
 use rastro_collector::Observation;
 
 mod support;
@@ -389,4 +389,26 @@ fn parse_still_refuses_output_with_no_document_in_it_at_all() {
     // dump carries no line beginning with a brace, so the failure still names what the tool
     // actually said.
     assert!(RabbitmqctlStatus::parse(&format!("{PREAMBLE}Usage\n\nrabbitmqctl [--node]")).is_err());
+}
+
+#[test]
+fn a_list_answer_is_a_document_too() {
+    // Arrange: every `list_*` command answers with an array rather than an object, and the
+    // same runtime report can precede it.
+    let noisy = format!("{PREAMBLE}[{{\"name\":\"/\"}}]\n");
+
+    // Act & Assert: a reader that knew only about `{{` would skip the whole answer looking
+    // for one. Found by the conformance test, which asks the broker directly and met the
+    // noise on its own side.
+    assert_eq!(document_in(&noisy).trim(), "[{\"name\":\"/\"}]");
+}
+
+#[test]
+fn a_reports_own_bracket_does_not_start_the_document() {
+    // Arrange: the report's second line is `file:path_eval([...`, which contains a bracket
+    // and does not begin with one.
+    let noisy = format!("{PREAMBLE}{MEASURED}");
+
+    // Act & Assert: whole lines, rather than hunting for the first bracket anywhere.
+    assert!(document_in(&noisy).starts_with('{'));
 }
