@@ -126,12 +126,24 @@ impl Box_ {
         ))
     }
 
-    /// A client that records the arguments it was handed, for the cases about *how* a node
-    /// is addressed rather than what it answers.
+    /// A client that records every argument vector it was handed *and answers*, so a read
+    /// that would have followed a failure is still made.
+    ///
+    /// **Answering is the point.** An earlier version exited non-zero, so the first read
+    /// failed, the other two were never attempted, and a test asserting "the flag appears
+    /// somewhere in what was recorded" passed while two of the three reads were addressing
+    /// nodes the wrong way.
     fn recording_client(&self) -> BrokerClient {
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexit 1\n",
-            self.root.join("arguments").display()
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {arguments}\n\
+             for argument in \"$@\"; do\n\
+             \x20 case $argument in\n\
+             \x20   status) cat {root}/fixtures/status.json; exit 0 ;;\n\
+             \x20   export_definitions) cat {root}/fixtures/definitions.json; exit 0 ;;\n\
+             \x20   list_feature_flags) cat {root}/fixtures/feature_flags.json; exit 0 ;;\n\
+             \x20 esac\ndone\nexit 64\n",
+            arguments = self.root.join("arguments").display(),
+            root = self.root.display(),
         );
 
         BrokerClient::using(shim::executable(
@@ -384,9 +396,8 @@ fn the_client_shim_answers_both_reads() {
 }
 
 #[test]
-fn a_long_name_node_is_addressed_with_the_flag_it_needs() {
-    // Arrange: a broker whose store names it by a fully qualified name, and a client that
-    // records the arguments it was given rather than answering.
+fn every_read_of_a_long_name_node_carries_the_flag() {
+    // Arrange: a broker whose store names it by a fully qualified name.
     let host = box_named(
         "rabbitmq-asking-longnames",
         &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
@@ -396,20 +407,33 @@ fn a_long_name_node_is_addressed_with_the_flag_it_needs() {
     let recorder = host.recording_client();
 
     // Act
-    let _ = host.inventory().read(Some(&recorder));
+    host.inventory()
+        .read(Some(&recorder))
+        .expect("the recorder answers every read");
 
-    // Assert: measured, a long-name node answers `invalid node name` and exits 65 without
-    // `--longnames`, so every read of it would fail and take the facet with it.
+    // Assert: **every** invocation, not merely one of them. Measured, a long-name node exits
+    // 65 with `invalid node name` without the flag, so a read that missed it would fail and
+    // take the facet with it — which is exactly what happened when only `status` was routed
+    // and this test asserted the flag appeared somewhere.
     let recorded = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
-    assert!(
-        recorded.contains("--longnames"),
-        "a node named rabbit@broker.example.test was addressed without the flag: {recorded}"
+    let invocations: Vec<&str> = recorded.lines().filter(|line| !line.is_empty()).collect();
+
+    assert_eq!(
+        invocations.len(),
+        3,
+        "status, feature flags and definitions are three reads: {recorded}"
     );
-    assert!(recorded.contains("rabbit@broker.example.test"));
+    for invocation in &invocations {
+        assert!(
+            invocation.contains("--longnames"),
+            "this read addressed a long-name node without the flag: {invocation}"
+        );
+        assert!(invocation.contains("rabbit@broker.example.test"));
+    }
 }
 
 #[test]
-fn a_short_name_node_is_not_given_the_flag() {
+fn no_read_of_a_short_name_node_carries_the_flag() {
     // Arrange
     let host = box_with(
         "rabbitmq-asking-shortnames",
@@ -419,14 +443,21 @@ fn a_short_name_node_is_not_given_the_flag() {
     let recorder = host.recording_client();
 
     // Act
-    let _ = host.inventory().read(Some(&recorder));
+    host.inventory()
+        .read(Some(&recorder))
+        .expect("the recorder answers every read");
 
-    // Assert: and this is the half that is easy to get wrong by being generous. Measured: the
-    // same flag against a short-name node makes the tool hang until it is killed, exit 124 on
-    // a 20-second bound, where the call without it answers at once.
+    // Assert: the half that is easy to get wrong by being generous. Measured: the same flag
+    // against a short-name node makes the tool hang until it is killed, exit 124 on a
+    // 20-second bound, where the call without it answers at once.
     let recorded = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
-    assert!(
-        !recorded.contains("--longnames"),
-        "a short-name node was given a flag that hangs it: {recorded}"
-    );
+    let invocations: Vec<&str> = recorded.lines().filter(|line| !line.is_empty()).collect();
+
+    assert_eq!(invocations.len(), 3);
+    for invocation in &invocations {
+        assert!(
+            !invocation.contains("--longnames"),
+            "this read gave a short-name node a flag that hangs it: {invocation}"
+        );
+    }
 }

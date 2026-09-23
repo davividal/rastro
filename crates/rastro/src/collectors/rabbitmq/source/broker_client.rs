@@ -105,16 +105,14 @@ impl BrokerClient {
         &self,
         node: &NodeName,
     ) -> Result<BTreeMap<String, String>, CollectionError> {
-        let answer = self
-            .tool
-            .run(&[NODE_FLAG, node.as_str(), FEATURE_FLAGS, FORMATTER, JSON])?;
+        let answer = self.ask(node, &[FEATURE_FLAGS, FORMATTER, JSON])?;
 
         RabbitmqctlFeatureFlags::parse(&answer)
     }
 
     /// The durable half of the node: its tenancy, accounts and topology.
     pub fn definitions(&self, node: &NodeName) -> Result<Definitions, CollectionError> {
-        let answer = self.tool.run(&[NODE_FLAG, node.as_str(), EXPORT, STDOUT])?;
+        let answer = self.ask(node, &[EXPORT, STDOUT])?;
 
         RabbitmqctlDefinitions::parse(&answer)
     }

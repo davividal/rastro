@@ -5203,3 +5203,12 @@ way does not fail politely.
 [the execution seam clears the environment](#rastro-does-not-change-the-host-it-describes) on
 purpose: an inherited environment is an input nobody audited. Measured both ways, the flag is
 the only route that works under a cleared environment.
+
+**Every read goes through one place, and the first attempt at this did not.** The flag reached
+`status` and not the other two reads, so a long-name box would have had its first read succeed
+and its second fail, erroring the whole facet — caught in review rather than by the test, which
+is the part worth recording. The test asserted that `--longnames` appeared *somewhere* in what
+a recording shim captured, and the first invocation satisfied it; the shim also exited non-zero,
+so the reads that were wrong were never even attempted. It now asserts the count of
+invocations and checks each one, and putting the bug back makes it fail naming the offending
+call.
