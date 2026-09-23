@@ -5175,3 +5175,31 @@ argument that lets a config rule beat a collector's claim. It carries one requir
 not optional, and it is why this is not a one-line change: wherever a value appears because
 sensitivity was overridden, the document has to say so, loudly and at the value, so no reader
 of a fingerprint can mistake a disclosed secret for one that was never sensitive.
+
+## A long-name node needs `--longnames`, and a short-name node must not have it
+
+Reading a node's real name made addressing long-name nodes reachable, and incomplete: the
+name arrived whole while the invocation did not change. Measured on 4.0.5, with a node started
+as `rabbit@broker.example.test`:
+
+| invocation | result |
+| --- | --- |
+| `-n rabbit@broker.example.test status` | exit 65, `invalid node name` |
+| `--longnames -n rabbit@broker.example.test status` | exit 0 |
+| `--longnames -n rabbit@shorthost status` | **exit 124**, killed at the bound |
+| `-n rabbit@shorthost status` | exit 0 |
+
+So every read of a long-name box would have failed and taken the facet with it, which is the
+review's point. The second half is the one the measurement adds: **the flag cannot be passed
+defensively**. Against a short-name node it does not fail, it *hangs*, and rastro would have
+wedged every ordinary box for the tool's full time bound before reporting an error.
+
+**A dot in the host half decides it**, which is Erlang's own rule rather than a guess: `-sname`
+refuses a host containing a dot, so a name that has one came from `-name`. The question is
+asked per node, in one place that every read goes through, because a node addressed the wrong
+way does not fail politely.
+
+**The environment cannot carry it.** `RABBITMQ_USE_LONGNAME` would do the same job, and
+[the execution seam clears the environment](#rastro-does-not-change-the-host-it-describes) on
+purpose: an inherited environment is an input nobody audited. Measured both ways, the flag is
+the only route that works under a cleared environment.

@@ -24,6 +24,9 @@ const EPMD_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/epmd\0-daemon\0";
 const BROKER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0rabbit\0boot\0";
 const OTHER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0ejabberd\0boot\0";
 
+/// The same, for a node running under long names.
+const LONG_WAL: &str = "/var/lib/rabbitmq/mnesia/rabbit@broker.example.test/quorum/rabbit@broker.example.test/00000001.wal";
+
 /// A descriptor every running broker holds: Ra's write-ahead log, under the store, in a
 /// directory named for the node. It is where the node's own name is read from, so a fixture
 /// without one describes a broker rastro cannot name and therefore will not address.
@@ -58,6 +61,12 @@ struct Box_ {
 }
 
 fn box_with(name: &str, processes: &[(&str, &str)], holder: Option<&str>) -> Box_ {
+    box_named(name, processes, holder, WAL)
+}
+
+/// The same, with the store the brokers hold open named: it is where the node's own name is
+/// read from, so it is what makes a fixture a short-name or a long-name box.
+fn box_named(name: &str, processes: &[(&str, &str)], holder: Option<&str>, store: &str) -> Box_ {
     let root = scratch_tree(name, &["bin", "fixtures"]);
     let proc = root.join("proc");
     fs::create_dir_all(proc.join("net")).expect("a writable scratch directory");
@@ -77,7 +86,7 @@ fn box_with(name: &str, processes: &[(&str, &str)], holder: Option<&str>) -> Box
     // Every beam that booted RabbitMQ holds its store open, which is what names it.
     for (pid, argv) in processes {
         if argv.contains("rabbit") {
-            symlink(WAL, proc.join(pid).join("fd/15")).expect("a writable scratch symlink");
+            symlink(store, proc.join(pid).join("fd/15")).expect("a writable scratch symlink");
         }
     }
 
@@ -108,6 +117,21 @@ impl Box_ {
              \x20 esac\ndone\nexit 64\n",
             witness = self.witness().display(),
             root = self.root.display(),
+        );
+
+        BrokerClient::using(shim::executable(
+            &self.root.join("bin"),
+            "rabbitmqctl",
+            &script,
+        ))
+    }
+
+    /// A client that records the arguments it was handed, for the cases about *how* a node
+    /// is addressed rather than what it answers.
+    fn recording_client(&self) -> BrokerClient {
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexit 1\n",
+            self.root.join("arguments").display()
         );
 
         BrokerClient::using(shim::executable(
@@ -357,4 +381,52 @@ fn the_client_shim_answers_both_reads() {
     assert!(client.tool().run(&["status"]).is_ok());
     assert!(client.tool().run(&["export_definitions"]).is_ok());
     assert!(Path::new(&host.witness()).exists());
+}
+
+#[test]
+fn a_long_name_node_is_addressed_with_the_flag_it_needs() {
+    // Arrange: a broker whose store names it by a fully qualified name, and a client that
+    // records the arguments it was given rather than answering.
+    let host = box_named(
+        "rabbitmq-asking-longnames",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+        LONG_WAL,
+    );
+    let recorder = host.recording_client();
+
+    // Act
+    let _ = host.inventory().read(Some(&recorder));
+
+    // Assert: measured, a long-name node answers `invalid node name` and exits 65 without
+    // `--longnames`, so every read of it would fail and take the facet with it.
+    let recorded = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
+    assert!(
+        recorded.contains("--longnames"),
+        "a node named rabbit@broker.example.test was addressed without the flag: {recorded}"
+    );
+    assert!(recorded.contains("rabbit@broker.example.test"));
+}
+
+#[test]
+fn a_short_name_node_is_not_given_the_flag() {
+    // Arrange
+    let host = box_with(
+        "rabbitmq-asking-shortnames",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    let recorder = host.recording_client();
+
+    // Act
+    let _ = host.inventory().read(Some(&recorder));
+
+    // Assert: and this is the half that is easy to get wrong by being generous. Measured: the
+    // same flag against a short-name node makes the tool hang until it is killed, exit 124 on
+    // a 20-second bound, where the call without it answers at once.
+    let recorded = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
+    assert!(
+        !recorded.contains("--longnames"),
+        "a short-name node was given a flag that hangs it: {recorded}"
+    );
 }

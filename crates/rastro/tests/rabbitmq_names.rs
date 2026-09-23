@@ -134,3 +134,19 @@ fn every_evidence_says_something_different_in_the_document() {
     // read the same.
     assert_eq!(unique.len(), spellings.len());
 }
+
+#[test]
+fn a_dot_in_the_host_is_what_makes_a_name_long() {
+    // Act & Assert: Erlang's own rule. `-sname` refuses a host containing a dot, so a name
+    // that has one came from `-name` and the node has to be addressed accordingly.
+    assert!(
+        !NodeName::parse("rabbit@box")
+            .expect("legal")
+            .uses_long_names()
+    );
+    assert!(
+        NodeName::parse("rabbit@broker.example.test")
+            .expect("legal")
+            .uses_long_names()
+    );
+}

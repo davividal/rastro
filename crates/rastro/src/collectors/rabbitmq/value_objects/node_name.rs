@@ -44,6 +44,23 @@ impl NodeName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether this node runs under long names, which decides how it must be addressed.
+    ///
+    /// **A dot in the host half is the whole test**, because that is Erlang's own rule:
+    /// `-sname` refuses a host containing one, so a name that has one came from `-name`.
+    ///
+    /// **Measured, and the flag is not safe to pass defensively.** Against a long-name node
+    /// `rabbitmqctl -n rabbit@broker.example.test status` exits 65 with `invalid node name`,
+    /// and with `--longnames` it answers. Against a *short*-name node the same flag makes the
+    /// tool hang until it is killed: exit 124 on a 20-second bound, where the same call
+    /// without it answers immediately. So this is a question that has to be asked per node
+    /// rather than a flag that can be set once and forgotten.
+    pub fn uses_long_names(&self) -> bool {
+        self.0
+            .split_once(SEPARATOR)
+            .is_some_and(|(_, host)| host.contains('.'))
+    }
 }
 
 /// Ordered by the name, so this type's order and the document's are one order.

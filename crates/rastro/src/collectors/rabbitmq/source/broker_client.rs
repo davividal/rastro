@@ -29,6 +29,12 @@ const PROGRAM: &str = "rabbitmqctl";
 
 /// The flag that names the node, and the formatter that makes an answer parseable.
 const NODE_FLAG: &str = "-n";
+
+/// The flag a node running under long names has to be addressed with.
+///
+/// Measured: without it such a node answers `invalid node name` and exits 65, and *with* it a
+/// short-name node hangs until the bound kills it. Conditional, therefore, never constant.
+const LONG_NAMES: &str = "--longnames";
 const FORMATTER: &str = "--formatter";
 const JSON: &str = "json";
 
@@ -68,11 +74,27 @@ impl BrokerClient {
 
     /// What the node says it is running with.
     pub fn status(&self, node: &NodeName) -> Result<NodeStatus, CollectionError> {
-        let answer = self
-            .tool
-            .run(&[NODE_FLAG, node.as_str(), STATUS, FORMATTER, JSON])?;
+        let answer = self.ask(node, &[STATUS, FORMATTER, JSON])?;
 
         RabbitmqctlStatus::parse(&answer)
+    }
+
+    /// One read of one node, addressed the way that node has to be addressed.
+    ///
+    /// Every read goes through here so that the `--longnames` decision is made once. A node
+    /// addressed the wrong way does not fail politely: the short-name case hangs.
+    fn ask(&self, node: &NodeName, arguments: &[&str]) -> Result<String, CollectionError> {
+        let mut addressed = Vec::with_capacity(arguments.len() + 3);
+
+        if node.uses_long_names() {
+            addressed.push(LONG_NAMES);
+        }
+
+        addressed.push(NODE_FLAG);
+        addressed.push(node.as_str());
+        addressed.extend_from_slice(arguments);
+
+        self.tool.run(&addressed)
     }
 
     /// Which feature flags the node has enabled.
