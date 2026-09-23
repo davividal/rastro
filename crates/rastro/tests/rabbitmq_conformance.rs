@@ -23,7 +23,6 @@ use std::process::Command;
 mod support;
 
 use rastro::collectors::rabbitmq::{RabbitmqCollector, document_in};
-use rastro::collectors::read_hostname;
 use rastro_collector::Collector;
 use support::observation::{boolean, field, items_of, keys_of, text};
 
@@ -94,27 +93,24 @@ fn column_in(output: &str, column: &str) -> BTreeSet<String> {
 
 /// The facet, read from this box.
 fn facet() -> rastro_collector::Observation {
-    RabbitmqCollector::new(read_hostname())
+    RabbitmqCollector::new()
         .collect()
         .expect("a box with a running broker is readable")
 }
 
 #[test]
-fn rastro_names_the_node_the_broker_names() {
+fn rastro_reads_the_name_the_node_answers_to() {
     // Arrange
     let observed = facet();
-    let nodes = keys_of(&field(&observed, "nodes"));
+    let node = field(&field(&observed, "nodes"), &the_node(&observed));
 
-    // Act: the broker's own name for itself, which `status` carries in every listener.
+    // Act: the broker's own name for itself.
     let reported = evaluated(&rabbitmqctl(&["eval", "node()."]));
 
-    // Assert: rastro composes the key from the register and the box's hostname, and the
-    // broker knows its own name. A disagreement here is the long-names case, which this
-    // facet does not compose yet and would rather fail loudly about than paper over.
-    assert!(
-        nodes.contains(&reported),
-        "rastro keyed {nodes:?} and the broker calls itself {reported:?}"
-    );
+    // Assert: read from the directories the broker holds open, never composed from the box's
+    // hostname, so a node under long names is named as it runs rather than as rastro would
+    // have guessed. This is the assertion that would have caught that guess.
+    assert_eq!(text(&field(&node, "node_name")), reported);
 }
 
 #[test]
