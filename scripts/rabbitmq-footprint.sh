@@ -27,14 +27,27 @@ mkdir -p "$OUT"
 REPORT="$OUT/report.txt"
 : > "$REPORT"
 
-say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
-section() { say ""; say "=== $*"; }
+# The indent every quoted block of tool output gets, named once.
+INDENT='s/^/    /'
+
+say() {
+    printf '%s\n' "$*" | tee -a "$REPORT"
+    return 0
+}
+section() {
+    say ""
+    say "=== $*"
+    return 0
+}
 
 # Files touched since a marker, kernel interfaces and this script's own output aside.
 touched_since() {
-    find / -xdev -newer "$1" \
+    marker=$1
+
+    find / -xdev -newer "$marker" \
         -not -path '/proc/*' -not -path '/sys/*' -not -path "$OUT/*" \
         -not -path '/run/*' 2>/dev/null | sort
+    return 0
 }
 
 # One invocation, timed, with its streams kept. Never fails the run: a command that refuses
@@ -48,6 +61,7 @@ run() {
     end=$(date +%s%N)
     say "$(printf '%-34s exit=%-3s %6s ms %10s bytes' \
         "$name" "$status" "$(( (end - start) / 1000000 ))" "$(wc -c < "$OUT/$name.out")")"
+    return 0
 }
 
 epmd_state() {
@@ -56,6 +70,7 @@ epmd_state() {
     else
         say "  epmd: not running"
     fi
+    return 0
 }
 
 cookie_state() {
@@ -66,6 +81,7 @@ cookie_state() {
             say "  cookie $cookie: absent"
         fi
     done
+    return 0
 }
 
 section "the box"
@@ -110,7 +126,7 @@ for caller in root rabbitmq; do
     epmd_state
     cookie_state
     say "  files touched since the marker:"
-    touched_since "/tmp/.marker-$caller" | sed 's/^/    /' | tee -a "$REPORT"
+    touched_since "/tmp/.marker-$caller" | sed "$INDENT" | tee -a "$REPORT"
     pkill epmd 2>/dev/null && say "  (killed an epmd this invocation left behind)"
     sleep 1
 done
@@ -154,8 +170,8 @@ rabbitmqctl set_global_parameter my-global '{"answer":42,"fraction":0.5,"on":tru
 section "Q3 control: what an idle broker touches on its own in 10s"
 touch /tmp/.marker-idle
 sleep 10
-IDLE_LOG_DIGEST=$( [ -f "$LOG" ] && md5sum "$LOG" | cut -d' ' -f1 )
-touched_since /tmp/.marker-idle | sed 's/^/    /' | tee -a "$REPORT"
+IDLE_LOG_DIGEST=$( [ -f "$LOG" ] && sha256sum "$LOG" | cut -d' ' -f1 )
+touched_since /tmp/.marker-idle | sed "$INDENT" | tee -a "$REPORT"
 say "  log digest after the idle window: ${IDLE_LOG_DIGEST:-no log file}"
 
 section "Q3/Q5: the reads, timed, and what they touched"
@@ -170,8 +186,8 @@ run diag_listeners         rabbitmq-diagnostics listeners --formatter json
 run plugins_list           rabbitmq-plugins list --formatter json
 say ""
 say "  files touched during the read window:"
-touched_since /tmp/.marker-reads | sed 's/^/    /' | tee -a "$REPORT"
-say "  log digest after the reads:       $( [ -f "$LOG" ] && md5sum "$LOG" | cut -d' ' -f1 )"
+touched_since /tmp/.marker-reads | sed "$INDENT" | tee -a "$REPORT"
+say "  log digest after the reads:       $( [ -f "$LOG" ] && sha256sum "$LOG" | cut -d' ' -f1 )"
 say "  log digest after the idle window: ${IDLE_LOG_DIGEST:-no log file}"
 
 section "the register, with epmd up, and whether a read leaves its own node in it"
@@ -184,7 +200,7 @@ if diff -q /tmp/names.before /tmp/names.after > /dev/null 2>&1; then
     say "  identical before and after a CLI call: the tool deregisters"
 else
     say "  CHANGED, which would mean a read leaves a node registered:"
-    diff -u /tmp/names.before /tmp/names.after | sed 's/^/    /' | tee -a "$REPORT"
+    diff -u /tmp/names.before /tmp/names.after | sed "$INDENT" | tee -a "$REPORT"
 fi
 
 section "can a node be attributed to a process, and what stops it"
@@ -206,7 +222,7 @@ if diff -q "$OUT/modules.before" "$OUT/modules.after" > /dev/null 2>&1; then
     say "  unchanged"
 else
     say "  CHANGED (a container shares the host kernel, so read it with that in mind):"
-    diff -u "$OUT/modules.before" "$OUT/modules.after" | sed 's/^/    /' | tee -a "$REPORT"
+    diff -u "$OUT/modules.before" "$OUT/modules.after" | sed "$INDENT" | tee -a "$REPORT"
 fi
 
 section "done"
