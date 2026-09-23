@@ -4,6 +4,7 @@
 //! tool invoked on such a box leaves an `epmd -daemon` behind, so the gate is asserted here
 //! against a shim that records having been executed, rather than trusted to a code reading.
 
+use std::os::unix::fs::symlink;
 use std::path::Path;
 
 use rastro::collectors::canonical_tool::CanonicalTool;
@@ -28,7 +29,9 @@ fn proc_with(root: &Path, processes: &[(&str, &str)]) -> std::path::PathBuf {
     std::fs::create_dir_all(&proc).expect("a writable scratch directory");
 
     for (pid, argv) in processes {
-        std::fs::create_dir_all(proc.join(pid)).expect("a writable scratch directory");
+        // `fd` as well, because a process without one is a process rastro cannot read a node
+        // name or a store from, and every real one has it.
+        std::fs::create_dir_all(proc.join(pid).join("fd")).expect("a writable scratch directory");
         write(&proc, &format!("{pid}/cmdline"), argv);
     }
 
@@ -68,9 +71,14 @@ fn read_asks_nothing_where_the_port_mapper_is_not_resident() {
     assert!(!installation.port_mapper_running());
 }
 
+/// A descriptor a running broker holds: Ra's log, under the store, in a directory named for
+/// the node. It is where the node's own name is read from.
+const WAL: &str = "/var/lib/rabbitmq/mnesia/rabbit@box/quorum/rabbit@box/00000001.wal";
+
 #[test]
-fn read_keys_a_node_by_the_name_a_cli_tool_would_be_given() {
-    // Arrange
+fn read_keys_a_node_by_the_name_the_register_knows_it_by() {
+    // Arrange: a registration whose broker holds nothing open, so its own name cannot be
+    // read.
     let scratch = scratch_tree("rabbitmq-inventory-node", &["bin"]);
     let inventory = NodeInventory::using(epmd_shim(&scratch.join("bin"), &scratch.join("ran")))
         .in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
@@ -78,14 +86,36 @@ fn read_keys_a_node_by_the_name_a_cli_tool_would_be_given() {
     // Act
     let installation = inventory.read(None).expect("the shim answers like epmd");
 
-    // Assert: the local part comes from the register, the host from the box, because epmd
-    // prints only the half before the `@` and the CLI needs both.
-    let names: Vec<&str> = installation
-        .nodes()
-        .keys()
-        .map(|name| name.as_str())
-        .collect();
-    assert_eq!(names, ["rabbit@measured-box"]);
+    // Assert: epmd's own name for the node, which is the half that is always readable. The
+    // name the node runs under is a separate field, and it is absent here because nothing on
+    // the box said what it is.
+    let keys: Vec<&str> = installation.nodes().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["rabbit"]);
+    assert!(installation.nodes()["rabbit"].node_name.is_none());
+}
+
+#[test]
+fn read_names_a_node_from_the_files_its_broker_holds_open() {
+    // Arrange: the same box, with a broker holding its store open.
+    let scratch = scratch_tree("rabbitmq-inventory-named", &["bin"]);
+    let proc = proc_with(&scratch, &[("748", EPMD_ARGV), ("966", BROKER_ARGV)]);
+    symlink(WAL, proc.join("966/fd/9")).expect("a writable scratch symlink");
+    let inventory =
+        NodeInventory::using(epmd_shim(&scratch.join("bin"), &scratch.join("ran"))).in_proc(&proc);
+
+    // Act
+    let installation = inventory.read(None).expect("the shim answers like epmd");
+
+    // Assert: read from the directory the broker writes into, never composed from the box's
+    // hostname. A node under long names is the case that proves the difference.
+    assert_eq!(
+        installation.nodes()["rabbit"]
+            .node_name
+            .as_ref()
+            .expect("a name")
+            .as_str(),
+        "rabbit@box"
+    );
 }
 
 #[test]
@@ -113,7 +143,7 @@ fn read_records_the_distribution_port_and_the_brokers_it_counted() {
 
     let nodes = field(&rendered, "nodes");
     let (key, node) = object_of(&nodes).into_iter().next().expect("one node");
-    assert_eq!(key, "rabbit@box");
+    assert_eq!(key, "rabbit");
     assert_eq!(integer(&field(&node, "distribution_port")), 25672);
 }
 
