@@ -1,8 +1,8 @@
-//! Composing the nodes to ask, from what is resident and what the register holds.
+//! The nodes on the box, and which of them may be asked anything.
 //!
 //! The one place the facet's gate is enforced: the register is read only where the port
-//! mapper is already running, because `epmd -names` is safe to run and a CLI tool is not,
-//! and the whole point of asking epmd first is to avoid starting one.
+//! mapper is already running, because `epmd -names` is safe to run and a CLI tool is not, and
+//! the whole point of asking epmd first is to avoid starting one.
 
 use std::path::{Path, PathBuf};
 
@@ -10,8 +10,8 @@ use rastro_collector::CollectionError;
 
 use super::broker_client::BrokerClient;
 use super::epmd_register::EpmdRegister;
+use super::node_layout;
 use super::resident_runtime::ResidentRuntime;
-use super::store_directory;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::proc_sockets::{SocketHolders, listening_inodes};
 use crate::collectors::rabbitmq::model::{Definitions, Installation, Node, NodeStatus};
@@ -27,40 +27,26 @@ const NAMES: &str = "-names";
 const PROC: &str = "/proc";
 const NET: &str = "net";
 
-/// The register, the process table, and the host whose nodes they describe.
+/// The register and the process table, which between them say what is here.
 ///
-/// **The gate lives in this one type on purpose.** Residency and the register are two reads
-/// that only mean something together: the first says whether the second may be asked, and a
-/// caller holding them apart could ask in the wrong order. So the caller gets one `read`
-/// and no way to skip the order.
+/// **No hostname.** An earlier version carried the box's name so it could compose
+/// `local@host`; the node's own name is read from the files it holds open instead, so nothing
+/// about the box needs to be guessed at.
 pub struct NodeInventory {
     port_mapper: CanonicalTool,
-
-    /// The hostname the run resolved, or why it could not be.
-    ///
-    /// Carried as the run left it, the way `HostCollector` carries it: a node is addressed as
-    /// `local@host`, so a box that cannot say what it is called cannot have its nodes named,
-    /// and that is a loud failure rather than a guessed key.
-    hostname: Result<String, String>,
-
     proc: PathBuf,
 }
 
 impl NodeInventory {
     /// The inventory of this box, where a port mapper is installed at all.
-    pub fn detect(hostname: Result<String, String>) -> Option<Self> {
-        CanonicalTool::located(REGISTER_PROGRAM).map(|port_mapper| Self {
-            port_mapper,
-            hostname,
-            proc: PathBuf::from(PROC),
-        })
+    pub fn detect() -> Option<Self> {
+        CanonicalTool::located(REGISTER_PROGRAM).map(Self::using)
     }
 
     /// The same over a register the caller located, which is what makes this testable.
-    pub fn using(port_mapper: CanonicalTool, hostname: Result<String, String>) -> Self {
+    pub fn using(port_mapper: CanonicalTool) -> Self {
         Self {
             port_mapper,
-            hostname,
             proc: PathBuf::from(PROC),
         }
     }
@@ -71,16 +57,26 @@ impl NodeInventory {
         self
     }
 
+    /// Whether a process on this box booted RabbitMQ.
+    ///
+    /// What [`presence`](rastro_collector::Collector::presence) needs, and a `/proc` walk
+    /// rather than a question put to anybody: a broker running with no client installed to
+    /// ask it with is still a broker, and reporting that box as having no RabbitMQ would be a
+    /// confident lie about it.
+    pub fn brokers_resident(&self) -> bool {
+        !ResidentRuntime::read_in(&self.proc)
+            .broker_process_ids()
+            .is_empty()
+    }
+
     /// What this box holds, asking epmd only where epmd is already running.
     ///
     /// **A box with no port mapper is not a failure and not a question.** It is an
     /// installation with nothing up, reported from the process table alone, and the register
-    /// is not touched: asking it would start nothing, but it is also the step that decides
-    /// whether the rest of the facet asks anything at all, and that decision belongs where
-    /// the evidence is.
+    /// is not touched.
     ///
-    /// A resident port mapper that will not answer *is* a failure, because rastro cannot
-    /// tell it apart from a box whose nodes it failed to find.
+    /// A resident port mapper that will not answer *is* a failure, because rastro cannot tell
+    /// it apart from a box whose nodes it failed to find.
     pub fn read(&self, client: Option<&BrokerClient>) -> Result<Installation, CollectionError> {
         let resident = ResidentRuntime::read_in(&self.proc);
         let brokers = resident.broker_process_ids().len();
@@ -89,38 +85,35 @@ impl NodeInventory {
             return Ok(Installation::new(false, brokers, []));
         }
 
-        let hostname = self.hostname.as_ref().map_err(|reason| {
-            CollectionError::new(format!(
-                "a node is addressed as local@host and this box could not say what it is \
-                 called, so its nodes cannot be named: {reason}"
-            ))
-        })?;
-
         let registered = EpmdRegister::parse(&self.port_mapper.run(&[NAMES])?)?;
         let holders = SocketHolders::at(&self.proc);
         let nodes = registered
             .into_iter()
             .map(|node| {
-                let name = NodeName::new(node.name, hostname.as_str())?;
                 let evidence = self.evidence_for(node.distribution_port, &holders, &resident);
+                let name = self.named(&node.name, &resident);
 
-                // Asked only where a RabbitMQ process holds the port, and only with a client
-                // to ask with. Every other case is a node reported as what the box knows of
-                // it, which is the whole restraint this facet is arranged around.
-                let asked = match (evidence.may_be_addressed(), client) {
-                    (true, Some(client)) => Some(Asked {
-                        status: client.status(&name)?,
-                        definitions: client.definitions(&name)?,
+                // Asked only where a RabbitMQ process holds the port, where the node's own
+                // name could be read, and where there is a client to ask with. A node rastro
+                // cannot name is one it cannot address either: `rabbitmqctl -n` takes the
+                // name the node runs under, and guessing it is what this facet stopped doing.
+                let asked = match (evidence.may_be_addressed(), &name, client) {
+                    (true, Some(name), Some(client)) => Some(Asked {
+                        status: client.status(name)?,
+                        feature_flags: client.feature_flags(name)?,
+                        definitions: client.definitions(name)?,
                     }),
                     _ => None,
                 };
 
                 Ok((
-                    name,
+                    node.name,
                     Node {
+                        node_name: name,
                         distribution_port: node.distribution_port,
                         evidence,
                         status: asked.as_ref().map(|asked| asked.status.clone()),
+                        feature_flags: asked.as_ref().map(|asked| asked.feature_flags.clone()),
                         definitions: asked.map(|asked| asked.definitions),
                     },
                 ))
@@ -136,30 +129,14 @@ impl NodeInventory {
     /// collector runs and before the walk, sequentially, so this is on the critical path of
     /// every run and pays for nothing it does not need: the register, which is 2 ms and was
     /// measured not to start the daemon it may fail to reach, and then `/proc`. The broker is
-    /// never asked, because it holds its own store open and a `status` read here would cost
-    /// ~310 ms of every run to learn a path that is already on the box.
+    /// never asked, because it writes where its store is into the paths it holds open.
     ///
-    /// **The same gate as everywhere else.** No port mapper resident means no register read,
-    /// which means no claim: a box with nothing up has no store to seal, and speculatively
-    /// invoking anything is what this facet is arranged to avoid.
-    ///
-    /// **A failed read makes no claim**, which is the postgres rule and for its reason: an
-    /// unreadable register or a broker whose descriptors rastro may not see is a fact this
-    /// facet reports as its own, and making it fail the walk as well would cost the whole
-    /// filesystem over a missing RabbitMQ.
-    ///
-    /// This reads `epmd -names` a second time in a run, since claims are gathered before any
-    /// facet is collected. One 2 ms probe is the honest price of not caching a host reading
-    /// between two questions asked at different times.
+    /// **A failed read makes no claim**, which is the postgres rule and for its reason.
     pub fn store_directories(&self) -> Vec<(NodeName, String)> {
         let resident = ResidentRuntime::read_in(&self.proc);
         if !resident.port_mapper_running() {
             return Vec::new();
         }
-
-        let Ok(hostname) = self.hostname.as_ref() else {
-            return Vec::new();
-        };
 
         let Ok(listed) = self.port_mapper.run(&[NAMES]) else {
             return Vec::new();
@@ -172,13 +149,20 @@ impl NodeInventory {
         registered
             .into_iter()
             .filter_map(|node| {
-                let name = NodeName::new(node.name, hostname.as_str()).ok()?;
-                let directory =
-                    store_directory::under(&self.proc, resident.broker_process_ids(), &name)?;
+                let layout =
+                    node_layout::read(&self.proc, resident.broker_process_ids(), &node.name)?;
+                let name = NodeName::parse(layout.name).ok()?;
 
-                Some((name, directory))
+                Some((name, layout.store))
             })
             .collect()
+    }
+
+    /// The node's own name, where its files say what it is.
+    fn named(&self, registered: &str, resident: &ResidentRuntime) -> Option<NodeName> {
+        let layout = node_layout::read(&self.proc, resident.broker_process_ids(), registered)?;
+
+        NodeName::parse(layout.name).ok()
     }
 
     /// What the box's own evidence says about this node, without addressing it.
@@ -237,5 +221,6 @@ impl NodeInventory {
 /// with no vhosts at all, which is a state RabbitMQ cannot be in.
 struct Asked {
     status: NodeStatus,
+    feature_flags: std::collections::BTreeMap<String, String>,
     definitions: Definitions,
 }

@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use rastro_collector::Observation;
 
 use crate::collectors::rabbitmq::model::Node;
-use crate::collectors::rabbitmq::value_objects::NodeName;
 
 /// What this box holds of RabbitMQ, keyed by node.
 ///
@@ -24,14 +23,21 @@ pub struct Installation {
     /// touched and would put noise in every diff.
     broker_processes: usize,
 
-    nodes: BTreeMap<NodeName, Node>,
+    /// The nodes, keyed by the name the register knows them by.
+    ///
+    /// **The register's name rather than the node's own**, which is not a preference for the
+    /// shorter one: epmd names every node on the box and always answers, while a node's full
+    /// name is read from files that an unprivileged run cannot see. Keying on what is always
+    /// there keeps one key shape, and the name the node runs under is inside the entry where
+    /// it can be absent without leaving a node unkeyed.
+    nodes: BTreeMap<String, Node>,
 }
 
 impl Installation {
     pub fn new(
         port_mapper_running: bool,
         broker_processes: usize,
-        nodes: impl IntoIterator<Item = (NodeName, Node)>,
+        nodes: impl IntoIterator<Item = (String, Node)>,
     ) -> Self {
         Self {
             port_mapper_running,
@@ -48,7 +54,7 @@ impl Installation {
         self.broker_processes
     }
 
-    pub fn nodes(&self) -> &BTreeMap<NodeName, Node> {
+    pub fn nodes(&self) -> &BTreeMap<String, Node> {
         &self.nodes
     }
 }

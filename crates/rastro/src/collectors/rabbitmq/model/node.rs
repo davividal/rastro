@@ -1,9 +1,11 @@
 //! One node: what the box knows of it, and what it said when asked.
 
+use std::collections::BTreeMap;
+
 use rastro_collector::Observation;
 
 use crate::collectors::rabbitmq::model::{Definitions, NodeStatus};
-use crate::collectors::rabbitmq::value_objects::BrokerEvidence;
+use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, NodeName};
 
 /// A node of the Erlang distribution on this box.
 ///
@@ -15,6 +17,16 @@ use crate::collectors::rabbitmq::value_objects::BrokerEvidence;
 /// process holding this node's distribution port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
+    /// The name the node runs under, read from the files it holds open.
+    ///
+    /// **Absent means rastro could not read it**, not that the node has none: a broker whose
+    /// descriptors are unreadable, or one holding none of Ra's directories open. A node that
+    /// cannot be named is also one that cannot be addressed, because `rabbitmqctl -n` takes
+    /// this and nothing else, and composing it from the box's hostname is what this facet
+    /// stopped doing: a node under long names calls itself `rabbit@broker.example.test` and
+    /// the composition would have said `rabbit@broker`.
+    pub node_name: Option<NodeName>,
+
     /// The port this node accepts distribution connections on.
     ///
     /// State rather than noise: it is fixed by configuration, `25672` by default, and a
@@ -35,6 +47,14 @@ pub struct Node {
     /// fails the facet instead, because rastro could see it and could not read it.
     pub status: Option<NodeStatus>,
 
+    /// Which feature flags the node has enabled, where it was asked.
+    ///
+    /// Not volatile and not configuration: enabling one is a deliberate, **irreversible** act
+    /// that decides which versions this node can be upgraded to and which nodes it can be
+    /// clustered with. A flag appearing as enabled between two fingerprints is one of the
+    /// larger changes this facet can report.
+    pub feature_flags: Option<BTreeMap<String, String>>,
+
     /// The durable half: vhosts, users, permissions, policies, parameters and topology.
     pub definitions: Option<Definitions>,
 }
@@ -42,6 +62,13 @@ pub struct Node {
 impl From<&Node> for Observation {
     fn from(node: &Node) -> Self {
         Observation::object([
+            (
+                "node_name",
+                match &node.node_name {
+                    Some(name) => Observation::text(name.as_str()),
+                    None => Observation::null(),
+                },
+            ),
             (
                 "distribution_port",
                 Observation::integer(i64::from(node.distribution_port)),
@@ -58,6 +85,17 @@ impl From<&Node> for Observation {
                 "status",
                 match &node.status {
                     Some(status) => Observation::from(status),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "feature_flags",
+                match &node.feature_flags {
+                    Some(flags) => {
+                        Observation::object(flags.iter().map(|(name, state)| {
+                            (name.as_str(), Observation::text(state.as_str()))
+                        }))
+                    }
                     None => Observation::null(),
                 },
             ),

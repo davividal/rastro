@@ -3,35 +3,32 @@
 use rastro::collectors::rabbitmq::{BrokerEvidence, NodeName, PasswordHashing};
 
 #[test]
-fn a_node_name_is_the_local_part_joined_to_the_host() {
+fn a_node_name_is_whatever_the_node_runs_under() {
     // Act
-    let name = NodeName::new("rabbit", "box").expect("both halves are there");
+    let short = NodeName::parse("rabbit@box").expect("a name");
+    let long = NodeName::parse("rabbit@broker.example.test").expect("a name");
 
-    // Assert: what `rabbitmqctl -n` takes, and the facet's key.
-    assert_eq!(name.as_str(), "rabbit@box");
+    // Assert: read, not composed. A node under long names calls itself the second of these,
+    // and an earlier version that built `local@hostname` would have said `rabbit@broker`.
+    assert_eq!(short.as_str(), "rabbit@box");
+    assert_eq!(long.as_str(), "rabbit@broker.example.test");
 }
 
 #[test]
-fn a_node_name_refuses_a_half_that_already_carries_the_separator() {
-    // Act & Assert: `a@b@c` cannot be split back into the halves that made it, and the
-    // halves are what a CLI tool is addressed with.
-    assert!(NodeName::new("rabbit@already", "box").is_err());
-    assert!(NodeName::new("rabbit", "box@already").is_err());
+fn a_node_name_refuses_what_no_node_answers_to() {
+    // Act & Assert: both halves, and exactly one separator.
+    assert!(NodeName::parse("rabbit").is_err());
+    assert!(NodeName::parse("@box").is_err());
+    assert!(NodeName::parse("rabbit@").is_err());
+    assert!(NodeName::parse("rabbit@box@extra").is_err());
 }
 
 #[test]
-fn a_node_name_refuses_an_empty_half() {
-    // Act & Assert: `@box` and `rabbit@` address nothing.
-    assert!(NodeName::new("", "box").is_err());
-    assert!(NodeName::new("rabbit", "").is_err());
-}
-
-#[test]
-fn node_names_order_by_the_key_they_render_as() {
+fn node_names_order_by_the_name_they_are() {
     // Arrange
     let mut names = [
-        NodeName::new("rabbit", "box").expect("legal"),
-        NodeName::new("aardvark", "box").expect("legal"),
+        NodeName::parse("rabbit@box").expect("legal"),
+        NodeName::parse("aardvark@box").expect("legal"),
     ];
 
     // Act

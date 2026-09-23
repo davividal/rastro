@@ -12,19 +12,19 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::{
-    Binding, Definitions, Exchange, Installation, Listener, Node, NodeStatus, Parameter,
+    Alarm, Binding, Definitions, Exchange, Installation, Listener, Node, NodeStatus, Parameter,
     Permission, Policy, Queue, TopicPermission, User, UserLimit, Vhost,
 };
 pub use source::{
-    BrokerClient, EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlStatus,
-    RegisteredNode, ResidentRuntime, document_in,
+    BrokerClient, EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlFeatureFlags,
+    RabbitmqctlStatus, RegisteredNode, ResidentRuntime, document_in,
 };
 pub use value_objects::{BrokerEvidence, DefinitionValue, NodeName, PasswordHashing};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
     ClaimQualifier, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
+    CollectorVersion, Concurrency, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 pub struct RabbitmqCollector {
@@ -43,8 +43,8 @@ pub struct RabbitmqCollector {
 }
 
 impl RabbitmqCollector {
-    pub fn new(hostname: Result<String, String>) -> Self {
-        Self::reading(BrokerClient::located(), NodeInventory::detect(hostname))
+    pub fn new() -> Self {
+        Self::reading(BrokerClient::located(), NodeInventory::detect())
     }
 
     /// The same collector over sources the caller chose.
@@ -61,6 +61,12 @@ impl RabbitmqCollector {
     }
 }
 
+impl Default for RabbitmqCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Collector for RabbitmqCollector {
     fn name(&self) -> &FacetName {
         &self.name
@@ -74,18 +80,43 @@ impl Collector for RabbitmqCollector {
         CollectorCategory::State
     }
 
-    /// `absent` without `rabbitmqctl`, `present` with it even where no node is running.
+    /// `present` where RabbitMQ is installed **or** running, `absent` only where neither.
     ///
-    /// The two are different facts and the document keeps them apart: a box with the CLI and
-    /// nothing up has had RabbitMQ installed and stopped, which is state, while a box without
-    /// it has no RabbitMQ at all. Neither is a failure, so neither is `Undetermined`: with
-    /// the CLI installed there is always something to read, because the process table and the
-    /// register are readable whatever the broker is doing.
+    /// **A running broker is not hidden by a missing client**, which an earlier version did:
+    /// presence was the client alone, so a box with a broker up and no `rabbitmqctl` on it
+    /// reported no RabbitMQ at all, and the inventory's own clientless path became
+    /// unreachable while a test went on passing over it. The register, the port mapper and
+    /// the broker processes are all readable without a client, and what they say is worth
+    /// the facet.
+    ///
+    /// Neither answer is `Undetermined`: installed-and-stopped and not-installed are
+    /// different facts about the host rather than two ways of failing to look, and the
+    /// reasons rastro genuinely cannot look surface from
+    /// [`Collector::collect`] as an `error` instead.
     fn presence(&self) -> Presence {
-        match self.client {
-            Some(_) => Presence::Present,
-            None => Presence::Absent,
+        let installed = self.client.is_some();
+        let running = self
+            .inventory
+            .as_ref()
+            .is_some_and(NodeInventory::brokers_resident);
+
+        match installed || running {
+            true => Presence::Present,
+            false => Presence::Absent,
         }
+    }
+
+    /// Alone, like the walk, and for a neighbouring reason.
+    ///
+    /// Every read of a node boots an Erlang VM that joins the broker's distribution cluster,
+    /// which binds a port for as long as the call lasts. Shared, that ephemeral listener and
+    /// its `beam.smp` race the `sockets` and `processes` collectors reading the same box, so
+    /// which of them a run records is decided by thread scheduling and two runs of an
+    /// unchanged host differ. The walk declares itself exclusive because it would notice
+    /// another collector's temp file; this one declares itself exclusive because it *is* the
+    /// thing another collector would notice.
+    fn concurrency(&self) -> Concurrency {
+        Concurrency::Exclusive
     }
 
     /// Each node's store, sealed.

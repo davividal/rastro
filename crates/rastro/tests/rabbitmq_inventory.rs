@@ -50,11 +50,8 @@ fn read_asks_nothing_where_the_port_mapper_is_not_resident() {
     // Arrange
     let scratch = scratch_tree("rabbitmq-inventory-silent", &["bin"]);
     let witness = scratch.join("ran");
-    let inventory = NodeInventory::using(
-        epmd_shim(&scratch.join("bin"), &witness),
-        Ok("host".to_owned()),
-    )
-    .in_proc(&proc_with(&scratch, &[("1", "/sbin/init\0")]));
+    let inventory = NodeInventory::using(epmd_shim(&scratch.join("bin"), &witness))
+        .in_proc(&proc_with(&scratch, &[("1", "/sbin/init\0")]));
 
     // Act
     let installation = inventory
@@ -75,11 +72,8 @@ fn read_asks_nothing_where_the_port_mapper_is_not_resident() {
 fn read_keys_a_node_by_the_name_a_cli_tool_would_be_given() {
     // Arrange
     let scratch = scratch_tree("rabbitmq-inventory-node", &["bin"]);
-    let inventory = NodeInventory::using(
-        epmd_shim(&scratch.join("bin"), &scratch.join("ran")),
-        Ok("measured-box".to_owned()),
-    )
-    .in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
+    let inventory = NodeInventory::using(epmd_shim(&scratch.join("bin"), &scratch.join("ran")))
+        .in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
 
     // Act
     let installation = inventory.read(None).expect("the shim answers like epmd");
@@ -98,14 +92,10 @@ fn read_keys_a_node_by_the_name_a_cli_tool_would_be_given() {
 fn read_records_the_distribution_port_and_the_brokers_it_counted() {
     // Arrange
     let scratch = scratch_tree("rabbitmq-inventory-render", &["bin"]);
-    let inventory = NodeInventory::using(
-        epmd_shim(&scratch.join("bin"), &scratch.join("ran")),
-        Ok("box".to_owned()),
-    )
-    .in_proc(&proc_with(
-        &scratch,
-        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
-    ));
+    let inventory =
+        NodeInventory::using(epmd_shim(&scratch.join("bin"), &scratch.join("ran"))).in_proc(
+            &proc_with(&scratch, &[("748", EPMD_ARGV), ("966", BROKER_ARGV)]),
+        );
 
     // Act
     let installation = inventory.read(None).expect("the shim answers like epmd");
@@ -132,8 +122,8 @@ fn read_reports_a_register_that_would_not_answer_as_a_failure() {
     // Arrange
     let scratch = scratch_tree("rabbitmq-inventory-refusal", &["bin"]);
     let refusing = shim::executable(&scratch.join("bin"), "epmd", "#!/bin/sh\nexit 1\n");
-    let inventory = NodeInventory::using(refusing, Ok("box".to_owned()))
-        .in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
+    let inventory =
+        NodeInventory::using(refusing).in_proc(&proc_with(&scratch, &[("748", EPMD_ARGV)]));
 
     // Act & Assert: epmd is resident and will not say what it holds, which rastro cannot
     // tell apart from a node it failed to find. Loud, per the absence-is-state rule.

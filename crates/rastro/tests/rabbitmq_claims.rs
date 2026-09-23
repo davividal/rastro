@@ -72,7 +72,7 @@ impl Box_ {
     }
 
     fn inventory(&self) -> NodeInventory {
-        NodeInventory::using(self.epmd(None), Ok("box".to_owned())).in_proc(&self.proc)
+        NodeInventory::using(self.epmd(None)).in_proc(&self.proc)
     }
 }
 
@@ -130,8 +130,7 @@ fn nothing_is_asked_where_the_port_mapper_is_not_resident() {
     // be read on.
     let host = box_with("rabbitmq-claims-silent", &[("966", BROKER_ARGV, &[WAL])]);
     let witness = host.root.join("asked");
-    let inventory =
-        NodeInventory::using(host.epmd(Some(&witness)), Ok("box".to_owned())).in_proc(&host.proc);
+    let inventory = NodeInventory::using(host.epmd(Some(&witness))).in_proc(&host.proc);
 
     // Act
     let resolved = inventory.store_directories();
@@ -179,18 +178,47 @@ fn a_box_with_no_rabbitmq_claims_nothing() {
 }
 
 #[test]
-fn a_box_that_cannot_say_what_it_is_called_claims_nothing() {
-    // Arrange: the run resolves the hostname once, and a node cannot be named without it.
+fn the_store_is_found_where_the_operator_moved_it() {
+    // Arrange: `RABBITMQ_MNESIA_DIR=/srv/rabbit-data`, measured on 3.12.1 and 4.0.5. The
+    // store root carries no node name at all; only the directory under it does.
+    let moved = "/srv/rabbit-data/quorum/rabbit@box/00000001.wal";
     let host = box_with(
-        "rabbitmq-claims-nameless",
-        &[("748", EPMD_ARGV, &[]), ("966", BROKER_ARGV, &[WAL])],
+        "rabbitmq-claims-moved",
+        &[("748", EPMD_ARGV, &[]), ("966", BROKER_ARGV, &[moved])],
     );
-    let inventory =
-        NodeInventory::using(host.epmd(None), Err("no hostname could be read".to_owned()))
-            .in_proc(&host.proc);
 
-    // Act & Assert: no claim rather than a tree sealed under a guessed key.
-    assert!(inventory.store_directories().is_empty());
+    // Act
+    let resolved = host.inventory().store_directories();
+
+    // Assert: the whole store, not the Raft subtree inside it. A rule that looked for a
+    // component named after the node sealed `/srv/rabbit-data/quorum/rabbit@box` and left the
+    // message store in the walk.
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].1, "/srv/rabbit-data");
+    assert_eq!(resolved[0].0.as_str(), "rabbit@box");
+}
+
+#[test]
+fn a_node_under_long_names_is_read_whole() {
+    // Arrange: a node started with `RABBITMQ_USE_LONGNAME`, which calls itself by its fully
+    // qualified name and writes that name into its own directories.
+    let long = "/var/lib/rabbitmq/mnesia/rabbit@broker.example.test/coordination/rabbit@broker.example.test/names.dets";
+    let host = box_with(
+        "rabbitmq-claims-longnames",
+        &[("748", EPMD_ARGV, &[]), ("966", BROKER_ARGV, &[long])],
+    );
+
+    // Act
+    let resolved = host.inventory().store_directories();
+
+    // Assert: the name is read rather than composed, so the long form arrives whole. Composing
+    // `local@hostname` would have produced `rabbit@broker` and addressed a node that does not
+    // exist.
+    assert_eq!(resolved[0].0.as_str(), "rabbit@broker.example.test");
+    assert_eq!(
+        resolved[0].1,
+        "/var/lib/rabbitmq/mnesia/rabbit@broker.example.test"
+    );
 }
 
 #[test]
@@ -201,7 +229,7 @@ fn a_register_that_will_not_answer_claims_nothing() {
         &[("748", EPMD_ARGV, &[]), ("966", BROKER_ARGV, &[WAL])],
     );
     let refusing = shim::executable(&host.root.join("bin"), "epmd", "#!/bin/sh\nexit 1\n");
-    let inventory = NodeInventory::using(refusing, Ok("box".to_owned())).in_proc(&host.proc);
+    let inventory = NodeInventory::using(refusing).in_proc(&host.proc);
 
     // Act & Assert: the claim phase reports nothing rather than failing the walk. An
     // unreadable register is a fact the facet reports as its own error when it collects.

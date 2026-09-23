@@ -5,7 +5,7 @@
 //! halves included, because half of what this parse has to get right is what it leaves out.
 
 use rastro::collectors::rabbitmq::{RabbitmqctlStatus, document_in};
-use rastro_collector::Observation;
+use rastro_collector::{Observation, Volatility};
 
 mod support;
 
@@ -411,4 +411,47 @@ fn a_reports_own_bracket_does_not_start_the_document() {
 
     // Act & Assert: whole lines, rather than hunting for the first bracket anywhere.
     assert!(document_in(&noisy).starts_with('{'));
+}
+
+/// A status from a node that has hit a limit, with the alarm exactly as it was measured by
+/// raising one: `rabbitmqctl set_vm_memory_high_watermark 0.0001`.
+const ALARMED: &str = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP 27",
+  "alarms":[{"node":"rabbit@box","type":"resource_limit","resource":"memory"}],
+  "listeners":[{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}]}"#;
+
+#[test]
+fn parse_records_an_alarm_the_node_has_raised() {
+    // Act
+    let status = RabbitmqctlStatus::parse(ALARMED).expect("well formed");
+
+    // Assert: while this is up the node blocks publishing connections, which is the state an
+    // operator opens a fingerprint to explain.
+    assert_eq!(status.alarms.len(), 1);
+    assert_eq!(status.alarms[0].alarm_type, "resource_limit");
+    assert_eq!(status.alarms[0].resource, "memory");
+}
+
+#[test]
+fn an_alarm_is_volatile_because_it_comes_and_goes_with_load() {
+    // Act
+    let rendered = Observation::from(&RabbitmqctlStatus::parse(ALARMED).expect("well formed"));
+
+    // Assert: measured by raising one and watching it clear. Recorded rather than dropped,
+    // because `--include-volatile` is for the operator standing in front of the box, and
+    // annotated so two runs of an unchanged host stay byte-identical.
+    assert_eq!(
+        field(&rendered, "alarms").volatility(),
+        Volatility::Volatile
+    );
+}
+
+#[test]
+fn the_nodes_own_name_is_dropped_from_an_alarm() {
+    // Act
+    let rendered = Observation::from(&RabbitmqctlStatus::parse(ALARMED).expect("well formed"));
+    let alarm = &items_of(&field(&rendered, "alarms"))[0];
+
+    // Assert: the report carries `node`, and it is the node this alarm already sits under.
+    // Repeating it would be the document arguing with its own keys.
+    assert_eq!(keys_of(alarm), ["resource", "type"]);
 }

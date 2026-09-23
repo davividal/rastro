@@ -1,5 +1,6 @@
 //! What rastro means by a RabbitMQ installation, as opposed to how epmd prints it.
 
+mod alarm;
 mod binding;
 mod definitions;
 mod exchange;
@@ -15,6 +16,7 @@ mod topic_permission;
 mod user;
 mod vhost;
 
+pub use alarm::Alarm;
 pub use binding::Binding;
 pub use definitions::Definitions;
 pub use exchange::Exchange;

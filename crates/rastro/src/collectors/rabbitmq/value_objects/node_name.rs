@@ -2,61 +2,51 @@
 
 use std::cmp::Ordering;
 
-use rastro_collector::{CollectionError, NonEmptyText};
+use rastro_collector::CollectionError;
 
 /// The separator Erlang puts between a node's local name and its host.
 const SEPARATOR: char = '@';
 
-/// A node's full name, which is the name a CLI tool has to be addressed with.
+/// A node's name, exactly as the node runs under it.
 ///
-/// **Composed from two sources, because neither knows both halves.** epmd prints the local
-/// part and nothing else; the host comes from the box. `rabbit@host` is what the node calls
-/// itself, what `rabbitmqctl -n` takes, and what this facet keys on, so it is held as the
-/// rendered form rather than as its parts.
+/// **Read from the box, never composed.** An earlier version built this from the register's
+/// local part and the box's hostname, which is a guess wearing a reading's clothes: a node
+/// started with long names calls itself `rabbit@broker.example.test` while that composition
+/// says `rabbit@broker`, so the facet would have keyed on a name nothing answers to and
+/// addressed `rabbitmqctl -n` with it. The broker writes its own name into the directories it
+/// keeps open, and that is where this comes from.
 ///
-/// **A host of the short form, which is what a default installation uses.** A node started
-/// under long names is `rabbit@host.example.com` and would be addressed with `--longnames`
-/// as well; rastro does not compose that yet, and the node's own account of its name is
-/// recorded beside this one so a disagreement is visible rather than silent.
+/// Held as the whole name, because that is what it is: what the node calls itself, what
+/// `-n` takes, and what this facet keys on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeName(String);
 
 impl NodeName {
-    pub fn new(local: impl Into<String>, host: impl Into<String>) -> Result<Self, CollectionError> {
-        let local = NonEmptyText::new(local, "node name")?;
-        let host = NonEmptyText::new(host, "node host")?;
+    /// A node's name as the box spells it.
+    ///
+    /// Both halves must be there, because `@box` and `rabbit@` address nothing, and exactly
+    /// one separator, because `a@b@c` is not a name any Erlang node answers to.
+    pub fn parse(name: impl Into<String>) -> Result<Self, CollectionError> {
+        let name = name.into();
+        let halves: Vec<&str> = name.split(SEPARATOR).collect();
 
-        // Refused rather than rendered, because a second separator makes the composed name
-        // ambiguous: `a@b@c` cannot be split back into the halves that made it, and the
-        // halves are what a CLI tool is addressed with.
-        for half in [local.as_str(), host.as_str()] {
-            if half.contains(SEPARATOR) {
-                return Err(CollectionError::new(format!(
-                    "a node name is composed around {SEPARATOR:?}, so neither half may \
-                     contain one: {half:?}"
-                )));
-            }
+        let named = halves.len() == 2 && halves.iter().all(|half| !half.is_empty());
+        if !named {
+            return Err(CollectionError::new(format!(
+                "a node is named local{SEPARATOR}host, and {name:?} is not"
+            )));
         }
 
-        Ok(Self(format!(
-            "{}{SEPARATOR}{}",
-            local.as_str(),
-            host.as_str()
-        )))
+        Ok(Self(name))
     }
 
-    /// The `local@host` form, which is also the facet key.
+    /// The whole name, which is also the facet key.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// Ordered by the rendered name, so this type's order and the document's are one order.
-///
-/// The same reasoning [`ClusterId`](crate::collectors::postgresql::value_objects::ClusterId)
-/// records: the facet renders as an object whose key order the format decides
-/// lexicographically, so any cleverer ordering here would govern an internal map and nothing
-/// a reader sees.
+/// Ordered by the name, so this type's order and the document's are one order.
 impl Ord for NodeName {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.cmp(&other.0)

@@ -24,6 +24,11 @@ const EPMD_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/epmd\0-daemon\0";
 const BROKER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0rabbit\0boot\0";
 const OTHER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0ejabberd\0boot\0";
 
+/// A descriptor every running broker holds: Ra's write-ahead log, under the store, in a
+/// directory named for the node. It is where the node's own name is read from, so a fixture
+/// without one describes a broker rastro cannot name and therefore will not address.
+const WAL: &str = "/var/lib/rabbitmq/mnesia/rabbit@box/quorum/rabbit@box/00000001.wal";
+
 /// `/proc/net/tcp` with one socket offered on 25672, whose inode the fixture hands to a
 /// process below.
 /// The same table with no rows, which is a readable answer that nothing is being offered.
@@ -38,6 +43,8 @@ const STATUS: &str = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP
   "os":"Linux","data_directory":"/var/lib/rabbitmq/mnesia/rabbit@box","config_files":[],
   "log_files":["/var/log/rabbitmq/rabbit@box.log"],"active_plugins":[],
   "listeners":[{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}]}"#;
+
+const FEATURE_FLAGS: &str = r#"[{"name":"khepri_db","state":"disabled"}]"#;
 
 const DEFINITIONS: &str = r#"{"rabbitmq_version":"4.0.5","vhosts":[{"name":"/"}],
   "users":[{"name":"guest","tags":["administrator"],
@@ -67,8 +74,16 @@ fn box_with(name: &str, processes: &[(&str, &str)], holder: Option<&str>) -> Box
             .expect("a writable scratch symlink");
     }
 
+    // Every beam that booted RabbitMQ holds its store open, which is what names it.
+    for (pid, argv) in processes {
+        if argv.contains("rabbit") {
+            symlink(WAL, proc.join(pid).join("fd/15")).expect("a writable scratch symlink");
+        }
+    }
+
     write(&root, "fixtures/status.json", STATUS);
     write(&root, "fixtures/definitions.json", DEFINITIONS);
+    write(&root, "fixtures/feature_flags.json", FEATURE_FLAGS);
 
     Box_ { root, proc }
 }
@@ -89,6 +104,7 @@ impl Box_ {
              \x20 case $argument in\n\
              \x20   status) cat {root}/fixtures/status.json; exit 0 ;;\n\
              \x20   export_definitions) cat {root}/fixtures/definitions.json; exit 0 ;;\n\
+             \x20   list_feature_flags) cat {root}/fixtures/feature_flags.json; exit 0 ;;\n\
              \x20 esac\ndone\nexit 64\n",
             witness = self.witness().display(),
             root = self.root.display(),
@@ -115,7 +131,7 @@ impl Box_ {
     }
 
     fn inventory(&self) -> NodeInventory {
-        NodeInventory::using(self.epmd(), Ok("box".to_owned())).in_proc(&self.proc)
+        NodeInventory::using(self.epmd()).in_proc(&self.proc)
     }
 
     fn asked(&self) -> bool {
@@ -295,7 +311,7 @@ fn nothing_is_asked_where_no_client_is_installed() {
 }
 
 #[test]
-fn the_node_name_a_broker_reports_is_recorded_beside_the_one_rastro_composed() {
+fn the_name_rastro_read_is_the_one_the_node_answers_to() {
     // Arrange
     let host = box_with(
         "rabbitmq-asking-name",
@@ -309,10 +325,16 @@ fn the_node_name_a_broker_reports_is_recorded_beside_the_one_rastro_composed() {
         .read(Some(&host.client()))
         .expect("the shims answer");
 
-    // Assert: composed from the register and the hostname, reported by the node itself, and
-    // kept apart so a node under long names shows as a disagreement rather than as a guess.
-    let (name, node) = installation.nodes().iter().next().expect("one node");
-    assert_eq!(name.as_str(), "rabbit@box");
+    // Assert: the key is what the register calls the node, the name inside it is what rastro
+    // read from the node's own files, and the status carries what the node says about itself.
+    // All three agree here because nothing is composed: the middle one comes from the very
+    // directory the broker writes into.
+    let (registered, node) = installation.nodes().iter().next().expect("one node");
+    assert_eq!(registered, "rabbit");
+    assert_eq!(
+        node.node_name.as_ref().expect("a name").as_str(),
+        "rabbit@box"
+    );
     assert_eq!(
         node.status
             .as_ref()

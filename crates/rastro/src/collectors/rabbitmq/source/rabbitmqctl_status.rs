@@ -16,7 +16,7 @@ use rastro_collector::CollectionError;
 
 use super::json_document::document_in;
 
-use crate::collectors::rabbitmq::model::{Listener, NodeStatus};
+use crate::collectors::rabbitmq::model::{Alarm, Listener, NodeStatus};
 
 /// The subset of `status` rastro reads, spelled as RabbitMQ spells it.
 ///
@@ -43,12 +43,23 @@ struct StatusDocument {
     #[serde(default)]
     listeners: Vec<ListenerDocument>,
     #[serde(default)]
+    alarms: Vec<AlarmDocument>,
+    #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
     is_under_maintenance: bool,
     net_ticktime: Option<i64>,
     vm_memory_high_watermark_limit: Option<i64>,
     disk_free_limit: Option<i64>,
+}
+
+/// An alarm as the node reports it, measured by raising one:
+/// `{"node": "rabbit@box", "type": "resource_limit", "resource": "memory"}`.
+#[derive(Debug, Deserialize)]
+struct AlarmDocument {
+    #[serde(rename = "type")]
+    alarm_type: Option<String>,
+    resource: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,6 +112,14 @@ impl RabbitmqctlStatus {
             enabled_plugins_file: stated(document.enabled_plugin_file),
             active_plugins: document.active_plugins,
             listeners: document.listeners.iter().map(listener_of).collect(),
+            alarms: document
+                .alarms
+                .iter()
+                .map(|alarm| Alarm {
+                    alarm_type: alarm.alarm_type.clone().unwrap_or_default(),
+                    resource: alarm.resource.clone().unwrap_or_default(),
+                })
+                .collect(),
             tags: document.tags,
             under_maintenance: document.is_under_maintenance,
             net_tick_seconds: document.net_ticktime,

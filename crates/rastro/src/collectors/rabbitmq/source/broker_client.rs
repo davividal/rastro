@@ -17,7 +17,11 @@ use rastro_collector::CollectionError;
 
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::rabbitmq::model::{Definitions, NodeStatus};
-use crate::collectors::rabbitmq::source::{RabbitmqctlDefinitions, RabbitmqctlStatus};
+use std::collections::BTreeMap;
+
+use crate::collectors::rabbitmq::source::{
+    RabbitmqctlDefinitions, RabbitmqctlFeatureFlags, RabbitmqctlStatus,
+};
 use crate::collectors::rabbitmq::value_objects::NodeName;
 
 /// The client whose presence says RabbitMQ was installed here.
@@ -30,6 +34,9 @@ const JSON: &str = "json";
 
 /// The read that asks a node what it is running with.
 const STATUS: &str = "status";
+
+/// The read that asks which feature flags a node has enabled.
+const FEATURE_FLAGS: &str = "list_feature_flags";
 
 /// The read that asks a node for its durable definitions.
 ///
@@ -66,6 +73,21 @@ impl BrokerClient {
             .run(&[NODE_FLAG, node.as_str(), STATUS, FORMATTER, JSON])?;
 
         RabbitmqctlStatus::parse(&answer)
+    }
+
+    /// Which feature flags the node has enabled.
+    ///
+    /// A third invocation, and worth it: enabling a flag is irreversible and decides what the
+    /// node can be upgraded to and clustered with.
+    pub fn feature_flags(
+        &self,
+        node: &NodeName,
+    ) -> Result<BTreeMap<String, String>, CollectionError> {
+        let answer = self
+            .tool
+            .run(&[NODE_FLAG, node.as_str(), FEATURE_FLAGS, FORMATTER, JSON])?;
+
+        RabbitmqctlFeatureFlags::parse(&answer)
     }
 
     /// The durable half of the node: its tenancy, accounts and topology.

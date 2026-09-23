@@ -147,10 +147,17 @@ one holding the distribution port epmd named for it. Addressing another
 application's node would make it log an authentication failure, which is a write
 to a box rastro was asked to read.
 
-Each node's message store is sealed, resolved from a descriptor the broker holds
-open rather than from the conventional path or from a second `status` read: claims
-are gathered before the walk and sequentially, so a read there is paid on the
-critical path of every run.
+A node's name is **read, never composed**: the broker writes it into the Ra
+directories it holds open, so a node under long names is keyed and addressed by the
+name it actually runs under. The same directories give the store, which is sealed:
+everything before Ra's `coordination` or `quorum` bucket is the data directory,
+whatever the operator moved it to. Claims are gathered before the walk and
+sequentially, so nothing there asks the broker anything.
+
+The facet runs **exclusive**, like the walk and for the neighbouring reason: each
+read boots an Erlang VM that binds a distribution port, so sharing the pool would
+let `sockets` and `processes` catch rastro's own transient node in one run and not
+the next.
 
 Each way of *not* knowing is kept apart from the others rather than folded into a
 denial: a port whose holder cannot be read, and a socket table that cannot be read

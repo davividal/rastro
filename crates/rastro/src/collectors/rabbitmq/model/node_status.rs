@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::rabbitmq::model::Listener;
+use crate::collectors::rabbitmq::model::{Alarm, Listener};
 
 /// A node's own account of what it is running and which files it is running from.
 ///
@@ -72,6 +72,13 @@ pub struct NodeStatus {
 
     pub listeners: Vec<Listener>,
 
+    /// The resource limits the node has hit, if any.
+    ///
+    /// Volatile whole: an alarm comes and goes with load, so it is kept out of the diffable
+    /// view and reaches `--include-volatile` instead. Recorded all the same, because a node
+    /// that is blocking publishers is the thing an operator opens a fingerprint to find.
+    pub alarms: Vec<Alarm>,
+
     /// The node's own tags, which are configuration and not observation.
     pub tags: Vec<String>,
 
@@ -131,6 +138,10 @@ impl From<&NodeStatus> for Observation {
             (
                 "listeners",
                 Observation::list(status.listeners.iter().map(Observation::from)),
+            ),
+            (
+                "alarms",
+                Observation::list(status.alarms.iter().map(Observation::from)).volatile(),
             ),
             ("tags", texts(&status.tags)),
             (

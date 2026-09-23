@@ -5068,3 +5068,110 @@ document differs in two ways the parse now has a fixture for: 3.12 carries
 `release_series_support_status`, which 4.0 does not, and it has no `tags` key at all. Both
 were already handled, by ignoring unknown fields and defaulting absent ones, but *handled by
 construction* and *shown to work* are different claims and only one of them is worth making.
+
+## A node's name is read from the box, never composed
+
+The facet keyed itself on `local@host`, built from the register's local part and the box's
+hostname. That is a guess wearing a reading's clothes, and it has a case where it is simply
+wrong: a node started with `RABBITMQ_USE_LONGNAME` calls itself `rabbit@broker.example.test`
+while the composition says `rabbit@broker`. rastro would have keyed the facet on a name
+nothing answers to and addressed `rabbitmqctl -n` with it.
+
+**The broker writes its own name into the directories it holds open**, measured on RabbitMQ
+3.12.1 and 4.0.5, with the default store, with a relocated one, and under long names:
+
+```text
+<store>/coordination/<node>/names.dets
+<store>/quorum/<node>/00000001.wal
+```
+
+`coordination` and `quorum` are Ra's system directories. RabbitMQ puts them directly under the
+data directory and each holds one subdirectory named for the node, so the component after the
+bucket is the node's own name, whatever it happens to be.
+
+**The facet keys on what the register calls the node**, not on that name, and the two are
+different on purpose. epmd names every node on the box and always answers; the node's own name
+is read from files an unprivileged run cannot see. Keying on the half that is always there
+keeps one key shape, and `node_name` sits inside the entry where it is allowed to be absent
+without leaving a node unkeyed.
+
+**A node rastro cannot name is a node rastro does not address.** `-n` takes the name the node
+runs under and nothing else, so an unreadable name means the reads are skipped and the entry
+says so, rather than a guess being sent to a broker.
+
+## The store is found by Ra's directories, not by the node's name
+
+Superseded rule: [the store was taken as the prefix up to the first component named for the
+node](#the-store-is-sealed-from-a-descriptor-the-broker-holds-open-not-from-a-second-read).
+That holds only for the default layout. With `RABBITMQ_MNESIA_DIR=/srv/rabbit-data` the store
+root carries no node name at all, while `/srv/rabbit-data/quorum/rabbit@host/` still does, so
+the old rule sealed the Raft subtree and left the message store in the walk — the exact
+failure the seal exists to prevent, and the one the review caught.
+
+The shape above answers this too: **everything before the bucket is the store root**, whatever
+it is called. Measured on both versions, both layouts. No bucket open means no claim, which is
+the postgres rule and the safe direction.
+
+## The facet runs alone, because it is what the other collectors would notice
+
+Every read of a node boots an Erlang VM that joins the broker's distribution cluster and binds
+a port for as long as the call lasts. On the shared pool of four, that ephemeral listener and
+its `beam.smp` race the `sockets` and `processes` collectors reading the same box, so which of
+them a run records is decided by thread scheduling and two runs of an unchanged host differ.
+
+So the collector declares itself
+[`Exclusive`](#collectors-run-concurrently-and-the-walk-runs-alone). The walk is exclusive
+because it would notice another collector's temp file; this one is exclusive because it *is*
+the thing another collector would notice. The cost is that its second or so no longer overlaps
+the pool.
+
+**The live-broker workflow could not have caught this**, and that is worth recording: it
+compared only the `rabbitmq` facet between two runs, so a difference rastro caused in
+`sockets` was outside what it looked at.
+
+## A running broker is not hidden by a missing client
+
+`presence` was `rabbitmqctl` alone, so a box with a broker up and no client installed reported
+no RabbitMQ at all. The inventory's clientless path was written, tested and unreachable: the
+framework never calls `collect` on an absent facet, and the test exercised the inventory
+directly, so it passed over a path production could not take. **A test that green-lights dead
+code is worse than no test**, because it reads as coverage.
+
+Presence is now installed **or** running: the client's presence, or a process on the box that
+booted RabbitMQ. Both are readings of the host rather than of rastro's own equipment, which is
+what presence is supposed to be about.
+
+## Alarms are recorded and annotated, feature flags are recorded and are not
+
+Two reads the first version skipped, both asked for and both worth their invocations.
+
+**An alarm is volatile, measured by raising one.** `rabbitmqctl set_vm_memory_high_watermark
+0.0001` puts `{"type": "resource_limit", "resource": "memory"}` into `status`, and it clears
+when the pressure does. So it is annotated `volatile`: out of the diffable view, into
+`--include-volatile`. It is recorded rather than dropped because while an alarm is up the node
+**blocks publishing connections**, and a box that looks healthy and refuses writes is exactly
+what an operator opens a fingerprint to explain. The alarm's own `node` field is dropped,
+since it repeats the entry's key.
+
+**A feature flag is the opposite of volatile.** Enabling one is deliberate and
+**irreversible**: a node that has enabled `khepri_db` cannot go back, and cannot cluster with
+one that has not. The set of enabled flags therefore decides what the box can be upgraded to
+and joined with, and it appears in no package version and no configuration file. It costs a
+third invocation per node, which is the clearest case in this facet of a read earning its
+300 ms.
+
+## Owed: a parameter allowlist the operator owns, not one rastro ships
+
+Left deliberately: every runtime parameter's value is withheld, including an operator policy's
+definition, which holds no secret. The obvious fix is an allowlist of components whose values
+are structural, and the obvious objection is the one
+[`.gitleaks.toml`](../.gitleaks.toml) already makes about allowlists: it is a standing
+exemption for a shape, and someone can put a secret inside an `operator_policy` whenever they
+like.
+
+So the shape it should take, when it is built, is **an allowlist in the operator's own config
+file rather than a list rastro ships**: the operator knows their box, which is the same
+argument that lets a config rule beat a collector's claim. It carries one requirement that is
+not optional, and it is why this is not a one-line change: wherever a value appears because
+sensitivity was overridden, the document has to say so, loudly and at the value, so no reader
+of a fingerprint can mistake a disclosed secret for one that was never sensitive.
