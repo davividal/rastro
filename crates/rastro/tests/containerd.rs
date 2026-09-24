@@ -802,16 +802,17 @@ fn a_tree_inside_one_already_sealed_is_not_claimed_again() {
     // keeps its store at `/var/lib/docker/containerd/daemon`, inside docker's own root, and
     // the walk prunes at the parent — so the deeper rule could never be consulted and would
     // sit in the effective table matching nothing. Where those directories are is reported
-    // as state by this facet instead, so folding the rule loses nothing.
+    // as state by this facet instead, so folding the rule loses nothing. The inner engine is
+    // listed first, because nothing promises engines arrive shallowest first.
     let collector = ContainersCollector::reading(vec![
-        EngineSource::Containerd(containerd_holding(
-            "outer",
-            Some("/var/lib/docker/containerd"),
-            None,
-        )),
         EngineSource::Containerd(containerd_holding(
             "inner",
             Some("/var/lib/docker/containerd/daemon"),
+            None,
+        )),
+        EngineSource::Containerd(containerd_holding(
+            "outer",
+            Some("/var/lib/docker/containerd"),
             None,
         )),
     ]);
