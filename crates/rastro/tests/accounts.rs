@@ -407,6 +407,37 @@ fn read_leaves_the_password_unknown_when_the_host_keeps_no_shadow_database() {
 }
 
 #[test]
+fn read_fails_when_the_shadow_database_is_there_but_unreadable() {
+    // Arrange: what every unprivileged run meets, since `/etc/shadow` is root-only. It is the
+    // opposite answer to a missing file, and reading it as one would drop every password state
+    // from a document that still looks complete.
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tree_for(PASSWD, GROUP, Some(SHADOW));
+    let shadow = root.join("shadow");
+    fs::set_permissions(&shadow, fs::Permissions::from_mode(0o000))
+        .expect("a scratch file this user owns");
+
+    if fs::read(&shadow).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and reads it regardless of the mode bits.
+        eprintln!("skipped: this user reads a file without the read bit");
+        return;
+    }
+
+    // Act
+    let result = files_in(&root).read();
+
+    // Assert
+    let failure = result.expect_err("an unreadable shadow database must fail the read");
+    assert!(
+        failure
+            .to_string()
+            .starts_with(&format!("could not read {}", shadow.display())),
+        "the message must name the shadow file, got: {failure}"
+    );
+}
+
+#[test]
 fn read_refuses_a_user_the_shadow_database_does_not_mention() {
     // Arrange: `pwck` reports the same fault.
     let root = tree_for(PASSWD, GROUP, Some("root:*:20583:0:99999:7:::\n"));
