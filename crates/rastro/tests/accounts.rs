@@ -446,10 +446,11 @@ fn read_refuses_a_user_the_shadow_database_does_not_mention() {
     let result = files_in(&root).read();
 
     // Assert: recording the password as absent would turn an inconsistency into a
-    // claim that the account is wide open.
+    // claim that the account is wide open. `sysdaemon` is the first passwd entry the
+    // shadow file lacks, and the read stops there.
     let failure = result.expect_err("a user with no password record must not be guessed at");
     assert!(
-        failure.to_string().contains("operator") || failure.to_string().contains("sysdaemon"),
+        failure.to_string().starts_with("\"sysdaemon\" is in "),
         "the message must name the account, got: {failure}"
     );
 }
