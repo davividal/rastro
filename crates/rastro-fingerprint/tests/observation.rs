@@ -84,6 +84,21 @@ fn incomplete_annotates_the_observation_without_changing_its_content() {
 }
 
 #[test]
+fn incomplete_when_marks_only_what_failed() {
+    // Arrange: the same shape either way, as a consumer expects, with the mark on the one that
+    // could not be read.
+    let entry = || Observation::object([("error", Observation::null())]);
+
+    // Act
+    let read = entry().incomplete_when(false);
+    let refused = entry().incomplete_when(true);
+
+    // Assert
+    assert_eq!(read.completeness(), Completeness::Complete);
+    assert_eq!(refused.completeness(), Completeness::Incomplete);
+}
+
+#[test]
 fn incomplete_items_counts_every_marked_node_however_deep() {
     // Arrange: two refused paths under one object and a vanished container in a list beside
     // them. The mark counts once per item, not once per value under it.

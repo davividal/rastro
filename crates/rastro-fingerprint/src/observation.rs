@@ -94,6 +94,14 @@ impl Observation {
         self
     }
 
+    /// The same, where whether the item failed is only known at render time.
+    pub fn incomplete_when(self, failed: bool) -> Self {
+        match failed {
+            true => self.incomplete(),
+            false => self,
+        }
+    }
+
     /// This observation as `presentation` shows it, borrowed.
     ///
     /// Which values belong in which view, and which stand in as digests, are
