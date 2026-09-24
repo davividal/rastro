@@ -1,0 +1,119 @@
+//! The `rabbitmqctl` interface: the two reads a node is asked for.
+//!
+//! **Addressed at a node by name, always.** Without `-n` the tool talks to whatever
+//! `RABBITMQ_NODENAME` or the default says, which on a box running two nodes is a coin toss
+//! about which one a facet describes. The name comes from the register, so what is asked and
+//! what is reported cannot disagree.
+//!
+//! **Run as rastro's own account.** Measured on Debian 13: root answers while holding no
+//! cookie of its own, and the broker's own user answers too. Where rastro is neither, the
+//! read fails and the facet says so, naming the requirement, because the tool's own
+//! diagnosis for that case is a usage dump that would tell an operator nothing. Dropping to
+//! the broker's account through [`ToolAsUser`](crate::collectors::canonical_tool::ToolAsUser)
+//! is the documented fallback and is not built: it needs the account behind a process id,
+//! which is a passwd lookup this facet has no business owning yet.
+
+use rastro_collector::CollectionError;
+
+use crate::collectors::canonical_tool::CanonicalTool;
+use crate::collectors::rabbitmq::model::{Definitions, NodeStatus};
+use std::collections::BTreeMap;
+
+use crate::collectors::rabbitmq::source::{
+    RabbitmqctlDefinitions, RabbitmqctlFeatureFlags, RabbitmqctlStatus,
+};
+use crate::collectors::rabbitmq::value_objects::NodeName;
+
+/// The client whose presence says RabbitMQ was installed here.
+const PROGRAM: &str = "rabbitmqctl";
+
+/// The flag that names the node, and the formatter that makes an answer parseable.
+const NODE_FLAG: &str = "-n";
+
+/// The flag a node running under long names has to be addressed with.
+///
+/// Measured: without it such a node answers `invalid node name` and exits 65, and *with* it a
+/// short-name node hangs until the bound kills it. Conditional, therefore, never constant.
+const LONG_NAMES: &str = "--longnames";
+const FORMATTER: &str = "--formatter";
+const JSON: &str = "json";
+
+/// The read that asks a node what it is running with.
+const STATUS: &str = "status";
+
+/// The read that asks which feature flags a node has enabled.
+const FEATURE_FLAGS: &str = "list_feature_flags";
+
+/// The read that asks a node for its durable definitions.
+///
+/// `-` is the whole difference between a read and a write: given a path instead, this command
+/// creates the file.
+const EXPORT: &str = "export_definitions";
+const STDOUT: &str = "-";
+
+/// A located `rabbitmqctl`, ready to be addressed at a node.
+pub struct BrokerClient {
+    tool: CanonicalTool,
+}
+
+impl BrokerClient {
+    /// The client on this box, where one is installed.
+    pub fn located() -> Option<Self> {
+        CanonicalTool::located(PROGRAM).map(|tool| Self { tool })
+    }
+
+    /// The same over a tool the caller located, which is what makes the reads testable.
+    pub fn using(tool: CanonicalTool) -> Self {
+        Self { tool }
+    }
+
+    /// The tool itself, for a caller that needs to say which binary answered.
+    pub fn tool(&self) -> &CanonicalTool {
+        &self.tool
+    }
+
+    /// What the node says it is running with.
+    pub fn status(&self, node: &NodeName) -> Result<NodeStatus, CollectionError> {
+        let answer = self.ask(node, &[STATUS, FORMATTER, JSON])?;
+
+        RabbitmqctlStatus::parse(&answer)
+    }
+
+    /// One read of one node, addressed the way that node has to be addressed.
+    ///
+    /// Every read goes through here so that the `--longnames` decision is made once. A node
+    /// addressed the wrong way does not fail politely: the short-name case hangs.
+    fn ask(&self, node: &NodeName, arguments: &[&str]) -> Result<String, CollectionError> {
+        let mut addressed = Vec::with_capacity(arguments.len() + 3);
+
+        if node.uses_long_names() {
+            addressed.push(LONG_NAMES);
+        }
+
+        addressed.push(NODE_FLAG);
+        addressed.push(node.as_str());
+        addressed.extend_from_slice(arguments);
+
+        self.tool.run(&addressed)
+    }
+
+    /// Which feature flags the node has enabled.
+    ///
+    /// A third invocation, and worth it: enabling a flag is irreversible and decides what the
+    /// node can be upgraded to and clustered with.
+    pub fn feature_flags(
+        &self,
+        node: &NodeName,
+    ) -> Result<BTreeMap<String, String>, CollectionError> {
+        let answer = self.ask(node, &[FEATURE_FLAGS, FORMATTER, JSON])?;
+
+        RabbitmqctlFeatureFlags::parse(&answer)
+    }
+
+    /// The durable half of the node: its tenancy, accounts and topology.
+    pub fn definitions(&self, node: &NodeName) -> Result<Definitions, CollectionError> {
+        let answer = self.ask(node, &[EXPORT, STDOUT])?;
+
+        RabbitmqctlDefinitions::parse(&answer)
+    }
+}

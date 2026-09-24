@@ -1,15 +1,18 @@
 //! The `/proc` interface to what the host is listening on.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rastro_collector::CollectionError;
 
 use super::inet_table::InetTable;
-use super::proc_fd::SocketHolders;
 use super::socket_row::SocketRow;
 use super::{proc_net_inet, proc_net_unix};
-use crate::collectors::sockets::model::{ListeningSocket, SocketTable};
+use crate::collectors::proc_sockets::SocketHolders;
+use crate::collectors::sockets::model::{
+    ListeningSocket, SocketHolder, SocketProcess, SocketTable,
+};
 
 /// Where the kernel publishes its network tables.
 const PROC_NET: &str = "/proc/net";
@@ -108,10 +111,31 @@ impl ProcNet {
                 kind: row.kind,
                 state: row.state,
                 address: row.address,
-                holders: holders.of(row.inode),
+                holders: held_by(&holders, row.inode),
             })
             .collect()
     }
+}
+
+/// The holders of one socket, as this facet renders them.
+///
+/// The shared reader answers who holds a socket. What is volatile about a holder, and how it
+/// is rendered, is this facet's own decision and stays here.
+fn held_by(holders: &SocketHolders, inode: u64) -> BTreeSet<SocketHolder> {
+    holders
+        .of(inode)
+        .into_iter()
+        .map(|(name, processes)| SocketHolder {
+            name,
+            processes: processes
+                .into_iter()
+                .map(|held| SocketProcess {
+                    process_id: held.process_id,
+                    file_descriptor: held.file_descriptor,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn read(path: &Path) -> Result<String, CollectionError> {

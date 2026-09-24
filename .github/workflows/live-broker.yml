@@ -1,0 +1,154 @@
+name: live broker
+
+# rastro's account of a box's RabbitMQ against the broker's own. One tenant of the
+# `extended-verification` tier, which every deep workflow enters through that one label.
+# When to apply it: CONTRIBUTING.md.
+#
+# Why it runs in a container rather than on the runner, and both halves are measured.
+#
+# **The broker has to be one rastro supports.** `ubuntu-latest` carries RabbitMQ 3.12.1, whose
+# support ended in June 2025; this facet declares a floor of 3.13, so testing against 3.12
+# would be proving the wrong thing. Debian trixie, which `rust:latest` is built on, carries
+# 4.0.5.
+#
+# **The capabilities have to be asked for.** Attributing a registered node to the process
+# holding its distribution port means reading that process's descriptors, and a container's
+# default capability set refuses that even to root (`CapEff: 800405fb`), so the confirmed case
+# would be unreachable and a live broker would come back undetermined. Hence the two
+# `--cap-add`s, which a plain `scripts/container-suite.sh` run deliberately does not have.
+#
+# What this catches that the fixture tests cannot: a fixture captured wrong. Every other test
+# of the `rabbitmq` facet asserts what rastro does with output somebody captured once, which
+# pins the code against the author's own reading of it. This one asks the broker.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    # Nightly, and deliberately not at the same minute as the other deep workflows, so a
+    # RabbitMQ release changing an answer underneath rastro is found by a run naming the day
+    # it broke rather than by the next unrelated pull request.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  conformance:
+    name: rabbitmq against a live broker
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'extended-verification')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      # Pinned to the toolchain `mise.toml` pins, on the Debian that carries a supported
+      # broker: trixie has RabbitMQ 4.0.5, and bookworm has 3.10, which is below the floor
+      # this facet declares. `latest` would drift across both at once.
+      image: rust:1.98.1-trixie
+      # Root in a container cannot read another account's `/proc/<pid>/fd` without these, and
+      # that read is how a node is attributed to its broker.
+      options: --cap-add=SYS_PTRACE --cap-add=DAC_READ_SEARCH
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install the broker
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            rabbitmq-server procps python3
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # **The broker's whole life is one step, and that is not tidiness.** There is no systemd
+      # in a container, so it is started by hand; a step is its own process group, and a
+      # broker started in one step is not guaranteed to be there in the next. The first
+      # version of this job started it separately and the next step found `node 'rabbit' not
+      # running at all` — which a local replay could not reproduce, because a replay runs
+      # every step in one shell and so never crosses the boundary that breaks it.
+      #
+      # Everything after the start therefore lives here: seed the broker, ask it, and compare
+      # two runs. A start that fails prints what the broker said rather than only that it did
+      # not answer.
+      - name: Ask a live broker whether rastro read it right
+        run: |
+          su -s /bin/sh rabbitmq -c 'HOME=/var/lib/rabbitmq rabbitmq-server > /tmp/broker.log 2>&1 &'
+
+          # **Polled, not awaited once.** `await_startup` waits for a *running* node to finish
+          # booting; it fails immediately when epmd has no registration yet, which is where a
+          # cold runner is a second after the server was asked to start. The first version of
+          # this called it once and failed in under a second, and no local run reproduced it,
+          # because a warm machine registers the node before the next command runs.
+          waited=0
+          until rabbitmqctl await_startup > /dev/null 2>&1; do
+              waited=$((waited + 2))
+              if [ "$waited" -ge 90 ]; then
+                  echo "--- the broker never came up. It wrote:"
+                  cat /tmp/broker.log || true
+                  echo '--- and its own log:'
+                  tail -50 /var/log/rabbitmq/*.log 2>/dev/null || true
+                  exit 1
+              fi
+              sleep 2
+          done
+          echo "the node answered after about ${waited}s"
+          rabbitmqctl version
+          rabbitmq-diagnostics erlang_version
+          epmd -names
+
+          # One of each thing the definitions half reports: a vhost, a user with a password
+          # (hence a real verifier to withhold), permissions, a policy, a durable quorum
+          # queue, an exchange and a binding.
+          cat > /tmp/seed.json <<'JSON'
+          {"vhosts":[{"name":"conformance"}],
+           "users":[{"name":"conformance-user","password":"hunter2","tags":["monitoring"]}],
+           "permissions":[{"user":"conformance-user","vhost":"conformance","configure":"^c.*","write":".*","read":".*"}],
+           "topic_permissions":[{"user":"conformance-user","vhost":"conformance","exchange":"amq.topic","write":"^a","read":"^b"}],
+           "policies":[{"vhost":"conformance","name":"capped","pattern":"^work","apply-to":"queues","definition":{"max-length":1000},"priority":1}],
+           "queues":[{"name":"work","vhost":"conformance","durable":true,"auto_delete":false,"arguments":{"x-queue-type":"quorum"}}],
+           "exchanges":[{"name":"conformance.direct","vhost":"conformance","type":"direct","durable":true,"auto_delete":false,"arguments":{}}],
+           "bindings":[{"source":"conformance.direct","vhost":"conformance","destination":"work","destination_type":"queue","routing_key":"k","arguments":{}}]}
+          JSON
+          rabbitmqctl import_definitions /tmp/seed.json
+          # A shovel keeps its peer's password inside a URI, which is the case the facet
+          # withholds every parameter value for.
+          rabbitmq-plugins enable rabbitmq_shovel
+          rabbitmqctl set_parameter shovel conformance-shovel \
+            '{"src-protocol":"amqp091","src-uri":"amqp://shovel-user:hunter2@upstream.example.com","src-queue":"in","dest-protocol":"amqp091","dest-uri":"amqp://localhost","dest-queue":"out"}'
+
+          # What the fixtures cannot answer for themselves: whether rastro's reading of a real
+          # broker matches the broker's own account.
+          cargo test --locked --test rabbitmq_conformance
+
+          # The facet's own tests too, on a box that has a broker: they are fixture-driven and
+          # pass anywhere, but a run here proves the detection finds a real node rather than
+          # only a `/proc` a test wrote.
+          cargo test --locked --test rabbitmq --test rabbitmq_asking --test rabbitmq_definitions \
+            --test rabbitmq_inventory --test rabbitmq_register --test rabbitmq_residency \
+            --test rabbitmq_status --test rabbitmq_feature_flags --test proc_sockets
+
+          # The whole point of the facet, through the shipped binary rather than a unit: two
+          # runs of a box nobody touched render the same bytes.
+          cargo run --locked --quiet -- -o /tmp/first.json
+          cargo run --locked --quiet -- -o /tmp/second.json
+          python3 - <<'PY'
+          import json, sys
+          def facet(path):
+              with open(path) as document:
+                  return next(f for f in json.load(document)['facets'] if f['name'] == 'rabbitmq')
+          first, second = facet('/tmp/first.json'), facet('/tmp/second.json')
+          if first != second:
+              print('the rabbitmq facet differs between two runs of an unchanged box')
+              print(json.dumps(first, indent=1, sort_keys=True))
+              print(json.dumps(second, indent=1, sort_keys=True))
+              sys.exit(1)
+          print('identical')
+          PY
