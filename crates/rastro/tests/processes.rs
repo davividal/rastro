@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 mod support;
 
 use rastro::collectors::processes::{
-    ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline, proc_processes,
-    proc_status,
+    CommandLine, ProcProcesses, Process, ProcessId, ProcessName, ProcessState, ProcessTable,
+    ProcessesCollector, proc_cmdline, proc_processes, proc_status,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Observation, View};
@@ -60,6 +60,23 @@ fn read(root: &Path) -> ProcessTable {
     ProcProcesses::at(root)
         .read()
         .expect("this tree is well formed")
+}
+
+/// A minimal process, distinguished only by `name`, for exercising `ProcessTable::new`
+/// directly rather than through a `/proc` walk.
+fn minimal_process(name: &str, pid: u32) -> Process {
+    Process {
+        name: ProcessName::new(name).expect("a legal process name"),
+        command_line: CommandLine::new([]),
+        user_id: 0,
+        group_id: 0,
+        control_group: None,
+        executable: None,
+        process_id: ProcessId::parse(&pid.to_string()).expect("a legal process id"),
+        parent_process_id: ProcessId::parse("1").expect("a legal process id"),
+        state: ProcessState::new("S").expect("a legal process state"),
+        thread_count: 1,
+    }
 }
 
 fn named(table: &ProcessTable, name: &str) -> Process {
@@ -288,6 +305,28 @@ fn read_sorts_the_table_rather_than_leaving_it_in_pid_order() {
 
     // Act
     let table = read(&root);
+
+    // Assert
+    assert_eq!(
+        table
+            .processes()
+            .iter()
+            .map(|process| process.name.as_str())
+            .collect::<Vec<&str>>(),
+        ["alpha", "zulu"]
+    );
+}
+
+#[test]
+fn process_table_new_sorts_regardless_of_the_order_it_is_given() {
+    // Arrange: `ProcProcesses` sorts pids before building processes, so a fixture driven
+    // through it can never observe `ProcessTable::new`'s own sort. Built directly instead,
+    // with the process ids deliberately *not* matching the name order (zulu first, at the
+    // lower pid), so a passing assertion cannot be pid ordering in disguise.
+    let processes = [minimal_process("zulu", 1), minimal_process("alpha", 9)];
+
+    // Act
+    let table = ProcessTable::new(processes);
 
     // Assert
     assert_eq!(
