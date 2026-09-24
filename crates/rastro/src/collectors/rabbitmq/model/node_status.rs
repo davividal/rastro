@@ -44,9 +44,13 @@ pub struct NodeStatus {
     pub product_name: Option<String>,
     pub product_version: Option<String>,
 
-    pub operating_system: String,
+    pub operating_system: Option<String>,
 
-    pub data_directory: String,
+    /// Where the node keeps its store, as the node reports it.
+    ///
+    /// Absent where it did not say. An earlier version rendered that as an empty string,
+    /// which asserts a path of no characters rather than the absence of an answer.
+    pub data_directory: Option<String>,
 
     /// Where the quorum queues keep their Raft logs, which is usually under the data
     /// directory and does not have to be.
@@ -98,6 +102,33 @@ pub struct NodeStatus {
     pub disk_free_limit: Option<i64>,
 }
 
+/// The first RabbitMQ with a feature-flag subsystem, and so the first that can be asked
+/// about one.
+///
+/// Every flag the documentation lists as the earliest arrived in 3.8.0, `quorum_queue` and
+/// `user_limits` among them. On anything older `list_feature_flags` is not a subcommand, and
+/// asking would fail the read, which under this facet's own rule would fail the whole node
+/// and lose the status and definitions that were answered perfectly well. The same shape as
+/// the PostgreSQL replication-slot query, which asks for `two_phase` only from 14 and up.
+const FEATURE_FLAGS_SINCE: (u32, u32) = (3, 8);
+
+impl NodeStatus {
+    /// Whether this node is new enough to be asked which feature flags it has enabled.
+    ///
+    /// An unreadable version is asked anyway: a node that reports something this cannot parse
+    /// is a surprise worth a loud failure rather than a silent omission.
+    pub fn answers_about_feature_flags(&self) -> bool {
+        let mut halves = self.rabbitmq_version.split('.');
+        let major = halves.next().and_then(|half| half.parse::<u32>().ok());
+        let minor = halves.next().and_then(|half| half.parse::<u32>().ok());
+
+        match (major, minor) {
+            (Some(major), Some(minor)) => (major, minor) >= FEATURE_FLAGS_SINCE,
+            _ => true,
+        }
+    }
+}
+
 impl From<&NodeStatus> for Observation {
     fn from(status: &NodeStatus) -> Self {
         Observation::object([
@@ -116,14 +147,8 @@ impl From<&NodeStatus> for Observation {
             ),
             ("product_name", optional_text(&status.product_name)),
             ("product_version", optional_text(&status.product_version)),
-            (
-                "operating_system",
-                Observation::text(status.operating_system.as_str()),
-            ),
-            (
-                "data_directory",
-                Observation::text(status.data_directory.as_str()),
-            ),
+            ("operating_system", optional_text(&status.operating_system)),
+            ("data_directory", optional_text(&status.data_directory)),
             (
                 "raft_data_directory",
                 optional_text(&status.raft_data_directory),

@@ -90,7 +90,12 @@ fn layout_of(target: &Path, registered: &str) -> Option<NodeLayout> {
         .collect();
 
     for (index, component) in components.iter().enumerate() {
-        let node = components.get(index + 1)?;
+        // `continue` rather than `?`, which would have returned from the whole function at
+        // the last component instead of finishing the walk. Harmless on every path measured,
+        // since a bucket is never last, and wrong in a way nothing would have reported.
+        let Some(node) = components.get(index + 1) else {
+            continue;
+        };
 
         if BUCKETS.contains(component) && node.starts_with(&named) {
             return Some(NodeLayout {

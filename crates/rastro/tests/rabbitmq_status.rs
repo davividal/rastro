@@ -367,7 +367,7 @@ fn parse_reads_a_status_from_an_older_broker() {
     // this facet.
     assert_eq!(status.rabbitmq_version, "3.12.1");
     assert!(status.tags.is_empty());
-    assert!(!status.data_directory.is_empty());
+    assert!(status.data_directory.is_some());
 }
 
 #[test]
@@ -454,4 +454,58 @@ fn the_nodes_own_name_is_dropped_from_an_alarm() {
     // Assert: the report carries `node`, and it is the node this alarm already sits under.
     // Repeating it would be the document arguing with its own keys.
     assert_eq!(keys_of(alarm), ["resource", "type"]);
+}
+
+#[test]
+fn only_a_node_new_enough_answers_about_feature_flags() {
+    // Act & Assert: the subsystem arrived in 3.8.0 — every flag the documentation lists as
+    // earliest is from that release — so an older node has no such subcommand.
+    let older =
+        RabbitmqctlStatus::parse(&MEASURED.replace("4.0.5", "3.7.28")).expect("well formed");
+    let boundary =
+        RabbitmqctlStatus::parse(&MEASURED.replace("4.0.5", "3.8.0")).expect("well formed");
+    let newer = RabbitmqctlStatus::parse(MEASURED).expect("well formed");
+
+    assert!(!older.answers_about_feature_flags());
+    assert!(boundary.answers_about_feature_flags());
+    assert!(newer.answers_about_feature_flags());
+}
+
+#[test]
+fn a_version_that_cannot_be_read_is_asked_anyway() {
+    // Act & Assert: a node reporting something unparseable is a surprise worth a loud failure
+    // rather than a silent omission, so it is asked and the read reports whatever happens.
+    let strange = RabbitmqctlStatus::parse(&MEASURED.replace("4.0.5", "chef-special"))
+        .expect("a version is text");
+
+    assert!(strange.answers_about_feature_flags());
+}
+
+#[test]
+fn a_listener_the_node_gave_no_port_for_is_not_recorded() {
+    // Arrange
+    let portless = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP 27",
+      "listeners":[{"node":"rabbit@box","protocol":"amqp","interface":"[::]"},
+                   {"node":"rabbit@box","protocol":"clustering","interface":"[::]","port":25672}]}"#;
+
+    // Act
+    let status = RabbitmqctlStatus::parse(portless).expect("well formed");
+
+    // Assert: zero is a port number, so recording one the node never gave would put a socket
+    // in the document that does not exist, and a reader could not tell it from a real one.
+    assert_eq!(status.listeners.len(), 1);
+    assert_eq!(status.listeners[0].port, 25672);
+}
+
+#[test]
+fn a_directory_the_node_did_not_name_is_absent_rather_than_empty() {
+    // Arrange
+    let bare = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP 27"}"#;
+
+    // Act
+    let rendered = Observation::from(&RabbitmqctlStatus::parse(bare).expect("well formed"));
+
+    // Assert: an empty string asserts a path of no characters; null says the node did not say.
+    assert!(is_null(&field(&rendered, "data_directory")));
+    assert!(is_null(&field(&rendered, "operating_system")));
 }

@@ -104,14 +104,14 @@ impl RabbitmqctlStatus {
             crypto_library_version: stated(document.crypto_lib_version),
             product_name: stated(document.product_name),
             product_version: stated(document.product_version),
-            operating_system: document.os.unwrap_or_default(),
-            data_directory: document.data_directory.unwrap_or_default(),
+            operating_system: stated(document.os),
+            data_directory: stated(document.data_directory),
             raft_data_directory: stated(document.raft_data_directory),
             configuration_files: document.config_files,
             log_destinations: document.log_files,
             enabled_plugins_file: stated(document.enabled_plugin_file),
             active_plugins: document.active_plugins,
-            listeners: document.listeners.iter().map(listener_of).collect(),
+            listeners: document.listeners.iter().filter_map(listener_of).collect(),
             alarms: document
                 .alarms
                 .iter()
@@ -148,11 +148,16 @@ fn stated(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.is_empty())
 }
 
-fn listener_of(document: &ListenerDocument) -> Listener {
-    Listener {
+/// One listener, where the node gave a port for it.
+///
+/// **A listener with no port is dropped rather than recorded on port 0.** Zero is a port
+/// number, so writing it would put a socket in the document that the node never mentioned,
+/// and a reader comparing two fingerprints would have no way to tell it from a real one.
+fn listener_of(document: &ListenerDocument) -> Option<Listener> {
+    Some(Listener {
         protocol: document.protocol.clone().unwrap_or_default(),
         interface: document.interface.clone().unwrap_or_default(),
-        port: document.port.unwrap_or_default(),
+        port: document.port?,
         purpose: document.purpose.clone(),
-    }
+    })
 }

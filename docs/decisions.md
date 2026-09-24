@@ -5246,3 +5246,69 @@ about what the tool said.
 does not cover this**, which is worth stating because it looks as though it should. rastro's
 own calls are sequenced; an operator at a shell, a monitoring script or a deployment running
 `rabbitmqctl` at that moment is not, and on a busy box that is not a remote possibility.
+
+## A name is not evidence: the CLI filter needs both halves
+
+Supersedes the filter in
+[A CLI tool's own node is in the register while it runs](#a-cli-tools-own-node-is-in-the-register-while-it-runs-and-is-not-a-node-on-the-box),
+which discarded every registration whose name began with `rabbitmqcli-`. Raised in review and
+confirmed by measurement: `RABBITMQ_NODENAME=rabbitmqcli-legit@localhost` starts a perfectly
+ordinary broker, epmd lists it as `name rabbitmqcli-legit at port 25672`, and it answers like
+any other node. The filter would have hidden a live broker **and left its message store
+unsealed**, which is the failure the seal exists to prevent, caused by the fix for a different
+failure.
+
+**Both halves are now required**: the prefix, and the process holding that node's distribution
+port not being one that booted RabbitMQ. A real broker so named is held by a beam that did, so
+it stays; a CLI tool's hidden node is held by an escript VM that did not, so it goes.
+
+**Neither half alone would do.** The prefix alone discards the legitimate broker above. The
+evidence alone keeps every transient node on a box whose descriptors cannot be read, and those
+are precisely what make two runs of an unchanged box differ.
+
+**The claim phase needs no filter at all**, which fell out of looking again: a store is sought
+among the processes that booted RabbitMQ, and a CLI tool's hidden node matches none of their
+directories. The filter there was doing nothing except, in the prefixed-broker case, harm.
+
+## A node is asked only what its version can answer
+
+`list_feature_flags` is not a subcommand before RabbitMQ 3.8 — every flag the documentation
+lists as earliest arrived in 3.8.0 — and this facet fails a node loudly when a read fails. So
+on an older broker the flag read would have failed the node and lost the status and
+definitions it had already answered perfectly well.
+
+The status is therefore read first and decides the rest, which is the shape
+[the replication-slot query](#only-the-stable-columns-of-a-moving-catalogue-are-read) already
+has in the PostgreSQL facet: ask the version-dependent thing only of a version that has it. A
+version rastro cannot parse is asked anyway, because a node reporting something unreadable is
+a surprise worth a loud failure rather than a silent omission.
+
+**Absent flags and no flags are different facts**, so the field is null for a node too old to
+have the subsystem, rather than an empty map that would read as a node with the subsystem and
+nothing enabled.
+
+## What reading the whole facet turned up
+
+Prompted by the fourth round of "fix one thing, another appears", and the findings say
+something about how that happened rather than only what was wrong.
+
+- **An absent value was being written as an empty one.** `data_directory` and
+  `operating_system` fell back to `""`, which asserts a path of no characters rather than the
+  node declining to say. Both are optional now, as the product fields beside them already
+  were.
+- **A listener with no port was recorded on port 0.** Zero is a port number, so the document
+  would have carried a socket the node never mentioned and a reader could not have told it
+  from a real one. Such a listener is dropped.
+- **The register was read in two places**, once in `read` and once in `store_directories`,
+  with the difference between them — an error against nothing — the only thing that was meant
+  to differ. That is how the `--longnames` fix reached one of three call sites: the shape
+  invites it. There is one reading now, and the two callers differ only where they say so.
+- **A `?` inside a loop left the whole function** rather than continuing to the next path
+  component. Harmless on every layout measured, because a bucket is never the last component,
+  and wrong in a way nothing would have reported.
+
+**The tests were the weaker half of every one of these rounds.** Two of the new ones here were
+written and then checked by putting the defect back: the prefix-only filter makes the
+legitimate-broker test fail, and removing the version gate makes the old-node test fail naming
+the call. One of them had to be rewritten first, because it was passing while asserting
+nothing — the fixture rebuilt the register shim after the test had written its own.

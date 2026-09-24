@@ -10,7 +10,6 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::rabbitmq::{BrokerClient, BrokerEvidence, NodeInventory};
 
 mod support;
@@ -23,6 +22,20 @@ const REGISTER: &str = "epmd: up and running on port 4369 with data:\nname rabbi
 const EPMD_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/epmd\0-daemon\0";
 const BROKER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0rabbit\0boot\0";
 const OTHER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0ejabberd\0boot\0";
+
+/// A broker legitimately named with the prefix a CLI tool's hidden node uses. Measured:
+/// `RABBITMQ_NODENAME=rabbitmqcli-legit@localhost` starts an ordinary broker, epmd lists it,
+/// and it answers.
+const PREFIXED_REGISTER: &str =
+    "epmd: up and running on port 4369 with data:\nname rabbitmqcli-legit at port 25672\n";
+
+const PREFIXED_WAL: &str =
+    "/var/lib/rabbitmq/mnesia/rabbitmqcli-legit@box/quorum/rabbitmqcli-legit@box/00000001.wal";
+
+/// The register while somebody runs a CLI tool, with the broker beside the transient node.
+const REGISTER_WITH_A_CLI_TOOL: &str = "epmd: up and running on port 4369 with data:\n\
+     name rabbit at port 25672\n\
+     name rabbitmqcli-308-rabbit at port 35672\n";
 
 /// The same, for a node running under long names.
 const LONG_WAL: &str = "/var/lib/rabbitmq/mnesia/rabbit@broker.example.test/quorum/rabbit@broker.example.test/00000001.wal";
@@ -98,14 +111,6 @@ fn box_named(name: &str, processes: &[(&str, &str)], holder: Option<&str>, store
 }
 
 impl Box_ {
-    fn epmd(&self) -> CanonicalTool {
-        shim::executable(
-            &self.root.join("bin"),
-            "epmd",
-            &format!("#!/bin/sh\ncat <<'OUT'\n{REGISTER}OUT\n"),
-        )
-    }
-
     /// A client that answers both reads from the fixtures and records that it ran.
     fn client(&self) -> BrokerClient {
         let script = format!(
@@ -167,7 +172,19 @@ impl Box_ {
     }
 
     fn inventory(&self) -> NodeInventory {
-        NodeInventory::using(self.epmd()).in_proc(&self.proc)
+        self.inventory_registering(REGISTER)
+    }
+
+    /// The same, over a register the test wrote: a box where a CLI tool is running, or one
+    /// whose broker is named like one.
+    fn inventory_registering(&self, register: &str) -> NodeInventory {
+        let epmd = shim::executable(
+            &self.root.join("bin"),
+            "epmd",
+            &format!("#!/bin/sh\ncat <<'OUT'\n{register}OUT\n"),
+        );
+
+        NodeInventory::using(epmd).in_proc(&self.proc)
     }
 
     fn asked(&self) -> bool {
@@ -460,4 +477,88 @@ fn no_read_of_a_short_name_node_carries_the_flag() {
             "this read gave a short-name node a flag that hangs it: {invocation}"
         );
     }
+}
+
+#[test]
+fn a_broker_named_like_a_cli_tool_is_still_a_broker() {
+    // Arrange: measured — `RABBITMQ_NODENAME=rabbitmqcli-legit@localhost` starts an ordinary
+    // broker, epmd lists it, and it answers. A filter that went by the name alone would have
+    // hidden it and left its message store unsealed.
+    let host = box_named(
+        "rabbitmq-asking-prefixed",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+        PREFIXED_WAL,
+    );
+
+    // Act
+    let installation = host
+        .inventory_registering(PREFIXED_REGISTER)
+        .read(Some(&host.client()))
+        .expect("the shims answer");
+
+    // Assert: kept, named and addressed, because the process holding its port booted
+    // RabbitMQ. The prefix raises the question; the evidence answers it.
+    let node = installation
+        .nodes()
+        .get("rabbitmqcli-legit")
+        .expect("the broker is still reported");
+    assert_eq!(node.evidence, BrokerEvidence::RabbitmqProcess);
+    assert_eq!(
+        node.node_name.as_ref().expect("a name").as_str(),
+        "rabbitmqcli-legit@box"
+    );
+}
+
+#[test]
+fn a_cli_tools_own_node_is_dropped_because_no_broker_holds_its_port() {
+    // Arrange: the register as it reads while somebody runs `rabbitmqctl`. The broker holds
+    // 25672; nothing rastro can see holds the transient node's 35672.
+    let host = box_with(
+        "rabbitmq-asking-cli-node",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+
+    // Act
+    let installation = host
+        .inventory_registering(REGISTER_WITH_A_CLI_TOOL)
+        .read(Some(&host.client()))
+        .expect("the shims answer");
+
+    // Assert: the broker stays and the transient node does not, so two runs of an unchanged
+    // box agree even when an operator happens to be running a CLI tool during one of them.
+    let keys: Vec<&str> = installation.nodes().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["rabbit"]);
+}
+
+#[test]
+fn a_node_too_old_for_feature_flags_is_not_asked_about_them() {
+    // Arrange: a node reporting 3.7.28, which predates the feature-flag subsystem entirely.
+    let host = box_with(
+        "rabbitmq-asking-old",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    fs::write(
+        host.root.join("fixtures/status.json"),
+        STATUS.replace("4.0.5", "3.7.28"),
+    )
+    .expect("a writable fixture");
+    let recorder = host.recording_client();
+
+    // Act
+    host.inventory()
+        .read(Some(&recorder))
+        .expect("an old node is still readable");
+
+    // Assert: `list_feature_flags` is not a subcommand there, and asking would fail the read,
+    // which would lose the status and definitions this node answered perfectly well.
+    let recorded = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
+    assert!(
+        !recorded.contains("list_feature_flags"),
+        "a 3.7 node was asked about feature flags: {recorded}"
+    );
+    assert!(recorded.contains("status"));
+    assert!(recorded.contains("export_definitions"));
 }

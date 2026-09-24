@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use rastro_collector::CollectionError;
 
 use super::broker_client::BrokerClient;
-use super::epmd_register::EpmdRegister;
+use super::epmd_register::{EpmdRegister, RegisteredNode};
 use super::node_layout;
 use super::resident_runtime::ResidentRuntime;
 use crate::collectors::canonical_tool::CanonicalTool;
@@ -27,17 +27,19 @@ const NAMES: &str = "-names";
 ///
 /// **Measured, because a conformance run caught one**: with the register sampled continuously
 /// while six `rabbitmqctl` calls ran, it held `name rabbitmqcli-308-rabbit at port 35672`, and
-/// nothing but the broker once they finished. CI saw the same thing from the other side, the
-/// facet reporting `["rabbit", "rabbitmqcli-819-rabbit"]` as two nodes.
+/// nothing but the broker once they finished. CI saw the same from the other side, the facet
+/// reporting `["rabbit", "rabbitmqcli-819-rabbit"]` as two nodes.
 ///
-/// **Filtered by name, which is the tool's own naming rather than a guess**: `rabbitmqcli-`
-/// then the caller's process id then the node it is addressing. The alternative is to report
-/// it, and that cannot be right: the entry exists only while somebody is running a CLI tool,
-/// so two runs of an unchanged box would differ, which the document's contract forbids.
+/// **The prefix alone is not enough to drop a registration**, which the review caught and a
+/// measurement confirmed: `RABBITMQ_NODENAME=rabbitmqcli-legit@localhost` starts a perfectly
+/// ordinary broker, epmd lists it as `name rabbitmqcli-legit at port 25672`, and it answers
+/// like any other node. Dropping it by name would have hidden a live broker and left its
+/// message store unsealed — the same failure the seal exists to prevent.
 ///
-/// **Being exclusive does not cover this.** rastro's own calls are sequenced, but an operator
-/// at a shell, a monitoring script or a deployment can be running `rabbitmqctl` at the moment
-/// the register is read, and on a busy box that is not a remote possibility.
+/// So the prefix only raises the question, and [the evidence](BrokerEvidence) answers it: a
+/// registration is discarded when it carries this prefix **and** the process holding its port
+/// is not one that booted RabbitMQ. A real broker so named is held by a beam that did, and
+/// stays.
 const CLI_NODE_PREFIX: &str = "rabbitmqcli-";
 
 /// Where the kernel publishes its process table, and its socket tables under it.
@@ -98,17 +100,22 @@ impl NodeInventory {
         let resident = ResidentRuntime::read_in(&self.proc);
         let brokers = resident.broker_process_ids().len();
 
-        if !resident.port_mapper_running() {
+        let Some(listed) = self.registered()? else {
             return Ok(Installation::new(false, brokers, []));
-        }
+        };
 
-        let registered = EpmdRegister::parse(&self.port_mapper.run(&[NAMES])?)?;
         let holders = SocketHolders::at(&self.proc);
-        let nodes = registered
+        let nodes = listed
             .into_iter()
-            .filter(|node| !is_a_cli_tool(&node.name))
-            .map(|node| {
+            .filter_map(|node| {
                 let evidence = self.evidence_for(node.distribution_port, &holders, &resident);
+
+                match discarded_as_a_cli_tool(&node.name, &evidence) {
+                    true => None,
+                    false => Some((node, evidence)),
+                }
+            })
+            .map(|(node, evidence)| {
                 let name = self.named(&node.name, &resident);
 
                 // Asked only where a RabbitMQ process holds the port, where the node's own
@@ -116,11 +123,7 @@ impl NodeInventory {
                 // cannot name is one it cannot address either: `rabbitmqctl -n` takes the
                 // name the node runs under, and guessing it is what this facet stopped doing.
                 let asked = match (evidence.may_be_addressed(), &name, client) {
-                    (true, Some(name), Some(client)) => Some(Asked {
-                        status: client.status(name)?,
-                        feature_flags: client.feature_flags(name)?,
-                        definitions: client.definitions(name)?,
-                    }),
+                    (true, Some(name), Some(client)) => Some(ask(client, name)?),
                     _ => None,
                 };
 
@@ -131,7 +134,7 @@ impl NodeInventory {
                         distribution_port: node.distribution_port,
                         evidence,
                         status: asked.as_ref().map(|asked| asked.status.clone()),
-                        feature_flags: asked.as_ref().map(|asked| asked.feature_flags.clone()),
+                        feature_flags: asked.as_ref().and_then(|asked| asked.feature_flags.clone()),
                         definitions: asked.map(|asked| asked.definitions),
                     },
                 ))
@@ -139,6 +142,20 @@ impl NodeInventory {
             .collect::<Result<Vec<_>, CollectionError>>()?;
 
         Ok(Installation::new(true, brokers, nodes))
+    }
+
+    /// The register, where there is a port mapper to ask.
+    ///
+    /// `None` means no port mapper is resident, which is a box with nothing up rather than a
+    /// failure. One place, because the two callers below read the same thing and an earlier
+    /// version spelled it twice: a change that reached one of them and not the other is
+    /// exactly how this facet has gone wrong before.
+    fn registered(&self) -> Result<Option<Vec<RegisteredNode>>, CollectionError> {
+        if !ResidentRuntime::read_in(&self.proc).port_mapper_running() {
+            return Ok(None);
+        }
+
+        Ok(Some(EpmdRegister::parse(&self.port_mapper.run(&[NAMES])?)?))
     }
 
     /// The store each node keeps, for the trees the facet claims.
@@ -152,21 +169,19 @@ impl NodeInventory {
     /// **A failed read makes no claim**, which is the postgres rule and for its reason.
     pub fn store_directories(&self) -> Vec<(NodeName, String)> {
         let resident = ResidentRuntime::read_in(&self.proc);
-        if !resident.port_mapper_running() {
-            return Vec::new();
-        }
 
-        let Ok(listed) = self.port_mapper.run(&[NAMES]) else {
-            return Vec::new();
-        };
-
-        let Ok(registered) = EpmdRegister::parse(&listed) else {
+        // A failure here is nothing rather than an error, which is the one way this differs
+        // from the collect-time read: a claim that cannot be made costs a subtree of the
+        // walk, and failing the run over it would cost the whole filesystem.
+        let Ok(Some(listed)) = self.registered() else {
             return Vec::new();
         };
 
-        registered
+        // No CLI filter, and none is needed: a layout is looked for among the processes that
+        // booted RabbitMQ, and a CLI tool's hidden node matches none of their directories. A
+        // broker that happens to carry the prefix does, and is sealed like any other.
+        listed
             .into_iter()
-            .filter(|node| !is_a_cli_tool(&node.name))
             .filter_map(|node| {
                 let layout =
                     node_layout::read(&self.proc, resident.broker_process_ids(), &node.name)?;
@@ -234,9 +249,35 @@ impl NodeInventory {
     }
 }
 
-/// Whether a registration belongs to a CLI tool rather than to a broker.
-fn is_a_cli_tool(name: &str) -> bool {
-    name.starts_with(CLI_NODE_PREFIX)
+/// Whether a registration is a CLI tool's own hidden node rather than a broker.
+///
+/// Both halves are required. The prefix alone would discard a broker legitimately named with
+/// it, measured; the evidence alone would keep every transient node on a box where the
+/// holders cannot be read, and those nodes are what make two runs of an unchanged box differ.
+fn discarded_as_a_cli_tool(name: &str, evidence: &BrokerEvidence) -> bool {
+    name.starts_with(CLI_NODE_PREFIX) && *evidence != BrokerEvidence::RabbitmqProcess
+}
+
+/// Everything one node is asked, in the order that lets the version decide the rest.
+///
+/// **The status first, because it says what this node can be asked.** `list_feature_flags` is
+/// not a subcommand before RabbitMQ 3.8, and asking an older node would fail the read, which
+/// under this facet's rules fails the node and loses the status and definitions it answered
+/// perfectly well. The same shape as the PostgreSQL replication-slot query, which asks for a
+/// column only from the version that has it.
+fn ask(client: &BrokerClient, node: &NodeName) -> Result<Asked, CollectionError> {
+    let status = client.status(node)?;
+
+    let feature_flags = match status.answers_about_feature_flags() {
+        true => Some(client.feature_flags(node)?),
+        false => None,
+    };
+
+    Ok(Asked {
+        status,
+        feature_flags,
+        definitions: client.definitions(node)?,
+    })
 }
 
 /// What a node answered, kept together so a half-read node cannot be assembled.
@@ -245,6 +286,10 @@ fn is_a_cli_tool(name: &str) -> bool {
 /// with no vhosts at all, which is a state RabbitMQ cannot be in.
 struct Asked {
     status: NodeStatus,
-    feature_flags: std::collections::BTreeMap<String, String>,
+
+    /// Absent where the node is too old to have the subsystem at all, which is a different
+    /// fact from a node that has it and has enabled nothing.
+    feature_flags: Option<std::collections::BTreeMap<String, String>>,
+
     definitions: Definitions,
 }
