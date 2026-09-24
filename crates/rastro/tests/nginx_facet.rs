@@ -272,6 +272,19 @@ fn the_configuration_names_both_bases_and_who_chose_the_root() {
 }
 
 #[test]
+fn every_file_certificate_and_key_rastro_could_not_read_counts_once() {
+    // Arrange: the fixture holds one of each that read and one of each that did not: a
+    // parsed file and a refused include, a certificate and one naming a variable, a key
+    // described and a key refused.
+    // Act
+    let observed = facet();
+
+    // Assert: exactly the three refusals, so neither a missing mark nor a mark on something
+    // that read goes unnoticed.
+    assert_eq!(observed.incomplete_items(), 3);
+}
+
+#[test]
 fn a_file_renders_its_digest_and_a_refused_one_renders_its_reason() {
     // Arrange
     let files = items_of(&field(&field(&facet(), "configuration"), "files"));

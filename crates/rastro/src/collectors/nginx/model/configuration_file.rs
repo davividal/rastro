@@ -88,5 +88,6 @@ impl From<&ConfigurationFile> for Observation {
             ("path", Observation::text(file.path.as_str())),
             ("reading", Observation::from(&file.reading)),
         ])
+        .incomplete_when(file.is_refusal())
     }
 }
