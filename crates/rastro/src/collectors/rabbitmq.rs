@@ -19,7 +19,7 @@ pub use source::{
     BrokerClient, EpmdRegister, NodeInventory, RabbitmqctlDefinitions, RabbitmqctlFeatureFlags,
     RabbitmqctlStatus, RegisteredNode, ResidentRuntime, document_in,
 };
-pub use value_objects::{BrokerEvidence, DefinitionValue, NodeName, PasswordHashing};
+pub use value_objects::{BrokerEvidence, DefinitionValue, NodeName, NotAsked, PasswordHashing};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{

@@ -10,7 +10,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use rastro::collectors::rabbitmq::{BrokerClient, BrokerEvidence, NodeInventory};
+use rastro::collectors::rabbitmq::{BrokerClient, BrokerEvidence, NodeInventory, NotAsked};
 use rastro_collector::Observation;
 
 mod support;
@@ -225,6 +225,56 @@ fn a_node_whose_port_a_broker_holds_is_asked() {
             .users
             .contains_key("guest")
     );
+}
+
+#[test]
+fn a_broker_with_no_client_to_ask_it_with_is_recorded_as_not_asked() {
+    // Arrange: a RabbitMQ process holds the port and no `rabbitmqctl` is installed. The node
+    // is a broker, and what it runs is not something this run could find out.
+    let host = box_with(
+        "rabbitmq-asking-no-client",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+
+    // Act
+    let installation = host
+        .inventory()
+        .read(None)
+        .expect("a broker with no client is still a node on the box");
+
+    // Assert: said, not left as a node of nulls a reader takes for nothing to report.
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.evidence, BrokerEvidence::RabbitmqProcess);
+    assert_eq!(node.not_asked, Some(NotAsked::NoClient));
+    let rendered = Observation::from(&installation);
+    assert_eq!(rendered.incomplete_items(), 1);
+}
+
+#[test]
+fn a_broker_whose_name_cannot_be_read_is_recorded_as_not_asked() {
+    // Arrange: a RabbitMQ process holds the port, and what it holds open names no store, so
+    // the name `rabbitmqctl -n` needs is not there to read. Guessing it is what this facet
+    // stopped doing; saying so is what it did not yet do.
+    let host = box_named(
+        "rabbitmq-asking-nameless",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+        "/var/tmp/not-a-store",
+    );
+
+    // Act
+    let installation = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect("a broker that cannot be named is still a node on the box");
+
+    // Assert
+    assert!(!host.asked());
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.node_name, None);
+    assert_eq!(node.not_asked, Some(NotAsked::Nameless));
+    assert_eq!(Observation::from(&installation).incomplete_items(), 1);
 }
 
 #[test]
