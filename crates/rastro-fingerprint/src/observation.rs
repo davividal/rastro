@@ -9,7 +9,7 @@ mod annotation;
 pub mod redaction;
 mod scalar;
 
-pub use annotation::{Sensitivity, Volatility};
+pub use annotation::{Completeness, Sensitivity, Volatility};
 pub use scalar::Scalar;
 
 use std::borrow::Cow;
@@ -27,6 +27,7 @@ use crate::view::View;
 pub struct Observation {
     volatility: Volatility,
     sensitivity: Sensitivity,
+    completeness: Completeness,
     content: Content,
 }
 
@@ -84,6 +85,12 @@ impl Observation {
     /// Marks this value, and everything under it, as needing redaction.
     pub fn sensitive(mut self) -> Self {
         self.sensitivity = Sensitivity::Sensitive;
+        self
+    }
+
+    /// Marks this node as an item rastro could not read or record.
+    pub fn incomplete(mut self) -> Self {
+        self.completeness = Completeness::Incomplete;
         self
     }
 
@@ -156,6 +163,7 @@ impl Observation {
         Some(Self {
             volatility: self.volatility,
             sensitivity: self.sensitivity,
+            completeness: self.completeness,
             content,
         })
     }
@@ -183,6 +191,25 @@ impl Observation {
         self.sensitivity
     }
 
+    pub fn completeness(&self) -> Completeness {
+        self.completeness
+    }
+
+    /// How many nodes in this tree are marked [`Completeness::Incomplete`], each counted once.
+    ///
+    /// Over the whole tree whatever a view would drop, because an item refused this run is
+    /// refused however the document is rendered.
+    pub fn incomplete_items(&self) -> usize {
+        let own = usize::from(self.completeness == Completeness::Incomplete);
+        let below = match &self.content {
+            Content::Scalar(_) => 0,
+            Content::Object(entries) => entries.values().map(Observation::incomplete_items).sum(),
+            Content::List(items) => items.iter().map(Observation::incomplete_items).sum(),
+        };
+
+        own + below
+    }
+
     pub fn content(&self) -> &Content {
         &self.content
     }
@@ -191,6 +218,7 @@ impl Observation {
         Self {
             volatility: Volatility::default(),
             sensitivity: Sensitivity::default(),
+            completeness: Completeness::default(),
             content,
         }
     }
