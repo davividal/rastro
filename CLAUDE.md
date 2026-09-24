@@ -113,7 +113,8 @@ Violating one is a plan change, not a detail.
   cannot break byte-identity. `--detail` records the attributes themselves.
 - **The document goes to a file by default**, `0600`, `-o -` for stdout. stdout
   carries only the fingerprint, which with the document in a file means nothing at
-  all. Progress and `--debug` timings go to stderr, and never into the document.
+  all. Progress, `--debug` timings and the summary of what the run could not see go to
+  stderr, and never into the document.
 - v1 boundaries: single box, generate-only, no network I/O, JSON only.
 
 ## Comment scope
