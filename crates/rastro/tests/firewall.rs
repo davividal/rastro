@@ -256,6 +256,33 @@ fn the_inventory_tells_an_empty_ruleset_apart_from_a_subsystem_that_cannot_hold_
 }
 
 #[test]
+fn a_backend_rastro_could_not_read_counts_as_an_item_not_read() {
+    // Arrange: an empty ruleset and an unloaded subsystem are answers; an interface that
+    // could not be dumped is the one gap.
+    let found = vec![
+        (
+            FirewallBackend::IptablesLegacy,
+            BackendReport::Read(Ruleset::default()),
+        ),
+        (FirewallBackend::IptablesNft, BackendReport::SubsystemAbsent),
+        (
+            FirewallBackend::Ip6tablesLegacy,
+            BackendReport::Unreadable("ip6tables-legacy-save exited with status 1".to_owned()),
+        ),
+        (
+            FirewallBackend::Ip6tablesNft,
+            BackendReport::SubsystemAbsent,
+        ),
+    ];
+
+    // Act
+    let observation = Observation::from(&FirewallInventory::new(found).expect("every backend"));
+
+    // Assert
+    assert_eq!(observation.incomplete_items(), 1);
+}
+
+#[test]
 fn the_inventory_refuses_a_backend_reported_twice() {
     // Arrange
     let found = vec![

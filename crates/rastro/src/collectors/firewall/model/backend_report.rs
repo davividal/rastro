@@ -50,5 +50,6 @@ impl From<&BackendReport> for Observation {
             ("status", Observation::text(status)),
             ("tables", tables),
         ])
+        .incomplete_when(matches!(report, BackendReport::Unreadable(_)))
     }
 }
