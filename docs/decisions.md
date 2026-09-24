@@ -5390,3 +5390,43 @@ that fails on some field this reader does not anticipate still reports a byte of
 `serde_path_to_error` would turn that into `users[3].tags`, and it is a new dependency on a
 crate whose whole job is error paths, which is the maintainer's call rather than a detail of
 this change.
+
+## A refused read fails the facet, rather than being reported as a node with nothing in it
+
+Reverses the reporting half of *A CLI invocation starts epmd, so nothing is asked
+speculatively*: the two evidence values that mean "rastro was not allowed to look" no longer
+render as a node, they fail the `rabbitmq` facet.
+
+**What the old behaviour produced, on a real box.** An unprivileged run against a host with a
+broker on it wrote this, under `status: ok`:
+
+```json
+"nodes": {"rabbit": {"broker_evidence": "the holder of the port could not be read",
+  "definitions": null, "distribution_port": 25672, "feature_flags": null,
+  "node_name": null, "runs_rabbitmq": null, "status": null}}
+```
+
+Nothing anywhere signalled a failure: not the facet status, not stderr, not the exit code. The
+tri-state `runs_rabbitmq: null` was doing its job and it was not enough, because the reader who
+matters is a diff, and a diff between that document and one from a box with no broker at all
+shows no change. "I was not allowed to read it" is an error. It was never an absent, and it
+must not be an `ok` carrying nulls.
+
+**The evidence values stay.** They are what the error says — which node, and which of the two
+refusals — so the distinction that entry was written to protect is still made, in the place a
+failure is actually read. What changed is where it is reported, not whether.
+
+**The cost, stated plainly.** A box with two nodes, one attributable and one not, now reports
+neither. That is the deliberate trade: both refusals come from one permission barrier, which in
+practice applies to every node on the box at once, and a document that is half an answer and
+half a silence with no way to tell which is the thing this entry exists to stop. Should a
+mixed box turn up, the answer is a per-node error inside an `ok` facet, which the fingerprint
+format does not currently have.
+
+**One swallow left in place, knowingly.** `node_layout::read` returns `None` both for a broker
+with no store among its descriptors and for descriptors it could not read, so a refusal there
+would surface as `node_name: null` — the same defect one layer in. It is unreachable: the
+holder check runs first over the same directories, and an `fd` that cannot be listed yields no
+holder, which is now a failure. Verified by reading `SocketHolders::at`, which returns an empty
+map for an unreadable directory. Left alone rather than hardened blind, and written down here
+so the next reader knows it was looked at.
