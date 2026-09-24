@@ -85,7 +85,9 @@ const NERDCTL_CONTAINER_INFO: &str = r#"{
 /// **The one read here whose columns cannot be split on whitespace.** `SIZE` is two tokens,
 /// `3.9 MiB`, so a positional split puts the platforms where the labels should be. The
 /// header's own column offsets are what the rows are sliced by instead.
-const IMAGES: &str = "REF                             TYPE                                    DIGEST                                                                  SIZE    PLATFORMS                                                                                              LABELS \ndocker.io/library/alpine:3.22   application/vnd.oci.image.index.v1+json sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce 3.9 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/riscv64,linux/s390x -      \ndocker.io/library/alpine:latest application/vnd.oci.image.index.v1+json sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b 4.0 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/riscv64,linux/s390x -      \n";
+// The platforms cell is deliberately out of alphabetical order: `ctr` prints the manifest
+// index's own order, and it is the parser, not the fixture, that promises the sorted view.
+const IMAGES: &str = "REF                             TYPE                                    DIGEST                                                                  SIZE    PLATFORMS                                                                                              LABELS \ndocker.io/library/alpine:3.22   application/vnd.oci.image.index.v1+json sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce 3.9 MiB linux/s390x,linux/arm64/v8,linux/amd64,linux/386,linux/riscv64,linux/arm/v7,linux/ppc64le,linux/arm/v6 -      \ndocker.io/library/alpine:latest application/vnd.oci.image.index.v1+json sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b 4.0 MiB linux/s390x,linux/arm64/v8,linux/amd64,linux/386,linux/riscv64,linux/arm/v7,linux/ppc64le,linux/arm/v6 -      \n";
 
 /// The same for a namespace holding none, which is the header alone.
 const NO_IMAGES: &str = "REF    TYPE    DIGEST    SIZE    PLATFORMS    LABELS \n";
@@ -614,6 +616,38 @@ fn a_container_that_vanished_while_being_read_is_recorded_per_namespace() {
 }
 
 #[test]
+fn the_unreadable_containers_are_recorded_sorted_by_id_per_namespace() {
+    // Arrange: two containers can vanish between the id list and the info read of them, and
+    // `ctr` lists ids in the order `containers ls` printed them rather than any promised
+    // order. The fixture lists `zeta-gone` before `alpha-gone` to prove the sort rather than
+    // assume it.
+    let namespaces = vec![
+        NamespaceFixtures {
+            name: "moby",
+            containers: &[("zeta-gone", None), ("alpha-gone", None)],
+            tasks: NO_TASKS,
+            images: NO_IMAGES,
+        },
+        empty_namespace("k8s.io"),
+    ];
+
+    // Act
+    let entries = items_of(&field(
+        &namespace_of("vanished-sorted", &namespaces, "moby"),
+        "unreadable_containers",
+    ));
+
+    // Assert
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| text(&field(entry, "id")))
+            .collect::<Vec<String>>(),
+        vec!["alpha-gone".to_owned(), "zeta-gone".to_owned()]
+    );
+}
+
+#[test]
 fn a_namespaces_images_are_keyed_by_reference() {
     // Arrange: containerd's images are named by reference and nothing else, so the
     // reference is the key. Unlike docker there is no separate image id to prefer.
@@ -660,7 +694,7 @@ fn the_columns_are_sliced_by_the_headers_offsets_so_a_two_word_size_shifts_nothi
 fn an_images_platforms_are_recorded_sorted() {
     // Arrange: a manifest index carries one per architecture, and which ones an image has
     // decides whether it can run on this box at all. The engine prints them in the index's
-    // order, which is not one it promises.
+    // own order, which the fixture gives scrambled, and promises nothing about.
     let image = field(
         &field(
             &namespace_of("platforms", &both_namespaces(), "moby"),
@@ -669,15 +703,26 @@ fn an_images_platforms_are_recorded_sorted() {
         "docker.io/library/alpine:3.22",
     );
 
-    // Act & Assert
+    // Act
     let platforms: Vec<String> = items_of(&field(&image, "platforms"))
         .iter()
         .map(text)
         .collect();
-    assert!(platforms.contains(&"linux/arm64/v8".to_owned()));
-    let mut sorted = platforms.clone();
-    sorted.sort();
-    assert_eq!(platforms, sorted);
+
+    // Assert
+    assert_eq!(
+        platforms,
+        vec![
+            "linux/386".to_owned(),
+            "linux/amd64".to_owned(),
+            "linux/arm/v6".to_owned(),
+            "linux/arm/v7".to_owned(),
+            "linux/arm64/v8".to_owned(),
+            "linux/ppc64le".to_owned(),
+            "linux/riscv64".to_owned(),
+            "linux/s390x".to_owned(),
+        ]
+    );
 }
 
 #[test]
