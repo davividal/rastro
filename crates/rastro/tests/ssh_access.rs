@@ -390,6 +390,49 @@ fn read_translates_the_server_and_account_files_together() {
 }
 
 #[test]
+fn read_accounts_fails_on_a_home_it_is_not_allowed_to_enter() {
+    // Arrange: `/root` is `0700`, so an unprivileged run cannot tell whether root has keys.
+    // Only a missing file is absence; leaving root out would say it has none.
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tree("closed-home");
+    let home = root.join("home/operator");
+    fs::create_dir_all(home.join(".ssh")).expect("a writable home");
+    let key_file = home.join(".ssh/authorized_keys");
+    fs::write(&key_file, format!("ssh-ed25519 {ED25519} operator\n")).expect("a writable file");
+    let passwd = root.join("passwd");
+    fs::write(
+        &passwd,
+        format!("operator:x:1000:1000::{}:/bin/sh\n", home.display()),
+    )
+    .expect("a writable passwd");
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o000))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::read(&key_file).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and enters it regardless of the mode bits.
+        fs::set_permissions(&home, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user enters a directory without the execute bit");
+        return;
+    }
+
+    // Act
+    let result = files("closed-home", &passwd).read_accounts(&server());
+
+    fs::set_permissions(&home, reopened).expect("a scratch directory this user owns");
+
+    // Assert
+    let failure = result.expect_err("a key file behind a closed home must fail the read");
+    assert!(
+        failure
+            .to_string()
+            .starts_with(&format!("could not read {}", key_file.display())),
+        "the message must name the key file, got: {failure}"
+    );
+}
+
+#[test]
 fn read_accounts_names_the_passwd_file_it_could_not_read() {
     let passwd = tree("missing-passwd").join("passwd");
     let failure = files("missing-passwd", &passwd)
