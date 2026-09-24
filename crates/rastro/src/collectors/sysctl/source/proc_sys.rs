@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use rastro_collector::CollectionError;
 
-use super::proc_sys_entry;
+use super::proc_sys_entry::{self, EntryReading};
 use crate::collectors::sysctl::model::SysctlParameters;
 use crate::collectors::sysctl::value_objects::{SysctlKey, SysctlValue};
 
@@ -157,9 +157,20 @@ impl ProcSys {
         }
 
         let mode = metadata.permissions().mode();
-        let reported = fs::read(&path).ok();
+        let read = fs::read(&path);
+        let refusal = match &read {
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                Some(error.to_string())
+            }
+            _ => None,
+        };
+        let reading = match (&read, &refusal) {
+            (Ok(bytes), _) => EntryReading::Read(bytes),
+            (Err(_), Some(reason)) => EntryReading::Refused(reason),
+            (Err(_), None) => EntryReading::Declined,
+        };
 
-        Ok(proc_sys_entry::classify(&segments, mode, reported.as_deref())?.map(Child::Parameter))
+        Ok(proc_sys_entry::classify(&segments, mode, reading)?.map(Child::Parameter))
     }
 
     /// Where a name spelled as segments lives under this root.

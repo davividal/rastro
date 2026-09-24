@@ -9,6 +9,16 @@ use rastro_collector::CollectionError;
 
 use crate::collectors::sysctl::value_objects::{Readability, SysctlKey, SysctlValue};
 
+/// What reading one entry's file gave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryReading<'a> {
+    Read(&'a [u8]),
+    /// The kernel answered the read with an error of its own, such as `EIO`.
+    Declined,
+    /// This run was not allowed to read it, with the reason.
+    Refused(&'a str),
+}
+
 /// What one entry under the interface's root contributes to the facet.
 ///
 /// A free function rather than a type, because there is no per-entry state to hold:
@@ -20,25 +30,26 @@ use crate::collectors::sysctl::value_objects::{Readability, SysctlKey, SysctlVal
 /// is not the same as a failure and not the same as an absent value, and it is
 /// reserved for the write-only triggers [`Readability`] describes.
 ///
-/// **`reported` is `None` when the read itself failed**, which is a real and
-/// expected state rather than a collection failure: the kernel answers `EIO` for an
-/// unset `stable_secret`, on a file it advertises as readable. Recording that as
-/// [`SysctlValue::Withheld`] keeps the parameter visible and keeps the run alive,
-/// where treating it as a failure would cost the other twelve hundred parameters
-/// over one that has simply never been set.
+/// **A declined read is state, a refused one is not.** The kernel answers `EIO` for an
+/// unset `stable_secret`, on a file it advertises as readable, which is
+/// [`SysctlValue::Withheld`]: a parameter that has never been set. A read refused for
+/// permission says nothing about the parameter, only that this run may not look, so it
+/// is [`SysctlValue::Refused`] with the reason. Either way the run goes on, where failing
+/// the facet would cost the other twelve hundred parameters over one.
 pub fn classify(
     segments: &[String],
     mode: u32,
-    reported: Option<&[u8]>,
+    reading: EntryReading<'_>,
 ) -> Result<Option<(SysctlKey, SysctlValue)>, CollectionError> {
     if !Readability::of_mode(mode).holds_state() {
         return Ok(None);
     }
 
     let key = SysctlKey::of(segments)?;
-    let value = match reported {
-        Some(bytes) => SysctlValue::reported(decoded(&key, bytes)?),
-        None => SysctlValue::Withheld,
+    let value = match reading {
+        EntryReading::Read(bytes) => SysctlValue::reported(decoded(&key, bytes)?),
+        EntryReading::Declined => SysctlValue::Withheld,
+        EntryReading::Refused(reason) => SysctlValue::Refused(reason.to_owned()),
     };
 
     Ok(Some((key, value)))
