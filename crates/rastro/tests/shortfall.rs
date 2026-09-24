@@ -138,3 +138,25 @@ fn a_run_short_both_ways_says_both() {
         ]
     );
 }
+
+#[test]
+fn a_reason_that_runs_to_several_lines_is_cut_to_its_first() {
+    // Arrange: busybox's `ip` answers a flag it lacks with its whole usage text, and the facet
+    // keeps all of it as the reason. On stderr it would break the one-line-per-facet list; the
+    // document still has every line.
+    let run = fingerprint([facet(
+        "network",
+        FacetOutcome::error(
+            "ip (/sbin/ip) exited unsuccessfully: usage\n\nip addr add|del IFADDR dev IFACE\n",
+        ),
+    )]);
+
+    // Act
+    let messages = Shortfall::of(&run).messages();
+
+    // Assert
+    assert_eq!(
+        messages,
+        ["1 facet could not be read:\n  network: ip (/sbin/ip) exited unsuccessfully: usage […]"]
+    );
+}

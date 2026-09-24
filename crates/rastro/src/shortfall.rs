@@ -76,10 +76,13 @@ impl Shortfall {
         let mut messages = Vec::new();
 
         if !self.failed.is_empty() {
-            let lines = self
-                .failed
-                .iter()
-                .map(|facet| format!("\n  {}: {}", facet.name.as_str(), facet.reason));
+            let lines = self.failed.iter().map(|facet| {
+                format!(
+                    "\n  {}: {}",
+                    facet.name.as_str(),
+                    first_line_of(&facet.reason)
+                )
+            });
             messages.push(format!(
                 "{} could not be read:{}",
                 counted(self.failed.len(), "facet", "facets"),
@@ -106,6 +109,19 @@ impl Shortfall {
         }
 
         messages
+    }
+}
+
+/// A reason as one line, marked where it was cut.
+///
+/// A tool's usage text can be the whole of a reason, and on stderr it would break the list of
+/// one facet per line. The document keeps every line, so nothing is lost by cutting here.
+fn first_line_of(reason: &str) -> String {
+    let mut lines = reason.trim_end().lines();
+    let first = lines.next().unwrap_or_default();
+    match lines.next() {
+        Some(_) => format!("{first} […]"),
+        None => first.to_owned(),
     }
 }
 

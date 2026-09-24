@@ -466,10 +466,17 @@ fn unexplained_stderr(output: &Output) -> Vec<String> {
         .iter()
         .filter(|facet| facet["status"] == "error")
         .map(|facet| {
+            // One line per facet on stderr: a reason that runs longer is cut, and marked.
+            let reason = facet["error"].as_str().expect("a failed facet says why");
+            let mut lines = reason.trim_end().lines();
+            let first = lines.next().unwrap_or_default();
+            let shown = match lines.next() {
+                Some(_) => format!("{first} […]"),
+                None => first.to_owned(),
+            };
             format!(
-                "  {}: {}",
-                facet["name"].as_str().expect("a facet has a name"),
-                facet["error"].as_str().expect("a failed facet says why")
+                "  {}: {shown}",
+                facet["name"].as_str().expect("a facet has a name")
             )
         })
         .collect();
