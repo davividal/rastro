@@ -83,7 +83,13 @@ impl AptSources {
     /// configuration, and a container image can carry the configuration with the
     /// binary removed; in both cases the files are the honest answer.
     pub fn detect() -> Option<Self> {
-        let sources = Self::new();
+        Self::detect_at(ETC_APT)
+    }
+
+    /// The same over a configuration root the caller names, so detection can be exercised
+    /// without an `/etc`.
+    pub fn detect_at(root: impl Into<PathBuf>) -> Option<Self> {
+        let sources = Self::at(root);
         sources.root.is_dir().then_some(sources)
     }
 
