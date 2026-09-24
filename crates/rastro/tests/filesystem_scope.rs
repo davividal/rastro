@@ -65,6 +65,23 @@ fn roots_covers_every_mount_but_the_kernels_own_interfaces() {
 }
 
 #[test]
+fn roots_keeps_a_mount_point_containing_unicode_whitespace() {
+    // Arrange: the kernel escapes exactly space, tab, newline and backslash, so U+00A0 from a
+    // Windows share name arrives unescaped. Splitting on Unicode whitespace walked `/mnt/My`,
+    // which is not a mount point, and read the filesystem type from the wrong column.
+    let mounts = "\
+/dev/sda1 / ext4 rw,relatime 0 0
+//server/share /mnt/My\u{a0}Drive cifs rw,relatime 0 0
+";
+
+    // Act
+    let covered = roots("scope_unicode_whitespace", mounts);
+
+    // Assert
+    assert_eq!(covered, vec!["/", "/mnt/My\u{a0}Drive"]);
+}
+
+#[test]
 fn roots_covers_a_filesystem_that_holds_data_without_a_block_device() {
     // Arrange: every one of these needs no block device, and every one holds real data. An
     // earlier version took the kernel's `nodev` marker as the criterion and skipped all four,
