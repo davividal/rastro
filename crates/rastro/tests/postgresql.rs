@@ -832,6 +832,68 @@ fn answering_every_query() -> String {
     )
 }
 
+/// A psql standing in for a PostgreSQL 13 server, which predates `two_phase` (14) and
+/// `rule_number` (16). A query naming either fails there as it does on the real server, and the
+/// two catalogues answer in the shape that version has; everything else is answered as above.
+fn answering_as_postgresql_13() -> String {
+    format!(
+        "case \"$*\" in\n\
+         *rule_number*|*two_phase*) printf 'ERROR:  column does not exist\\n' >&2; exit 1 ;;\n\
+         *pg_hba_file_rules*) cat <<'EOF'\n{HBA_RULES_V15}EOF\n exit 0 ;;\n\
+         *pg_replication_slots*) cat <<'EOF'\n{REPLICATION_SLOTS_V13}EOF\n exit 0 ;;\n\
+         esac\n{}",
+        answering_every_query()
+    )
+}
+
+/// `pg_hba_file_rules` before PostgreSQL 16: no rule number and no file name.
+const HBA_RULES_V15: &str = "\
+90,local,{all},{postgres},,,peer,{},
+92,host,{all},{all},127.0.0.1/32,,scram-sha-256,{},
+";
+
+/// `pg_replication_slots` before PostgreSQL 14: no `two_phase`.
+const REPLICATION_SLOTS_V13: &str = "standby_1,,physical,,f\n";
+
+#[test]
+fn read_asks_an_older_cluster_only_for_the_columns_it_has() {
+    // Arrange: a box still running 13. Asking it for the newer columns fails the read and,
+    // with it, every catalogue this facet reports for the cluster.
+    // Act
+    let clusters = read_with(
+        "postgresql-13",
+        "13  main    5432 online postgres /var/lib/pg /var/log/pg.log",
+        &answering_as_postgresql_13(),
+    );
+
+    // Assert
+    let cluster = clusters.clusters().values().next().expect("one cluster");
+    let rules = cluster
+        .hba_rules
+        .as_ref()
+        .expect("an older cluster's rules are read");
+    assert_eq!(
+        rules
+            .rules()
+            .iter()
+            .map(|rule| (rule.rule_number, rule.line_number))
+            .collect::<Vec<_>>(),
+        [(None, Some(90)), (None, Some(92))]
+    );
+    let slots = cluster
+        .replication_slots
+        .as_ref()
+        .expect("an older cluster's slots are read");
+    assert_eq!(
+        slots
+            .slots()
+            .iter()
+            .map(|slot| slot.name.as_str())
+            .collect::<Vec<&str>>(),
+        ["standby_1"]
+    );
+}
+
 #[test]
 fn read_asks_a_running_cluster_and_carries_its_settings() {
     // Act
