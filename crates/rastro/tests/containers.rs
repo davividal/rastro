@@ -2561,8 +2561,8 @@ fn an_image_the_daemon_reports_twice_fails_the_facet() {
 
     // Act & Assert
     assert!(
-        failure.contains("twice"),
-        "the failure should say the image was reported twice: {failure}"
+        failure.contains(&format!("image {TAGGED_IMAGE:?} twice")),
+        "the failure should name the image reported twice: {failure}"
     );
 }
 
