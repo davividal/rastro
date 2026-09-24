@@ -313,7 +313,10 @@ fn a_directory_where_a_file_was_declared_is_an_error_and_not_an_absence() {
     // Assert: rastro was able to look and what it found would not read, which is a different
     // statement about the box from "there is nothing here".
     match source.reading {
-        EnvironmentReading::Unreadable(why) => assert!(!why.is_empty(), "the reason is the point"),
+        EnvironmentReading::Unreadable(why) => assert!(
+            why.contains("is not a regular file"),
+            "the reason is the point, got: {why}"
+        ),
         other => panic!("expected an unreadable file, got {other:?}"),
     }
 }

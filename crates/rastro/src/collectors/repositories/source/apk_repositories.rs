@@ -44,7 +44,13 @@ impl ApkRepositories {
 
     /// Finds apk's repository list, or reports that this host does not use apk.
     pub fn detect() -> Option<Self> {
-        let repositories = Self::new();
+        Self::detect_at(REPOSITORIES)
+    }
+
+    /// The same over a repository list the caller names, so detection can be exercised
+    /// without an `/etc`.
+    pub fn detect_at(path: impl Into<PathBuf>) -> Option<Self> {
+        let repositories = Self::at(path);
         repositories.path.is_file().then_some(repositories)
     }
 

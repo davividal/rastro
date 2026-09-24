@@ -195,14 +195,18 @@ const INSPECT_PLAIN_VOLUME: &str = r#"[
 
 /// A tagged image built on this box, from `docker image inspect`.
 ///
-/// `RepoDigests` is empty because the box built it and never pushed it, and `Parent` is set
-/// because the classic builder records a chain where buildkit records none. Both are real
-/// states this facet has to carry.
+/// `RepoTags` and `RepoDigests` are both given out of alphabetical order: docker keeps
+/// neither in any promised order, the same build having been pushed to two registries after
+/// it was tagged twice. `Parent` is set because the classic builder records a chain where
+/// buildkit records none.
 const INSPECT_TAGGED_IMAGE: &str = r#"[
   {
     "Id": "sha256:fa10ef3b6224d65632b644294314ddefb5b9185fb87ba29e9bd8d8c2ba86dc02",
-    "RepoTags": ["fixture-app:1", "fixture-app:latest"],
-    "RepoDigests": [],
+    "RepoTags": ["fixture-app:latest", "fixture-app:1"],
+    "RepoDigests": [
+      "ghcr.io/fixture-app@sha256:aaaa000000000000000000000000000000000000000000000000000000000a",
+      "docker.io/fixture-app@sha256:cccc000000000000000000000000000000000000000000000000000000000c"
+    ],
     "Parent": "sha256:d0e93b62e38199f58d210648e86e485c13900f798f372a2cf31032a904c6f232",
     "Comment": "buildkit.dockerfile.v0",
     "Created": "2026-09-08T12:24:37.169201826Z",
@@ -327,8 +331,8 @@ const INSPECT_WEB: &str = r#"[
         "7777/tcp": null,
         "80/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "8080" }],
         "9000/udp": [
-          { "HostIp": "0.0.0.0", "HostPort": "9000" },
-          { "HostIp": "::", "HostPort": "9000" }
+          { "HostIp": "::", "HostPort": "9000" },
+          { "HostIp": "0.0.0.0", "HostPort": "9000" }
         ]
       }
     },
@@ -486,8 +490,8 @@ const INSPECT_LIMITED: &str = r#"[
       "RestartPolicy": { "Name": "on-failure", "MaximumRetryCount": 5 },
       "Privileged": false,
       "ReadonlyRootfs": true,
-      "CapAdd": ["NET_ADMIN", "SYS_TIME"],
-      "CapDrop": ["CHOWN"],
+      "CapAdd": ["SYS_TIME", "NET_ADMIN"],
+      "CapDrop": ["SYS_ADMIN", "CHOWN"],
       "SecurityOpt": ["no-new-privileges", "label=disable"],
       "UsernsMode": "host",
       "PidMode": "host",
@@ -1119,6 +1123,38 @@ fn a_container_that_vanished_while_being_read_is_recorded_rather_than_dropped() 
 }
 
 #[test]
+fn the_unreadable_containers_are_recorded_sorted_by_id() {
+    // Arrange: two containers can vanish between the id list and the inspect of them, and
+    // docker lists ids in the order `ps -aq` printed them rather than any promised order.
+    // The fixture lists `zeta-vanished` before `alpha-vanished` to prove the sort rather
+    // than assume it.
+    let observed = docker_facet(
+        "vanished-sorted",
+        holding(
+            &[
+                (WEB_ID, Some(INSPECT_WEB)),
+                ("zeta-vanished", None),
+                ("alpha-vanished", None),
+            ],
+            &[],
+            &[],
+            &[],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+    let entries = items_of(&field(&server, "unreadable_containers"));
+
+    // Act & Assert
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| text(&field(entry, "id")))
+            .collect::<Vec<String>>(),
+        vec!["alpha-vanished".to_owned(), "zeta-vanished".to_owned()]
+    );
+}
+
+#[test]
 fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
     // Arrange: an engine installed and running with nothing on it is a real state, and a
     // different one from an engine that could not be asked.
@@ -1344,7 +1380,8 @@ fn a_published_port_records_where_it_is_reachable_from() {
 #[test]
 fn the_bindings_of_one_port_are_sorted_rather_than_left_in_the_engines_order() {
     // Arrange: publishing one port without naming an address gives two bindings, one per
-    // family, and docker promises nothing about which comes first.
+    // family, and docker promises nothing about which comes first. The fixture lists `::`
+    // before `0.0.0.0` to prove the sort rather than assume it.
     let bindings = items_of(&field(
         &field(&container_of("binding-order", "web"), "ports"),
         "9000/udp",
@@ -1355,9 +1392,7 @@ fn the_bindings_of_one_port_are_sorted_rather_than_left_in_the_engines_order() {
         .iter()
         .map(|binding| text(&field(binding, "host_address")))
         .collect();
-    let mut sorted = addresses.clone();
-    sorted.sort();
-    assert_eq!(addresses, sorted);
+    assert_eq!(addresses, vec!["0.0.0.0".to_owned(), "::".to_owned()]);
 }
 
 #[test]
@@ -1502,7 +1537,9 @@ fn a_limit_the_container_does_not_have_is_absent_rather_than_zero() {
 #[test]
 fn a_hardened_container_records_what_it_added_dropped_and_forbade() {
     // Arrange: sorted, because the engine keeps them in the order they were given and an
-    // operator reordering two `--cap-add` flags has not changed the box.
+    // operator reordering two `--cap-add` flags has not changed the box. The fixture lists
+    // both `CapAdd` and `CapDrop` out of alphabetical order to prove the sort, not just
+    // assume it.
     //
     // `label=disable` was not asked for: docker added it because `--pid host` makes SELinux
     // labelling impossible, which is why the effective list is the one worth recording.
@@ -1523,7 +1560,7 @@ fn a_hardened_container_records_what_it_added_dropped_and_forbade() {
             .iter()
             .map(text)
             .collect::<Vec<String>>(),
-        vec!["CHOWN".to_owned()]
+        vec!["CHOWN".to_owned(), "SYS_ADMIN".to_owned()]
     );
     assert_eq!(
         items_of(&field(&security, "options"))
@@ -1700,7 +1737,8 @@ fn the_images_are_keyed_by_their_own_id() {
 #[test]
 fn an_image_records_every_tag_that_points_at_it_sorted() {
     // Arrange: two tags on one image is ordinary, `:1` and `:latest` being the usual pair,
-    // and docker promises no order between them.
+    // and docker promises no order between them. The fixture lists `latest` before `1` to
+    // prove the sort rather than assume it.
     let image = image_of("image-tags", TAGGED_IMAGE);
 
     // Act & Assert
@@ -1711,7 +1749,26 @@ fn an_image_records_every_tag_that_points_at_it_sorted() {
             .collect::<Vec<String>>(),
         vec!["fixture-app:1".to_owned(), "fixture-app:latest".to_owned()]
     );
-    assert!(items_of(&field(&image, "registry_digests")).is_empty());
+}
+
+#[test]
+fn an_images_registry_digests_are_recorded_sorted() {
+    // Arrange: a build pushed to two registries carries one digest per registry, and docker
+    // lists them in the order the pushes happened rather than any promised order. The
+    // fixture gives `ghcr.io` before `docker.io` to prove the sort rather than assume it.
+    let image = image_of("image-registry-digests", TAGGED_IMAGE);
+
+    // Act & Assert
+    assert_eq!(
+        items_of(&field(&image, "registry_digests"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec![
+            "docker.io/fixture-app@sha256:cccc000000000000000000000000000000000000000000000000000000000c".to_owned(),
+            "ghcr.io/fixture-app@sha256:aaaa000000000000000000000000000000000000000000000000000000000a".to_owned(),
+        ]
+    );
 }
 
 #[test]
@@ -1801,6 +1858,46 @@ fn an_image_that_vanished_while_being_read_is_recorded_too() {
     assert_eq!(entries.len(), 1);
     assert_eq!(text(&field(&entries[0], "id")), DANGLING_IMAGE);
     assert!(text(&field(&entries[0], "reason")).contains("No such image"));
+}
+
+#[test]
+fn the_unreadable_images_are_recorded_sorted_by_id() {
+    // Arrange: two images can vanish between the id list and the inspect of them, and docker
+    // lists ids in the order `image ls -q` printed them rather than any promised order. The
+    // fixture lists `sha256:bbbb…` before `sha256:aaaa…` to prove the sort rather than
+    // assume it.
+    let observed = docker_facet(
+        "vanished-images-sorted",
+        holding(
+            &[],
+            &[
+                (
+                    "sha256:bbbb000000000000000000000000000000000000000000000000000000000b",
+                    None,
+                ),
+                (
+                    "sha256:aaaa000000000000000000000000000000000000000000000000000000000a",
+                    None,
+                ),
+            ],
+            &[],
+            &[],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+    let entries = items_of(&field(&server, "unreadable_images"));
+
+    // Act & Assert
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| text(&field(entry, "id")))
+            .collect::<Vec<String>>(),
+        vec![
+            "sha256:aaaa000000000000000000000000000000000000000000000000000000000a".to_owned(),
+            "sha256:bbbb000000000000000000000000000000000000000000000000000000000b".to_owned(),
+        ]
+    );
 }
 
 fn volume_of(name: &str, volume: &str) -> Observation {
@@ -2276,6 +2373,34 @@ fn a_volume_that_vanished_while_being_read_is_recorded_rather_than_dropped() {
 }
 
 #[test]
+fn the_unreadable_volumes_are_recorded_sorted_by_name() {
+    // Arrange: two volumes can vanish between the list and the inspect of them, and docker
+    // lists names in the order `volume ls -q` printed them rather than any promised order.
+    // The fixture lists `zeta-pruned` before `alpha-pruned` to prove the sort rather than
+    // assume it.
+    let observed = docker_facet(
+        "vanished-volumes-sorted",
+        holding(
+            &[],
+            &[],
+            &[("zeta-pruned", None), ("alpha-pruned", None)],
+            &[],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+    let entries = items_of(&field(&server, "unreadable_volumes"));
+
+    // Act & Assert
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| text(&field(entry, "id")))
+            .collect::<Vec<String>>(),
+        vec!["alpha-pruned".to_owned(), "zeta-pruned".to_owned()]
+    );
+}
+
+#[test]
 fn a_network_that_vanished_while_being_read_is_recorded_rather_than_dropped() {
     // Arrange: the same race again, from `docker compose down` removing a project's network.
     let observed = docker_facet(
@@ -2301,6 +2426,37 @@ fn a_network_that_vanished_while_being_read_is_recorded_rather_than_dropped() {
     assert_eq!(entries.len(), 1);
     assert_eq!(text(&field(&entries[0], "id")), FIXTURE_NETWORK_ID);
     assert!(text(&field(&entries[0], "reason")).contains("not found"));
+}
+
+#[test]
+fn the_unreadable_networks_are_recorded_sorted_by_id() {
+    // Arrange: two networks can vanish between the list and the inspect of them, and docker
+    // lists ids in the order `network ls -q` printed them rather than any promised order.
+    // The fixture lists `zeta-vanished-net` before `alpha-vanished-net` to prove the sort
+    // rather than assume it.
+    let observed = docker_facet(
+        "vanished-networks-sorted",
+        holding(
+            &[],
+            &[],
+            &[],
+            &[("zeta-vanished-net", None), ("alpha-vanished-net", None)],
+        ),
+    );
+    let server = field(&engine_of(&observed, "docker"), "server");
+    let entries = items_of(&field(&server, "unreadable_networks"));
+
+    // Act & Assert
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| text(&field(entry, "id")))
+            .collect::<Vec<String>>(),
+        vec![
+            "alpha-vanished-net".to_owned(),
+            "zeta-vanished-net".to_owned()
+        ]
+    );
 }
 
 #[test]
@@ -2405,8 +2561,8 @@ fn an_image_the_daemon_reports_twice_fails_the_facet() {
 
     // Act & Assert
     assert!(
-        failure.contains("twice"),
-        "the failure should say the image was reported twice: {failure}"
+        failure.contains(&format!("image {TAGGED_IMAGE:?} twice")),
+        "the failure should name the image reported twice: {failure}"
     );
 }
 

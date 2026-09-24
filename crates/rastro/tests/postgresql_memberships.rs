@@ -98,9 +98,10 @@ fn parse_refuses_a_row_with_the_wrong_number_of_columns() {
 
 #[test]
 fn parse_refuses_the_same_membership_twice() {
-    // Arrange
+    // Arrange: kept apart, since nothing promises a repeat arrives adjacent.
     let contradiction = "\
 developer,migrator,f
+analyst,reader,f
 developer,migrator,t
 ";
 
@@ -108,5 +109,6 @@ developer,migrator,t
     let refused = PsqlMemberships::parse(contradiction);
 
     // Assert: one grant cannot both carry the admin option and not carry it.
-    assert!(refused.is_err());
+    let failure = refused.expect_err("a repeated membership must be refused");
+    assert!(failure.to_string().contains("twice"), "got: {failure}");
 }

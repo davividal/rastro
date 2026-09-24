@@ -582,3 +582,27 @@ fn a_unit_that_unsets_nothing_reports_an_empty_list() {
             .is_empty()
     );
 }
+
+#[test]
+fn unset_environment_is_sorted_rather_than_left_in_systemds_printed_order() {
+    // Arrange: this is a set of names, not a sequence, so nothing is lost in sorting it, and
+    // `systemctl` prints it in the order the unit file named them, which is not alphabetical.
+    let shown = "\
+UnsetEnvironment=ZULU ALPHA
+Id=probe.service
+";
+    let unit = UnitName::new("probe.service").expect("a legal unit name");
+
+    // Act
+    let parsed = systemctl_show::parse(shown).expect("a well formed group");
+
+    // Assert
+    assert_eq!(
+        parsed[&unit]
+            .unset_environment
+            .iter()
+            .map(|name| name.as_str())
+            .collect::<Vec<&str>>(),
+        ["ALPHA", "ZULU"]
+    );
+}

@@ -129,7 +129,12 @@ impl MountedFilesystems {
         let mut boundaries = BTreeSet::new();
 
         for line in self.read()?.lines() {
-            let fields: Vec<&str> = line.split_whitespace().take(READ_FIELDS).collect();
+            // A single space, as the kernel writes it: other whitespace arrives unescaped in a value.
+            let fields: Vec<&str> = line
+                .split(' ')
+                .filter(|field| !field.is_empty())
+                .take(READ_FIELDS)
+                .collect();
 
             if fields.len() < READ_FIELDS {
                 continue;

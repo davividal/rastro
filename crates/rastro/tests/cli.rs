@@ -732,6 +732,27 @@ fn debug_reports_what_the_walk_cost_and_where_the_document_went() {
 }
 
 #[test]
+fn debug_writes_no_escape_sequence_into_a_redirected_stderr() {
+    // Arrange: stderr is a pipe here, as it is under `2> file`, so the live counter is off. The
+    // debug report still clears the counter's line before it prints, and with no counter drawn
+    // that clear must write nothing, or every redirected log carries terminal control codes.
+    // Act
+    let output = run(&["--debug", "--config", sealing_the_shipped_trees()]);
+
+    // Assert
+    assert!(output.status.success(), "rastro should have succeeded");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("total"),
+        "the debug report should have run, which is what calls the clear"
+    );
+    assert!(
+        !output.stderr.contains(&0x1b),
+        "a redirected stderr should hold no escape sequence, got {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn debug_writes_no_timing_into_the_document() {
     // Act
     let document = document(&[

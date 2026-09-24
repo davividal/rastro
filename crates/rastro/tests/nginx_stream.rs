@@ -26,15 +26,15 @@ stream {
     }
 
     server {
+        listen 5433 udp reuseport;
         listen 5432;
-        listen 5433 udp;
         proxy_pass database;
         ssl_certificate     /etc/ssl/db.crt;
         ssl_certificate_key /etc/ssl/db.key;
         allow 10.0.0.0/8;
         deny all;
-        access_log /var/log/nginx/stream.log basic;
         error_log /var/log/nginx/stream-error.log warn;
+        access_log /var/log/nginx/stream.log basic;
     }
 }
 
@@ -42,11 +42,12 @@ http {
     server {
         listen 8080;
         server_name example.org;
-        access_log /var/log/nginx/access.log combined;
         access_log off;
+        access_log /var/log/nginx/access.log combined;
         error_log /var/log/nginx/error.log;
 
         location /quiet {
+            error_log /var/log/nginx/quiet-error.log warn;
             access_log off;
         }
     }
@@ -97,6 +98,9 @@ fn a_stream_server_is_not_read_as_a_virtual_host() {
 
 #[test]
 fn a_stream_server_keeps_where_it_listens_and_where_it_sends() {
+    // Arrange: the 5433 listen is written before the 5432 one, and its switches are written
+    // `udp` before `reuseport`, because neither a listen's address nor its switches are state
+    // by the order they were declared in — nginx reads both as sets.
     // Act
     let (_, stream) = services("listen");
     let server = &stream.servers[0];
@@ -113,7 +117,7 @@ fn a_stream_server_keeps_where_it_listens_and_where_it_sends() {
             .iter()
             .map(|option| option.as_str())
             .collect::<Vec<&str>>(),
-        ["udp"]
+        ["reuseport", "udp"]
     );
 
     let pass = server.pass.as_ref().expect("this server proxies");
@@ -159,6 +163,8 @@ fn a_stream_context_has_pools_of_its_own() {
 
 #[test]
 fn a_log_destination_carries_where_and_how() {
+    // Arrange: `error_log` is written before `access_log`, because a block declaring several
+    // is not read in the order they were declared.
     // Act
     let (_, stream) = services("logs-stream");
     let logs: Vec<(LogKind, &str, Option<&str>)> = stream.servers[0]
@@ -190,7 +196,9 @@ fn a_log_destination_carries_where_and_how() {
 #[test]
 fn a_log_switched_off_is_a_destination_like_any_other() {
     // Arrange: `access_log off;` is how a location stops being logged, and nothing else in a
-    // fingerprint would say that it had.
+    // fingerprint would say that it had. It is written before the access log it shares a
+    // block with, and the location's `error_log` before its `access_log`, because the written
+    // order is not promised to be sorted.
     // Act
     let (http, _) = services("logs-off");
     let host = &http.hosts[0];
@@ -205,6 +213,16 @@ fn a_log_switched_off_is_a_destination_like_any_other() {
             "/var/log/nginx/error.log"
         ]
     );
-    assert_eq!(host.locations[0].logs.len(), 1);
-    assert_eq!(host.locations[0].logs[0].target.as_str(), "off");
+    let location_logs: Vec<(LogKind, &str)> = host.locations[0]
+        .logs
+        .iter()
+        .map(|log| (log.kind, log.target.as_str()))
+        .collect();
+    assert_eq!(
+        location_logs,
+        [
+            (LogKind::Access, "off"),
+            (LogKind::Error, "/var/log/nginx/quiet-error.log")
+        ]
+    );
 }

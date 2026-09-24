@@ -40,8 +40,9 @@ http {
         root /srv/www;
         ssl_certificate     /etc/ssl/example.org.crt;
         ssl_certificate_key /etc/ssl/example.org.key;
+        set_real_ip_from 172.16.0.0/12;
         set_real_ip_from 10.0.0.0/8;
-        resolver 10.0.0.53 valid=30s;
+        resolver 8.8.8.8 10.0.0.53 valid=30s;
 
         location / {
             proxy_pass http://app_pool;
@@ -174,7 +175,10 @@ fn a_certificate_keeps_the_key_that_belongs_to_it() {
 
 #[test]
 fn a_resolver_keeps_its_addresses_and_drops_its_settings() {
-    // Arrange: `valid=30s` tunes the cache; it is not a nameserver.
+    // Arrange: `valid=30s` tunes the cache; it is not a nameserver. Both the resolver
+    // addresses and the trusted-proxy addresses are written in the reverse of sorted order,
+    // because nginx reads each as a set, not as a list a `set_real_ip_from` or a `resolver`
+    // controls the order of.
     let prefix = fixture("resolver");
 
     // Act
@@ -187,7 +191,7 @@ fn a_resolver_keeps_its_addresses_and_drops_its_settings() {
             .iter()
             .map(|resolver| resolver.as_str())
             .collect::<Vec<&str>>(),
-        ["10.0.0.53"]
+        ["10.0.0.53", "8.8.8.8"]
     );
     assert_eq!(
         served
@@ -195,7 +199,7 @@ fn a_resolver_keeps_its_addresses_and_drops_its_settings() {
             .iter()
             .map(|proxy| proxy.as_str())
             .collect::<Vec<&str>>(),
-        ["10.0.0.0/8"]
+        ["10.0.0.0/8", "172.16.0.0/12"]
     );
 }
 
@@ -337,6 +341,39 @@ fn a_pool_sorts_its_members_and_keeps_what_each_was_given() {
         &pool.servers[2].endpoint,
         Endpoint::Unix { path } if path.as_str() == "/run/app.sock"
     ));
+}
+
+#[test]
+fn pools_are_sorted_by_name_because_a_proxy_pass_names_a_pool_not_a_position() {
+    // Arrange: `zebra` is declared before `alpha`, because `proxy_pass` resolves a pool by
+    // name and nginx does not care which `upstream` block came first.
+    let prefix = scratch_tree("nginx-hosts-pool-order", &[]);
+    write(
+        &prefix,
+        "nginx.conf",
+        "http {\n    upstream zebra {\n        server 10.0.0.1:80;\n    }\n\n    upstream alpha {\n        server 10.0.0.2:80;\n    }\n}\n",
+    );
+    let configuration = ConfigurationFiles::at(
+        prefix.join("nginx.conf"),
+        &prefix,
+        ConfigurationSource::CompiledIn,
+    )
+    .expect("the scratch tree is absolute")
+    .read();
+
+    // Act
+    let pools = nginx_directives::http_service(&configuration.directives, &prefix)
+        .expect("this configuration holds no directive rastro cannot read")
+        .upstreams;
+
+    // Assert
+    assert_eq!(
+        pools
+            .iter()
+            .map(|pool| pool.name.as_str())
+            .collect::<Vec<&str>>(),
+        ["alpha", "zebra"]
+    );
 }
 
 #[test]

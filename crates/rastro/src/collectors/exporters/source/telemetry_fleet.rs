@@ -39,6 +39,9 @@ pub struct Deployment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TelemetryFleet {
     tool: CanonicalTool,
+    /// Where agents are looked for instead of the system directories, and only ever set by
+    /// [`Self::using_agents_in`], so production cannot be handed the wrong list.
+    agent_directories: Option<Vec<String>>,
 }
 
 impl TelemetryFleet {
@@ -49,7 +52,24 @@ impl TelemetryFleet {
 
     /// The same over a tool the caller located.
     pub fn using(tool: CanonicalTool) -> Self {
-        Self { tool }
+        Self {
+            tool,
+            agent_directories: None,
+        }
+    }
+
+    /// The same, running agents only from directories the caller names, which is what makes
+    /// reading an agent's build testable without installing one.
+    pub fn using_agents_in(tool: CanonicalTool, directories: &[&str]) -> Self {
+        Self {
+            tool,
+            agent_directories: Some(
+                directories
+                    .iter()
+                    .map(|&directory| directory.to_owned())
+                    .collect(),
+            ),
+        }
     }
 
     pub fn tool(&self) -> &CanonicalTool {
@@ -143,7 +163,14 @@ impl TelemetryFleet {
         let Some(flag) = deployment.known.version.flag() else {
             return Ok(exporter_of(deployment.clone(), None));
         };
-        let Some(binary) = CanonicalTool::located(deployment.known.program) else {
+        let located = match &self.agent_directories {
+            None => CanonicalTool::located(deployment.known.program),
+            Some(directories) => {
+                let directories: Vec<&str> = directories.iter().map(String::as_str).collect();
+                CanonicalTool::located_in(deployment.known.program, &directories)
+            }
+        };
+        let Some(binary) = located else {
             return Ok(exporter_of(deployment.clone(), None));
         };
 

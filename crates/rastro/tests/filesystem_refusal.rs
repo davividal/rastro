@@ -18,8 +18,8 @@ mod support;
 
 use rastro::collectors::filesystem::{
     ContentPolicy, Detail, FileEntry, FileKind, FileMode, FileTree, FilesystemInventory,
-    NanosecondsSinceEpoch, Refusal, UnreadablePath, WalkPolicy, as_document_integer, is_absence,
-    open_without_following,
+    NanosecondsSinceEpoch, Refusal, UnreadablePath, UnspellablePath, WalkPolicy,
+    as_document_integer, is_absence, open_without_following,
 };
 use rastro_collector::{AbsolutePath, NonEmptyText};
 use support::fs_tree::scratch_tree;
@@ -314,6 +314,32 @@ fn the_same_path_read_twice_and_identically_is_one_entry() {
     assert_eq!(
         keys_of(&inventory.observation(Detail::Summary)),
         vec!["/boot"]
+    );
+}
+
+#[test]
+fn unspellable_paths_are_sorted_regardless_of_the_order_the_walk_found_them() {
+    // Arrange: the walk finds these in directory order, which `read_dir` promises nothing
+    // about, so the entries are built directly in an order that is not already sorted by
+    // `name_bytes` (`ff` before `fe`).
+    let inventory = FilesystemInventory::new(
+        Vec::new(),
+        Vec::new(),
+        vec![
+            UnspellablePath::of(b"\xff", Some("/srv/data".to_owned())),
+            UnspellablePath::of(b"\xfe", Some("/srv/data".to_owned())),
+        ],
+    )
+    .expect("two unspellable names in one directory");
+
+    // Assert
+    assert_eq!(
+        inventory
+            .unspellable()
+            .iter()
+            .map(|path| path.name_bytes.as_str())
+            .collect::<Vec<&str>>(),
+        ["fe", "ff"]
     );
 }
 

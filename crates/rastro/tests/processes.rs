@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 mod support;
 
 use rastro::collectors::processes::{
-    ProcProcesses, Process, ProcessTable, ProcessesCollector, proc_cmdline, proc_processes,
-    proc_status,
+    CommandLine, ProcProcesses, Process, ProcessId, ProcessName, ProcessState, ProcessTable,
+    ProcessesCollector, proc_cmdline, proc_processes, proc_status,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Observation, View};
@@ -62,6 +62,23 @@ fn read(root: &Path) -> ProcessTable {
         .expect("this tree is well formed")
 }
 
+/// A minimal process, distinguished only by `name`, for exercising `ProcessTable::new`
+/// directly rather than through a `/proc` walk.
+fn minimal_process(name: &str, pid: u32) -> Process {
+    Process {
+        name: ProcessName::new(name).expect("a legal process name"),
+        command_line: CommandLine::new([]),
+        user_id: 0,
+        group_id: 0,
+        control_group: None,
+        executable: None,
+        process_id: ProcessId::parse(&pid.to_string()).expect("a legal process id"),
+        parent_process_id: ProcessId::parse("1").expect("a legal process id"),
+        state: ProcessState::new("S").expect("a legal process state"),
+        thread_count: 1,
+    }
+}
+
 fn named(table: &ProcessTable, name: &str) -> Process {
     table
         .processes()
@@ -107,6 +124,26 @@ fn read_takes_the_real_id_rather_than_the_effective_one() {
     // Assert: 1000, the account the process belongs to, not the 0 it is acting as.
     assert_eq!(exporter.user_id, 1000);
     assert_eq!(exporter.group_id, 1000);
+}
+
+#[test]
+fn read_resolves_the_binary_a_process_is_running() {
+    // Arrange: `exe` is the kernel's link to the binary itself, which the command line is not:
+    // `argv[0]` is whatever the parent chose to pass. The target needs no file behind it,
+    // because rastro reads the link and never follows it.
+    let root = tree("executable");
+    write_process(&root, 42, DROPPED_STATUS, "node_exporter\0", None);
+    std::os::unix::fs::symlink("/usr/bin/node_exporter", root.join("42/exe"))
+        .expect("a writable process directory");
+
+    // Act
+    let exporter = named(&read(&root), "node_exporter");
+
+    // Assert
+    assert_eq!(
+        exporter.executable.map(|path| path.as_str().to_owned()),
+        Some("/usr/bin/node_exporter".to_owned())
+    );
 }
 
 #[test]
@@ -288,6 +325,28 @@ fn read_sorts_the_table_rather_than_leaving_it_in_pid_order() {
 
     // Act
     let table = read(&root);
+
+    // Assert
+    assert_eq!(
+        table
+            .processes()
+            .iter()
+            .map(|process| process.name.as_str())
+            .collect::<Vec<&str>>(),
+        ["alpha", "zulu"]
+    );
+}
+
+#[test]
+fn process_table_new_sorts_regardless_of_the_order_it_is_given() {
+    // Arrange: `ProcProcesses` sorts pids before building processes, so a fixture driven
+    // through it can never observe `ProcessTable::new`'s own sort. Built directly instead,
+    // with the process ids deliberately *not* matching the name order (zulu first, at the
+    // lower pid), so a passing assertion cannot be pid ordering in disguise.
+    let processes = [minimal_process("zulu", 1), minimal_process("alpha", 9)];
+
+    // Act
+    let table = ProcessTable::new(processes);
 
     // Assert
     assert_eq!(

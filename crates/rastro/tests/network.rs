@@ -34,9 +34,9 @@ const INTERFACES: &str = r#"[
   {"ifindex":3,"ifname":"enp0s9","flags":["BROADCAST","MULTICAST","UP","LOWER_UP"],
    "mtu":1500,"operstate":"UNKNOWN","link_type":"ether","address":"08:00:27:a0:9c:dd",
    "addr_info":[
-     {"family":"inet","local":"192.168.56.103","prefixlen":24,"scope":"global",
-      "valid_life_time":4294967295,"preferred_life_time":4294967295},
      {"family":"inet6","local":"fe80::a00:27ff:fea0:9cdd","prefixlen":64,"scope":"link",
+      "valid_life_time":4294967295,"preferred_life_time":4294967295},
+     {"family":"inet","local":"192.168.56.103","prefixlen":24,"scope":"global",
       "valid_life_time":4294967295,"preferred_life_time":4294967295}]}
 ]"#;
 
@@ -222,8 +222,8 @@ fn parse_sorts_the_addresses_on_an_interface() {
     // Act
     let enp0s9 = interface(&state(), "enp0s9");
 
-    // Assert: `inet` sorts before `inet6`, so the order is the model's rather than the
-    // kernel's.
+    // Assert: `ip` prints this interface's inet6 address first, but the model promises no
+    // order of its own, so `inet` sorting before `inet6` here is the sort, not `ip`'s order.
     assert_eq!(
         enp0s9
             .addresses

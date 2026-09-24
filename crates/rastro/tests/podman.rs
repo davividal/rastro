@@ -79,8 +79,15 @@ const CONTAINERS: &str = r#"[
     "IsInfra": false,
     "AutoRemove": false,
     "Labels": { "com.example.role": "web" },
-    "Networks": ["podman"],
+    "Networks": ["podman", "custom-net"],
     "Ports": [
+      {
+        "host_ip": "192.168.1.5",
+        "container_port": 80,
+        "host_port": 18083,
+        "range": 1,
+        "protocol": "tcp"
+      },
       {
         "host_ip": "127.0.0.1",
         "container_port": 80,
@@ -484,6 +491,39 @@ fn a_published_port_records_the_run_of_ports_it_covers() {
     assert_eq!(text(&field(&bindings[0], "host_address")), "127.0.0.1");
     assert_eq!(integer(&field(&bindings[0], "host_port")), 18081);
     assert_eq!(integer(&field(&bindings[0], "range")), 1);
+}
+
+#[test]
+fn a_ports_bindings_are_recorded_sorted() {
+    // Arrange: a port published to more than one address is ordinary, and podman prints the
+    // bindings in the order they were created rather than any promised order. The fixture
+    // lists `192.168.1.5` before `127.0.0.1` to prove the sort rather than assume it.
+    let ports = field(&container_of("bindings-sorted", "pweb"), "ports");
+    let bindings = items_of(&field(&ports, "80/tcp"));
+
+    // Act & Assert
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(text(&field(&bindings[0], "host_address")), "127.0.0.1");
+    assert_eq!(integer(&field(&bindings[0], "host_port")), 18081);
+    assert_eq!(text(&field(&bindings[1], "host_address")), "192.168.1.5");
+    assert_eq!(integer(&field(&bindings[1], "host_port")), 18083);
+}
+
+#[test]
+fn a_containers_networks_are_recorded_sorted() {
+    // Arrange: a container attached to more than one network is ordinary, and podman prints
+    // them in the order they were joined rather than any promised order. The fixture lists
+    // `podman` before `custom-net` to prove the sort rather than assume it.
+    let container = container_of("networks-sorted", "pweb");
+
+    // Act & Assert
+    assert_eq!(
+        items_of(&field(&container, "networks"))
+            .iter()
+            .map(text)
+            .collect::<Vec<String>>(),
+        vec!["custom-net".to_owned(), "podman".to_owned()]
+    );
 }
 
 #[test]

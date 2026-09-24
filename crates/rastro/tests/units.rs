@@ -14,7 +14,7 @@ use rastro::collectors::units::{
 };
 use rastro_collector::{Collector, EnvironmentVariableName, Presence};
 use rastro_fingerprint::{Content, Observation, Presentation, Scalar, View};
-use support::observation::{field, items_of, keys_of};
+use support::observation::{field, is_null, items_of, keys_of};
 
 /// Real rows, covering an enabled service, a masked one, an alias, a template, a
 /// runtime-enabled unit and the transient scope of a login session.
@@ -541,6 +541,38 @@ fn an_environment_file_path_is_not_withheld() {
     // Assert
     let files = items_of(&field(&rendered, "environment_files"));
     assert_eq!(text(&field(&files[0], "path")), "/etc/myapp.env");
+}
+
+#[test]
+fn a_wildcard_records_the_pattern_and_the_file_it_matched_apart() {
+    // Arrange: the pattern changes when somebody edits the unit, the matched file when
+    // somebody drops one into the directory, so the two are recorded as separate facts. A
+    // pattern that matched nothing has no file to name.
+    let matched = EnvironmentSource {
+        resolved: Some(
+            rastro_collector::AbsolutePath::new("/etc/app.d/10-base.env", "unit environment file")
+                .expect("an absolute path"),
+        ),
+        ..source_read("/etc/app.d/*.env", false, [], 0)
+    };
+    let unmatched = EnvironmentSource {
+        declared: EnvironmentFile::new("/etc/none.d/*.env", true).expect("an absolute path"),
+        resolved: None,
+        reading: EnvironmentReading::Absent,
+    };
+
+    // Act
+    let rendered = unit_with(vec![matched, unmatched]);
+
+    // Assert
+    let files = items_of(&field(&rendered, "environment_files"));
+    assert_eq!(text(&field(&files[0], "declared")), "/etc/app.d/*.env");
+    assert_eq!(text(&field(&files[0], "path")), "/etc/app.d/10-base.env");
+    assert_eq!(text(&field(&files[1], "declared")), "/etc/none.d/*.env");
+    assert!(
+        is_null(&field(&files[1], "path")),
+        "a pattern that matched nothing names no file"
+    );
 }
 
 /// A declared file that was read, with the variables it set.

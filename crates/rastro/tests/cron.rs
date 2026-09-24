@@ -9,7 +9,7 @@ use std::path::PathBuf;
 mod support;
 
 use rastro::collectors::cron::{
-    CronCollector, CronFiles, CronTable, OwnerColumn, Schedule, crontab,
+    CronCollector, CronFiles, CronTable, OwnerColumn, Schedule, ScriptName, crontab,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
@@ -273,6 +273,24 @@ fn read_lists_the_scripts_in_a_run_parts_directory() {
 }
 
 #[test]
+fn scripts_sorts_the_run_parts_directory_regardless_of_listing_order() {
+    // Arrange: `CronTable::scripts` promises no order of its own, and a real directory
+    // listing may happen to come back sorted, so this drives it directly with the names
+    // reversed to make the sort observable rather than incidental.
+    let names = [
+        ScriptName::new("logrotate").expect("a legal script name"),
+        ScriptName::new("apt-compat").expect("a legal script name"),
+    ];
+
+    // Act
+    let table = CronTable::scripts(names);
+
+    // Assert
+    let scripts: Vec<&str> = table.scripts.iter().map(ScriptName::as_str).collect();
+    assert_eq!(scripts, ["apt-compat", "logrotate"]);
+}
+
+#[test]
 fn read_skips_a_placeholder_file_because_cron_does() {
     // Arrange: every Debian cron directory carries a `.placeholder`, and both cron and
     // `run-parts` require a name of letters, digits, underscores and hyphens.
@@ -371,6 +389,76 @@ fn read_tells_an_absent_run_parts_directory_apart_from_an_empty_one() {
         entry("cron.monthly").content(),
         &Content::Scalar(Scalar::Null),
         "an absent one reports null"
+    );
+}
+
+#[test]
+fn read_fails_on_a_spool_it_is_not_allowed_to_list() {
+    // Arrange: Debian's spool is `1730 root:crontab`, so an unprivileged run can see it exists
+    // and cannot list it. Reading that as an empty spool would claim nobody has a crontab.
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tree("unlistable-spool");
+    write(
+        &root,
+        "var/spool/cron/crontabs/operator",
+        "0 4 * * * /usr/bin/backup\n",
+    );
+    let spool = root.join("var/spool/cron/crontabs");
+    fs::set_permissions(&spool, fs::Permissions::from_mode(0o300))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::read_dir(&spool).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and lists it regardless of the mode bits.
+        fs::set_permissions(&spool, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user lists a directory without the read bit");
+        return;
+    }
+
+    // Act
+    let result = CronFiles::under(&root).read();
+
+    fs::set_permissions(&spool, reopened).expect("a scratch directory this user owns");
+
+    // Assert
+    let failure = result.expect_err("an unlistable spool must fail the read");
+    assert!(
+        failure
+            .to_string()
+            .starts_with(&format!("could not list {}", spool.display())),
+        "the message must name the spool, got: {failure}"
+    );
+}
+
+#[test]
+fn read_fails_on_a_crontab_it_is_not_allowed_to_read() {
+    // Arrange: only a missing file is absence. One that is there and will not open is a
+    // crontab rastro could not see, which is not the same as no crontab.
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tree("unreadable-drop-in");
+    write(&root, "etc/cron.d/sysstat", DROP_IN);
+    let drop_in = root.join("etc/cron.d/sysstat");
+    fs::set_permissions(&drop_in, fs::Permissions::from_mode(0o000))
+        .expect("a scratch file this user owns");
+
+    if fs::read(&drop_in).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and reads it regardless of the mode bits.
+        eprintln!("skipped: this user reads a file without the read bit");
+        return;
+    }
+
+    // Act
+    let result = CronFiles::under(&root).read();
+
+    // Assert
+    let failure = result.expect_err("an unreadable crontab must fail the read");
+    assert!(
+        failure
+            .to_string()
+            .starts_with(&format!("could not read {}", drop_in.display())),
+        "the message must name the crontab, got: {failure}"
     );
 }
 

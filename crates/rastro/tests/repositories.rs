@@ -4,6 +4,7 @@
 //! Both apt formats are exercised, because Debian 12 ships both at once: the fixtures
 //! are the shapes really found on the development box, with the URIs changed.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 mod support;
@@ -591,14 +592,44 @@ fn the_inventory_refuses_a_system_reported_twice() {
 
 #[test]
 fn detect_finds_nothing_when_neither_system_is_configured() {
-    // Arrange: a root with no apt tree and no apk file.
+    // Arrange: a root with no apt tree and no apk file, which is what a host using neither
+    // looks like. Reporting either system here would describe a package source that is not.
     let root = tree("undetected");
 
     // Act
-    let sources = AptSources::at(root.join("absent"));
+    let apt = AptSources::detect_at(root.join("etc/apt"));
+    let apk = ApkRepositories::detect_at(root.join("etc/apk/repositories"));
 
     // Assert
-    assert!(!sources.root().is_dir());
+    assert_eq!(apt, None);
+    assert_eq!(apk, None);
+}
+
+#[test]
+fn detect_finds_each_system_whose_configuration_is_there() {
+    // Arrange: the files are the answer, not the binaries. A container image can carry the
+    // configuration with the package manager removed.
+    let root = tree("detected");
+    fs::create_dir_all(root.join("etc/apt")).expect("a writable tree");
+    write(
+        &root,
+        "etc/apk/repositories",
+        "https://dl-cdn.alpinelinux.org/alpine/v3.22/main\n",
+    );
+
+    // Act
+    let apt = AptSources::detect_at(root.join("etc/apt"));
+    let apk = ApkRepositories::detect_at(root.join("etc/apk/repositories"));
+
+    // Assert
+    assert_eq!(
+        apt.map(|sources| sources.root().to_owned()),
+        Some(root.join("etc/apt"))
+    );
+    assert_eq!(
+        apk.map(|repositories| repositories.path().to_owned()),
+        Some(root.join("etc/apk/repositories"))
+    );
 }
 
 #[test]

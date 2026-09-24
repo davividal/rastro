@@ -7,15 +7,24 @@
 use rastro::collectors::postgresql::{ClusterId, HbaRule, PsqlHbaRules};
 
 /// The eleven columns PostgreSQL 16 and later print.
+///
+/// Rule 2 before rule 1: the server prints rules in file order, not rule-number order (the
+/// two only coincide when nothing has ever reordered the files), so listing them in this
+/// order is what makes `ClusterHbaRules`'s sort by `rule_number` observable rather than
+/// incidentally already-sorted input.
 const RULES_V16: &str = "\
-1,/etc/postgresql/17/main/pg_hba.conf,90,local,{all},{postgres},,,peer,{},
 2,/etc/postgresql/17/main/pg_hba.conf,92,host,{all},{all},127.0.0.1/32,,scram-sha-256,{},
+1,/etc/postgresql/17/main/pg_hba.conf,90,local,{all},{postgres},,,peer,{},
 ";
 
 /// The nine columns PostgreSQL 15 prints: no rule_number, no file_name.
+///
+/// Line 92 before line 90: PostgreSQL 15 has no `rule_number` to sort by, so the fallback
+/// key is `line_number`, and listing the higher line first is what makes that fallback sort
+/// observable.
 const RULES_V15: &str = "\
-90,local,{all},{postgres},,,peer,{},
 92,host,{all},{all},127.0.0.1/32,,scram-sha-256,{},
+90,local,{all},{postgres},,,peer,{},
 ";
 
 fn parsed(csv: &str) -> Vec<HbaRule> {
@@ -56,6 +65,37 @@ fn parse_reads_the_nine_column_shape() {
     assert_eq!(host.connection_type.as_deref(), Some("host"));
     assert_eq!(host.address.as_deref(), Some("127.0.0.1/32"));
     assert_eq!(host.auth_method.as_deref(), Some("scram-sha-256"));
+}
+
+#[test]
+fn parse_sorts_by_rule_number_rather_than_the_order_the_server_printed_them() {
+    // Act: `RULES_V16` lists rule 2 before rule 1, since precedence order and file order
+    // are not the same thing.
+    let rules = parsed(RULES_V16);
+
+    // Assert
+    assert_eq!(
+        rules
+            .iter()
+            .map(|rule| rule.rule_number)
+            .collect::<Vec<Option<i64>>>(),
+        [Some(1), Some(2)]
+    );
+}
+
+#[test]
+fn parse_sorts_by_line_number_when_no_rule_number_exists() {
+    // Act: `RULES_V15` has no rule_number column at all, and lists line 92 before line 90.
+    let rules = parsed(RULES_V15);
+
+    // Assert
+    assert_eq!(
+        rules
+            .iter()
+            .map(|rule| rule.line_number)
+            .collect::<Vec<Option<i64>>>(),
+        [Some(90), Some(92)]
+    );
 }
 
 #[test]

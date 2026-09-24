@@ -53,9 +53,10 @@ fn the_host_collector_reads_the_hostname_itself_when_nobody_hands_it_one() {
 #[test]
 fn the_default_host_collector_is_the_one_that_reads_for_itself() {
     // Act & Assert: `Default` exists because a collector with a no-argument constructor
-    // should satisfy it, and it must not become a second, quietly different collector.
+    // should satisfy it, and it must not become a second, quietly different collector. Both
+    // read this box's hostname, so what they collect is the comparison that can tell.
     assert_eq!(
-        HostCollector::default().identity().version.as_str(),
-        HostCollector::new().identity().version.as_str()
+        HostCollector::default().collect(),
+        HostCollector::new().collect()
     );
 }
