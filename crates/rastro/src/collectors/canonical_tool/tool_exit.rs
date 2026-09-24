@@ -14,3 +14,11 @@ pub struct ToolExit {
     pub stdout: String,
     pub stderr: String,
 }
+
+impl ToolExit {
+    /// The end of stderr, bounded the way every failed tool is quoted, for a caller that
+    /// judged this run a failure after all.
+    pub fn stderr_tail(&self) -> String {
+        super::quoted_tail(self.stderr.as_bytes())
+    }
+}

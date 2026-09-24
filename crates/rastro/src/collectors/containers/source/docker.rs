@@ -183,14 +183,20 @@ impl Docker {
             Err(_) if !probed.succeeded => {
                 return Err(CollectionError::new(format!(
                     "`{PROGRAM} version` exited unsuccessfully: {}",
-                    probed.stderr.trim()
+                    probed.stderr_tail()
                 )));
             }
             Err(error) => return Err(error),
         };
 
         let Some(server) = versions.server else {
-            return Ok(unanswered(versions.client, &probed.stderr));
+            // Bounded like any quoted stderr, since it reaches the document; nothing said
+            // stays nothing rather than becoming the placeholder for an empty stream.
+            let said = match probed.stderr.trim().is_empty() {
+                true => String::new(),
+                false => probed.stderr_tail(),
+            };
+            return Ok(unanswered(versions.client, &said));
         };
 
         let reported = decode::<DockerInfoDocument>(&self.tool.run(&INFO)?, "info")?;

@@ -2421,6 +2421,54 @@ fn a_docker_that_fails_without_saying_what_it_is_fails_the_facet() {
     );
 }
 
+#[test]
+fn a_failed_docker_probe_quotes_only_the_end_of_what_it_said() {
+    // Arrange: a client that writes a screenful of noise before its reason. The facet error
+    // is part of the document, so it keeps the tail every other failed tool is quoted by.
+    let noisy = format!("{}\nexec format error", "noise ".repeat(20_000));
+    let failure = refusal(
+        "version-noisy",
+        DockerFixtures {
+            version: "not a document",
+            version_stderr: &noisy,
+            info: "",
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
+    );
+
+    // Act & Assert
+    assert!(failure.ends_with("exec format error"), "got {failure:.200}");
+    assert!(failure.len() < 1_024, "quoted {} bytes", failure.len());
+}
+
+#[test]
+fn a_refused_docker_keeps_only_the_end_of_what_it_said_as_its_reason() {
+    // Arrange: the reason reaches the document, so it is bounded like any quoted stderr.
+    let noisy = format!("{}\n{REFUSED_STDERR}", "noise ".repeat(20_000));
+    let observed = docker_facet(
+        "refused-noisy",
+        DockerFixtures {
+            version: VERSION_UNREACHABLE,
+            version_stderr: &noisy,
+            info: "",
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
+    );
+
+    // Act
+    let reason = text(&field(&engine_of(&observed, "docker"), "daemon_reason"));
+
+    // Assert
+    assert!(reason.ends_with(REFUSED_STDERR), "got {reason:.200}");
+    assert!(reason.len() < 1_024, "kept {} bytes", reason.len());
+}
+
 /// An `inspect` that returns an empty array, which is how a test drives the object that
 /// went away between being listed and being described.
 const DESCRIBES_NOTHING: &str = "[]";
