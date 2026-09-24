@@ -114,5 +114,6 @@ impl From<&Node> for Observation {
                 },
             ),
         ])
+        .incomplete_when(node.evidence.refusal().is_some())
     }
 }

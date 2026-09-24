@@ -282,6 +282,29 @@ fn a_node_whose_holder_cannot_be_read_is_reported_as_refused() {
 }
 
 #[test]
+fn a_refused_node_counts_as_an_item_not_read_and_a_stale_one_does_not() {
+    // Arrange: the facet stays `ok` either way, so only the mark tells the operator's summary
+    // that one of these is a gap and the other a confident answer.
+    let refused = box_with("rabbitmq-asking-refused-mark", &[("748", EPMD_ARGV)], None);
+    let stale = box_with("rabbitmq-asking-stale-mark", &[("748", EPMD_ARGV)], None);
+    fs::write(stale.proc.join("net/tcp"), EMPTY_TCP).expect("a writable scratch table");
+
+    // Act
+    let read = |host: &Box_| {
+        Observation::from(
+            &host
+                .inventory()
+                .read(Some(&host.client()))
+                .expect("both are nodes on the box"),
+        )
+    };
+
+    // Assert
+    assert_eq!(read(&refused).incomplete_items(), 1);
+    assert_eq!(read(&stale).incomplete_items(), 0);
+}
+
+#[test]
 fn a_node_whose_port_nothing_offers_is_a_stale_registration() {
     // Arrange: epmd still names the node, and no socket in the table offers its port.
     let host = box_with("rabbitmq-asking-stale", &[("748", EPMD_ARGV)], None);
