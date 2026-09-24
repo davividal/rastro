@@ -1155,6 +1155,32 @@ fn the_unreadable_containers_are_recorded_sorted_by_id() {
 }
 
 #[test]
+fn a_container_that_vanished_counts_as_an_item_not_read_and_one_that_was_read_does_not() {
+    // Arrange: the facet is `ok` and describes `web` in full; the container that ended before
+    // it could be inspected is the one thing this run did not see.
+    let fixtures = |containers| DockerFixtures {
+        version: VERSION_ANSWERING,
+        version_stderr: "",
+        info: INFO_ANSWERING,
+        containers,
+        images: &[],
+        volumes: &[],
+        networks: &[],
+    };
+
+    // Act
+    let with_a_loss = docker_facet(
+        "vanished-mark",
+        fixtures(&[(WEB_ID, Some(INSPECT_WEB)), (EPHEMERAL_ID, None)]),
+    );
+    let whole = docker_facet("whole-mark", fixtures(&[(WEB_ID, Some(INSPECT_WEB))]));
+
+    // Assert
+    assert_eq!(with_a_loss.incomplete_items(), 1);
+    assert_eq!(whole.incomplete_items(), 0);
+}
+
+#[test]
 fn a_daemon_with_no_containers_reports_an_empty_list_rather_than_nothing() {
     // Arrange: an engine installed and running with nothing on it is a real state, and a
     // different one from an engine that could not be asked.
