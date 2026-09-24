@@ -23,10 +23,18 @@ const REGISTER: &str = "epmd: up and running on port 4369 with data:\nname rabbi
 const EPMD_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/epmd\0-daemon\0";
 const BROKER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0rabbit\0boot\0";
 
+/// A socket table with no rows, which is a box that answered rather than one that refused.
+///
+/// Present in every fixture here on purpose: these tests are about which node the register
+/// names and what the facet can read of it, and a missing table is a refused read, which fails
+/// the facet before any of that is reached.
+const EMPTY_TCP: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
 /// A `/proc` holding the processes named, under a scratch root of this test's own.
 fn proc_with(root: &Path, processes: &[(&str, &str)]) -> std::path::PathBuf {
     let proc = root.join("proc");
-    std::fs::create_dir_all(&proc).expect("a writable scratch directory");
+    std::fs::create_dir_all(proc.join("net")).expect("a writable scratch directory");
+    write(&proc, "net/tcp", EMPTY_TCP);
 
     for (pid, argv) in processes {
         // `fd` as well, because a process without one is a process rastro cannot read a node

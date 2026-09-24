@@ -255,25 +255,26 @@ fn a_node_held_by_another_erlang_application_is_not_asked() {
 }
 
 #[test]
-fn a_node_whose_holder_cannot_be_read_is_undetermined_rather_than_denied() {
+fn a_node_whose_holder_cannot_be_read_fails_the_facet() {
     // Arrange: the port is offered and no descriptor of any process names its inode. That is
     // what an unprivileged run meets, and what a container with reduced capabilities meets
     // even as root. Found that way: a live broker reported `runs_rabbitmq: false`.
     let host = box_with("rabbitmq-asking-unheld", &[("748", EPMD_ARGV)], None);
 
     // Act
-    let installation = host
+    let failure = host
         .inventory()
         .read(Some(&host.client()))
-        .expect("an unattributable node is not a failure");
+        .expect_err("a refused read is not a reading");
 
-    // Assert: still not addressed, which is the safe behaviour, and now the document says
-    // rastro could not tell rather than asserting the node is not a broker.
+    // Assert: still not addressed, which is the safe behaviour, and loud, which is the part
+    // an earlier release got wrong: it recorded the node with every field null under an `ok`
+    // facet, so a fingerprint of a box rastro was not allowed to read was indistinguishable
+    // from one of a box with nothing on it.
     assert!(!host.asked());
 
-    let node = installation.nodes().values().next().expect("one node");
-    assert_eq!(node.evidence, BrokerEvidence::HolderUnreadable);
-    assert_eq!(node.evidence.runs_rabbitmq(), None);
+    let message = failure.to_string();
+    assert!(message.contains("rabbit"), "{message}");
 }
 
 #[test]
@@ -298,28 +299,23 @@ fn a_node_whose_port_nothing_offers_is_a_stale_registration() {
 }
 
 #[test]
-fn a_box_whose_socket_tables_cannot_be_read_says_so() {
-    // Arrange
+fn a_box_whose_socket_tables_cannot_be_read_fails_the_facet() {
+    // Arrange: the same refusal one step earlier. Nothing about the box has been learnt, so
+    // there is nothing to report but the refusal.
     let host = box_with("rabbitmq-asking-tableless", &[("748", EPMD_ARGV)], None);
     fs::remove_file(host.proc.join("net/tcp")).expect("a removable scratch table");
 
     // Act
-    let installation = host
+    let failure = host
         .inventory()
         .read(Some(&host.client()))
-        .expect("an unreadable table is not a failure of the facet");
+        .expect_err("a refused read is not a reading");
 
     // Assert
     assert!(!host.asked());
-    assert_eq!(
-        installation
-            .nodes()
-            .values()
-            .next()
-            .expect("one node")
-            .evidence,
-        BrokerEvidence::TablesUnreadable
-    );
+
+    let message = failure.to_string();
+    assert!(message.contains("socket"), "{message}");
 }
 
 #[test]
