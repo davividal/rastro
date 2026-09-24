@@ -5504,8 +5504,9 @@ renderers present, as with the other two.
 
 Marked: a path the walk was refused, a name it cannot spell, a broker node whose holder could
 not be read, a PAM or unit environment file that would not open, a firewall backend that could
-not be dumped, a container object that vanished, and an nginx include, certificate or key it
-refused. Not marked: the three box-state `error` fields above.
+not be dumped, a container object that vanished, and an nginx include, certificate, key or
+basic-auth user file it refused. Not marked: the three box-state `error` fields above, and a
+container engine whose daemon did not answer, which `DaemonStatus` records as state.
 
 **What this costs.** A new collector that records a per-item failure has to mark it, and
 nothing but review makes it do so; an unmarked one is reported in the document and missing
