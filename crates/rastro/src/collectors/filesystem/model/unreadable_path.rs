@@ -62,6 +62,6 @@ impl UnreadablePath {
 
 impl From<&UnreadablePath> for Observation {
     fn from(refused: &UnreadablePath) -> Self {
-        Observation::object([("error", Observation::text(refused.reason.as_str()))])
+        Observation::object([("error", Observation::text(refused.reason.as_str()))]).incomplete()
     }
 }

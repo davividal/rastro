@@ -66,5 +66,6 @@ impl From<&UnspellablePath> for Observation {
                 Observation::text(unspellable.name_bytes.as_str()),
             ),
         ])
+        .incomplete()
     }
 }
