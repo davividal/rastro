@@ -704,6 +704,17 @@ fn parse_records_a_supervisor_alongside_recovery() {
 }
 
 #[test]
+fn parse_sorts_the_qualifiers_rather_than_leaving_pg_lsclusters_own_order() {
+    // Arrange: `pg_lsclusters` prints qualifiers in the order postgresql-common appends
+    // them, which is not alphabetical, and this is a set of facts about the cluster rather
+    // than a sequence, so nothing is lost in sorting it.
+    let status = ClusterStatus::parse("down,zebra_tool,alpha_tool").expect("a legal status");
+
+    // Assert
+    assert_eq!(status.qualifiers(), ["alpha_tool", "zebra_tool"]);
+}
+
+#[test]
 fn parse_reads_an_empty_owner_column_as_no_owner() {
     // Arrange: a uid with no passwd entry prints an empty owner, and the data directory
     // collapses into its place under whitespace splitting.
