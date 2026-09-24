@@ -81,13 +81,25 @@ jobs:
       - name: Ask a live broker whether rastro read it right
         run: |
           su -s /bin/sh rabbitmq -c 'HOME=/var/lib/rabbitmq rabbitmq-server > /tmp/broker.log 2>&1 &'
-          timeout 90 rabbitmqctl await_startup || {
-              echo '--- the broker wrote:'
-              cat /tmp/broker.log || true
-              echo '--- and its own log:'
-              tail -50 /var/log/rabbitmq/*.log || true
-              exit 1
-          }
+
+          # **Polled, not awaited once.** `await_startup` waits for a *running* node to finish
+          # booting; it fails immediately when epmd has no registration yet, which is where a
+          # cold runner is a second after the server was asked to start. The first version of
+          # this called it once and failed in under a second, and no local run reproduced it,
+          # because a warm machine registers the node before the next command runs.
+          waited=0
+          until rabbitmqctl await_startup > /dev/null 2>&1; do
+              waited=$((waited + 2))
+              if [ "$waited" -ge 90 ]; then
+                  echo "--- the broker never came up. It wrote:"
+                  cat /tmp/broker.log || true
+                  echo '--- and its own log:'
+                  tail -50 /var/log/rabbitmq/*.log 2>/dev/null || true
+                  exit 1
+              fi
+              sleep 2
+          done
+          echo "the node answered after about ${waited}s"
           rabbitmqctl version
           rabbitmq-diagnostics erlang_version
           epmd -names
