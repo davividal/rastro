@@ -9,10 +9,11 @@ mod support;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 use rastro::collectors::canonical_tool::{CanonicalTool, ToolOutput};
 use rastro::collectors::exporters::{
-    ExporterBuild, ExportersCollector, TelemetryFleet, VersionDialect,
+    Exporter, ExporterBuild, ExportersCollector, TelemetryFleet, VersionDialect,
 };
 use rastro::collectors::systemd::UnitName;
 use rastro_collector::{Collector, Content, Observation, Presence, Scalar};
@@ -508,27 +509,62 @@ Id=collectd.service\n";
     assert_eq!(collectd.agent.as_str(), "collectd");
 }
 
-#[test]
-fn read_records_a_known_agent_even_when_rastro_will_not_run_its_binary() {
-    if CanonicalTool::located("node_exporter").is_some() {
-        return;
-    }
-
-    let listed = "[{\"unit\":\"node_exporter.service\"}]\n";
-    let shown = "\
+const NODE_EXPORTER_LISTED: &str = "[{\"unit\":\"node_exporter.service\"}]\n";
+const NODE_EXPORTER_SHOWN: &str = "\
 ExecStartEx={ path=/usr/local/bin/node_exporter ; argv[]=/usr/local/bin/node_exporter \
 --web.listen-address=0.0.0.0:9100 ; flags= ; pid=0 }\n\
 Id=node_exporter.service\n";
-    let fleet = TelemetryFleet::using(fake_systemctl("missing-binary", listed, shown));
 
-    let read = fleet
+/// The node_exporter a fleet reads, found among the agents in `directory` or not at all.
+fn node_exporter_read_with_agents_in(name: &str, directory: &Path) -> Exporter {
+    let fleet = TelemetryFleet::using_agents_in(
+        fake_systemctl(name, NODE_EXPORTER_LISTED, NODE_EXPORTER_SHOWN),
+        &[directory.to_str().expect("utf-8 scratch path")],
+    );
+
+    fleet
         .read()
-        .expect("the fake systemctl output is well formed");
-    let exporter = read
+        .expect("the fake systemctl output is well formed")
         .exporters()
         .get(&UnitName::new("node_exporter.service").expect("legal unit"))
-        .expect("node_exporter should be in the fleet");
+        .expect("node_exporter should be in the fleet")
+        .clone()
+}
 
+#[test]
+fn read_records_a_known_agent_even_when_rastro_will_not_run_its_binary() {
+    // Arrange: no agent in any directory rastro runs binaries from, whatever this host has
+    // installed. The unit still names a binary, so the exporter is recorded without a build.
+    let nowhere = scratch_tree("exporters-no-agents", &[]);
+
+    // Act
+    let exporter = node_exporter_read_with_agents_in("missing-binary", &nowhere);
+
+    // Assert
     assert!(exporter.build.is_none());
     assert_eq!(exporter.executable.as_str(), "/usr/local/bin/node_exporter");
+}
+
+#[test]
+fn read_records_the_build_of_an_agent_it_is_willing_to_run() {
+    // Arrange: an agent where rastro looks, printing its version the way node_exporter 1.12
+    // does. The build is the one fact about an agent that its unit file cannot say.
+    let agents = scratch_tree("exporters-agents", &[]);
+    let agent = agents.join("node_exporter");
+    fs::write(
+        &agent,
+        "#!/bin/sh\nprintf 'node_exporter, version 1.12.1 (branch: HEAD, revision: 6044da78)\\n'\n",
+    )
+    .expect("a writable script");
+    fs::set_permissions(&agent, fs::Permissions::from_mode(0o700)).expect("an executable script");
+
+    // Act
+    let exporter = node_exporter_read_with_agents_in("found-binary", &agents);
+
+    // Assert
+    let build = exporter
+        .build
+        .expect("an agent rastro ran reports its build");
+    assert_eq!(build.version.as_str(), "1.12.1");
+    assert_eq!(build.revision.as_str(), "6044da78");
 }
