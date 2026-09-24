@@ -50,7 +50,10 @@ jobs:
     permissions:
       contents: read
     container:
-      image: rust:latest
+      # Pinned to the toolchain `mise.toml` pins, on the Debian that carries a supported
+      # broker: trixie has RabbitMQ 4.0.5, and bookworm has 3.10, which is below the floor
+      # this facet declares. `latest` would drift across both at once.
+      image: rust:1.98.1-trixie
       # Root in a container cannot read another account's `/proc/<pid>/fd` without these, and
       # that read is how a node is attributed to its broker.
       options: --cap-add=SYS_PTRACE --cap-add=DAC_READ_SEARCH
@@ -63,26 +66,35 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             rabbitmq-server procps python3
 
-      # No systemd in a container, so the broker is started the way its own package would and
-      # then waited for. Everything after this runs as root, which is what rastro is on a
-      # production box.
-      - name: Start it
-        run: |
-          su -s /bin/sh rabbitmq -c 'HOME=/var/lib/rabbitmq rabbitmq-server -detached'
-          timeout 90 rabbitmqctl await_startup
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Report which broker answered
+      # **The broker's whole life is one step, and that is not tidiness.** There is no systemd
+      # in a container, so it is started by hand; a step is its own process group, and a
+      # broker started in one step is not guaranteed to be there in the next. The first
+      # version of this job started it separately and the next step found `node 'rabbit' not
+      # running at all` — which a local replay could not reproduce, because a replay runs
+      # every step in one shell and so never crosses the boundary that breaks it.
+      #
+      # Everything after the start therefore lives here: seed the broker, ask it, and compare
+      # two runs. A start that fails prints what the broker said rather than only that it did
+      # not answer.
+      - name: Ask a live broker whether rastro read it right
         run: |
+          su -s /bin/sh rabbitmq -c 'HOME=/var/lib/rabbitmq rabbitmq-server > /tmp/broker.log 2>&1 &'
+          timeout 90 rabbitmqctl await_startup || {
+              echo '--- the broker wrote:'
+              cat /tmp/broker.log || true
+              echo '--- and its own log:'
+              tail -50 /var/log/rabbitmq/*.log || true
+              exit 1
+          }
           rabbitmqctl version
           rabbitmq-diagnostics erlang_version
           epmd -names
 
-      # The conformance test compares lists and fails when one is empty, so the broker has to
-      # hold something first. A vhost, a user with a password (hence a real verifier to
-      # withhold), permissions, a policy, a durable quorum queue, an exchange and a binding:
-      # one of each thing the definitions half reports.
-      - name: Give the broker something to describe
-        run: |
+          # One of each thing the definitions half reports: a vhost, a user with a password
+          # (hence a real verifier to withhold), permissions, a policy, a durable quorum
+          # queue, an exchange and a binding.
           cat > /tmp/seed.json <<'JSON'
           {"vhosts":[{"name":"conformance"}],
            "users":[{"name":"conformance-user","password":"hunter2","tags":["monitoring"]}],
@@ -100,24 +112,19 @@ jobs:
           rabbitmqctl set_parameter shovel conformance-shovel \
             '{"src-protocol":"amqp091","src-uri":"amqp://shovel-user:hunter2@upstream.example.com","src-queue":"in","dest-protocol":"amqp091","dest-uri":"amqp://localhost","dest-queue":"out"}'
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+          # What the fixtures cannot answer for themselves: whether rastro's reading of a real
+          # broker matches the broker's own account.
+          cargo test --locked --test rabbitmq_conformance
 
-      - name: Compare rastro's answer with the broker's
-        run: cargo test --locked --test rabbitmq_conformance
-
-      # The facet's own tests too, on a box that has a broker: they are fixture-driven and
-      # pass anywhere, but a run here proves the detection finds a real node rather than only
-      # a `/proc` a test wrote.
-      - name: Run the facet's own tests where a broker exists
-        run: |
+          # The facet's own tests too, on a box that has a broker: they are fixture-driven and
+          # pass anywhere, but a run here proves the detection finds a real node rather than
+          # only a `/proc` a test wrote.
           cargo test --locked --test rabbitmq --test rabbitmq_asking --test rabbitmq_definitions \
             --test rabbitmq_inventory --test rabbitmq_register --test rabbitmq_residency \
-            --test rabbitmq_status --test proc_sockets
+            --test rabbitmq_status --test rabbitmq_feature_flags --test proc_sockets
 
-      # The whole point of the facet, asserted through the shipped binary rather than a unit:
-      # two runs of a box nobody touched render the same bytes.
-      - name: Two runs of an unchanged broker are identical
-        run: |
+          # The whole point of the facet, through the shipped binary rather than a unit: two
+          # runs of a box nobody touched render the same bytes.
           cargo run --locked --quiet -- -o /tmp/first.json
           cargo run --locked --quiet -- -o /tmp/second.json
           python3 - <<'PY'
