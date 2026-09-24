@@ -531,3 +531,98 @@ fn a_cli_tools_own_node_is_dropped_because_no_broker_holds_its_port() {
     let keys: Vec<&str> = installation.nodes().keys().map(String::as_str).collect();
     assert_eq!(keys, ["rabbit"]);
 }
+
+/// A status document reporting the version the test names, otherwise the box's own.
+///
+/// Built rather than substituted into [`STATUS`]: a `replace` that stops matching because the
+/// constant was reformatted leaves the fixture reporting the version it always did, and the
+/// test then passes while asserting nothing.
+fn status_reporting(version: &str) -> String {
+    format!(
+        r#"{{"rabbitmq_version":"{version}","erlang_version":"Erlang/OTP 27 [erts-15.2.7]",
+  "os":"Linux","data_directory":"/var/lib/rabbitmq/mnesia/rabbit@box","config_files":[],
+  "log_files":["/var/log/rabbitmq/rabbit@box.log"],"active_plugins":[],
+  "listeners":[{{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}}]}}"#
+    )
+}
+
+#[test]
+fn a_node_below_the_floor_is_refused_by_the_version_it_reports() {
+    // Arrange: 3.9 predates the floor. What the operator needs from the failure is which node
+    // and which version, not an offset into a 6MB document that no longer exists.
+    let host = box_with(
+        "rabbitmq-asking-below-the-floor",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(
+        &host.root,
+        "fixtures/status.json",
+        &status_reporting("3.9.16"),
+    );
+
+    // Act
+    let failure = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect_err("a node below the floor is not read");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(message.contains("3.9.16"), "{message}");
+    assert!(message.contains("3.10.0"), "{message}");
+}
+
+#[test]
+fn a_node_below_the_floor_is_not_asked_for_its_definitions() {
+    // Arrange: the floor is checked against the status because the status is the cheap read
+    // that names the version. Asking the fat read of a node whose answer cannot be parsed is
+    // the exact sequence that cost a facet on a live box.
+    let host = box_with(
+        "rabbitmq-asking-below-the-floor-reads",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(
+        &host.root,
+        "fixtures/status.json",
+        &status_reporting("3.9.16"),
+    );
+
+    // Act
+    let _ = host.inventory().read(Some(&host.recording_client()));
+
+    // Assert
+    let asked = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
+    assert!(asked.contains("status"), "{asked}");
+    assert!(!asked.contains("export_definitions"), "{asked}");
+}
+
+#[test]
+fn a_node_at_the_floor_is_read() {
+    // Arrange: Debian 12, current stable, carries 3.10.8, so the floor is where a stock box of
+    // the distribution this tool targets first sits.
+    let host = box_with(
+        "rabbitmq-asking-at-the-floor",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(
+        &host.root,
+        "fixtures/status.json",
+        &status_reporting("3.10.0"),
+    );
+
+    // Act
+    let installation = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect("the shims answer");
+
+    // Assert
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(
+        node.status.as_ref().expect("a status").rabbitmq_version,
+        "3.10.0"
+    );
+}
