@@ -62,10 +62,16 @@ fn parse_reads_a_cluster_with_no_available_extensions_as_empty() {
 
 #[test]
 fn new_refuses_one_extension_available_twice() {
-    // Act & Assert: pg_available_extensions reads one control file per name, so a repeat
-    // means two reads were spliced.
-    let repeated = "plpgsql,1.0,1.0\nplpgsql,1.0,\n";
-    assert!(PsqlAvailableExtensions::parse(repeated).is_err());
+    // Arrange: pg_available_extensions reads one control file per name, so a repeat means
+    // two reads were spliced. Kept apart, since nothing promises a repeat arrives adjacent.
+    let repeated = "plpgsql,1.0,1.0\npg_trgm,1.6,\nplpgsql,1.0,\n";
+
+    // Act
+    let refused = PsqlAvailableExtensions::parse(repeated);
+
+    // Assert
+    let failure = refused.expect_err("a repeated extension must be refused");
+    assert!(failure.to_string().contains("twice"), "got: {failure}");
 }
 
 #[test]
