@@ -136,7 +136,9 @@ two shapes it comes in: a service that will report its effective state, and a
 service that will not.
 
 **Layer 3, RabbitMQ.** One `rabbitmq` facet keyed by node, because a box can run
-several and a CLI tool addresses exactly one. It is the strictest case of
+several and a CLI tool addresses exactly one. **RabbitMQ 3.13 and newer**, which is
+every release still receiving support of any kind: 3.12's extended support ended in
+June 2025. Nothing refuses an older node, and nothing accommodates one either. It is the strictest case of
 observe-and-do-not-cause in the codebase: a RabbitMQ CLI tool boots an Erlang VM
 and joins the broker's distribution cluster, and a call that finds nothing still
 leaves an `epmd -daemon` behind, measured as root and as the broker's own user. So

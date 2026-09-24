@@ -4,13 +4,18 @@ name: live broker
 # `extended-verification` tier, which every deep workflow enters through that one label.
 # When to apply it: CONTRIBUTING.md.
 #
-# Why it cannot live in the suite the other legs run in, and this is measured rather than
-# assumed: attributing a registered node to the process holding its distribution port means
-# reading that process's descriptors, and podman's default capability set refuses that even
-# to root (`CapEff: 800405fb`). Inside `scripts/container-suite.sh` the confirmed case is
-# therefore unreachable, and a live broker there would be reported as undetermined. A GitHub
-# runner with `sudo` has the full set, so the facet can be asked the one question the
-# fixtures cannot answer for it.
+# Why it runs in a container rather than on the runner, and both halves are measured.
+#
+# **The broker has to be one rastro supports.** `ubuntu-latest` carries RabbitMQ 3.12.1, whose
+# support ended in June 2025; this facet declares a floor of 3.13, so testing against 3.12
+# would be proving the wrong thing. Debian trixie, which `rust:latest` is built on, carries
+# 4.0.5.
+#
+# **The capabilities have to be asked for.** Attributing a registered node to the process
+# holding its distribution port means reading that process's descriptors, and a container's
+# default capability set refuses that even to root (`CapEff: 800405fb`), so the confirmed case
+# would be unreachable and a live broker would come back undetermined. Hence the two
+# `--cap-add`s, which a plain `scripts/container-suite.sh` run deliberately does not have.
 #
 # What this catches that the fixture tests cannot: a fixture captured wrong. Every other test
 # of the `rabbitmq` facet asserts what rastro does with output somebody captured once, which
@@ -44,21 +49,33 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    container:
+      image: rust:latest
+      # Root in a container cannot read another account's `/proc/<pid>/fd` without these, and
+      # that read is how a node is attributed to its broker.
+      options: --cap-add=SYS_PTRACE --cap-add=DAC_READ_SEARCH
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install the broker
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-            rabbitmq-server
+          DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            rabbitmq-server procps python3
+
+      # No systemd in a container, so the broker is started the way its own package would and
+      # then waited for. Everything after this runs as root, which is what rastro is on a
+      # production box.
+      - name: Start it
+        run: |
+          su -s /bin/sh rabbitmq -c 'HOME=/var/lib/rabbitmq rabbitmq-server -detached'
+          timeout 90 rabbitmqctl await_startup
 
       - name: Report which broker answered
         run: |
-          sudo rabbitmqctl await_startup
-          sudo rabbitmqctl version
-          sudo rabbitmq-diagnostics erlang_version
-          sudo epmd -names
+          rabbitmqctl version
+          rabbitmq-diagnostics erlang_version
+          epmd -names
 
       # The conformance test compares lists and fails when one is empty, so the broker has to
       # hold something first. A vhost, a user with a password (hence a real verifier to
@@ -76,23 +93,17 @@ jobs:
            "exchanges":[{"name":"conformance.direct","vhost":"conformance","type":"direct","durable":true,"auto_delete":false,"arguments":{}}],
            "bindings":[{"source":"conformance.direct","vhost":"conformance","destination":"work","destination_type":"queue","routing_key":"k","arguments":{}}]}
           JSON
-          sudo rabbitmqctl import_definitions /tmp/seed.json
+          rabbitmqctl import_definitions /tmp/seed.json
           # A shovel keeps its peer's password inside a URI, which is the case the facet
           # withholds every parameter value for.
-          sudo rabbitmq-plugins enable rabbitmq_shovel
-          sudo rabbitmqctl set_parameter shovel conformance-shovel \
+          rabbitmq-plugins enable rabbitmq_shovel
+          rabbitmqctl set_parameter shovel conformance-shovel \
             '{"src-protocol":"amqp091","src-uri":"amqp://shovel-user:hunter2@upstream.example.com","src-queue":"in","dest-protocol":"amqp091","dest-uri":"amqp://localhost","dest-queue":"out"}'
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      # As root, because that is what rastro is on a production box and what the attribution
-      # needs: the broker's beam is owned by `rabbitmq`, so an unprivileged run cannot read
-      # its descriptors and every node would come back undetermined. Its own target directory
-      # keeps the root-owned artefacts out of the one the step below uses.
       - name: Compare rastro's answer with the broker's
-        run: |
-          sudo -E env "CARGO_TARGET_DIR=/tmp/conformance-target" \
-            "$(command -v cargo)" test --locked --test rabbitmq_conformance
+        run: cargo test --locked --test rabbitmq_conformance
 
       # The facet's own tests too, on a box that has a broker: they are fixture-driven and
       # pass anywhere, but a run here proves the detection finds a real node rather than only
@@ -107,11 +118,9 @@ jobs:
       # two runs of a box nobody touched render the same bytes.
       - name: Two runs of an unchanged broker are identical
         run: |
-          sudo -E env "CARGO_TARGET_DIR=/tmp/conformance-target" \
-            "$(command -v cargo)" run --locked --quiet -- -o /tmp/first.json
-          sudo -E env "CARGO_TARGET_DIR=/tmp/conformance-target" \
-            "$(command -v cargo)" run --locked --quiet -- -o /tmp/second.json
-          sudo python3 - <<'PY'
+          cargo run --locked --quiet -- -o /tmp/first.json
+          cargo run --locked --quiet -- -o /tmp/second.json
+          python3 - <<'PY'
           import json, sys
           def facet(path):
               with open(path) as document:

@@ -5312,3 +5312,35 @@ written and then checked by putting the defect back: the prefix-only filter make
 legitimate-broker test fail, and removing the version gate makes the old-node test fail naming
 the call. One of them had to be rewritten first, because it was passing while asserting
 nothing — the fixture rebuilt the register shim after the test had written its own.
+
+## The facet supports RabbitMQ 3.13 and newer, and carries nothing for older
+
+A review found that a pre-3.8 node could never be named or sealed: the layout rule reads Ra's
+`coordination` and `quorum` directories, and Ra arrived with quorum queues in 3.8. It was
+right, and the code it was right about should never have existed. The round before had added a
+version gate so that `list_feature_flags`, a subcommand only from 3.8, would not be asked of a
+3.7 node — machinery for a version that the very next read could not have served anyway.
+
+**So the floor is declared instead.** [endoflife.date](https://endoflife.date/rabbitmq) puts
+3.13 as the oldest cycle receiving support of any kind, under extended commercial support until
+December 2027; 3.12's ended in June 2025. Every supported release has Ra, has feature flags,
+and answers the three reads this facet makes.
+
+**Declared, not enforced.** Nothing refuses an older node and nothing checks a version before
+asking: the commands are the same, the parse ignores keys it does not know and treats missing
+optional ones as absent, so an older broker will very likely read correctly. What changes is
+that rastro carries no code for it, tests nothing against it, and promises nothing about it.
+The node's version is in the facet, so a reader can see what answered.
+
+**What it removed**: the 3.8 gate, the branch in `ask`, and the fixture and tests that existed
+only to describe versions nobody supports. What replaced them is the property those tests were
+really protecting, expressed without a version in it: a document carrying a key rastro has
+never seen still parses, and a field a release stops sending is absent rather than fatal.
+
+**The live-broker job had to move, and that is the part worth noticing.** It installed
+`rabbitmq-server` on `ubuntu-latest`, which is 3.12.1 — so the job would have been proving the
+facet against a version the facet no longer supports. It now runs in the `rust:latest`
+container, whose Debian trixie base carries 4.0.5, with `--cap-add=SYS_PTRACE
+--cap-add=DAC_READ_SEARCH` because attributing a node means reading another account's
+descriptors. Declaring a floor and leaving CI below it would have been worse than not
+declaring one.

@@ -134,7 +134,7 @@ impl NodeInventory {
                         distribution_port: node.distribution_port,
                         evidence,
                         status: asked.as_ref().map(|asked| asked.status.clone()),
-                        feature_flags: asked.as_ref().and_then(|asked| asked.feature_flags.clone()),
+                        feature_flags: asked.as_ref().map(|asked| asked.feature_flags.clone()),
                         definitions: asked.map(|asked| asked.definitions),
                     },
                 ))
@@ -258,24 +258,18 @@ fn discarded_as_a_cli_tool(name: &str, evidence: &BrokerEvidence) -> bool {
     name.starts_with(CLI_NODE_PREFIX) && *evidence != BrokerEvidence::RabbitmqProcess
 }
 
-/// Everything one node is asked, in the order that lets the version decide the rest.
+/// Everything one node is asked.
 ///
-/// **The status first, because it says what this node can be asked.** `list_feature_flags` is
-/// not a subcommand before RabbitMQ 3.8, and asking an older node would fail the read, which
-/// under this facet's rules fails the node and loses the status and definitions it answered
-/// perfectly well. The same shape as the PostgreSQL replication-slot query, which asks for a
-/// column only from the version that has it.
+/// **No version branching**, because the facet declares a floor instead: RabbitMQ 3.13 and
+/// newer, which is every release still receiving support of any kind. An earlier version of
+/// this asked the status first so it could decide whether the node was new enough for
+/// `list_feature_flags`, which is a subcommand only from 3.8 — machinery for versions nobody
+/// supports, and incoherent besides, since a node that old has no Ra directories and could
+/// never have been named or sealed in the first place. See `docs/decisions.md`.
 fn ask(client: &BrokerClient, node: &NodeName) -> Result<Asked, CollectionError> {
-    let status = client.status(node)?;
-
-    let feature_flags = match status.answers_about_feature_flags() {
-        true => Some(client.feature_flags(node)?),
-        false => None,
-    };
-
     Ok(Asked {
-        status,
-        feature_flags,
+        status: client.status(node)?,
+        feature_flags: client.feature_flags(node)?,
         definitions: client.definitions(node)?,
     })
 }
@@ -287,9 +281,7 @@ fn ask(client: &BrokerClient, node: &NodeName) -> Result<Asked, CollectionError>
 struct Asked {
     status: NodeStatus,
 
-    /// Absent where the node is too old to have the subsystem at all, which is a different
-    /// fact from a node that has it and has enabled nothing.
-    feature_flags: Option<std::collections::BTreeMap<String, String>>,
+    feature_flags: std::collections::BTreeMap<String, String>,
 
     definitions: Definitions,
 }

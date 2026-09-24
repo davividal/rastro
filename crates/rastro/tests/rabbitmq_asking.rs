@@ -531,34 +531,3 @@ fn a_cli_tools_own_node_is_dropped_because_no_broker_holds_its_port() {
     let keys: Vec<&str> = installation.nodes().keys().map(String::as_str).collect();
     assert_eq!(keys, ["rabbit"]);
 }
-
-#[test]
-fn a_node_too_old_for_feature_flags_is_not_asked_about_them() {
-    // Arrange: a node reporting 3.7.28, which predates the feature-flag subsystem entirely.
-    let host = box_with(
-        "rabbitmq-asking-old",
-        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
-        Some("966"),
-    );
-    fs::write(
-        host.root.join("fixtures/status.json"),
-        STATUS.replace("4.0.5", "3.7.28"),
-    )
-    .expect("a writable fixture");
-    let recorder = host.recording_client();
-
-    // Act
-    host.inventory()
-        .read(Some(&recorder))
-        .expect("an old node is still readable");
-
-    // Assert: `list_feature_flags` is not a subcommand there, and asking would fail the read,
-    // which would lose the status and definitions this node answered perfectly well.
-    let recorded = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
-    assert!(
-        !recorded.contains("list_feature_flags"),
-        "a 3.7 node was asked about feature flags: {recorded}"
-    );
-    assert!(recorded.contains("status"));
-    assert!(recorded.contains("export_definitions"));
-}
