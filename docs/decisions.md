@@ -5430,3 +5430,32 @@ holder check runs first over the same directories, and an `fd` that cannot be li
 holder, which is now a failure. Verified by reading `SocketHolders::at`, which returns an empty
 map for an unreadable directory. Left alone rather than hardened blind, and written down here
 so the next reader knows it was looked at.
+
+## The refusal goes on the node, not on the facet
+
+Reverses *A refused read fails the facet, rather than being reported as a node with nothing in
+it*, which is one entry old and was wrong in its second half. The diagnosis stands: an `ok`
+facet carrying a node of nulls signals nothing, and a diff against a box with no broker shows
+no change. The remedy did not.
+
+**What was wrong with it.** It rested on a claim that both refusals come from one permission
+barrier applying to every node on the box at once. That is false, and the facet's own design
+says so: it is keyed by node *because a box can run several*, and several brokers on one box
+is several accounts — `app1` and `app2`, each unable to read the other's descriptors, exactly
+as two PostgreSQL clusters are. `SocketHolders::at` skips an unreadable `/proc/<pid>/fd` per
+process, so an unprivileged run attributes its own account's node and not the other's. Failing
+the facet whole meant a box like that could never be fingerprinted for RabbitMQ at all,
+whichever account the run used. That is a worse defect than the one being fixed.
+
+**And the format already had the answer.** "There is no per-node error" was not true either.
+`filesystem` records `{"error": "<reason>"}` for a path it was refused and keeps walking;
+`pam`, `units`, `firewall` and `containers` all mark a per-item failure the same way. The
+`rabbitmq` facet now does what they do: a refused node carries an `error` with what was
+refused, the facet stays `ok`, and a node that read is reported in full beside it.
+
+**What this does not change.** The evidence values stay, and so does the tri-state
+`runs_rabbitmq`. What was missing was never the information — `broker_evidence` said "the
+holder of the port could not be read" all along — it was that nothing marked it as a failure.
+Every node carries the evidence, healthy ones included, so a reader scanning for trouble saw a
+value rather than a problem. The `error` key is the mark, and it is the one the rest of the
+codebase uses.

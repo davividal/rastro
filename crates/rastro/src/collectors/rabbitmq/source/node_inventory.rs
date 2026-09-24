@@ -116,8 +116,6 @@ impl NodeInventory {
                 }
             })
             .map(|(node, evidence)| {
-                answered(&evidence, &node.name)?;
-
                 let name = self.named(&node.name, &resident);
 
                 // Asked only where a RabbitMQ process holds the port, where the node's own
@@ -258,35 +256,6 @@ impl NodeInventory {
 /// holders cannot be read, and those nodes are what make two runs of an unchanged box differ.
 fn discarded_as_a_cli_tool(name: &str, evidence: &BrokerEvidence) -> bool {
     name.starts_with(CLI_NODE_PREFIX) && *evidence != BrokerEvidence::RabbitmqProcess
-}
-
-/// Fails the facet where the box refused a read rather than answering one.
-///
-/// **Not an absent, and never an `ok` carrying nulls.** An earlier release recorded such a node
-/// with every field empty under an `ok` facet, which is the worst of the three outcomes it
-/// could have had: nothing in the document, the status or stderr said a read had been refused,
-/// so a fingerprint of a box rastro was not allowed to read was byte-indistinguishable from
-/// one of a box with no broker on it, and a diff across the pair showed no change where the
-/// truth was "unknown". "I was not allowed to read it" is an error.
-///
-/// **The whole facet, including nodes that did read.** A box whose descriptors are unreadable
-/// is almost always unreadable for every node on it, since one permission barrier produced
-/// them all, and keeping the good half would mean a document that is partly an answer and
-/// partly a silence with no way to tell which. `docs/decisions.md` carries the cost.
-fn answered(evidence: &BrokerEvidence, node: &str) -> Result<(), CollectionError> {
-    match evidence {
-        BrokerEvidence::HolderUnreadable => Err(CollectionError::new(format!(
-            "no descriptor naming {node}'s distribution socket could be read, so whether it is \
-             a broker is not something this run was allowed to find out"
-        ))),
-        BrokerEvidence::TablesUnreadable => Err(CollectionError::new(format!(
-            "no socket table could be read, so what holds {node}'s distribution port is not \
-             something this run was allowed to find out"
-        ))),
-        BrokerEvidence::RabbitmqProcess
-        | BrokerEvidence::OtherApplication
-        | BrokerEvidence::NotOffered => Ok(()),
-    }
 }
 
 /// Everything one node is asked.

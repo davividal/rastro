@@ -166,10 +166,13 @@ the next.
 
 Each way of *not* knowing is kept apart from the others rather than folded into a
 denial, and the two that are refusals rather than answers — a port whose holder
-cannot be read, and a socket table that cannot be read at all — fail the facet,
-naming the node and what was refused. They are not reported as a node with empty
-fields under an `ok` facet: a fingerprint of a box rastro was not allowed to read
-must not be indistinguishable from one of a box with no broker on it. The
+cannot be read, and a socket table that cannot be read at all — put an `error` on
+that node, the same spelling the walk uses for a path it was refused. Per node,
+because the accounts are per node: a box running one broker for each of two
+applications is readable for whichever of them this run is, so a refusal about one
+must not cost the other. A fingerprint of a node rastro was not allowed to read is
+then distinguishable from one of a box with no broker on it, which nulls alone did
+not manage. The
 facet's two halves are the node's own account of itself, `status`, and the durable
 half somebody declared, `export_definitions`, whose credential-bearing values are
 withheld by default. See [decisions.md](decisions.md#a-cli-invocation-starts-epmd-so-nothing-is-asked-speculatively).

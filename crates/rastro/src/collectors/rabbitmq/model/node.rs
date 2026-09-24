@@ -82,6 +82,13 @@ impl From<&Node> for Observation {
             ),
             ("broker_evidence", Observation::text(node.evidence.as_str())),
             (
+                "error",
+                match node.evidence.refusal() {
+                    Some(refusal) => Observation::text(refusal),
+                    None => Observation::null(),
+                },
+            ),
+            (
                 "status",
                 match &node.status {
                     Some(status) => Observation::from(status),

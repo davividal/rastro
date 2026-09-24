@@ -11,10 +11,12 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use rastro::collectors::rabbitmq::{BrokerClient, BrokerEvidence, NodeInventory};
+use rastro_collector::Observation;
 
 mod support;
 
 use support::fs_tree::{scratch_tree, write};
+use support::observation::{field, is_null};
 use support::shim;
 
 const REGISTER: &str = "epmd: up and running on port 4369 with data:\nname rabbit at port 25672\n";
@@ -255,26 +257,28 @@ fn a_node_held_by_another_erlang_application_is_not_asked() {
 }
 
 #[test]
-fn a_node_whose_holder_cannot_be_read_fails_the_facet() {
+fn a_node_whose_holder_cannot_be_read_is_reported_as_refused() {
     // Arrange: the port is offered and no descriptor of any process names its inode. That is
     // what an unprivileged run meets, and what a container with reduced capabilities meets
     // even as root. Found that way: a live broker reported `runs_rabbitmq: false`.
     let host = box_with("rabbitmq-asking-unheld", &[("748", EPMD_ARGV)], None);
 
     // Act
-    let failure = host
+    let installation = host
         .inventory()
         .read(Some(&host.client()))
-        .expect_err("a refused read is not a reading");
+        .expect("a node rastro may not read is still a node on the box");
 
-    // Assert: still not addressed, which is the safe behaviour, and loud, which is the part
-    // an earlier release got wrong: it recorded the node with every field null under an `ok`
-    // facet, so a fingerprint of a box rastro was not allowed to read was indistinguishable
-    // from one of a box with nothing on it.
+    // Assert: still not addressed, which is the safe behaviour, and the node carries the
+    // refusal as an `error` — the spelling the walk uses for a path it was refused. An `ok`
+    // node with nothing but nulls, which is what an earlier release wrote, said nothing at
+    // all: a diff of that document against one of a box with no broker shows no change.
     assert!(!host.asked());
 
-    let message = failure.to_string();
-    assert!(message.contains("rabbit"), "{message}");
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.evidence, BrokerEvidence::HolderUnreadable);
+    assert!(node.evidence.refusal().is_some());
+    assert_eq!(node.evidence.runs_rabbitmq(), None);
 }
 
 #[test]
@@ -299,23 +303,74 @@ fn a_node_whose_port_nothing_offers_is_a_stale_registration() {
 }
 
 #[test]
-fn a_box_whose_socket_tables_cannot_be_read_fails_the_facet() {
-    // Arrange: the same refusal one step earlier. Nothing about the box has been learnt, so
-    // there is nothing to report but the refusal.
+fn a_box_whose_socket_tables_cannot_be_read_is_reported_as_refused() {
+    // Arrange: the same refusal one step earlier.
     let host = box_with("rabbitmq-asking-tableless", &[("748", EPMD_ARGV)], None);
     fs::remove_file(host.proc.join("net/tcp")).expect("a removable scratch table");
 
     // Act
-    let failure = host
+    let installation = host
         .inventory()
         .read(Some(&host.client()))
-        .expect_err("a refused read is not a reading");
+        .expect("a box rastro may not read is still a box");
 
     // Assert
     assert!(!host.asked());
 
-    let message = failure.to_string();
-    assert!(message.contains("socket"), "{message}");
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.evidence, BrokerEvidence::TablesUnreadable);
+    assert!(node.evidence.refusal().is_some());
+}
+
+/// Two nodes registered, and a socket table offering both their ports. The second's inode is
+/// held by no descriptor this run can read, which is what a broker under another account looks
+/// like from an unprivileged one.
+const TWO_NODE_REGISTER: &str = "epmd: up and running on port 4369 with data:\n\
+     name rabbit at port 25672\n\
+     name other at port 35672\n";
+
+const TWO_ROW_TCP: &str = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:6448 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 787924 1 0000000000000000 100 0 0 10 0
+   1: 00000000:8B58 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 787925 1 0000000000000000 100 0 0 10 0
+";
+
+#[test]
+fn a_node_that_cannot_be_read_does_not_cost_the_one_that_can() {
+    // Arrange: two brokers on one box under two accounts, which is the case the facet is keyed
+    // by node for in the first place. This run may read the first's descriptors and not the
+    // second's, so one permission barrier does not apply to every node at once, and a facet
+    // that failed whole would report nothing about a broker it could read perfectly well.
+    let host = box_with(
+        "rabbitmq-asking-two-accounts",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(&host.proc, "net/tcp", TWO_ROW_TCP);
+
+    // Act
+    let installation = host
+        .inventory_registering(TWO_NODE_REGISTER)
+        .read(Some(&host.client()))
+        .expect("one unreadable node is not the whole box");
+
+    // Assert
+    let readable = installation.nodes().get("rabbit").expect("the read node");
+    assert_eq!(readable.evidence, BrokerEvidence::RabbitmqProcess);
+    assert_eq!(
+        readable.status.as_ref().expect("a status").rabbitmq_version,
+        "4.0.5"
+    );
+
+    let refused = installation.nodes().get("other").expect("the refused node");
+    assert_eq!(refused.evidence, BrokerEvidence::HolderUnreadable);
+    assert!(refused.status.is_none());
+
+    // And in the document, which is the only place an operator meets any of this: the refused
+    // node carries an `error`, the read one carries none.
+    let nodes = field(&Observation::from(&installation), "nodes");
+    assert!(is_null(&field(&field(&nodes, "rabbit"), "error")));
+    assert!(!is_null(&field(&field(&nodes, "other"), "error")));
 }
 
 #[test]
