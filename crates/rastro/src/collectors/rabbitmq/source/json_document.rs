@@ -67,7 +67,7 @@ const WHOLE_DOCUMENT: &str = ".";
 pub fn read_document<T: serde::de::DeserializeOwned>(output: &str) -> Result<T, String> {
     let mut deserializer = serde_json::Deserializer::from_str(document_in(output));
 
-    serde_path_to_error::deserialize(&mut deserializer).map_err(|failure| {
+    let document: T = serde_path_to_error::deserialize(&mut deserializer).map_err(|failure| {
         let field = failure.path().to_string();
         let cause = failure.into_inner();
 
@@ -76,5 +76,15 @@ pub fn read_document<T: serde::de::DeserializeOwned>(output: &str) -> Result<T, 
         }
 
         format!("{field}: {cause}")
-    })
+    })?;
+
+    // `serde_path_to_error` reads one value and stops, where `from_str` also asserted that
+    // nothing followed it. Without this, a report written after the document, or a second
+    // document concatenated to the first, is discarded in silence and the node's state is
+    // recorded from half of what the tool said.
+    deserializer
+        .end()
+        .map_err(|trailing| trailing.to_string())?;
+
+    Ok(document)
 }

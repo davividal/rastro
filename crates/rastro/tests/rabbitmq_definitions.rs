@@ -740,3 +740,20 @@ fn parse_names_the_field_a_document_failed_at() {
         "{message}"
     );
 }
+
+#[test]
+fn parse_refuses_anything_after_the_document() {
+    // Arrange: the runtime report this reader skips can precede a document, so it can follow
+    // one, and a second document can follow one too. Reading the first and discarding the rest
+    // would record a node's state from half of what the tool said, silently. `from_str`
+    // refused this; a path-naming deserialiser reads one value and stops, so the end has to be
+    // asserted rather than assumed.
+    let second_document = format!("{MEASURED}\n{{\"rabbitmq_version\": \"4.0.5\"}}");
+    let trailing_report = format!(
+        "{MEASURED}\n=ERROR REPORT==== 23-Sep-2026::14:03:05.184639 ===\nfile:path_eval([]): permission denied\n"
+    );
+
+    // Act & Assert
+    assert!(RabbitmqctlDefinitions::parse(&second_document).is_err());
+    assert!(RabbitmqctlDefinitions::parse(&trailing_report).is_err());
+}
