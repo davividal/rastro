@@ -62,9 +62,11 @@ fn parse_refuses_a_row_with_the_wrong_number_of_columns() {
 
 #[test]
 fn parse_refuses_the_same_extension_twice() {
-    // Arrange: one extension cannot be installed twice in a database.
+    // Arrange: one extension cannot be installed twice in a database. Kept apart, since
+    // nothing promises a repeat arrives adjacent.
     let contradiction = "\
 plpgsql,1.0,pg_catalog
+pg_trgm,1.6,public
 plpgsql,1.1,public
 ";
 
@@ -72,5 +74,6 @@ plpgsql,1.1,public
     let refused = PsqlExtensions::parse(contradiction);
 
     // Assert
-    assert!(refused.is_err());
+    let failure = refused.expect_err("a repeated extension must be refused");
+    assert!(failure.to_string().contains("twice"), "got: {failure}");
 }
