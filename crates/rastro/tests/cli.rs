@@ -441,16 +441,79 @@ fn clipped(value: &str) -> String {
 }
 
 #[test]
-fn stderr_stays_empty_on_a_successful_run() {
+fn stderr_carries_only_what_the_run_could_not_see() {
     // Act
     let output = run(&["--config", sealing_the_shipped_trees()]);
 
-    // Assert
-    assert!(
-        output.stderr.is_empty(),
-        "diagnostics belong on stderr, but a clean run has none: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    // Assert: a run that read everything as root is silent. One that did not says exactly what
+    // it missed, and nothing else: which facets fail depends on the host, so the document the
+    // same run wrote is the expectation.
+    assert_eq!(unexplained_stderr(&output), Vec::<String>::new());
+}
+
+/// What a run printed on stderr that neither its privilege nor its own document accounts for.
+///
+/// Each `rastro:` message is one of three things or it is unexplained: the warning for a run
+/// that is not root, the list of facets the document records as failed, which must name
+/// exactly those with the document's own reasons, or the count of incomplete facets. A failed
+/// facet stderr does not name is unexplained too, as a missing line.
+fn unexplained_stderr(output: &Output) -> Vec<String> {
+    let document: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should carry a JSON document");
+    let failed: Vec<String> = document["facets"]
+        .as_array()
+        .expect("a section is an array of facets")
+        .iter()
+        .filter(|facet| facet["status"] == "error")
+        .map(|facet| {
+            format!(
+                "  {}: {}",
+                facet["name"].as_str().expect("a facet has a name"),
+                facet["error"].as_str().expect("a failed facet says why")
+            )
+        })
+        .collect();
+    let failed_heading = match failed.len() {
+        1 => "1 facet could not be read:".to_owned(),
+        many => format!("{many} facets could not be read:"),
+    };
+    let privileged = rastro::privilege::effective_user_id() == Some(0);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let messages: Vec<&str> = stderr
+        .split("rastro: ")
+        .filter(|message| !message.is_empty())
+        .collect();
+    let mut unexplained = Vec::new();
+    let mut failures_named = false;
+
+    for message in messages {
+        let mut lines = message.trim_end_matches('\n').lines();
+        let heading = lines.next().unwrap_or_default();
+        let rest: Vec<&str> = lines.collect();
+        let explained = if heading.starts_with("running as uid ") {
+            !privileged && heading.contains(", not root: ") && rest.is_empty()
+        } else if heading.ends_with(" could not be read:") {
+            failures_named = true;
+            heading == failed_heading && rest == failed
+        } else if heading.ends_with(" incomplete:") {
+            !rest.is_empty()
+                && rest
+                    .iter()
+                    .all(|line| line.starts_with("  ") && line.ends_with(" could not be read"))
+        } else {
+            false
+        };
+        if !explained {
+            unexplained.push(message.to_owned());
+        }
+    }
+
+    if !failed.is_empty() && !failures_named {
+        unexplained.push(format!("missing: {failed_heading} {failed:?}"));
+    }
+
+    unexplained
 }
 
 /// A config file in the temp dir, named per test so parallel runs cannot clash.
@@ -811,16 +874,12 @@ fn progress_forced_on_reaches_stderr_even_when_it_is_not_a_terminal() {
 }
 
 #[test]
-fn no_progress_keeps_stderr_empty_even_on_a_terminal() {
+fn no_progress_keeps_stderr_to_what_the_run_could_not_see() {
     // Act
     let output = run(&["--no-progress", "--config", sealing_the_shipped_trees()]);
 
-    // Assert
-    assert!(
-        output.stderr.is_empty(),
-        "got {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    // Assert: no counter, and no timing either; what remains is what the run could not see.
+    assert_eq!(unexplained_stderr(&output), Vec::<String>::new());
 }
 
 #[test]
@@ -955,4 +1014,28 @@ fn a_redacted_run_says_nothing_about_disclosure_on_stderr() {
         !stderr.contains("cleartext"),
         "a redacted run has nothing to disclose, got {stderr:?}"
     );
+}
+
+#[test]
+fn a_run_not_made_as_root_is_told_so_before_it_starts() {
+    // Arrange: the suite runs both as root and unprivileged, so this asserts whichever this
+    // process is rather than skipping one of them.
+    let effective =
+        rastro::privilege::effective_user_id().expect("Linux reports this process's uid");
+
+    // Act
+    let output = run(&["--config", without_walking()]);
+
+    // Assert
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    match effective {
+        0 => assert!(
+            !stderr.contains("not root"),
+            "root should hear nothing, got {stderr:?}"
+        ),
+        uid => assert!(
+            stderr.contains(&format!("rastro: running as uid {uid}, not root")),
+            "an unprivileged run should be told, got {stderr:?}"
+        ),
+    }
 }
