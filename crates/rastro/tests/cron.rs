@@ -9,7 +9,7 @@ use std::path::PathBuf;
 mod support;
 
 use rastro::collectors::cron::{
-    CronCollector, CronFiles, CronTable, OwnerColumn, Schedule, crontab,
+    CronCollector, CronFiles, CronTable, OwnerColumn, Schedule, ScriptName, crontab,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar};
@@ -269,6 +269,24 @@ fn read_lists_the_scripts_in_a_run_parts_directory() {
         .iter()
         .map(text)
         .collect();
+    assert_eq!(scripts, ["apt-compat", "logrotate"]);
+}
+
+#[test]
+fn scripts_sorts_the_run_parts_directory_regardless_of_listing_order() {
+    // Arrange: `CronTable::scripts` promises no order of its own, and a real directory
+    // listing may happen to come back sorted, so this drives it directly with the names
+    // reversed to make the sort observable rather than incidental.
+    let names = [
+        ScriptName::new("logrotate").expect("a legal script name"),
+        ScriptName::new("apt-compat").expect("a legal script name"),
+    ];
+
+    // Act
+    let table = CronTable::scripts(names);
+
+    // Assert
+    let scripts: Vec<&str> = table.scripts.iter().map(ScriptName::as_str).collect();
     assert_eq!(scripts, ["apt-compat", "logrotate"]);
 }
 
