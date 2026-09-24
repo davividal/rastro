@@ -5,12 +5,16 @@
 //! things worth getting right about it are both in the real one: the version arrives on
 //! stderr, and the configure line holds two arguments whose values contain spaces.
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 mod support;
 
+use rastro::collectors::canonical_tool::CanonicalTool;
 use rastro::collectors::nginx::{Binary, NginxCollector, nginx_binary};
 use rastro_collector::{Collector, Presence};
+use support::fs_tree::{scratch_tree, write};
 
 const BANNER: &str = "\
 nginx version: nginx/1.30.4
@@ -221,6 +225,53 @@ fn a_host_without_nginx_claims_no_trees() {
 
     // Act & Assert
     assert!(collector.filesystem_claims().is_empty());
+}
+
+#[test]
+fn a_tree_both_the_configuration_and_the_build_name_is_claimed_once() {
+    // Arrange: a configuration that restates the build's own proxy temp path, which is how a
+    // packaged config often reads. The two lists are gathered separately, so the shared tree
+    // arrives twice and apart; claimed twice, the walk reports nginx contesting itself.
+    let root = scratch_tree("nginx-claims-once", &[]);
+    let prefix = root.join("prefix");
+    let shared = format!("{}/proxy_temp", prefix.display());
+    write(
+        &root,
+        "prefix/nginx.conf",
+        &format!("events {{}}\nhttp {{\n    proxy_temp_path {shared};\n}}\n"),
+    );
+    let banner = format!(
+        "nginx version: nginx/1.30.4\nconfigure arguments: --prefix={prefix} \
+         --conf-path={prefix}/nginx.conf --http-proxy-temp-path={shared}\n",
+        prefix = prefix.display()
+    );
+    let script = root.join("bin/nginx");
+    write(
+        &root,
+        "bin/nginx",
+        &format!("#!/bin/sh\nprintf '%s' '{banner}' >&2\n"),
+    );
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).expect("an executable script");
+    let tool = CanonicalTool::located_in("nginx", &[root.join("bin").to_str().expect("utf-8")])
+        .expect("the fake nginx should be locatable");
+    let collector = NginxCollector::reading(Some(nginx_binary::NginxBinary::using(tool)));
+
+    // Act
+    let claims = collector.filesystem_claims();
+
+    // Assert: the build's five trees, the shared one among them exactly once.
+    let trees: Vec<&str> = claims.iter().map(|claim| claim.tree().as_str()).collect();
+    let under = |name: &str| format!("{}/{name}", prefix.display());
+    assert_eq!(
+        trees,
+        [
+            under("client_body_temp"),
+            under("fastcgi_temp"),
+            under("proxy_temp"),
+            under("scgi_temp"),
+            under("uwsgi_temp"),
+        ]
+    );
 }
 
 #[test]
