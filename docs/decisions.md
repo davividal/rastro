@@ -5478,7 +5478,9 @@ advance would be wrong somewhere. An id that cannot be read gets no warning rath
 guess that would warn root about nothing.
 
 **After: what the document is missing, once it is safely written.** Two kinds. A facet whose
-status is `error`, named with its reason. And a facet that is `ok` but holds items its
+status is `error`, named with the first line of its reason, marked `[…]` where it was cut: on
+Alpine, busybox's `ip` answers with ten lines of usage, which would break a list of one facet
+per line, and the document keeps every line. And a facet that is `ok` but holds items its
 collector could not read, counted rather than listed, because a walk refused under someone
 else's home is refused thousands of times and the document already holds each one.
 
