@@ -5344,3 +5344,49 @@ container, whose Debian trixie base carries 4.0.5, with `--cap-add=SYS_PTRACE
 --cap-add=DAC_READ_SEARCH` because attributing a node means reading another account's
 descriptors. Declaring a floor and leaving CI below it would have been worse than not
 declaring one.
+
+## The floor drops to RabbitMQ 3.10, and stops being a declaration
+
+Reverses *The facet supports RabbitMQ 3.13 and newer, and carries nothing for older*, on both
+of its halves: the number and the decision not to enforce it.
+
+**The number was measured against the wrong thing.** [endoflife.date](https://endoflife.date/rabbitmq)
+tracks what upstream supports, and distributions lag it by years. Debian 12, current stable and
+the platform this tool targets first, ships `rabbitmq-server 3.10.8`; Debian 13 ships 4.0. A
+floor of 3.13 therefore promised nothing about a stock box of the distribution the whole
+codebase is written Debian-first for. That consequence was not in view when the floor was set,
+and it is the only thing that changed: 3.10 is still unsupported upstream, and rastro still
+carries no code that branches on a version.
+
+**A declared floor failed as badly as no floor.** A 3.10.8 node in the fleet answered
+`export_definitions` with `""` where a collection belongs, and the facet died with `invalid
+type: string "", expected a sequence at line 1 column 4889`. Three things were wrong with that
+as an answer to an operator: it names no field, it names no node, and the offset points into a
+document of several megabytes that nothing keeps a copy of. The status read had already
+succeeded and carried `rabbitmq_version`, which was thrown away with everything else, so the
+box knew exactly what was wrong and said none of it.
+
+**So the floor is checked against the status, which is the cheap read that names the version.**
+A node below it is refused there, before the fat read whose answer could not have been parsed,
+with a message naming the node, its version and what rastro reads. This is not the version
+branching the previous entry removed and was right to remove: nothing asks a different question
+of a different release. It only declines to ask an older one anything more.
+
+**The empty string is read as an empty collection, and that is not a version rule.** Measured
+against a 3.10.25 broker in a container: `users[].tags`, `vhosts[].metadata.tags` and all ten
+top-level keys export as JSON arrays, exactly as 4.0 does. So the `""` is not what 3.10 emits,
+it is what *that node* emitted, and a fix keyed to a version would have missed it. The reader
+accepts `""` for any collection and a comma-separated string for tags — the spelling that
+predates 3.9 — and refuses any other text, because the empty string is a reading of "nothing
+here" and anything else would be a guess.
+
+**Written as a visitor rather than an untagged enum**, which is the one implementation detail
+worth recording. An untagged enum that matches no variant reports "data did not match any
+variant", so every malformed entry in the document would have lost the message saying which
+field and why — the exact defect this entry exists to fix, reintroduced by the fix.
+
+**Still owed, and deliberately not done here**: the parse error names no field path. A node
+that fails on some field this reader does not anticipate still reports a byte offset.
+`serde_path_to_error` would turn that into `users[3].tags`, and it is a new dependency on a
+crate whose whole job is error paths, which is the maintainer's call rather than a detail of
+this change.
