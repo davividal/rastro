@@ -33,7 +33,7 @@ const LISTING: &str = r#"{
     {"name":"dm-0","kname":"dm-0","pkname":"sda1","type":"lvm","size":53687091200,
      "fstype":"xfs","fsver":null,"uuid":"aaaabbbb-cccc-dddd-eeee-ffff00001111",
      "label":"data","partuuid":null,"partlabel":null,
-     "mountpoints":["/srv","/var/lib/thing"],"ro":false,"rm":false,"rota":true,
+     "mountpoints":["/var/lib/thing","/srv"],"ro":false,"rm":false,"rota":true,
      "model":null,"serial":null,"log-sec":512,"phy-sec":512}
   ]
 }"#;
@@ -129,7 +129,8 @@ fn parse_reads_a_null_mountpoint_list_as_no_mount_points() {
 #[test]
 fn parse_reads_a_device_mounted_in_more_than_one_place() {
     // Act: a bind mount, or a btrfs subvolume mounted twice, gives one device two mount
-    // points.
+    // points. `lsblk` reports them in mount order, not alphabetical, so the fixture lists
+    // "/var/lib/thing" before "/srv" to make the sort observable.
     let volume = device(&tree(), "dm-0");
 
     // Assert: sorted, so the order `lsblk` used never reaches the document.
