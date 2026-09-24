@@ -375,6 +375,76 @@ fn read_tells_an_absent_run_parts_directory_apart_from_an_empty_one() {
 }
 
 #[test]
+fn read_fails_on_a_spool_it_is_not_allowed_to_list() {
+    // Arrange: Debian's spool is `1730 root:crontab`, so an unprivileged run can see it exists
+    // and cannot list it. Reading that as an empty spool would claim nobody has a crontab.
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tree("unlistable-spool");
+    write(
+        &root,
+        "var/spool/cron/crontabs/operator",
+        "0 4 * * * /usr/bin/backup\n",
+    );
+    let spool = root.join("var/spool/cron/crontabs");
+    fs::set_permissions(&spool, fs::Permissions::from_mode(0o300))
+        .expect("a scratch directory this user owns");
+
+    let reopened = fs::Permissions::from_mode(0o700);
+    if fs::read_dir(&spool).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and lists it regardless of the mode bits.
+        fs::set_permissions(&spool, reopened).expect("a scratch directory this user owns");
+        eprintln!("skipped: this user lists a directory without the read bit");
+        return;
+    }
+
+    // Act
+    let result = CronFiles::under(&root).read();
+
+    fs::set_permissions(&spool, reopened).expect("a scratch directory this user owns");
+
+    // Assert
+    let failure = result.expect_err("an unlistable spool must fail the read");
+    assert!(
+        failure
+            .to_string()
+            .starts_with(&format!("could not list {}", spool.display())),
+        "the message must name the spool, got: {failure}"
+    );
+}
+
+#[test]
+fn read_fails_on_a_crontab_it_is_not_allowed_to_read() {
+    // Arrange: only a missing file is absence. One that is there and will not open is a
+    // crontab rastro could not see, which is not the same as no crontab.
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tree("unreadable-drop-in");
+    write(&root, "etc/cron.d/sysstat", DROP_IN);
+    let drop_in = root.join("etc/cron.d/sysstat");
+    fs::set_permissions(&drop_in, fs::Permissions::from_mode(0o000))
+        .expect("a scratch file this user owns");
+
+    if fs::read(&drop_in).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and reads it regardless of the mode bits.
+        eprintln!("skipped: this user reads a file without the read bit");
+        return;
+    }
+
+    // Act
+    let result = CronFiles::under(&root).read();
+
+    // Assert
+    let failure = result.expect_err("an unreadable crontab must fail the read");
+    assert!(
+        failure
+            .to_string()
+            .starts_with(&format!("could not read {}", drop_in.display())),
+        "the message must name the crontab, got: {failure}"
+    );
+}
+
+#[test]
 fn read_names_the_file_a_failure_came_from() {
     // Arrange
     let root = tree("named-failure");
