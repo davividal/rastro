@@ -5506,7 +5506,33 @@ Marked: a path the walk was refused, a name it cannot spell, a broker node whose
 not be read, a PAM or unit environment file that would not open, a firewall backend that could
 not be dumped, a container object that vanished, and an nginx include, certificate, key or
 basic-auth user file it refused. Not marked: the three box-state `error` fields above, and a
-container engine whose daemon did not answer, which `DaemonStatus` records as state.
+container engine whose daemon is not running, which `DaemonStatus` records as state.
+
+## Four collectors did not record the failure at all
+
+Marking assumes the failure is in the document to be marked. Review found four where it was
+not, each reporting a gap as if it were an answer:
+
+- **`sysctl`** read every file with `.ok()`, so a root-only parameter refused to an
+  unprivileged run became `null`, the value of a parameter never set. A diff against a root
+  run read as settings cleared. A read refused for permission is now `{"error": …}`; the
+  kernel declining with `EIO`, as for an unset `stable_secret`, stays `null`.
+- **`rabbitmq`** left a node a RabbitMQ process holds as a node of nulls when there was no
+  `rabbitmqctl` to ask it with or its name could not be read. The node's `error` now says
+  which.
+- **`sockets`** rendered `holders: []` both for a socket nothing holds and for one whose
+  holder might be a process whose descriptors could not be listed. On a run where any
+  could not be, a socket with no holder found renders `holders: {"error": …}` instead. The
+  reason names no count, which would move between two runs; and a socket whose holder was
+  found may still have others hidden, which no reading can tell.
+- **`containers`** treated whatever docker printed when its daemon did not answer as a
+  daemon that is not running, so a socket this user may not use read as a stopped daemon.
+  docker says `permission denied` for that, measured on 29.5.3, and it is now `refused`.
+  Measuring it found a worse fault underneath: 29.5.3 exits 1 when no daemon answers, which
+  failed the whole facet, where the design says a stopped daemon is state. `docker version`
+  is now read whatever it exits, as long as its own document arrives on stdout.
+
+Each changes the document for the case it covers, and nothing else.
 
 **What this costs.** A new collector that records a per-item failure has to mark it, and
 nothing but review makes it do so; an unmarked one is reported in the document and missing
