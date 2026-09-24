@@ -127,6 +127,26 @@ fn read_takes_the_real_id_rather_than_the_effective_one() {
 }
 
 #[test]
+fn read_resolves_the_binary_a_process_is_running() {
+    // Arrange: `exe` is the kernel's link to the binary itself, which the command line is not:
+    // `argv[0]` is whatever the parent chose to pass. The target needs no file behind it,
+    // because rastro reads the link and never follows it.
+    let root = tree("executable");
+    write_process(&root, 42, DROPPED_STATUS, "node_exporter\0", None);
+    std::os::unix::fs::symlink("/usr/bin/node_exporter", root.join("42/exe"))
+        .expect("a writable process directory");
+
+    // Act
+    let exporter = named(&read(&root), "node_exporter");
+
+    // Assert
+    assert_eq!(
+        exporter.executable.map(|path| path.as_str().to_owned()),
+        Some("/usr/bin/node_exporter".to_owned())
+    );
+}
+
+#[test]
 fn read_splits_a_command_line_on_its_nul_separators() {
     // Arrange: the kernel separates arguments with NUL precisely so an argument containing a
     // space is unambiguous.
