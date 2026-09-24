@@ -720,3 +720,23 @@ fn parse_reads_tags_exported_as_one_comma_separated_string() {
     );
     assert!(definitions.users["plain"].tags.is_empty());
 }
+
+#[test]
+fn parse_names_the_field_a_document_failed_at() {
+    // Arrange: a shape this reader does not anticipate, which is the case that matters —
+    // anticipated ones are read. A byte offset into a document of several megabytes that
+    // nothing keeps a copy of tells an operator nothing they can act on; the field does.
+    let unreadable = r#"{"rabbitmq_version":"3.10.8","queues":[
+      {"name":"work","vhost":"/","arguments":[]}]}"#;
+
+    // Act
+    let failure =
+        RabbitmqctlDefinitions::parse(unreadable).expect_err("a list is not a map of arguments");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(
+        message.contains("queues[0].arguments: invalid type: sequence, expected a map"),
+        "{message}"
+    );
+}

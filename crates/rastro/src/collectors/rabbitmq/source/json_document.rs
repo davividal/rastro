@@ -28,6 +28,12 @@
 //! with an object; every `list_*` command answers with an array, and a reader that knew only
 //! about `{` would skip a whole answer looking for one.
 
+//! **Which field, not which byte.** Every read here goes through one deserialiser that names
+//! the field it failed at. A collector reports to an operator who no longer has the document —
+//! it was several megabytes, it was never written down, and the node has moved on since — so
+//! `at line 1 column 4889` names nothing anybody can act on. Measured on a live 3.10.8 box,
+//! where exactly that message was the whole of what a failed facet had to say.
+
 /// The opening of a JSON document, whichever kind it is.
 const OPENINGS: [char; 2] = ['{', '['];
 
@@ -47,4 +53,28 @@ pub fn document_in(output: &str) -> &str {
     }
 
     output
+}
+
+/// What `serde_path_to_error` prints when the document itself is the failure rather than a
+/// field in it.
+const WHOLE_DOCUMENT: &str = ".";
+
+/// The document in `output`, read into `T`, with the field that failed named.
+///
+/// The error is the failure's own words with the field's path in front of them, which the
+/// caller puts after its own account of which command it ran. A document that is not JSON at
+/// all fails at the root and is reported unprefixed, since there is no field to name.
+pub fn read_document<T: serde::de::DeserializeOwned>(output: &str) -> Result<T, String> {
+    let mut deserializer = serde_json::Deserializer::from_str(document_in(output));
+
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|failure| {
+        let field = failure.path().to_string();
+        let cause = failure.into_inner();
+
+        if field == WHOLE_DOCUMENT {
+            return cause.to_string();
+        }
+
+        format!("{field}: {cause}")
+    })
 }
