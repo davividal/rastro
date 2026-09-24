@@ -660,3 +660,63 @@ fn parse_reads_past_a_preamble_here_too() {
     // Act & Assert
     assert!(RabbitmqctlDefinitions::parse(&noisy).is_ok());
 }
+
+#[test]
+fn parse_reads_an_empty_string_where_a_collection_belongs_as_no_entries() {
+    // Arrange: a node in the fleet exported `""` for a collection with nothing in it, and it
+    // failed the whole facet with "expected a sequence at line 1 column 4889" — an offset into
+    // a document nobody keeps, naming neither the field nor the node. Every collection carries
+    // the shape at once here, because the reader must not care which of them arrives that way.
+    let empty_strings = r#"{"rabbitmq_version":"3.10.8",
+      "vhosts":"","users":"","permissions":"","topic_permissions":"","policies":"",
+      "parameters":"","global_parameters":"","exchanges":"","queues":"","bindings":""}"#;
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(empty_strings).expect("a readable document");
+
+    // Assert: read, and empty, rather than failed.
+    assert!(definitions.vhosts.is_empty());
+    assert!(definitions.users.is_empty());
+    assert!(definitions.permissions.is_empty());
+    assert!(definitions.topic_permissions.is_empty());
+    assert!(definitions.policies.is_empty());
+    assert!(definitions.parameters.is_empty());
+    assert!(definitions.global_parameters.is_empty());
+    assert!(definitions.exchanges.is_empty());
+    assert!(definitions.queues.is_empty());
+    assert!(definitions.bindings.is_empty());
+}
+
+#[test]
+fn parse_refuses_text_where_a_collection_belongs() {
+    // Arrange: the empty string is read as "nothing here". Text that says something else is a
+    // document rastro does not understand, and a guess at it would be worse than a failure.
+    let text = r#"{"rabbitmq_version":"3.10.8","users":"guest,spikeuser"}"#;
+
+    // Act & Assert
+    assert!(RabbitmqctlDefinitions::parse(text).is_err());
+}
+
+#[test]
+fn parse_reads_tags_exported_as_one_comma_separated_string() {
+    // Arrange: a user's tags are a JSON list from 3.9 onward and one comma-separated string
+    // before it, and a node upgraded across that line can still carry the older spelling. A
+    // user with no tags exports it as the empty string.
+    let older = r#"{"rabbitmq_version":"3.10.8","users":[
+      {"name":"guest","tags":"administrator,management",
+       "hashing_algorithm":"rabbit_password_hashing_sha256",
+       "password_hash":"guestAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+      {"name":"plain","tags":"",
+       "hashing_algorithm":"rabbit_password_hashing_sha256",
+       "password_hash":"plainAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}"#;
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(older).expect("a readable document");
+
+    // Assert
+    assert_eq!(
+        definitions.users["guest"].tags,
+        ["administrator".to_owned(), "management".to_owned()]
+    );
+    assert!(definitions.users["plain"].tags.is_empty());
+}
