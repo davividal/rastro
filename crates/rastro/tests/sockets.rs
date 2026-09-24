@@ -488,6 +488,33 @@ fn a_process_tree_rastro_cannot_read_leaves_the_sockets_unattributed() {
 }
 
 #[test]
+fn a_process_whose_name_cannot_be_read_leaves_unattributed_sockets_unknown() {
+    // Arrange: `/proc` mounted `hidepid=1` shows another user's pid and refuses its files,
+    // `comm` first. A process rastro cannot name is one whose sockets it cannot attribute.
+    let source = source("sockets_nameless_process");
+    let hidden = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("sockets_nameless_process/proc/4243");
+    std::fs::create_dir_all(&hidden).expect("a writable tree");
+    write(&hidden, "comm", "hidden\n");
+    std::fs::set_permissions(hidden.join("comm"), std::fs::Permissions::from_mode(0o000))
+        .expect("a scratch file this user owns");
+
+    if std::fs::read(hidden.join("comm")).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and reads it regardless of the mode bits.
+        eprintln!("skipped: this user reads a file without the read bit");
+        return;
+    }
+
+    // Act
+    let table = source
+        .read()
+        .expect("a process it cannot name is not a failure");
+
+    // Assert
+    assert!(at_path(&table, "/run/udev/control").holders_unknown);
+}
+
+#[test]
 fn a_process_whose_descriptors_cannot_be_listed_leaves_unattributed_sockets_unknown() {
     // Arrange: the fixture box, plus a process whose descriptors this user may not list, as
     // root's are on an unprivileged run. The udev socket has no visible holder; the one

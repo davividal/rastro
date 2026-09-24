@@ -78,8 +78,16 @@ impl SocketHolders {
             let Some(process_id) = process_id_of(&path) else {
                 continue;
             };
-            let Some(name) = name_of(&path) else {
-                continue;
+            let name = match name_of(&path) {
+                Ok(Some(name)) => name,
+                Ok(None) => continue,
+                // Gone between the listing and the read, which takes its sockets with it.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                // `hidepid` shows the pid and refuses its files: its sockets are unattributable.
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
             };
 
             let held = match sockets_of(&path.join("fd")) {
@@ -147,10 +155,11 @@ fn process_id_of(path: &Path) -> Option<i64> {
 }
 
 /// A process's name, as the kernel truncates it.
-fn name_of(path: &Path) -> Option<ProcessName> {
-    let comm = fs::read_to_string(path.join(COMM)).ok()?;
+/// The process's name, nothing where it is not one, or the read's own failure.
+fn name_of(path: &Path) -> std::io::Result<Option<ProcessName>> {
+    let comm = fs::read_to_string(path.join(COMM))?;
 
-    ProcessName::new(comm.trim()).ok()
+    Ok(ProcessName::new(comm.trim()).ok())
 }
 
 /// Every socket one process holds, as inode and descriptor number.
