@@ -112,16 +112,28 @@ impl Shortfall {
     }
 }
 
-/// A reason as one line, marked where it was cut.
+/// A reason as one inert line, marked where it was cut.
 ///
 /// A tool's usage text can be the whole of a reason, and on stderr it would break the list of
 /// one facet per line. The document keeps every line, so nothing is lost by cutting here.
+///
+/// **Control characters are written out, not passed through.** A reason carries a tool's
+/// stderr or a path on the host, and either can hold an escape sequence: printed raw, it can
+/// retitle the terminal or, with a bare carriage return, overwrite the warning it is part of.
 fn first_line_of(reason: &str) -> String {
     let mut lines = reason.trim_end().lines();
-    let first = lines.next().unwrap_or_default();
+    let first: String = lines
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .map(|character| match character.is_control() {
+            true => character.escape_default().to_string(),
+            false => character.to_string(),
+        })
+        .collect();
     match lines.next() {
         Some(_) => format!("{first} […]"),
-        None => first.to_owned(),
+        None => first,
     }
 }
 

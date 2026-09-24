@@ -160,3 +160,30 @@ fn a_reason_that_runs_to_several_lines_is_cut_to_its_first() {
         ["1 facet could not be read:\n  network: ip (/sbin/ip) exited unsuccessfully: usage […]"]
     );
 }
+
+#[test]
+fn a_reason_cannot_steer_the_terminal_it_is_printed_to() {
+    // Arrange: a reason carries a tool's stderr or a path on the host, and either can hold an
+    // escape sequence. Printed raw, an OSC sequence retitles the terminal and a bare carriage
+    // return lets what follows overwrite the warning.
+    let run = fingerprint([facet(
+        "units",
+        FacetOutcome::error("could not read /srv/\u{1b}]0;owned\u{7}x\rall clear"),
+    )]);
+
+    // Act
+    let messages = Shortfall::of(&run).messages();
+
+    // Assert: shown, so the operator still sees what the name really is, and inert.
+    let message = &messages[0];
+    assert!(
+        !message
+            .chars()
+            .any(|character| character.is_control() && character != '\n'),
+        "got {message:?}"
+    );
+    assert!(
+        message.contains(r"\u{1b}]0;owned\u{7}x\rall clear"),
+        "got {message:?}"
+    );
+}

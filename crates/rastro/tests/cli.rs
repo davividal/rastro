@@ -466,10 +466,18 @@ fn unexplained_stderr(output: &Output) -> Vec<String> {
         .iter()
         .filter(|facet| facet["status"] == "error")
         .map(|facet| {
-            // One line per facet on stderr: a reason that runs longer is cut, and marked.
+            // One inert line per facet on stderr: cut and marked if longer, controls written out.
             let reason = facet["error"].as_str().expect("a failed facet says why");
             let mut lines = reason.trim_end().lines();
-            let first = lines.next().unwrap_or_default();
+            let first: String = lines
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .map(|character| match character.is_control() {
+                    true => character.escape_default().to_string(),
+                    false => character.to_string(),
+                })
+                .collect();
             let shown = match lines.next() {
                 Some(_) => format!("{first} […]"),
                 None => first.to_owned(),
