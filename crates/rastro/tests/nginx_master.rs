@@ -84,6 +84,39 @@ fn the_master_is_the_process_whose_title_says_so() {
 }
 
 #[test]
+fn several_masters_are_read_from_the_lowest_pid() {
+    // Arrange: two nginx instances on one box, each with its own `-c`, created highest pid
+    // first. Which one rastro describes must not depend on the order `/proc` was listed in.
+    const MASTER_PIDS: [&str; 6] = ["1297", "1176", "1055", "934", "812", "701"];
+    let root = scratch_tree("nginx-master-several", &MASTER_PIDS);
+    let binary = root.join("nginx");
+    write(&root, "nginx", "#!/bin/false\n");
+    for process_id in MASTER_PIDS {
+        write(
+            &root,
+            &format!("{process_id}/cmdline"),
+            &format!("nginx: master process /usr/sbin/nginx\0-c\0/etc/nginx/{process_id}.conf\0"),
+        );
+        symlink(&binary, root.join(process_id).join("exe")).expect("a writable scratch tree");
+    }
+
+    // Act
+    let master = master_process::find_in(&root, &binary)
+        .expect("the fixture is readable")
+        .expect("the fixture holds masters");
+
+    // Assert
+    assert_eq!(master.process_id, 701);
+    assert_eq!(
+        master
+            .configuration_path
+            .expect("every master here was given a -c")
+            .as_str(),
+        "/etc/nginx/701.conf"
+    );
+}
+
+#[test]
 fn the_masters_command_line_says_which_configuration_is_being_served() {
     // Arrange: a master started with `-c`, which is a different file from the one the binary
     // was built to read.
