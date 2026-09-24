@@ -1,5 +1,7 @@
 use rastro_fingerprint::View;
-use rastro_fingerprint::{Content, Observation, Presentation, Scalar, Sensitivity, Volatility};
+use rastro_fingerprint::{
+    Completeness, Content, Observation, Presentation, Scalar, Sensitivity, Volatility,
+};
 
 fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, Observation> {
     match observation.content() {
@@ -56,6 +58,83 @@ fn sensitive_annotates_the_observation_without_changing_its_content() {
     // Assert
     assert_eq!(annotated.sensitivity(), Sensitivity::Sensitive);
     assert_eq!(annotated.content(), plain.content());
+}
+
+#[test]
+fn a_new_observation_is_complete() {
+    // Act
+    let observation = Observation::text("nginx");
+
+    // Assert
+    assert_eq!(observation.completeness(), Completeness::Complete);
+    assert_eq!(observation.incomplete_items(), 0);
+}
+
+#[test]
+fn incomplete_annotates_the_observation_without_changing_its_content() {
+    // Arrange: an item rastro was refused, which already says why in its own content.
+    let plain = Observation::object([("error", Observation::text("Permission denied"))]);
+
+    // Act
+    let annotated = plain.clone().incomplete();
+
+    // Assert
+    assert_eq!(annotated.completeness(), Completeness::Incomplete);
+    assert_eq!(annotated.content(), plain.content());
+}
+
+#[test]
+fn incomplete_when_marks_only_what_failed() {
+    // Arrange: the same shape either way, as a consumer expects, with the mark on the one that
+    // could not be read.
+    let entry = || Observation::object([("error", Observation::null())]);
+
+    // Act
+    let read = entry().incomplete_when(false);
+    let refused = entry().incomplete_when(true);
+
+    // Assert
+    assert_eq!(read.completeness(), Completeness::Complete);
+    assert_eq!(refused.completeness(), Completeness::Incomplete);
+}
+
+#[test]
+fn incomplete_items_counts_every_marked_node_however_deep() {
+    // Arrange: two refused paths under one object and a vanished container in a list beside
+    // them. The mark counts once per item, not once per value under it.
+    let refused = || Observation::object([("error", Observation::text("refused"))]).incomplete();
+    let observation = Observation::object([
+        (
+            "paths",
+            Observation::object([
+                ("/a", refused()),
+                ("/b", refused()),
+                ("/c", Observation::null()),
+            ]),
+        ),
+        ("unreadable", Observation::list([refused()]).volatile()),
+    ]);
+
+    // Act & Assert: the volatile list still counts, because a refusal this run is a refusal
+    // whichever view renders it.
+    assert_eq!(observation.incomplete_items(), 3);
+}
+
+#[test]
+fn a_view_keeps_the_mark_on_what_it_keeps() {
+    // Arrange
+    let observation = Observation::object([(
+        "/a",
+        Observation::object([("error", Observation::text("refused"))]).incomplete(),
+    )]);
+
+    // Act
+    let shown = observation
+        .in_view(View::Diffable)
+        .expect("nothing here is volatile");
+
+    // Assert
+    assert_eq!(shown.incomplete_items(), 1);
 }
 
 #[test]

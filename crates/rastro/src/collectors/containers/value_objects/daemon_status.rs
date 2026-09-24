@@ -16,7 +16,14 @@ use rastro_collector::{NonEmptyText, Observation};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DaemonStatus {
     Answering,
-    Unreachable { reason: Option<NonEmptyText> },
+    Unreachable {
+        reason: Option<NonEmptyText>,
+    },
+    /// The control plane is there and this run may not use it, which says nothing about the
+    /// engine and is a gap in what rastro saw, unlike a daemon that is not running.
+    Refused {
+        reason: NonEmptyText,
+    },
 }
 
 impl DaemonStatus {
@@ -35,6 +42,7 @@ impl DaemonStatus {
         match self {
             Self::Answering => "answering",
             Self::Unreachable { .. } => "unreachable",
+            Self::Refused { .. } => "refused",
         }
     }
 
@@ -43,6 +51,7 @@ impl DaemonStatus {
         match self {
             Self::Answering => None,
             Self::Unreachable { reason } => reason.as_ref().map(NonEmptyText::as_str),
+            Self::Refused { reason } => Some(reason.as_str()),
         }
     }
 }

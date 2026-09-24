@@ -45,23 +45,32 @@ pub struct HeldDescriptor {
 /// `/proc` a few hundred times. The pass costs about 100 ms on a 94-process box, measured,
 /// against 7 ms for the two `ss` invocations it replaces, and it is the difference between
 /// reading the host and changing it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SocketHolders(BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<HeldDescriptor>>>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SocketHolders {
+    by_inode: BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<HeldDescriptor>>>,
+    complete: bool,
+}
 
 impl SocketHolders {
     /// The holders on a `/proc` the caller names.
     ///
-    /// **Every failure here is expected and skipped.** A process may exit between being
-    /// listed and being read, and an unprivileged run cannot open another user's
-    /// descriptors at all. Neither is an error: it is the same partial view `ss -p` gives
-    /// under the same conditions, and failing a facet over it would make an unprivileged
-    /// run report nothing rather than less.
+    /// **Every failure here is expected and skipped, and the refusals are remembered.** A
+    /// process may exit between being listed and being read, and an unprivileged run cannot
+    /// open another user's descriptors at all. Neither fails the read: it is the same partial
+    /// view `ss -p` gives, and failing a facet over it would make an unprivileged run report
+    /// nothing rather than less. A process that exited took its sockets with it; one whose
+    /// descriptors were refused may hold any socket nothing else was found holding, which
+    /// [`Self::is_complete`] lets a caller say.
     pub fn at(proc: impl AsRef<Path>) -> Self {
         let mut holders: BTreeMap<u64, BTreeMap<ProcessName, BTreeSet<HeldDescriptor>>> =
             BTreeMap::new();
+        let mut complete = true;
 
         let Ok(entries) = fs::read_dir(proc.as_ref()) else {
-            return Self(holders);
+            return Self {
+                by_inode: holders,
+                complete: false,
+            };
         };
 
         for entry in entries.flatten() {
@@ -69,11 +78,29 @@ impl SocketHolders {
             let Some(process_id) = process_id_of(&path) else {
                 continue;
             };
-            let Some(name) = name_of(&path) else {
-                continue;
+            let name = match name_of(&path) {
+                Ok(Some(name)) => name,
+                Ok(None) => continue,
+                // Gone between the listing and the read, which takes its sockets with it.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                // `hidepid` shows the pid and refuses its files: its sockets are unattributable.
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
             };
 
-            for (inode, file_descriptor) in sockets_of(&path.join("fd")) {
+            let held = match sockets_of(&path.join("fd")) {
+                Ok(held) => held,
+                // Gone between the listing and the read, which takes its sockets with it.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
+            };
+
+            for (inode, file_descriptor) in held {
                 holders
                     .entry(inode)
                     .or_default()
@@ -86,7 +113,16 @@ impl SocketHolders {
             }
         }
 
-        Self(holders)
+        Self {
+            by_inode: holders,
+            complete,
+        }
+    }
+
+    /// Whether every process's descriptors could be listed, so that a socket no holder was
+    /// found for is one nothing visible holds rather than one this run could not attribute.
+    pub fn is_complete(&self) -> bool {
+        self.complete
     }
 
     /// The programs holding one socket, each with the processes of it that do.
@@ -94,7 +130,7 @@ impl SocketHolders {
     /// An empty answer is a real one rather than a failure: a socket whose holder exited
     /// between the two reads, or one held by a process an unprivileged run cannot see.
     pub fn of(&self, inode: u64) -> BTreeMap<ProcessName, BTreeSet<HeldDescriptor>> {
-        self.0.get(&inode).cloned().unwrap_or_default()
+        self.by_inode.get(&inode).cloned().unwrap_or_default()
     }
 
     /// The processes holding one socket, whatever they are called.
@@ -103,7 +139,7 @@ impl SocketHolders {
     /// it: the `rabbitmq` facet joins this against the processes that booted a broker, to
     /// decide whether the node behind a distribution port may be addressed at all.
     pub fn process_ids_of(&self, inode: u64) -> BTreeSet<i64> {
-        self.0
+        self.by_inode
             .get(&inode)
             .into_iter()
             .flat_map(BTreeMap::values)
@@ -119,19 +155,16 @@ fn process_id_of(path: &Path) -> Option<i64> {
 }
 
 /// A process's name, as the kernel truncates it.
-fn name_of(path: &Path) -> Option<ProcessName> {
-    let comm = fs::read_to_string(path.join(COMM)).ok()?;
+/// The process's name, nothing where it is not one, or the read's own failure.
+fn name_of(path: &Path) -> std::io::Result<Option<ProcessName>> {
+    let comm = fs::read_to_string(path.join(COMM))?;
 
-    ProcessName::new(comm.trim()).ok()
+    Ok(ProcessName::new(comm.trim()).ok())
 }
 
 /// Every socket one process holds, as inode and descriptor number.
-fn sockets_of(descriptors: &Path) -> Vec<(u64, i64)> {
-    let Ok(entries) = fs::read_dir(descriptors) else {
-        return Vec::new();
-    };
-
-    entries
+fn sockets_of(descriptors: &Path) -> std::io::Result<Vec<(u64, i64)>> {
+    Ok(fs::read_dir(descriptors)?
         .flatten()
         .filter_map(|entry| {
             let file_descriptor = entry.file_name().to_str()?.parse::<i64>().ok()?;
@@ -140,7 +173,7 @@ fn sockets_of(descriptors: &Path) -> Vec<(u64, i64)> {
 
             Some((inode, file_descriptor))
         })
-        .collect()
+        .collect())
 }
 
 /// The inode inside a `socket:[12345]` link target.

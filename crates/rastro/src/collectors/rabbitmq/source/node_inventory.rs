@@ -15,6 +15,7 @@ use super::resident_runtime::ResidentRuntime;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::proc_sockets::{SocketHolders, listening_inodes};
 use crate::collectors::rabbitmq::model::{Definitions, Installation, Node, NodeStatus};
+use crate::collectors::rabbitmq::value_objects::NotAsked;
 use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, BrokerVersion, FLOOR, NodeName};
 
 /// The program that keeps the register of Erlang nodes.
@@ -122,9 +123,11 @@ impl NodeInventory {
                 // name could be read, and where there is a client to ask with. A node rastro
                 // cannot name is one it cannot address either: `rabbitmqctl -n` takes the
                 // name the node runs under, and guessing it is what this facet stopped doing.
-                let asked = match (evidence.may_be_addressed(), &name, client) {
-                    (true, Some(name), Some(client)) => Some(ask(client, name)?),
-                    _ => None,
+                let (asked, not_asked) = match (evidence.may_be_addressed(), &name, client) {
+                    (true, Some(name), Some(client)) => (Some(ask(client, name)?), None),
+                    (true, None, _) => (None, Some(NotAsked::Nameless)),
+                    (true, Some(_), None) => (None, Some(NotAsked::NoClient)),
+                    (false, _, _) => (None, None),
                 };
 
                 Ok((
@@ -136,6 +139,7 @@ impl NodeInventory {
                         status: asked.as_ref().map(|asked| asked.status.clone()),
                         feature_flags: asked.as_ref().map(|asked| asked.feature_flags.clone()),
                         definitions: asked.map(|asked| asked.definitions),
+                        not_asked,
                     },
                 ))
             })

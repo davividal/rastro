@@ -299,8 +299,10 @@ produced nothing at all.
 
 stdout carries the fingerprint and nothing else — with the document in a file,
 nothing at all. Errors, warnings, the live counter and `--debug` timings go to
-stderr, and the counter only when stderr is a terminal, so a redirected clean run
-still says nothing.
+stderr, and the counter only when stderr is a terminal. A run that is not root is
+warned before it starts, and after the document is written stderr names every facet
+that failed and counts the items an `ok` facet could not read, so a partial run never
+passes for a whole one. A root run that read everything still says nothing.
 
 **Keep fingerprints off the walked tree.** A document written anywhere on real disk
 is an entry of the next run's walk. rastro leaves out the file it is itself
@@ -314,8 +316,9 @@ Of the following, the `unsafe`-free build, the absence of network I/O, the outpu
 file's mode, redaction and `--raw` are all true today. The root requirement arrives
 with Layer 1.
 
-- **Requires root.** It reads `/etc`, user crontabs and firewall state.
-  Degrading gracefully without root is roadmap.
+- **Requires root.** It reads `/etc`, user crontabs and firewall state. Run without
+  it, what only root may read is recorded as an `error` rather than guessed, and the
+  run says so on stderr before it starts and again, facet by facet, when it ends.
 - **Output file created `0600`**, at creation rather than by a later `chmod`, so
   there is no window in which a document naming every path on the box is
   world-readable. Written to a temporary sibling and renamed, so a run that died

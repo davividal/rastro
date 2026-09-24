@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use rastro_collector::Observation;
 
 use crate::collectors::rabbitmq::model::{Definitions, NodeStatus};
-use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, NodeName};
+use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, NodeName, NotAsked};
 
 /// A node of the Erlang distribution on this box.
 ///
@@ -57,6 +57,21 @@ pub struct Node {
 
     /// The durable half: vhosts, users, permissions, policies, parameters and topology.
     pub definitions: Option<Definitions>,
+
+    /// Why a broker was not asked, where it was not.
+    pub not_asked: Option<NotAsked>,
+}
+
+impl Node {
+    /// What this run could not find out about the node, if anything.
+    ///
+    /// The evidence's refusal first, because a node whose holder could not be read was never
+    /// a candidate for asking; otherwise why a broker was not asked.
+    pub fn error(&self) -> Option<&'static str> {
+        self.evidence
+            .refusal()
+            .or(self.not_asked.as_ref().map(NotAsked::reason))
+    }
 }
 
 impl From<&Node> for Observation {
@@ -83,8 +98,8 @@ impl From<&Node> for Observation {
             ("broker_evidence", Observation::text(node.evidence.as_str())),
             (
                 "error",
-                match node.evidence.refusal() {
-                    Some(refusal) => Observation::text(refusal),
+                match node.error() {
+                    Some(error) => Observation::text(error),
                     None => Observation::null(),
                 },
             ),
@@ -114,5 +129,6 @@ impl From<&Node> for Observation {
                 },
             ),
         ])
+        .incomplete_when(node.error().is_some())
     }
 }

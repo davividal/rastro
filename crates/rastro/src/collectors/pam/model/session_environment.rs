@@ -68,6 +68,7 @@ impl From<&VariablesFile> for Observation {
                 },
             ),
         ])
+        .incomplete_when(matches!(file.status, FileStatus::Unreadable(_)))
     }
 }
 
@@ -86,6 +87,7 @@ impl From<&RulesFile> for Observation {
             ),
             ("status", Observation::text(file.status.as_str())),
         ])
+        .incomplete_when(matches!(file.status, FileStatus::Unreadable(_)))
     }
 }
 

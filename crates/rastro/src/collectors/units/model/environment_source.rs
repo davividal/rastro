@@ -105,5 +105,6 @@ impl From<&EnvironmentSource> for Observation {
             ("status", Observation::text(source.reading.status())),
             ("variables", variables),
         ])
+        .incomplete_when(matches!(source.reading, EnvironmentReading::Unreadable(_)))
     }
 }

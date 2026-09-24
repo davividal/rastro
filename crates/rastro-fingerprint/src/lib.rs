@@ -32,8 +32,8 @@ pub use digest::Xxh3Digest;
 pub use error::FingerprintError;
 pub use facet::{Facet, FacetName, FacetOutcome};
 pub use observation::{
-    Content, Observation, Scalar, Sensitivity, Visible, VisibleContent, VisibleList, VisibleObject,
-    Volatility,
+    Completeness, Content, Observation, Scalar, Sensitivity, Visible, VisibleContent, VisibleList,
+    VisibleObject, Volatility,
 };
 pub use presentation::{Disclosure, Presentation};
 pub use view::View;

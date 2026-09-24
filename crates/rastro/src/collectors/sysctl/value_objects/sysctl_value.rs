@@ -26,6 +26,13 @@ pub enum SysctlValue {
     /// parameter, it is the state of a parameter that has never been set, and it
     /// is what makes setting one visible in a diff.
     Withheld,
+    /// This run was not allowed to read the parameter, which says nothing about its value.
+    ///
+    /// A root-only entry on an unprivileged run. Recorded apart from `Withheld` because the
+    /// two mean opposite things: `Withheld` is a parameter never set, this is a parameter
+    /// rastro could not see, and a `null` for both made an unprivileged run read as a box
+    /// with its settings cleared.
+    Refused(String),
 }
 
 /// How many trailing newlines the kernel writes after a value.
@@ -55,7 +62,7 @@ impl SysctlValue {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::Reported(value) => Some(value),
-            Self::Withheld => None,
+            Self::Withheld | Self::Refused(_) => None,
         }
     }
 }
@@ -65,6 +72,9 @@ impl From<&SysctlValue> for Observation {
         match value {
             SysctlValue::Reported(value) => Observation::text(value.clone()),
             SysctlValue::Withheld => Observation::null(),
+            SysctlValue::Refused(reason) => {
+                Observation::object([("error", Observation::text(reason.clone()))]).incomplete()
+            }
         }
     }
 }

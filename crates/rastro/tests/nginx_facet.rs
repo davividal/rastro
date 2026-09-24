@@ -272,6 +272,39 @@ fn the_configuration_names_both_bases_and_who_chose_the_root() {
 }
 
 #[test]
+fn every_file_certificate_and_key_rastro_could_not_read_counts_once() {
+    // Arrange: the fixture holds one of each that read and one of each that did not: a
+    // parsed file and a refused include, a certificate and one naming a variable, a key
+    // described and a key refused.
+    // Act
+    let observed = facet();
+
+    // Assert: exactly the three refusals, so neither a missing mark nor a mark on something
+    // that read goes unnoticed.
+    assert_eq!(observed.incomplete_items(), 3);
+}
+
+#[test]
+fn a_user_file_rastro_could_not_read_counts_as_an_item_not_read() {
+    // Arrange: the same wall with its user file read, and refused. Refused, the facet still
+    // names the realm and the file, so only the mark says who can log in is unknown.
+    let wall = |refusal: Option<NonEmptyText>| Authentication {
+        realm: Some(words("metrics")),
+        user_file: Some(path("/etc/nginx/metrics.htpasswd")),
+        users: Vec::new(),
+        refusal,
+    };
+
+    // Act
+    let refused = Observation::from(&wall(Some(words("Permission denied (os error 13)"))));
+    let read = Observation::from(&wall(None));
+
+    // Assert
+    assert_eq!(refused.incomplete_items(), 1);
+    assert_eq!(read.incomplete_items(), 0);
+}
+
+#[test]
 fn a_file_renders_its_digest_and_a_refused_one_renders_its_reason() {
     // Arrange
     let files = items_of(&field(&field(&facet(), "configuration"), "files"));

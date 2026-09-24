@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 mod support;
 
+use rastro::collectors::sysctl::proc_sys_entry::EntryReading;
 use rastro::collectors::sysctl::{
     ProcSys, SysctlCollector, SysctlKey, SysctlParameters, SysctlValue, proc_sys_entry,
 };
@@ -169,8 +170,12 @@ fn reported_keeps_the_tabs_a_value_is_separated_by() {
 #[test]
 fn classify_skips_an_entry_nobody_is_allowed_to_read() {
     // Act: `vm.drop_caches` is a button, not a setting.
-    let classified = proc_sys_entry::classify(&segments(&["vm", "drop_caches"]), WRITE_ONLY, None)
-        .expect("a write-only entry is not a failure");
+    let classified = proc_sys_entry::classify(
+        &segments(&["vm", "drop_caches"]),
+        WRITE_ONLY,
+        EntryReading::Declined,
+    )
+    .expect("a write-only entry is not a failure");
 
     // Assert: it holds no state, so it belongs nowhere in the facet.
     assert_eq!(classified, None);
@@ -183,13 +188,38 @@ fn classify_records_a_readable_entry_the_kernel_declined_as_withheld() {
     let name = segments(&["net", "ipv6", "conf", "lo", "stable_secret"]);
 
     // Act
-    let (key, value) = proc_sys_entry::classify(&name, 0o600, None)
+    let (key, value) = proc_sys_entry::classify(&name, 0o600, EntryReading::Declined)
         .expect("a declined read is not a collection failure")
         .expect("the parameter is readable, so it holds state");
 
     // Assert: visible as a parameter that has never been set, not as an absence.
     assert_eq!(key.as_str(), "net.ipv6.conf.lo.stable_secret");
     assert_eq!(value, SysctlValue::Withheld);
+}
+
+#[test]
+fn classify_records_an_entry_rastro_was_not_allowed_to_read_as_refused() {
+    // Arrange: a root-only parameter on an unprivileged run. Unlike the kernel declining an
+    // unset secret, this says nothing about the parameter's state, only about the reader.
+    let name = segments(&["kernel", "kptr_restrict"]);
+
+    // Act
+    let (_, value) = proc_sys_entry::classify(
+        &name,
+        0o600,
+        EntryReading::Refused("Permission denied (os error 13)"),
+    )
+    .expect("a refused read is recorded, not fatal")
+    .expect("the parameter is readable in principle, so it holds state");
+
+    // Assert: an error the operator's summary counts, never the `null` of a value unset.
+    assert_eq!(
+        value,
+        SysctlValue::Refused("Permission denied (os error 13)".to_owned())
+    );
+    let rendered = Observation::from(&value);
+    assert_eq!(keys_of(&rendered), vec!["error".to_owned()]);
+    assert_eq!(rendered.incomplete_items(), 1);
 }
 
 #[test]
@@ -201,7 +231,7 @@ fn classify_refuses_a_value_that_is_not_valid_utf8() {
     let result = proc_sys_entry::classify(
         &segments(&["kernel", "core_pattern"]),
         READABLE,
-        Some(&invalid),
+        EntryReading::Read(&invalid),
     );
 
     // Assert: refused rather than repaired with U+FFFD, and the message names the
@@ -309,6 +339,30 @@ fn read_keeps_an_empty_value_apart_from_a_withheld_one() {
     assert_eq!(
         reserved.content(),
         &Content::Scalar(Scalar::Text(String::new()))
+    );
+}
+
+#[test]
+fn read_records_a_parameter_this_user_may_not_read_as_refused_rather_than_unset() {
+    // Arrange: readable by others and not by its owner, which is how a scratch tree gives
+    // this user the `EACCES` a root-only `/proc/sys` entry gives an unprivileged run.
+    let root = tree("sysctl-refused");
+    write(&root, "kernel/kptr_restrict", "1\n", 0o044);
+    let parameter = root.join("kernel/kptr_restrict");
+
+    if fs::read(&parameter).is_ok() {
+        // Root carries `CAP_DAC_OVERRIDE` and reads it regardless of the mode bits.
+        eprintln!("skipped: this user reads a file without the read bit");
+        return;
+    }
+
+    // Act
+    let value = value_of(&read(&root), "kernel.kptr_restrict");
+
+    // Assert
+    assert!(
+        matches!(&value, SysctlValue::Refused(reason) if reason.contains("Permission denied")),
+        "got {value:?}"
     );
 }
 

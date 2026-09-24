@@ -48,5 +48,6 @@ impl From<&KeyFile> for Observation {
             ("path", Observation::text(key.path.as_str())),
             ("reading", reading),
         ])
+        .incomplete_when(matches!(key.reading, KeyReading::Refused { .. }))
     }
 }

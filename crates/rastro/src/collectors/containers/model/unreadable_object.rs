@@ -40,5 +40,6 @@ impl From<&UnreadableObject> for Observation {
             ("id", Observation::text(unreadable.id.as_str())),
             ("reason", Observation::text(unreadable.reason.as_str())),
         ])
+        .incomplete()
     }
 }

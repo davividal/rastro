@@ -11,7 +11,9 @@ use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro::output::{self, Destination, Written};
 use rastro::preflight;
+use rastro::privilege;
 use rastro::progress::{self, Reporting, WalkProgress};
+use rastro::shortfall::Shortfall;
 use rastro::{cli, collectors};
 use rastro_collector::fingerprint_host;
 use rastro_fingerprint::{Disclosure, Presentation};
@@ -46,6 +48,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
     let invocation = cli::parse();
     let resolved = resolve(&invocation)?;
 
+    warn_if_not_running_as_root(&resolved);
     warn_if_the_document_may_crowd_the_disk(&resolved);
     warn_if_secrets_are_not_being_withheld(&resolved, invocation.presentation());
 
@@ -101,6 +104,12 @@ fn run() -> Result<Written, Box<dyn Error>> {
         invocation.force(),
     )?;
 
+    // After the write, so the summary never holds up a document that is ready, and before the
+    // debug report, whose last line says where the document went.
+    for message in Shortfall::of(&fingerprint).messages() {
+        say(&resolved, &message);
+    }
+
     report(&resolved, &written)?;
 
     Ok(written)
@@ -146,6 +155,13 @@ fn walked_output(destination: &Destination) -> Option<std::path::PathBuf> {
     match destination {
         Destination::File(path) => Some(output::as_walked(path)),
         Destination::Stdout => None,
+    }
+}
+
+/// Before the run, because rerunning it with `sudo` costs nothing until the run has been paid for.
+fn warn_if_not_running_as_root(resolved: &Resolved) {
+    if let Some(concern) = privilege::concern(privilege::effective_user_id()) {
+        say(resolved, &concern);
     }
 }
 

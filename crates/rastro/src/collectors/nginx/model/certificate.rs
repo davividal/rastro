@@ -59,5 +59,9 @@ impl From<&Certificate> for Observation {
             ),
             ("reading", reading),
         ])
+        .incomplete_when(matches!(
+            certificate.reading,
+            CertificateReading::Refused { .. }
+        ))
     }
 }

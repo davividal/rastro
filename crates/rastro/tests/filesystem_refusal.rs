@@ -179,6 +179,33 @@ fn a_refused_path_renders_only_the_reason_it_could_not_be_read() {
 }
 
 #[test]
+fn every_refused_and_unspellable_path_counts_as_one_item_not_read() {
+    // Arrange: two refusals, one name that cannot be spelled, and a path that was described.
+    // The operator's summary counts what the walk could not see, not what it walked.
+    let inventory = FilesystemInventory::new(
+        vec![described("/srv")],
+        vec![
+            refused(
+                "/srv/a",
+                "could not be listed: Permission denied (os error 13)",
+            ),
+            refused(
+                "/srv/b",
+                "could not be listed: Permission denied (os error 13)",
+            ),
+        ],
+        vec![UnspellablePath::of(b"\xff", Some("/srv".to_owned()))],
+    )
+    .expect("distinct paths are a legal inventory");
+
+    // Act
+    let rendered = inventory.observation(Detail::Summary);
+
+    // Assert
+    assert_eq!(rendered.incomplete_items(), 3);
+}
+
+#[test]
 fn a_refusal_at_a_path_that_is_gone_records_nothing() {
     // Arrange: ENOENT, which is what the walk gets for a file that was listed in its parent
     // and deleted before the walk reached it.

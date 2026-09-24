@@ -5459,3 +5459,89 @@ holder of the port could not be read" all along — it was that nothing marked i
 Every node carries the evidence, healthy ones included, so a reader scanning for trouble saw a
 value rather than a problem. The `error` key is the mark, and it is the one the rest of the
 codebase uses.
+
+# A run says on stderr what it could not see
+
+Dated 2026-09-24. An unprivileged run on a real box finished with a progress line that came
+and went and nothing else on the terminal. The document it wrote had `accounts`, `cron` and
+`ssh_access` as `error` and a `rabbitmq` node it could not attribute. Every one of those was
+recorded, loudly, in a file nobody had opened yet. "Failures are loud" held for the document
+and not for the operator.
+
+## Two warnings, one before the run and one after
+
+**Before: a run that is not root is told so.** The effective uid, from `/proc/self/status`,
+because access checks use the effective one and a setuid wrapper leaves the real id as the
+caller's. Said before the run because rerunning with `sudo` costs nothing until the run has
+been paid for. It names no facets: which ones fail depends on the box, and a list guessed in
+advance would be wrong somewhere. An id that cannot be read gets no warning rather than a
+guess that would warn root about nothing.
+
+**After: what the document is missing, once it is safely written.** Two kinds. A facet whose
+status is `error`, named with the first line of its reason, marked `[…]` where it was cut: on
+Alpine, busybox's `ip` answers with ten lines of usage, which would break a list of one facet
+per line, and the document keeps every line. And a facet that is `ok` but holds items its
+collector could not read, counted rather than listed, because a walk refused under someone
+else's home is refused thousands of times and the document already holds each one.
+
+**Neither changes the exit code.** The document was written and is honest about its gaps; a
+non-zero exit would tell a script the run failed when it produced exactly what it should.
+
+## Which items count is the collector's call, as an annotation
+
+The first design counted `error` keys in the rendered tree. The codebase does not use them
+uniformly enough for that. PostgreSQL's `pg_hba_file_rules.error` and `pg_file_settings.error`
+and a docker container's `State.Error` are faults the box reports about itself: state, not a
+gap in what rastro saw. Counting them would tell an operator rastro failed to read a broken
+`pg_hba.conf` line it read perfectly well. And the containers facet marks an object that
+vanished between listing and inspecting with `reason`, not `error`, so it would be missed.
+
+So a third per-value judgement joins volatility and sensitivity: `Completeness`, set with
+`.incomplete()` on the one node standing for an item rastro could not read or record. It
+changes nothing in the document, which is byte-identical with or without it; the items
+already say why they failed. It only tells the summary where they are. Collectors classify,
+renderers present, as with the other two.
+
+Marked: a path the walk was refused, a name it cannot spell, a broker node whose holder could
+not be read, a PAM or unit environment file that would not open, a firewall backend that could
+not be dumped, a container object that vanished, and an nginx include, certificate, key or
+basic-auth user file it refused. Not marked: the three box-state `error` fields above, and a
+container engine whose daemon is not running, which `DaemonStatus` records as state.
+
+## Four collectors did not record the failure at all
+
+Marking assumes the failure is in the document to be marked. Review found four where it was
+not, each reporting a gap as if it were an answer:
+
+- **`sysctl`** read every file with `.ok()`, so a root-only parameter refused to an
+  unprivileged run became `null`, the value of a parameter never set. A diff against a root
+  run read as settings cleared. A read refused for permission is now `{"error": …}`; the
+  kernel declining with `EIO`, as for an unset `stable_secret`, stays `null`.
+- **`rabbitmq`** left a node a RabbitMQ process holds as a node of nulls when there was no
+  `rabbitmqctl` to ask it with or its name could not be read. The node's `error` now says
+  which.
+- **`sockets`** rendered `holders: []` both for a socket nothing holds and for one whose
+  holder might be a process whose descriptors could not be listed. On a run where any
+  could not be, a socket with no holder found renders `holders: {"error": …}` instead. The
+  reason names no count, which would move between two runs; and a socket whose holder was
+  found may still have others hidden, which no reading can tell.
+- **`containers`** treated whatever docker printed when its daemon did not answer as a
+  daemon that is not running, so a socket this user may not use read as a stopped daemon.
+  docker says `permission denied` for that, measured on 29.5.3, and it is now `refused`.
+  Measuring it found a worse fault underneath: 29.5.3 exits 1 when no daemon answers, which
+  failed the whole facet, where the design says a stopped daemon is state. `docker version`
+  is now read whatever it exits, as long as its own document arrives on stdout.
+
+Each changes the document for the case it covers, and nothing else.
+
+**What this costs.** A new collector that records a per-item failure has to mark it, and
+nothing but review makes it do so; an unmarked one is reported in the document and missing
+from the summary, which is the defect this entry fixes, one collector at a time. The tests
+that pin each mark check both directions, so a mark removed or made unconditional fails.
+
+## The stderr contract changes with it
+
+"A redirected clean run says nothing" becomes "stderr carries only what the run could not
+see". A root run that read everything is still silent. The two tests that asserted an empty
+stderr now check every line against the run's own document: the privilege warning only when
+not root, the failed facets exactly as the document records them, and nothing else.

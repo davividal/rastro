@@ -670,6 +670,26 @@ fn a_file_the_unit_requires_and_that_is_not_there_is_absent_rather_than_a_failur
 }
 
 #[test]
+fn a_file_that_would_not_open_counts_as_an_item_not_read_and_one_that_did_does_not() {
+    // Arrange: the unit is still described either way; only the refused file is a gap.
+    let refused = EnvironmentSource {
+        declared: EnvironmentFile::new("/etc/secret.env", false).expect("an absolute path"),
+        resolved: Some(
+            rastro_collector::AbsolutePath::new("/etc/secret.env", "unit environment file")
+                .expect("an absolute path"),
+        ),
+        reading: EnvironmentReading::Unreadable("Permission denied (os error 13)".to_owned()),
+    };
+    let read = source_read("/etc/app.env", false, [("A", "1")], 0);
+
+    // Act
+    let rendered = unit_with(vec![refused, read]);
+
+    // Assert
+    assert_eq!(rendered.incomplete_items(), 1);
+}
+
+#[test]
 fn a_file_that_would_not_open_is_an_error_and_not_an_absence() {
     // Act
     let rendered = unit_with(vec![EnvironmentSource {

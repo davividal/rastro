@@ -107,11 +107,15 @@ impl ProcNet {
         let holders = SocketHolders::at(&self.proc);
 
         rows.into_iter()
-            .map(|row| ListeningSocket {
-                kind: row.kind,
-                state: row.state,
-                address: row.address,
-                holders: held_by(&holders, row.inode),
+            .map(|row| {
+                let held = held_by(&holders, row.inode);
+                ListeningSocket {
+                    kind: row.kind,
+                    state: row.state,
+                    address: row.address,
+                    holders_unknown: held.is_empty() && !holders.is_complete(),
+                    holders: held,
+                }
             })
             .collect()
     }
