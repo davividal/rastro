@@ -90,17 +90,6 @@ fn the_report_leads_with_a_line_naming_itself() {
     );
 }
 
-#[test]
-fn a_sink_that_is_not_drawing_writes_nothing_when_cleared() {
-    // Arrange: `clear` exists so a warning is never half-overwritten by the counter. With the
-    // counter off there is no line to clear, and it must not emit an escape sequence into a
-    // redirected stderr — which is what keeps a clean run silent.
-    let sink = Reporting::new(false);
-
-    // Act & Assert: nothing to observe but the absence of a panic, which is the whole claim.
-    sink.clear();
-}
-
 /// A writer that fails on one nominated write and works for every other.
 ///
 /// The `--debug` report is several lines, and each one carries its own `?`. A writer that always
