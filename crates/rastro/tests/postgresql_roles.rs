@@ -48,6 +48,25 @@ fn parse_reads_every_attribute_of_a_role() {
 }
 
 #[test]
+fn parse_refuses_the_same_role_twice() {
+    // Arrange: a role name is unique in the cluster, and keeping either row would report
+    // whichever privileges happened to come last. Kept apart, since nothing promises a repeat
+    // arrives adjacent.
+    let repeated = "\
+app,t,f,f,f,f,t,-1,,md5,
+migrator,f,f,f,f,f,t,-1,,md5,
+app,f,f,f,f,f,t,-1,,md5,
+";
+
+    // Act
+    let refused = PsqlRoles::parse(repeated);
+
+    // Assert
+    let failure = refused.expect_err("a repeated role must be refused");
+    assert!(failure.to_string().contains("twice"), "got: {failure}");
+}
+
+#[test]
 fn parse_reads_a_role_that_holds_nothing() {
     // Act
     let roles = parsed(ROLES);
