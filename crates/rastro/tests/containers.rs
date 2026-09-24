@@ -59,6 +59,10 @@ const UNREACHABLE_STDERR: &str = "failed to connect to the docker API at \
 unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: \
 dial unix /var/run/docker.sock: connect: no such file or directory";
 
+/// What docker 29.5.3 writes, measured, when the socket is there and this user may not use it.
+const REFUSED_STDERR: &str =
+    "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock";
+
 /// `docker info --format '{{json .}}'`, trimmed.
 ///
 /// `Containers`, `Images` and `NCPU` are kept deliberately: they are counts this facet does
@@ -574,8 +578,8 @@ const INSPECT_EPHEMERAL: &str = r#"[
 /// test chose, and at a call site `containers: &[]` says something a bare `&[]` would not.
 struct DockerFixtures<'a> {
     version: &'a str,
-    /// What the client writes to stderr while exiting zero, which is where an unreachable
-    /// daemon reports itself.
+    /// What the client writes to stderr when no daemon answers. The fake then exits 1, as
+    /// docker 29.5.3 was measured to, with the client's own document still on stdout.
     version_stderr: &'a str,
     info: &'a str,
     /// The containers `docker ps` lists, each with the `inspect` document for it. An id
@@ -680,6 +684,7 @@ cat <<'STDOUT'
 {version}
 STDOUT
 printf '%s' '{version_stderr}' >&2
+if [ -n '{version_stderr}' ]; then exit 1; fi
 ;;
 info)
 cat <<'STDOUT'
@@ -911,7 +916,8 @@ fn the_components_report_which_containerd_and_runc_the_engine_runs() {
 #[test]
 fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
     // Arrange: the box has docker and no running daemon, which is state rather than a
-    // failure to read, and is a different fact from having no docker at all.
+    // failure to read, and is a different fact from having no docker at all. The client
+    // exits 1 saying so, which is not a failed read either.
     let observed = docker_facet(
         "unreachable",
         DockerFixtures {
@@ -933,6 +939,33 @@ fn a_docker_whose_daemon_does_not_answer_is_installed_and_unreachable() {
     assert_eq!(text(&field(&docker, "daemon")), "unreachable");
     assert!(text(&field(&docker, "daemon_reason")).contains("docker.sock"));
     assert!(is_null(&field(&docker, "server")));
+    assert_eq!(observed.incomplete_items(), 0);
+}
+
+#[test]
+fn a_docker_whose_socket_this_user_may_not_use_is_refused_rather_than_unreachable() {
+    // Arrange: an unprivileged run on a box whose daemon is up. What the daemon runs is not
+    // something this run may find out, which is the opposite of a daemon that is not there.
+    let observed = docker_facet(
+        "refused",
+        DockerFixtures {
+            version: VERSION_UNREACHABLE,
+            version_stderr: REFUSED_STDERR,
+            info: "",
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
+    );
+
+    // Act
+    let docker = engine_of(&observed, "docker");
+
+    // Assert
+    assert_eq!(text(&field(&docker, "daemon")), "refused");
+    assert!(text(&field(&docker, "daemon_reason")).contains("permission denied"));
+    assert_eq!(observed.incomplete_items(), 1);
 }
 
 #[test]
@@ -2362,6 +2395,30 @@ fn refusal(name: &str, fixtures: DockerFixtures) -> String {
         .collect()
         .expect_err("a misread answer is a failure, not a document")
         .to_string()
+}
+
+#[test]
+fn a_docker_that_fails_without_saying_what_it_is_fails_the_facet() {
+    // Arrange: a non-zero exit is tolerated only because a client document still arrives on
+    // stdout. With nothing readable there, the exit is the only answer, and it is a failure.
+    let failure = refusal(
+        "version-garbled",
+        DockerFixtures {
+            version: "not a document",
+            version_stderr: "exec format error",
+            info: "",
+            containers: &[],
+            images: &[],
+            volumes: &[],
+            networks: &[],
+        },
+    );
+
+    // Act & Assert
+    assert!(
+        failure.contains("exited unsuccessfully") && failure.contains("exec format error"),
+        "got {failure}"
+    );
 }
 
 /// An `inspect` that returns an empty array, which is how a test drives the object that

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use rastro_collector::{AbsolutePath, CollectionError, WalkedTree};
+use rastro_collector::{AbsolutePath, CollectionError, NonEmptyText, WalkedTree};
 
 use super::docker_container_document::DockerContainerDocument;
 use super::docker_image_document::DockerImageDocument;
@@ -17,7 +17,7 @@ use crate::collectors::containers::model::{
     DockerNetworks, DockerVolume, DockerVolumes, UnreadableObject,
 };
 use crate::collectors::containers::value_objects::{
-    ContainerId, ContainerName, ImageDigest, NetworkId, NetworkName, VolumeName,
+    ContainerId, ContainerName, EngineVersion, ImageDigest, NetworkId, NetworkName, VolumeName,
 };
 
 /// docker's client, which is the only interface the engine documents as stable.
@@ -25,6 +25,9 @@ const PROGRAM: &str = "docker";
 
 /// The probe that establishes whether a daemon is answering, and what both halves are.
 const VERSION: [&str; 3] = ["version", "--format", "{{json .}}"];
+
+/// What docker says when the socket is there and this user may not use it.
+const PERMISSION_DENIED: &str = "permission denied";
 
 /// What the answering daemon runs with.
 const INFO: [&str; 3] = ["info", "--format", "{{json .}}"];
@@ -172,13 +175,22 @@ impl Docker {
 
     /// docker as this box has it: the client, and the daemon if one answered.
     pub fn read(&self) -> Result<DockerEngine, CollectionError> {
-        // Both streams, because this is one of the tools that answers on the wrong one: the
-        // connection failure lands on stderr while the exit status stays zero.
-        let probed = self.tool.run_capturing_stderr(&VERSION)?;
-        let versions = decode::<DockerVersionDocument>(&probed.stdout, "version")?.to_versions()?;
+        // Both streams and whatever the exit: with no daemon the client prints its own
+        // document with `"Server": null`, says why on stderr, and exits 1 or 0 by release.
+        let probed = self.tool.run_to_exit(&VERSION)?;
+        let versions = match decode::<DockerVersionDocument>(&probed.stdout, "version") {
+            Ok(document) => document.to_versions()?,
+            Err(_) if !probed.succeeded => {
+                return Err(CollectionError::new(format!(
+                    "`{PROGRAM} version` exited unsuccessfully: {}",
+                    probed.stderr.trim()
+                )));
+            }
+            Err(error) => return Err(error),
+        };
 
         let Some(server) = versions.server else {
-            return Ok(DockerEngine::unreachable(versions.client, &probed.stderr));
+            return Ok(unanswered(versions.client, &probed.stderr));
         };
 
         let reported = decode::<DockerInfoDocument>(&self.tool.run(&INFO)?, "info")?;
@@ -427,6 +439,23 @@ fn resolve_root(tool: &CanonicalTool) -> Option<AbsolutePath> {
 ///
 /// The message names the subcommand rather than quoting the output, which for `info` is ten
 /// kilobytes and would bury the reason it failed.
+/// A docker whose daemon did not answer, told apart by what the client said.
+///
+/// **A refused socket is a gap, a missing daemon is state.** docker says `permission denied`
+/// when the socket is there and this user may not use it, measured on 29.5.3, and names a
+/// missing socket or a refused connection otherwise. Matched on the words rather than the
+/// exit, which is the same in both.
+fn unanswered(client: EngineVersion, stderr: &str) -> DockerEngine {
+    let said = stderr.trim();
+    match (
+        said.to_lowercase().contains(PERMISSION_DENIED),
+        NonEmptyText::new(said, "refused daemon reason"),
+    ) {
+        (true, Ok(reason)) => DockerEngine::refused(client, reason),
+        _ => DockerEngine::unreachable(client, stderr),
+    }
+}
+
 fn decode<T: serde::de::DeserializeOwned>(
     output: &str,
     subcommand: &str,

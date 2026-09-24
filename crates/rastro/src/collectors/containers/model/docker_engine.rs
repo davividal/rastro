@@ -1,6 +1,6 @@
 //! docker on this box: the client that is installed, and the daemon that may not be running.
 
-use rastro_collector::Observation;
+use rastro_collector::{NonEmptyText, Observation};
 
 use crate::collectors::containers::model::engine_entry::{optional_server, status_reason};
 
@@ -29,6 +29,15 @@ impl DockerEngine {
             client_version,
             daemon: DaemonStatus::Answering,
             server: Some(server),
+        }
+    }
+
+    /// docker installed, with a socket this run may not use.
+    pub fn refused(client_version: EngineVersion, reason: NonEmptyText) -> Self {
+        Self {
+            client_version,
+            daemon: DaemonStatus::Refused { reason },
+            server: None,
         }
     }
 
@@ -64,5 +73,6 @@ impl From<&DockerEngine> for Observation {
             ("daemon_reason", status_reason(&engine.daemon)),
             ("server", optional_server(engine.server.as_ref())),
         ])
+        .incomplete_when(matches!(engine.daemon, DaemonStatus::Refused { .. }))
     }
 }

@@ -46,11 +46,13 @@
 mod run_limits;
 mod target_user;
 mod tool_as_user;
+mod tool_exit;
 mod tool_output;
 
 pub use run_limits::RunLimits;
 pub use target_user::TargetUser;
 pub use tool_as_user::ToolAsUser;
+pub use tool_exit::ToolExit;
 pub use tool_output::ToolOutput;
 
 use std::io::ErrorKind;
@@ -202,6 +204,25 @@ impl CanonicalTool {
         }
 
         Ok(ToolOutput {
+            stdout: self.decoded(stdout, "stdout")?,
+            stderr: self.decoded(stderr, "stderr")?,
+        })
+    }
+
+    /// The same run, with the exit status handed back rather than judged.
+    ///
+    /// Only for a tool whose non-zero exit can still carry an answer; see [`ToolExit`].
+    pub fn run_to_exit(&self, arguments: &[&str]) -> Result<ToolExit, CollectionError> {
+        let mut job = self.started_tool(arguments)?;
+
+        let started = Instant::now();
+        let captured = self.capture(&mut job, started);
+        let reaped = self.reap(&job, started);
+        let (stdout, stderr) = captured?;
+        let status = reaped?;
+
+        Ok(ToolExit {
+            succeeded: status.success(),
             stdout: self.decoded(stdout, "stdout")?,
             stderr: self.decoded(stderr, "stderr")?,
         })
