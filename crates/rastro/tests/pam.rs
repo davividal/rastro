@@ -203,3 +203,31 @@ fn every_source_carries_the_same_keys_whatever_was_read() {
         ["error", "ignored_lines", "path", "rules", "status"]
     );
 }
+
+#[test]
+fn a_source_that_would_not_open_counts_as_an_item_not_read_and_an_absent_one_does_not() {
+    // Arrange: absence is state, and a file rastro was refused is a gap in what it saw. Both
+    // sources refused, so either one losing its mark shows.
+    let source = |status: FileStatus| SessionEnvironment {
+        variables: VariablesFile {
+            path: path("/etc/environment"),
+            status: status.clone(),
+            variables: Default::default(),
+            ignored_lines: 0,
+        },
+        rules: RulesFile {
+            path: path("/etc/security/pam_env.conf"),
+            status,
+            rules: Vec::new(),
+            ignored_lines: 0,
+        },
+    };
+    let refused = source(FileStatus::Unreadable(
+        "Permission denied (os error 13)".to_owned(),
+    ));
+    let absent = source(FileStatus::Absent);
+
+    // Act & Assert
+    assert_eq!(Observation::from(&refused).incomplete_items(), 2);
+    assert_eq!(Observation::from(&absent).incomplete_items(), 0);
+}
