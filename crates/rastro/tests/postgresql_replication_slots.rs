@@ -80,8 +80,14 @@ fn parse_reads_the_five_column_shape_without_two_phase() {
 
 #[test]
 fn new_refuses_one_slot_reported_twice() {
-    // Act & Assert: slot_name is unique in the catalog, so a repeat means two reads were
-    // spliced.
-    let repeated = "s,,physical,,f,f\ns,,physical,,f,f\n";
-    assert!(PsqlReplicationSlots::parse(repeated).is_err());
+    // Arrange: slot_name is unique in the catalog, so a repeat means two reads were spliced.
+    // Kept apart, since nothing promises a repeat arrives adjacent.
+    let repeated = "s,,physical,,f,f\nt,,physical,,f,f\ns,,physical,,f,f\n";
+
+    // Act
+    let refused = PsqlReplicationSlots::parse(repeated);
+
+    // Assert
+    let failure = refused.expect_err("a repeated slot must be refused");
+    assert!(failure.to_string().contains("twice"), "got: {failure}");
 }
