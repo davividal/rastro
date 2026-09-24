@@ -15,7 +15,7 @@ use super::resident_runtime::ResidentRuntime;
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::proc_sockets::{SocketHolders, listening_inodes};
 use crate::collectors::rabbitmq::model::{Definitions, Installation, Node, NodeStatus};
-use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, NodeName};
+use crate::collectors::rabbitmq::value_objects::{BrokerEvidence, BrokerVersion, FLOOR, NodeName};
 
 /// The program that keeps the register of Erlang nodes.
 const REGISTER_PROGRAM: &str = "epmd";
@@ -260,18 +260,44 @@ fn discarded_as_a_cli_tool(name: &str, evidence: &BrokerEvidence) -> bool {
 
 /// Everything one node is asked.
 ///
-/// **No version branching**, because the facet declares a floor instead: RabbitMQ 3.13 and
-/// newer, which is every release still receiving support of any kind. An earlier version of
-/// this asked the status first so it could decide whether the node was new enough for
-/// `list_feature_flags`, which is a subcommand only from 3.8 — machinery for versions nobody
-/// supports, and incoherent besides, since a node that old has no Ra directories and could
-/// never have been named or sealed in the first place. See `docs/decisions.md`.
+/// **The status comes first so the floor can be checked against it.** It is the cheap read
+/// that names the version, and a node below the floor is refused there rather than asked the
+/// fat read whose answer this cannot parse. That ordering is not the version branching an
+/// earlier release removed: nothing here asks a different question of a different release, it
+/// only declines to ask an older one anything more.
 fn ask(client: &BrokerClient, node: &NodeName) -> Result<Asked, CollectionError> {
+    let status = client.status(node)?;
+    supported(&status.rabbitmq_version, node)?;
+
     Ok(Asked {
-        status: client.status(node)?,
+        status,
         feature_flags: client.feature_flags(node)?,
         definitions: client.definitions(node)?,
     })
+}
+
+/// Refuses a node older than the floor, naming both versions.
+///
+/// **The message is the point.** A node below the floor answers the reads and then fails the
+/// parse somewhere inside a document of several megabytes, which reaches the operator as a
+/// byte offset into something they cannot get back. Read against a version instead, the same
+/// box says which node, which release, and what rastro reads.
+///
+/// A version that cannot be ordered at all is left to the reads: it is evidence that whatever
+/// answered is not a broker, which is a different failure with its own message.
+fn supported(version: &str, node: &NodeName) -> Result<(), CollectionError> {
+    let Some(reported) = BrokerVersion::parse(version) else {
+        return Ok(());
+    };
+
+    if reported < FLOOR {
+        return Err(CollectionError::new(format!(
+            "{node} runs RabbitMQ {version}, and rastro reads {FLOOR} and newer",
+            node = node.as_str()
+        )));
+    }
+
+    Ok(())
 }
 
 /// What a node answered, kept together so a half-read node cannot be assembled.

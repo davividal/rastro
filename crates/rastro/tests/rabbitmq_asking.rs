@@ -11,10 +11,12 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use rastro::collectors::rabbitmq::{BrokerClient, BrokerEvidence, NodeInventory};
+use rastro_collector::Observation;
 
 mod support;
 
 use support::fs_tree::{scratch_tree, write};
+use support::observation::{field, is_null};
 use support::shim;
 
 const REGISTER: &str = "epmd: up and running on port 4369 with data:\nname rabbit at port 25672\n";
@@ -255,7 +257,7 @@ fn a_node_held_by_another_erlang_application_is_not_asked() {
 }
 
 #[test]
-fn a_node_whose_holder_cannot_be_read_is_undetermined_rather_than_denied() {
+fn a_node_whose_holder_cannot_be_read_is_reported_as_refused() {
     // Arrange: the port is offered and no descriptor of any process names its inode. That is
     // what an unprivileged run meets, and what a container with reduced capabilities meets
     // even as root. Found that way: a live broker reported `runs_rabbitmq: false`.
@@ -265,14 +267,17 @@ fn a_node_whose_holder_cannot_be_read_is_undetermined_rather_than_denied() {
     let installation = host
         .inventory()
         .read(Some(&host.client()))
-        .expect("an unattributable node is not a failure");
+        .expect("a node rastro may not read is still a node on the box");
 
-    // Assert: still not addressed, which is the safe behaviour, and now the document says
-    // rastro could not tell rather than asserting the node is not a broker.
+    // Assert: still not addressed, which is the safe behaviour, and the node carries the
+    // refusal as an `error` — the spelling the walk uses for a path it was refused. An `ok`
+    // node with nothing but nulls, which is what an earlier release wrote, said nothing at
+    // all: a diff of that document against one of a box with no broker shows no change.
     assert!(!host.asked());
 
     let node = installation.nodes().values().next().expect("one node");
     assert_eq!(node.evidence, BrokerEvidence::HolderUnreadable);
+    assert!(node.evidence.refusal().is_some());
     assert_eq!(node.evidence.runs_rabbitmq(), None);
 }
 
@@ -298,8 +303,8 @@ fn a_node_whose_port_nothing_offers_is_a_stale_registration() {
 }
 
 #[test]
-fn a_box_whose_socket_tables_cannot_be_read_says_so() {
-    // Arrange
+fn a_box_whose_socket_tables_cannot_be_read_is_reported_as_refused() {
+    // Arrange: the same refusal one step earlier.
     let host = box_with("rabbitmq-asking-tableless", &[("748", EPMD_ARGV)], None);
     fs::remove_file(host.proc.join("net/tcp")).expect("a removable scratch table");
 
@@ -307,19 +312,65 @@ fn a_box_whose_socket_tables_cannot_be_read_says_so() {
     let installation = host
         .inventory()
         .read(Some(&host.client()))
-        .expect("an unreadable table is not a failure of the facet");
+        .expect("a box rastro may not read is still a box");
 
     // Assert
     assert!(!host.asked());
-    assert_eq!(
-        installation
-            .nodes()
-            .values()
-            .next()
-            .expect("one node")
-            .evidence,
-        BrokerEvidence::TablesUnreadable
+
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(node.evidence, BrokerEvidence::TablesUnreadable);
+    assert!(node.evidence.refusal().is_some());
+}
+
+/// Two nodes registered, and a socket table offering both their ports. The second's inode is
+/// held by no descriptor this run can read, which is what a broker under another account looks
+/// like from an unprivileged one.
+const TWO_NODE_REGISTER: &str = "epmd: up and running on port 4369 with data:\n\
+     name rabbit at port 25672\n\
+     name other at port 35672\n";
+
+const TWO_ROW_TCP: &str = "\
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:6448 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 787924 1 0000000000000000 100 0 0 10 0
+   1: 00000000:8B58 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 787925 1 0000000000000000 100 0 0 10 0
+";
+
+#[test]
+fn a_node_that_cannot_be_read_does_not_cost_the_one_that_can() {
+    // Arrange: two brokers on one box under two accounts, which is the case the facet is keyed
+    // by node for in the first place. This run may read the first's descriptors and not the
+    // second's, so one permission barrier does not apply to every node at once, and a facet
+    // that failed whole would report nothing about a broker it could read perfectly well.
+    let host = box_with(
+        "rabbitmq-asking-two-accounts",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
     );
+    write(&host.proc, "net/tcp", TWO_ROW_TCP);
+
+    // Act
+    let installation = host
+        .inventory_registering(TWO_NODE_REGISTER)
+        .read(Some(&host.client()))
+        .expect("one unreadable node is not the whole box");
+
+    // Assert
+    let readable = installation.nodes().get("rabbit").expect("the read node");
+    assert_eq!(readable.evidence, BrokerEvidence::RabbitmqProcess);
+    assert_eq!(
+        readable.status.as_ref().expect("a status").rabbitmq_version,
+        "4.0.5"
+    );
+
+    let refused = installation.nodes().get("other").expect("the refused node");
+    assert_eq!(refused.evidence, BrokerEvidence::HolderUnreadable);
+    assert!(refused.status.is_none());
+
+    // And in the document, which is the only place an operator meets any of this: the refused
+    // node carries an `error`, the read one carries none.
+    let nodes = field(&Observation::from(&installation), "nodes");
+    assert!(is_null(&field(&field(&nodes, "rabbit"), "error")));
+    assert!(!is_null(&field(&field(&nodes, "other"), "error")));
 }
 
 #[test]
@@ -530,4 +581,99 @@ fn a_cli_tools_own_node_is_dropped_because_no_broker_holds_its_port() {
     // box agree even when an operator happens to be running a CLI tool during one of them.
     let keys: Vec<&str> = installation.nodes().keys().map(String::as_str).collect();
     assert_eq!(keys, ["rabbit"]);
+}
+
+/// A status document reporting the version the test names, otherwise the box's own.
+///
+/// Built rather than substituted into [`STATUS`]: a `replace` that stops matching because the
+/// constant was reformatted leaves the fixture reporting the version it always did, and the
+/// test then passes while asserting nothing.
+fn status_reporting(version: &str) -> String {
+    format!(
+        r#"{{"rabbitmq_version":"{version}","erlang_version":"Erlang/OTP 27 [erts-15.2.7]",
+  "os":"Linux","data_directory":"/var/lib/rabbitmq/mnesia/rabbit@box","config_files":[],
+  "log_files":["/var/log/rabbitmq/rabbit@box.log"],"active_plugins":[],
+  "listeners":[{{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}}]}}"#
+    )
+}
+
+#[test]
+fn a_node_below_the_floor_is_refused_by_the_version_it_reports() {
+    // Arrange: 3.9 predates the floor. What the operator needs from the failure is which node
+    // and which version, not an offset into a 6MB document that no longer exists.
+    let host = box_with(
+        "rabbitmq-asking-below-the-floor",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(
+        &host.root,
+        "fixtures/status.json",
+        &status_reporting("3.9.16"),
+    );
+
+    // Act
+    let failure = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect_err("a node below the floor is not read");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(message.contains("3.9.16"), "{message}");
+    assert!(message.contains("3.10.0"), "{message}");
+}
+
+#[test]
+fn a_node_below_the_floor_is_not_asked_for_its_definitions() {
+    // Arrange: the floor is checked against the status because the status is the cheap read
+    // that names the version. Asking the fat read of a node whose answer cannot be parsed is
+    // the exact sequence that cost a facet on a live box.
+    let host = box_with(
+        "rabbitmq-asking-below-the-floor-reads",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(
+        &host.root,
+        "fixtures/status.json",
+        &status_reporting("3.9.16"),
+    );
+
+    // Act
+    let _ = host.inventory().read(Some(&host.recording_client()));
+
+    // Assert
+    let asked = fs::read_to_string(host.root.join("arguments")).expect("the shim recorded");
+    assert!(asked.contains("status"), "{asked}");
+    assert!(!asked.contains("export_definitions"), "{asked}");
+}
+
+#[test]
+fn a_node_at_the_floor_is_read() {
+    // Arrange: Debian 12, current stable, carries 3.10.8, so the floor is where a stock box of
+    // the distribution this tool targets first sits.
+    let host = box_with(
+        "rabbitmq-asking-at-the-floor",
+        &[("748", EPMD_ARGV), ("966", BROKER_ARGV)],
+        Some("966"),
+    );
+    write(
+        &host.root,
+        "fixtures/status.json",
+        &status_reporting("3.10.0"),
+    );
+
+    // Act
+    let installation = host
+        .inventory()
+        .read(Some(&host.client()))
+        .expect("the shims answer");
+
+    // Assert
+    let node = installation.nodes().values().next().expect("one node");
+    assert_eq!(
+        node.status.as_ref().expect("a status").rabbitmq_version,
+        "3.10.0"
+    );
 }

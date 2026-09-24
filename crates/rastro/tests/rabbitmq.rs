@@ -13,11 +13,19 @@ const REGISTER: &str = "epmd: up and running on port 4369 with data:\nname rabbi
 const EPMD_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/epmd\0-daemon\0";
 const BROKER_ARGV: &str = "/usr/lib/erlang/erts-15.2.7/bin/beam.smp\0-s\0rabbit\0boot\0";
 
+/// A socket table with no rows, which is a box that answered rather than one that refused.
+///
+/// Present in every fixture here on purpose: these tests are about which node the register
+/// names and what the facet can read of it, and a missing table is a refused read, which fails
+/// the facet before any of that is reached.
+const EMPTY_TCP: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
 /// The inventory over a box the test built: a `/proc`, and a fake epmd that answers.
 fn inventory_over(name: &str, processes: &[(&str, &str)]) -> NodeInventory {
     let scratch = scratch_tree(name, &["bin"]);
     let proc = scratch.join("proc");
-    std::fs::create_dir_all(&proc).expect("a writable scratch directory");
+    std::fs::create_dir_all(proc.join("net")).expect("a writable scratch directory");
+    write(&proc, "net/tcp", EMPTY_TCP);
 
     for (pid, argv) in processes {
         std::fs::create_dir_all(proc.join(pid)).expect("a writable scratch directory");

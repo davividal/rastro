@@ -25,6 +25,10 @@ serde = { workspace = true }
 # chooses rather than a table it has to guess the columns of. Promoted from a
 # dev-dependency for that: see `docs/decisions.md`.
 serde_json = { workspace = true }
+# Which field a document failed at, rather than which byte. A collector reports a parse
+# failure to an operator who no longer has the document, so the offset a bare serde error
+# carries names nothing they can act on: see `docs/decisions.md`.
+serde_path_to_error = { workspace = true }
 # Content hashing, which nothing does by default. Kept for the opt-in collector that
 # will name the trees worth reading: see `docs/decisions.md`.
 sha2 = { workspace = true }

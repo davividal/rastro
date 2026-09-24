@@ -136,9 +136,12 @@ two shapes it comes in: a service that will report its effective state, and a
 service that will not.
 
 **Layer 3, RabbitMQ.** One `rabbitmq` facet keyed by node, because a box can run
-several and a CLI tool addresses exactly one. **RabbitMQ 3.13 and newer**, which is
-every release still receiving support of any kind: 3.12's extended support ended in
-June 2025. Nothing refuses an older node, and nothing accommodates one either. It is the strictest case of
+several and a CLI tool addresses exactly one. **RabbitMQ 3.10 and newer**, which is
+what Debian 12, current stable, ships; upstream support ended well before that, and a
+floor set by upstream's calendar promised nothing about the boxes this tool is for. A
+node below the floor is refused against the version its own status reports, naming the
+node, the version and the floor, rather than failing somewhere inside a document
+nobody keeps a copy of. It is the strictest case of
 observe-and-do-not-cause in the codebase: a RabbitMQ CLI tool boots an Erlang VM
 and joins the broker's distribution cluster, and a call that finds nothing still
 leaves an `epmd -daemon` behind, measured as root and as the broker's own user. So
@@ -162,8 +165,14 @@ let `sockets` and `processes` catch rastro's own transient node in one run and n
 the next.
 
 Each way of *not* knowing is kept apart from the others rather than folded into a
-denial: a port whose holder cannot be read, and a socket table that cannot be read
-at all, both report `runs_rabbitmq: null` with the evidence in words beside it. The
+denial, and the two that are refusals rather than answers — a port whose holder
+cannot be read, and a socket table that cannot be read at all — put an `error` on
+that node, the same spelling the walk uses for a path it was refused. Per node,
+because the accounts are per node: a box running one broker for each of two
+applications is readable for whichever of them this run is, so a refusal about one
+must not cost the other. A fingerprint of a node rastro was not allowed to read is
+then distinguishable from one of a box with no broker on it, which nulls alone did
+not manage. The
 facet's two halves are the node's own account of itself, `status`, and the durable
 half somebody declared, `export_definitions`, whose credential-bearing values are
 withheld by default. See [decisions.md](decisions.md#a-cli-invocation-starts-epmd-so-nothing-is-asked-speculatively).

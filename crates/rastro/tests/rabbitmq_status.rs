@@ -399,3 +399,21 @@ fn a_key_a_supported_release_stopped_sending_is_absent_rather_than_fatal() {
     // Assert
     assert!(status.raft_data_directory.is_none());
 }
+
+#[test]
+fn parse_names_the_field_a_status_failed_at() {
+    // Arrange: the same reading applies to every document the facet takes, so the status says
+    // which field too rather than where in a line it gave up.
+    let unreadable = MEASURED.replace(r#""os": "Linux","#, r#""os": ["Linux"],"#);
+    assert_ne!(unreadable, MEASURED, "the fixture must carry the key");
+
+    // Act
+    let failure = RabbitmqctlStatus::parse(&unreadable).expect_err("a list is not the os");
+
+    // Assert
+    let message = failure.to_string();
+    assert!(
+        message.contains("os: invalid type: sequence, expected a string"),
+        "{message}"
+    );
+}

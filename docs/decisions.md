@@ -5344,3 +5344,118 @@ container, whose Debian trixie base carries 4.0.5, with `--cap-add=SYS_PTRACE
 --cap-add=DAC_READ_SEARCH` because attributing a node means reading another account's
 descriptors. Declaring a floor and leaving CI below it would have been worse than not
 declaring one.
+
+## The floor drops to RabbitMQ 3.10, and stops being a declaration
+
+Reverses *The facet supports RabbitMQ 3.13 and newer, and carries nothing for older*, on both
+of its halves: the number and the decision not to enforce it.
+
+**The number was measured against the wrong thing.** [endoflife.date](https://endoflife.date/rabbitmq)
+tracks what upstream supports, and distributions lag it by years. Debian 12, current stable and
+the platform this tool targets first, ships `rabbitmq-server 3.10.8`; Debian 13 ships 4.0. A
+floor of 3.13 therefore promised nothing about a stock box of the distribution the whole
+codebase is written Debian-first for. That consequence was not in view when the floor was set,
+and it is the only thing that changed: 3.10 is still unsupported upstream, and rastro still
+carries no code that branches on a version.
+
+**A declared floor failed as badly as no floor.** A 3.10.8 node in the fleet answered
+`export_definitions` with `""` where a collection belongs, and the facet died with `invalid
+type: string "", expected a sequence at line 1 column 4889`. Three things were wrong with that
+as an answer to an operator: it names no field, it names no node, and the offset points into a
+document of several megabytes that nothing keeps a copy of. The status read had already
+succeeded and carried `rabbitmq_version`, which was thrown away with everything else, so the
+box knew exactly what was wrong and said none of it.
+
+**So the floor is checked against the status, which is the cheap read that names the version.**
+A node below it is refused there, before the fat read whose answer could not have been parsed,
+with a message naming the node, its version and what rastro reads. This is not the version
+branching the previous entry removed and was right to remove: nothing asks a different question
+of a different release. It only declines to ask an older one anything more.
+
+**The empty string is read as an empty collection, and that is not a version rule.** Measured
+against a 3.10.25 broker in a container: `users[].tags`, `vhosts[].metadata.tags` and all ten
+top-level keys export as JSON arrays, exactly as 4.0 does. So the `""` is not what 3.10 emits,
+it is what *that node* emitted, and a fix keyed to a version would have missed it. The reader
+accepts `""` for any collection and a comma-separated string for tags — the spelling that
+predates 3.9 — and refuses any other text, because the empty string is a reading of "nothing
+here" and anything else would be a guess.
+
+**Written as a visitor rather than an untagged enum**, which is the one implementation detail
+worth recording. An untagged enum that matches no variant reports "data did not match any
+variant", so every malformed entry in the document would have lost the message saying which
+field and why — the exact defect this entry exists to fix, reintroduced by the fix.
+
+**Still owed, and deliberately not done here**: the parse error names no field path. A node
+that fails on some field this reader does not anticipate still reports a byte offset.
+`serde_path_to_error` would turn that into `users[3].tags`, and it is a new dependency on a
+crate whose whole job is error paths, which is the maintainer's call rather than a detail of
+this change.
+
+## A refused read fails the facet, rather than being reported as a node with nothing in it
+
+Reverses the reporting half of *A CLI invocation starts epmd, so nothing is asked
+speculatively*: the two evidence values that mean "rastro was not allowed to look" no longer
+render as a node, they fail the `rabbitmq` facet.
+
+**What the old behaviour produced, on a real box.** An unprivileged run against a host with a
+broker on it wrote this, under `status: ok`:
+
+```json
+"nodes": {"rabbit": {"broker_evidence": "the holder of the port could not be read",
+  "definitions": null, "distribution_port": 25672, "feature_flags": null,
+  "node_name": null, "runs_rabbitmq": null, "status": null}}
+```
+
+Nothing anywhere signalled a failure: not the facet status, not stderr, not the exit code. The
+tri-state `runs_rabbitmq: null` was doing its job and it was not enough, because the reader who
+matters is a diff, and a diff between that document and one from a box with no broker at all
+shows no change. "I was not allowed to read it" is an error. It was never an absent, and it
+must not be an `ok` carrying nulls.
+
+**The evidence values stay.** They are what the error says — which node, and which of the two
+refusals — so the distinction that entry was written to protect is still made, in the place a
+failure is actually read. What changed is where it is reported, not whether.
+
+**The cost, stated plainly.** A box with two nodes, one attributable and one not, now reports
+neither. That is the deliberate trade: both refusals come from one permission barrier, which in
+practice applies to every node on the box at once, and a document that is half an answer and
+half a silence with no way to tell which is the thing this entry exists to stop. Should a
+mixed box turn up, the answer is a per-node error inside an `ok` facet, which the fingerprint
+format does not currently have.
+
+**One swallow left in place, knowingly.** `node_layout::read` returns `None` both for a broker
+with no store among its descriptors and for descriptors it could not read, so a refusal there
+would surface as `node_name: null` — the same defect one layer in. It is unreachable: the
+holder check runs first over the same directories, and an `fd` that cannot be listed yields no
+holder, which is now a failure. Verified by reading `SocketHolders::at`, which returns an empty
+map for an unreadable directory. Left alone rather than hardened blind, and written down here
+so the next reader knows it was looked at.
+
+## The refusal goes on the node, not on the facet
+
+Reverses *A refused read fails the facet, rather than being reported as a node with nothing in
+it*, which is one entry old and was wrong in its second half. The diagnosis stands: an `ok`
+facet carrying a node of nulls signals nothing, and a diff against a box with no broker shows
+no change. The remedy did not.
+
+**What was wrong with it.** It rested on a claim that both refusals come from one permission
+barrier applying to every node on the box at once. That is false, and the facet's own design
+says so: it is keyed by node *because a box can run several*, and several brokers on one box
+is several accounts — `app1` and `app2`, each unable to read the other's descriptors, exactly
+as two PostgreSQL clusters are. `SocketHolders::at` skips an unreadable `/proc/<pid>/fd` per
+process, so an unprivileged run attributes its own account's node and not the other's. Failing
+the facet whole meant a box like that could never be fingerprinted for RabbitMQ at all,
+whichever account the run used. That is a worse defect than the one being fixed.
+
+**And the format already had the answer.** "There is no per-node error" was not true either.
+`filesystem` records `{"error": "<reason>"}` for a path it was refused and keeps walking;
+`pam`, `units`, `firewall` and `containers` all mark a per-item failure the same way. The
+`rabbitmq` facet now does what they do: a refused node carries an `error` with what was
+refused, the facet stays `ok`, and a node that read is reported in full beside it.
+
+**What this does not change.** The evidence values stay, and so does the tri-state
+`runs_rabbitmq`. What was missing was never the information — `broker_evidence` said "the
+holder of the port could not be read" all along — it was that nothing marked it as a failure.
+Every node carries the evidence, healthy ones included, so a reader scanning for trouble saw a
+value rather than a problem. The `error` key is the mark, and it is the one the rest of the
+codebase uses.

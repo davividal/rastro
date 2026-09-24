@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
-use super::json_document::document_in;
+use super::json_document::read_document;
 
 use crate::collectors::rabbitmq::model::{
     Binding, Definitions, Exchange, Parameter, Permission, Policy, Queue, TopicPermission, User,
@@ -27,6 +27,101 @@ use crate::collectors::rabbitmq::model::{
 use crate::collectors::rabbitmq::value_objects::DefinitionValue;
 use crate::collectors::rabbitmq::value_objects::PasswordHashing;
 
+/// Reads a collection a node exported as the empty string.
+///
+/// **Measured on a live box**: a node in the fleet answered `export_definitions` with `""`
+/// where a collection with nothing in it belongs, and the facet died with `invalid type:
+/// string "", expected a sequence at line 1 column 4889` — an offset into a document nobody
+/// keeps a copy of, naming neither the field nor the node. The empty string is the older
+/// spelling of an empty collection, and reading it as one costs nothing a fuller document
+/// would have said.
+///
+/// **A visitor rather than an untagged enum**, which is the whole reason this is hand-written:
+/// an untagged enum that fails both variants reports "data did not match any variant", so a
+/// genuinely malformed entry would lose the message that says which field and why. Here a list
+/// is still read as a list, and its entries still report themselves.
+fn sequence_or_empty_string<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct ListOrNothing<T>(std::marker::PhantomData<T>);
+
+    impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for ListOrNothing<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a list, or the empty string where a node lists nothing")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Self::Value, E> {
+            if text.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            Err(E::invalid_value(serde::de::Unexpected::Str(text), &self))
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut entries: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut listed = Vec::new();
+            while let Some(entry) = entries.next_element()? {
+                listed.push(entry);
+            }
+
+            Ok(listed)
+        }
+    }
+
+    deserializer.deserialize_any(ListOrNothing(std::marker::PhantomData))
+}
+
+/// Reads tags a node exported as one comma-separated string.
+///
+/// A user's tags and a vhost's are a JSON list from 3.9 onward and a single string before it,
+/// and a box upgraded across that line can still carry the older spelling for an account
+/// nobody has touched since. No tags at all is the empty string, which is why this cannot
+/// simply refuse a string.
+fn tags_of<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct TagsOrOneString;
+
+    impl<'de> serde::de::Visitor<'de> for TagsOrOneString {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a list of tags, or one comma-separated string of them")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, tags: &str) -> Result<Self::Value, E> {
+            Ok(tags
+                .split(',')
+                .map(str::trim)
+                .filter(|tag| !tag.is_empty())
+                .map(str::to_owned)
+                .collect())
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut tags: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut listed = Vec::new();
+            while let Some(tag) = tags.next_element()? {
+                listed.push(tag);
+            }
+
+            Ok(listed)
+        }
+    }
+
+    deserializer.deserialize_any(TagsOrOneString)
+}
+
 /// The subset of the export rastro reads, spelled as RabbitMQ spells it.
 ///
 /// Unknown fields are ignored: RabbitMQ adds to this document between releases, and refusing
@@ -34,25 +129,25 @@ use crate::collectors::rabbitmq::value_objects::PasswordHashing;
 #[derive(Debug, Deserialize)]
 struct DefinitionsDocument {
     rabbitmq_version: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     vhosts: Vec<VhostDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     users: Vec<UserDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     permissions: Vec<PermissionDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     topic_permissions: Vec<TopicPermissionDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     policies: Vec<PolicyDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     parameters: Vec<ParameterDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     global_parameters: Vec<GlobalParameterDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     exchanges: Vec<ExchangeDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     queues: Vec<QueueDocument>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "sequence_or_empty_string")]
     bindings: Vec<BindingDocument>,
 }
 
@@ -149,14 +244,14 @@ struct VhostDocument {
 #[derive(Debug, Deserialize)]
 struct VhostMetadata {
     description: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "tags_of")]
     tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UserDocument {
     name: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "tags_of")]
     tags: Vec<String>,
     hashing_algorithm: Option<String>,
     password_hash: Option<String>,
@@ -174,13 +269,12 @@ impl RabbitmqctlDefinitions {
     /// read refuses one: the register names every Erlang node on the box, and an answer that
     /// does not say which RabbitMQ wrote it is not evidence about a broker.
     pub fn parse(output: &str) -> Result<Definitions, CollectionError> {
-        let document: DefinitionsDocument =
-            serde_json::from_str(document_in(output)).map_err(|failure| {
-                CollectionError::new(format!(
-                    "rabbitmqctl export_definitions did not answer with a JSON document, so this \
+        let document: DefinitionsDocument = read_document(output).map_err(|failure| {
+            CollectionError::new(format!(
+                "rabbitmqctl export_definitions did not answer with a JSON document, so this \
                  node's definitions could not be read: {failure}"
-                ))
-            })?;
+            ))
+        })?;
 
         let rabbitmq_version = document
             .rabbitmq_version

@@ -6,10 +6,10 @@ name: live broker
 #
 # Why it runs in a container rather than on the runner, and both halves are measured.
 #
-# **The broker has to be one rastro supports.** `ubuntu-latest` carries RabbitMQ 3.12.1, whose
-# support ended in June 2025; this facet declares a floor of 3.13, so testing against 3.12
-# would be proving the wrong thing. Debian trixie, which `rust:latest` is built on, carries
-# 4.0.5.
+# **The broker has to be one rastro supports**, and this one proves the newest rather than the
+# floor. Debian trixie, which `rust:latest` is built on, carries 4.0.5; the facet's floor is
+# 3.10, which is what Debian 12 ships. Nothing here exercises the floor itself, so a release
+# between the two that changed a shape would reach a user before it reached CI.
 #
 # **The capabilities have to be asked for.** Attributing a registered node to the process
 # holding its distribution port means reading that process's descriptors, and a container's

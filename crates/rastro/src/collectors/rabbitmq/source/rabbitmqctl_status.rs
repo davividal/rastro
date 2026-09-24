@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
-use super::json_document::document_in;
+use super::json_document::read_document;
 
 use crate::collectors::rabbitmq::model::{Alarm, Listener, NodeStatus};
 
@@ -83,13 +83,12 @@ impl RabbitmqctlStatus {
     /// not a broker. Recording it would put another application's state under this facet's
     /// name.
     pub fn parse(output: &str) -> Result<NodeStatus, CollectionError> {
-        let document: StatusDocument =
-            serde_json::from_str(document_in(output)).map_err(|failure| {
-                CollectionError::new(format!(
-                    "rabbitmqctl status did not answer with a JSON document, so nothing about \
+        let document: StatusDocument = read_document(output).map_err(|failure| {
+            CollectionError::new(format!(
+                "rabbitmqctl status did not answer with a JSON document, so nothing about \
                  this node could be read: {failure}"
-                ))
-            })?;
+            ))
+        })?;
 
         let rabbitmq_version = required(document.rabbitmq_version, "rabbitmq_version")?;
         let erlang_version = required(document.erlang_version, "erlang_version")?;

@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use rastro_collector::CollectionError;
 
-use super::json_document::document_in;
+use super::json_document::read_document;
 
 /// One flag, as the node lists it.
 #[derive(Debug, Deserialize)]
@@ -34,13 +34,12 @@ impl RabbitmqctlFeatureFlags {
     /// A map rather than a list: a flag's name is unique on a node and is what a reader looks
     /// up, and the document's key order then does the sorting.
     pub fn parse(output: &str) -> Result<BTreeMap<String, String>, CollectionError> {
-        let rows: Vec<FlagDocument> =
-            serde_json::from_str(document_in(output)).map_err(|failure| {
-                CollectionError::new(format!(
-                    "rabbitmqctl list_feature_flags did not answer with a JSON document, so \
+        let rows: Vec<FlagDocument> = read_document(output).map_err(|failure| {
+            CollectionError::new(format!(
+                "rabbitmqctl list_feature_flags did not answer with a JSON document, so \
                      this node's feature flags could not be read: {failure}"
-                ))
-            })?;
+            ))
+        })?;
 
         Ok(rows
             .into_iter()

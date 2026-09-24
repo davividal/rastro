@@ -38,6 +38,28 @@ pub enum BrokerEvidence {
 
 impl BrokerEvidence {
     /// Whether this node runs RabbitMQ: `None` where the box could not say.
+    /// The refusal this evidence is, where it is one, in the words the document reports.
+    ///
+    /// **Marked as a failure rather than merely described.** Every node carries
+    /// [`Self::as_str`], healthy ones included, so a reader scanning for trouble sees a value
+    /// and not a problem; `runs_rabbitmq: null` beside it is a tri-state doing its job and is
+    /// no louder. An `error` key is how every other facet in this codebase spells "rastro was
+    /// not allowed to look" — the walk does it per path — and a diff over a box nobody could
+    /// read must not look like a diff over a box with no broker on it.
+    pub fn refusal(&self) -> Option<&'static str> {
+        match self {
+            Self::HolderUnreadable => Some(
+                "no descriptor naming this node's distribution socket could be read, so \
+                 whether it is a broker is not something this run was allowed to find out",
+            ),
+            Self::TablesUnreadable => Some(
+                "no socket table could be read, so what holds this node's distribution port \
+                 is not something this run was allowed to find out",
+            ),
+            Self::RabbitmqProcess | Self::OtherApplication | Self::NotOffered => None,
+        }
+    }
+
     pub fn runs_rabbitmq(&self) -> Option<bool> {
         match self {
             Self::RabbitmqProcess => Some(true),

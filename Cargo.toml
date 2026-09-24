@@ -38,6 +38,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "1.0"
 libc = "0.2"
 serde_json = "1"
+serde_path_to_error = "0.1"
 # Pure Rust on purpose. `blake3` and `ring` build C and assembly through `cc`, which
 # ends the cross-build from a macOS workstation to a musl target; `sha2` keeps it.
 sha2 = "0.11"
