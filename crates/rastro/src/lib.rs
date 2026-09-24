@@ -25,5 +25,6 @@ pub mod collectors;
 pub mod config;
 pub mod output;
 pub mod preflight;
+pub mod privilege;
 pub mod progress;
 pub mod shortfall;
