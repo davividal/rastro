@@ -130,7 +130,8 @@ telemetry agents print `--version` to stderr and exit zero.
 
 **Layer 3 starters:** nginx, read from its own configuration files and its
 running master; `pg_dumpall --globals-only` plus `SHOW ALL`; RabbitMQ, asked for
-its status and its definitions; and the container engines. Enough to prove the
+its status and its definitions; redis and valkey, asked over their own protocol; and
+the container engines. Enough to prove the
 detect-and-dispatch pattern exec-contract authors will copy, and between them the
 two shapes it comes in: a service that will report its effective state, and a
 service that will not.
@@ -158,6 +159,22 @@ name it actually runs under. The same directories give the store, which is seale
 everything before Ra's `coordination` or `quorum` bucket is the data directory,
 whatever the operator moved it to. Claims are gathered before the walk and
 sequentially, so nothing there asks the broker anything.
+
+**Layer 3, redis.** One `redis` facet for redis and valkey, which Debian 13 and Alpine
+package side by side, keyed by the instance's TCP port, else its unix socket's path.
+The server is the only honest account of itself, because on the estate this was written
+for `maxmemory` and `save` are applied with `CONFIG SET` and written to no file. It is
+asked over its own protocol rather than through `redis-cli`, whose only ways to carry a
+password are argv, the environment and stdin, and whose text output cannot tell an empty
+value from a missing one; `redis-protocol` frames the replies and rastro holds the
+socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
+seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
+the password its own unit started it with, read from the file that unit names, because a
+refused one is an entry in the server's `ACL LOG`; a password set only at runtime is
+unreachable and the instance says so. `INFO server` is the gate, and every read after it
+fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
+The data directory is sealed from the process's working directory, since `dir` is a
+`chdir`, and never when that is `/`.
 
 The facet runs **exclusive**, like the walk and for the neighbouring reason: each
 read boots an Erlang VM that binds a distribution port, so sharing the pool would
@@ -312,7 +329,7 @@ path with `-o`, to a tmpfs, or off the box.
 
 ## Security posture
 
-Of the following, the `unsafe`-free build, the absence of network I/O, the output
+Of the following, the `unsafe`-free build, the absence of off-box network I/O, the output
 file's mode, redaction and `--raw` are all true today. The root requirement arrives
 with Layer 1.
 
@@ -330,8 +347,11 @@ with Layer 1.
   the two a document was rendered under is in the `invocation` facet as
   `config.disclosure`, beside the view, because both axes rewrite the document and a
   diff across either would otherwise report changes nothing accounts for.
-- **No network I/O in v1.** A simplification, not policy — a firewall collector
-  verifying rules from outside the ruleset dump would be legitimate.
+- **No network I/O off the box in v1.** A simplification, not policy: a firewall
+  collector verifying rules from outside the ruleset dump would be legitimate. The one
+  socket rastro opens is the `redis` facet's, to a socket the kernel shows the server
+  holding, never a resolved name or a default port. See
+  [decisions.md](decisions.md#a-socket-rastro-opens-itself-and-only-to-a-server-on-this-box).
 
 ## Verification
 
@@ -362,6 +382,11 @@ unannotated volatile fields at CI time instead of on a production box.
   attribution rather than one of the two undetermined ones. It cannot run in the
   container suite, because attributing a node means reading the broker process's
   descriptors and a default container refuses that even to root.
+- The `redis` facet against a live server it starts in its own scratch tree, compared
+  with the server's own client (`redis_conformance`). Run after the suite rather than in
+  it, in `ci.yml` and the container suite, because a server coming and going while
+  nextest runs binaries side by side would land between the two runs of the determinism
+  harness.
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.

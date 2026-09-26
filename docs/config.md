@@ -36,6 +36,7 @@ exclude = ["mounts"]
 | `postgresql`   | state    | yes        |
 | `processes`    | state    | yes        |
 | `rabbitmq`     | state    | yes        |
+| `redis`        | state    | yes        |
 | `repositories` | state    | yes        |
 | `sockets`      | state    | yes        |
 | `ssh_access`   | state    | yes        |
@@ -104,7 +105,7 @@ unknown key is an error, so an attempt at one fails rather than quietly doing no
 
 **The operator's rule beats a collector's claim.** A collector that owns a tree claims it from
 the host — `postgresql` seals each cluster's data directory, `rabbitmq` seals each node's
-message store, `nginx` seals the caches and
+message store, `redis` seals each server's data directory, `nginx` seals the caches and
 temp trees it writes into, `packages` churns the package database, `containers` seals every
 tree a container engine keeps under its own root except the one holding your volumes. That is rastro's reckoning about a tree from the outside; the operator knows their
 box, so naming the same tree in a config replaces the claim rather than conflicting with it.

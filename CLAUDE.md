@@ -52,7 +52,9 @@ scripts/test-in-container.sh rust:latest  # one of them
 That script installs nginx before running the suite, because one test asks nginx which
 files it reads and compares the answer with rastro's own include resolution. Running
 `cargo test` in a bare image instead fails that one test, loudly and by design: a check
-that quietly skips itself is how three earlier defects hid.
+that quietly skips itself is how three earlier defects hid. It installs redis too, and
+runs `redis_conformance` after the suite rather than in it: that check starts a live
+server of its own, which must not appear between the two runs of the determinism harness.
 
 ```sh
 podman run --rm -v "$PWD":/w -w /w -e CARGO_TARGET_DIR=/tmp/target \
@@ -100,7 +102,9 @@ Violating one is a plan change, not a detail.
   files they read), and parse a config only where the service offers no
   non-mutating way to report its own. nginx is that exception and reads as the
   counter-example it is: `nginx -T` creates every log file the config names, so
-  rastro resolves the includes itself. `docs/decisions.md` has the measurement.
+  rastro resolves the includes itself. `docs/decisions.md` has the measurement. redis
+  reads its file too, for `requirepass` alone and only after `NOAUTH`: not as effective
+  state, but to be allowed to ask the server for it.
 - **Exclusions, never inclusions.** Config is optional and can only narrow.
 - **Absence is state.** Statuses are `ok|absent|error`; excluded collectors are
   omitted with a WARN. Failures are loud in the output, never silent.
@@ -115,7 +119,8 @@ Violating one is a plan change, not a detail.
   carries only the fingerprint, which with the document in a file means nothing at
   all. Progress, `--debug` timings and the summary of what the run could not see go to
   stderr, and never into the document.
-- v1 boundaries: single box, generate-only, no network I/O, JSON only.
+- v1 boundaries: single box, generate-only, no network I/O off the box, JSON only. The
+  one socket rastro opens is `redis`'s, to a socket the server was seen holding.
 
 ## Comment scope
 
