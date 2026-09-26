@@ -1,11 +1,13 @@
 //! What rastro means by a redis installation, as opposed to how a server spells it.
 
+mod accounts;
 mod installation;
 mod instance;
 mod replication;
 mod server_identity;
 mod settings;
 
+pub use accounts::Accounts;
 pub use installation::Installation;
 pub use instance::Instance;
 pub use replication::Replication;

@@ -46,10 +46,12 @@ impl FakeRedis {
         let info = bulk(DEBIAN_12_INFO);
         let config = debian_12_config();
         let replication = bulk(DEBIAN_12_REPLICATION);
+        let acl = array_of(&["user default on nopass sanitize-payload ~* &* +@all"]);
         let mut script: BTreeMap<&str, &str> = [
             ("INFO server", info.as_str()),
             ("CONFIG GET *", config.as_str()),
             ("INFO replication", replication.as_str()),
+            ("ACL LIST", acl.as_str()),
         ]
         .into_iter()
         .collect();
@@ -133,10 +135,12 @@ impl FakeRedis {
         let info = bulk(DEBIAN_12_INFO);
         let config = debian_12_config();
         let replication = bulk(DEBIAN_12_REPLICATION);
+        let acl = array_of(&["user default on nopass sanitize-payload ~* &* +@all"]);
         let mut script: BTreeMap<&str, &str> = [
             ("INFO server", info.as_str()),
             ("CONFIG GET *", config.as_str()),
             ("INFO replication", replication.as_str()),
+            ("ACL LIST", acl.as_str()),
         ]
         .into_iter()
         .collect();
