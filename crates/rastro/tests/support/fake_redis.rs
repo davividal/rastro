@@ -131,6 +131,14 @@ fn words_of(frame: OwnedFrame) -> Vec<String> {
     }
 }
 
+/// A bulk string reply, which is how `INFO` and every text value arrive.
+pub fn bulk(text: &str) -> String {
+    format!("${}\r\n{text}\r\n", text.len())
+}
+
+/// `INFO server` from a Debian 12 package, trimmed.
+pub const DEBIAN_12_INFO: &str = "# Server\r\nredis_version:7.0.15\r\nredis_mode:standalone\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\n";
+
 /// The socket path a fixture server's `/proc` names, as the facet keys it.
 pub fn key_of(server: &FakeRedis) -> String {
     server.socket.display().to_string()

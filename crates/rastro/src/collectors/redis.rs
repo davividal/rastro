@@ -8,10 +8,10 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{Installation, Instance};
+pub use model::{Installation, Instance, ServerIdentity};
 pub use source::{
-    DialTarget, DiscoveredServer, InstalledServers, Reply, ResidentServer, RespConnection,
-    ServerStream, discover, read_installation, resident_servers,
+    DialTarget, DiscoveredServer, InfoServer, InstalledServers, Reply, ResidentServer,
+    RespConnection, ServerStream, discover, read_installation, resident_servers,
 };
 pub use value_objects::{Listener, ServerKind};
 

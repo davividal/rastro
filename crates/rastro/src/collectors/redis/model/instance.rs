@@ -2,6 +2,7 @@
 
 use rastro_collector::Observation;
 
+use crate::collectors::redis::model::ServerIdentity;
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 /// A server process on this box.
@@ -12,31 +13,60 @@ use crate::collectors::redis::value_objects::{Listener, ServerKind};
 /// change where the truth is "unknown".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instance {
-    pub server: ServerKind,
+    /// The family the process table says this is, before the server has been asked.
+    pub process_kind: ServerKind,
 
     /// Every socket the server holds, as bound.
     pub listening: Vec<Listener>,
+
+    /// What the server said it is, where it was asked and answered.
+    pub identity: Option<ServerIdentity>,
 
     /// What this run could not find out about the server, if anything.
     pub error: Option<String>,
 }
 
+impl Instance {
+    /// The family, from the server's own answer where there is one.
+    pub fn server(&self) -> ServerKind {
+        self.identity
+            .as_ref()
+            .map_or(self.process_kind, |identity| identity.kind)
+    }
+}
+
 impl From<&Instance> for Observation {
     fn from(instance: &Instance) -> Self {
+        let identity = instance.identity.as_ref();
+        let text_or_null = |value: Option<&String>| match value {
+            Some(value) => Observation::text(value.as_str()),
+            None => Observation::null(),
+        };
+
         Observation::object([
-            ("server", Observation::text(instance.server.as_str())),
+            ("server", Observation::text(instance.server().as_str())),
             (
                 "listening",
                 // A set: the kernel lists a server's sockets in no order it acts on.
                 Observation::set(instance.listening.iter().map(Observation::from)),
             ),
             (
-                "error",
-                match &instance.error {
-                    Some(error) => Observation::text(error.as_str()),
-                    None => Observation::null(),
-                },
+                "version",
+                text_or_null(identity.map(|identity| &identity.version)),
             ),
+            (
+                "mode",
+                text_or_null(identity.and_then(|identity| identity.mode.as_ref())),
+            ),
+            (
+                "executable",
+                text_or_null(identity.and_then(|identity| identity.executable.as_ref())),
+            ),
+            (
+                "config_file",
+                text_or_null(identity.and_then(|identity| identity.config_file.as_ref())),
+            ),
+            ("error", text_or_null(instance.error.as_ref())),
         ])
         .incomplete_when(instance.error.is_some())
     }
