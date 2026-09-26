@@ -12,15 +12,20 @@
 //! per caller that can drift.
 //!
 //! **What is deliberately not here.** The full reading of an inet table, with its address
-//! families, its host-order hexadecimal words, its wildcard spellings and its per-protocol
-//! state vocabulary, stays in the `sockets` collector: that is a document shape rather than a
-//! shared mechanism, and the decisions behind it are recorded about that facet. What this
-//! module reads of the table is two columns and a state, which is a narrower question asked
-//! of the same file rather than a second answer to the same one. The residue is that the port
-//! hexadecimal is decoded in both places, six lines of it.
+//! families, its wildcard spellings and its per-protocol state vocabulary, stays in the
+//! `sockets` collector: that is a document shape rather than a shared mechanism, and the
+//! decisions behind it are recorded about that facet. What is here is the spelling underneath
+//! it, the host-order hexadecimal words and the unix table's trailing path, since `redis` needs
+//! a server's own addresses too and a second decoder is how two facets come to disagree about
+//! one socket. The residue is that the port hexadecimal is decoded in both places, six lines
+//! of it.
 
+mod kernel_address;
 mod listening_inodes;
 mod socket_holders;
+mod unix_columns;
 
+pub use kernel_address::{ipv4_of, ipv6_of};
 pub use listening_inodes::listening_inodes;
 pub use socket_holders::{HeldDescriptor, SocketHolders};
+pub use unix_columns::{UnixColumns, unix_columns};
