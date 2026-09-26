@@ -9,7 +9,9 @@ pub mod source;
 pub mod value_objects;
 
 pub use model::Installation;
-pub use source::{InstalledServers, ResidentServer, resident_servers};
+pub use source::{
+    InstalledServers, Reply, ResidentServer, RespConnection, ServerStream, resident_servers,
+};
 pub use value_objects::ServerKind;
 
 use std::path::{Path, PathBuf};
