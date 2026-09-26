@@ -5545,3 +5545,103 @@ that pin each mark check both directions, so a mark removed or made unconditiona
 see". A root run that read everything is still silent. The two tests that asserted an empty
 stderr now check every line against the run's own document: the privilege warning only when
 not root, the failed facets exactly as the document records them, and nothing else.
+
+# Elasticsearch: reading a node over its own HTTP API
+
+_2026-09-26._ The `elasticsearch` collector is not built. These entries are what shapes it,
+measured before a line of it was written, as the RabbitMQ ones were. Elasticsearch offers no
+command that reads a live node: `elasticsearch-keystore list` is a read and names only TLS
+plumbing, `elasticsearch-node` is an offline repair tool, and `elasticsearch-reset-password`
+changes the thing it touches. The node's effective state is on its HTTP API and nowhere else.
+
+Measured on the official images `7.17.24`, `8.15.3` and `9.0.3`, single node, aarch64, under
+podman. The raw report is kept outside the public tree; what it established that the design
+turns on is below.
+
+## rastro may send a GET to a service already running on the box
+
+"No network I/O in v1" was written as a simplification, not policy, and this is the first
+collector it stops. It is narrowed rather than dropped: **rastro may send an HTTP `GET` to a
+listener held by a process it has already found in `/proc`, on the address that process
+bound, from inside that process's network namespace. Nothing else touches the network.** No
+name is resolved, no remote address is dialled, no port is probed to see whether anything
+answers, and no request goes to a listener whose holder has not been identified as the
+service the request is for.
+
+**The RabbitMQ collector is not a precedent for this**, although it looks like one.
+`rabbitmqctl` joins the broker's distribution cluster over TCP, but it is a subprocess;
+rastro itself has never opened a socket. This is the first time it does, which is why the
+boundary is restated here rather than inferred from a neighbour.
+
+**Why the alternative is worse.** Without the API the facet would be `elasticsearch.yml` and
+the process environment, which is what the node was told at start, not what it runs with.
+Transient and persistent cluster settings, the ones an operator changes with an API call and
+never writes down, are exactly the change a before-and-after pair exists to catch, and no
+file holds them.
+
+**Cost:** a request is an action the node sees. What that costs is measured below, one
+entry per way it could write, and a request that could write is not made.
+
+## A GET is not automatically a read
+
+A deprecation warning on 7.16 and later is **indexed**, into a hidden data stream,
+`.logs-deprecation.elasticsearch-default` through 8.x and `.logs-elasticsearch.deprecation-default`
+on 9.0. The first warning a cluster ever emits creates the data stream, its ILM policy and
+its backing index. Measured: `GET /<index>/_mapping?include_type_name=true` on 7.17 writes one,
+and so does the legacy `PUT /_template`. The write lands one to five seconds after the
+response, on the `cluster.deprecation_indexing.flush_interval` of 5 s, so a check made at
+once calls a mutating read clean; the first attempt at this measurement did.
+
+Plain GETs on current endpoints wrote nothing, each checked with a 6 s settle: `/`,
+`_cluster/settings`, `_index_template`, `_component_template`, `_alias`, `<index>/_settings`,
+`<index>/_mapping`, `_ilm/policy`, `_ingest/pipeline`, `_snapshot`, `_nodes/_local/plugins`,
+and the legacy `GET _template` itself.
+
+**So the collector sends only those, with no deprecated parameter**, and does not read legacy
+templates at all. Reading them is not what writes, but they are the corner of the API where
+a deprecated parameter is most likely to be one release away, and composable templates have
+superseded them.
+
+## A node writes at idle, so a zero means nothing without a control
+
+Ninety seconds of a 7.17 node with no request at all: `.ds-ilm-history-5-*` gained three
+documents, `gc.log` grew, and every index's translog checkpoint and retention-lease file
+moved. The RabbitMQ lesson again: every mutation check around a node is measured against an
+idle window of the same length, and the data directory is sealed from the walk rather than
+walked.
+
+## Plain HTTP only; a node that wants TLS or credentials is an error
+
+8.x and 9.x turn on TLS and authentication by default, and a node started without a terminal,
+which is how a service starts, prints no password at all. Measured: plain HTTP to a default
+8.15 node gets no HTTP response, and HTTPS without credentials gets 401. The CA the node
+generates is readable by root, and it lets a client check the server, not the reverse. An
+8.x node with `xpack.security.enabled=false` serves plain HTTP exactly as 7.17 does, so the
+node's settings decide this, not its version.
+
+**v1 speaks plain HTTP and nothing else.** A node whose settings say
+`xpack.security.http.ssl.enabled: true` is an `error` and is not dialled. One whose port turns
+out to speak TLS, or that answers 401 or 403, is the same `error`. None of them is `absent`:
+the service is there and rastro could not read it.
+
+**TLS was considered and left out, the same day it was first chosen.** Both production
+crypto providers for rustls build C, which the workspace refuses so that the musl binary
+cross-builds from a macOS workstation, and the pure-Rust one is pre-1.0 and unaudited in a
+binary that runs as root. What it would buy is small: HTTP TLS requires security on, so
+without credentials a TLS node answers 401, which v1 reports as an `error` either way. The
+one case it would read is a node that grants anonymous access. TLS arrives together with
+credentials, since only credentials make it pay off.
+
+## A node in a container is read from inside its own network namespace
+
+A node running in a container runs on the server, and rastro collects it. Its listener
+exists in its own network namespace; with no published port the host's loopback has no route
+to it at all. So the request is made from a thread that has joined the holder's namespace
+through `/proc/<pid>/ns/net`, and a node on the host goes through the same code path with
+the join skipped. The listener table the port is read from is the holder's own,
+`/proc/<pid>/net/tcp`, so the port and the namespace it is dialled in cannot disagree.
+
+Joining another namespace needs `CAP_SYS_ADMIN`, so an unprivileged run records an `error`
+for such a node rather than guessing. The call goes through `rustix`, whose `setns` is safe
+and pure Rust on Linux, so `unsafe_code = "forbid"` still holds for the workspace's own code,
+as it does beside `libc` and `subprocess`.
