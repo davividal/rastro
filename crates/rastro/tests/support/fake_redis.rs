@@ -36,6 +36,31 @@ impl FakeRedis {
     /// A server answering each command, keyed by its words joined with spaces, with the bytes
     /// given. Anything unscripted is answered the way redis answers a command it lacks.
     pub fn answering(name: &str, script: &[(&str, &str)]) -> Self {
+        Self::serving(name, script, None)
+    }
+
+    /// A stock server that wants `password` before it answers anything, as `requirepass` makes
+    /// it: `NOAUTH` to every command until an `AUTH` with the password, `WRONGPASS` to one
+    /// without it. Measured on Debian 12.
+    pub fn stock_with_password(name: &str, password: &str, overrides: &[(&str, &str)]) -> Self {
+        let info = bulk(DEBIAN_12_INFO);
+        let config = debian_12_config();
+        let mut script: BTreeMap<&str, &str> = [
+            ("INFO server", info.as_str()),
+            ("CONFIG GET *", config.as_str()),
+        ]
+        .into_iter()
+        .collect();
+        script.extend(overrides.iter().copied());
+
+        Self::serving(
+            name,
+            &script.into_iter().collect::<Vec<_>>(),
+            Some(password.to_owned()),
+        )
+    }
+
+    fn serving(name: &str, script: &[(&str, &str)], password: Option<String>) -> Self {
         // A short path rather than the scratch tree: a unix socket path is capped at about a
         // hundred bytes, and the target directory of a worktree is most of that already.
         let socket = std::env::temp_dir().join(format!("rastro-{name}.sock"));
@@ -52,6 +77,7 @@ impl FakeRedis {
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
+                let mut authenticated = password.is_none();
                 let mut buffer = Vec::new();
                 let mut chunk = [0_u8; 4096];
 
@@ -64,10 +90,26 @@ impl FakeRedis {
                     while let Ok(Some((frame, consumed))) = decode(&buffer) {
                         buffer.drain(..consumed);
                         let words = words_of(frame);
-                        let reply = script
-                            .get(&words.join(" "))
-                            .cloned()
-                            .unwrap_or_else(|| format!("-ERR unknown command '{}'\r\n", words[0]));
+                        let is_auth = words[0].eq_ignore_ascii_case("AUTH");
+                        let reply = match (&password, is_auth) {
+                            (None, true) => "-ERR AUTH <password> called without any password \
+                                             configured for the default user. Are you sure your \
+                                             configuration is correct?\r\n"
+                                .to_owned(),
+                            (Some(expected), true) if words.last() == Some(expected) => {
+                                authenticated = true;
+                                "+OK\r\n".to_owned()
+                            }
+                            (Some(_), true) => "-WRONGPASS invalid username-password pair or \
+                                                user is disabled.\r\n"
+                                .to_owned(),
+                            _ if !authenticated => {
+                                "-NOAUTH Authentication required.\r\n".to_owned()
+                            }
+                            _ => script.get(&words.join(" ")).cloned().unwrap_or_else(|| {
+                                format!("-ERR unknown command '{}'\r\n", words[0])
+                            }),
+                        };
                         recorder.lock().expect("an unpoisoned lock").push(words);
                         if stream.write_all(reply.as_bytes()).is_err() {
                             break;
@@ -124,6 +166,12 @@ pub fn proc_holding(name: &str, socket: &Path) -> PathBuf {
         ),
     );
     write(&proc, "412/comm", "redis-server\n");
+    // Arrange: the Debian package's unit, as cgroup v2 names it.
+    write(
+        &proc,
+        "412/cgroup",
+        "0::/system.slice/redis-server.service\n",
+    );
     write(&proc, "412/cmdline", "/usr/bin/redis-server unixsocket\0");
     symlink(format!("socket:[{SOCKET_INODE}]"), proc.join("412/fd/3"))
         .expect("a writable scratch symlink");

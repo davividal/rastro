@@ -54,6 +54,10 @@ pub struct DiscoveredServer {
 
     pub kind: ServerKind,
 
+    /// The process, for the reads that need it and never for the document: it changes on every
+    /// restart of a box nobody touched.
+    pub process_id: u32,
+
     /// Every socket the server holds, sorted.
     pub listeners: Vec<Listener>,
 
@@ -101,6 +105,7 @@ fn discovered(
     let unreached = |reason: String| DiscoveredServer {
         key: title.clone(),
         kind: server.kind,
+        process_id: server.process_id,
         listeners: Vec::new(),
         reach: Err(reason),
     };
@@ -168,6 +173,7 @@ fn discovered(
     DiscoveredServer {
         key,
         kind: server.kind,
+        process_id: server.process_id,
         listeners,
         reach: Ok(reach),
     }
