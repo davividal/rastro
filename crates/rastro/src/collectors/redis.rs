@@ -10,9 +10,10 @@ pub mod value_objects;
 
 pub use model::Installation;
 pub use source::{
-    InstalledServers, Reply, ResidentServer, RespConnection, ServerStream, resident_servers,
+    DialTarget, DiscoveredServer, InstalledServers, Reply, ResidentServer, RespConnection,
+    ServerStream, discover, resident_servers,
 };
-pub use value_objects::ServerKind;
+pub use value_objects::{Listener, ServerKind};
 
 use std::path::{Path, PathBuf};
 

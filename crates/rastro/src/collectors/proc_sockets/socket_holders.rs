@@ -149,6 +149,17 @@ impl SocketHolders {
     }
 }
 
+/// The socket inodes one process holds, or the read's own failure.
+///
+/// For a caller that already knows which process it is asking about and needs to tell its
+/// failures apart, which the box-wide pass deliberately folds together: `NotFound` is a process
+/// that exited, anything else is descriptors this run may not read.
+pub fn sockets_held_by(proc: &Path, process_id: u32) -> std::io::Result<BTreeSet<u64>> {
+    let held = sockets_of(&proc.join(process_id.to_string()).join("fd"))?;
+
+    Ok(held.into_iter().map(|(inode, _)| inode).collect())
+}
+
 /// The pid of a `/proc` entry, or `None` for the many entries that are not processes.
 fn process_id_of(path: &Path) -> Option<i64> {
     path.file_name()?.to_str()?.parse::<i64>().ok()
