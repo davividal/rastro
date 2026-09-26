@@ -54,7 +54,7 @@ jobs:
       # until the label-gated workflow runs, or nobody adds the label and it lands broken.
       # Compiling them is cheap and catches exactly that.
       - name: Compile the conformance tests, which the suite deliberately does not run
-        run: cargo test --no-run --locked --test containers_conformance --test rabbitmq_conformance
+        run: cargo test --no-run --locked --test containers_conformance --test rabbitmq_conformance --test redis_conformance
       # One test asks nginx which files it reads, so rastro's include resolution is checked
       # against nginx rather than against what somebody wrote down. It runs `nginx -T` in a
       # prefix it owns and needs no privilege; the shipped binary never runs it, which is
@@ -69,6 +69,15 @@ jobs:
       # lands where `sonar-project.properties` looks for it, which is the only contract
       # this step has with the scan job.
       - run: mkdir -p target/llvm-cov && cargo llvm-cov nextest --workspace --lcov --output-path target/llvm-cov/lcov.info --locked --no-fail-fast
+      # After the suite rather than inside it: the check starts and stops a server of its own,
+      # and nextest runs binaries side by side, so a server coming and going mid-suite would
+      # land between the two runs of the determinism harness. The package's own daemon is
+      # stopped, because the runner has systemd and the check is about the server it starts.
+      - name: Install redis, and read a live server against its own client
+        run: |
+          sudo apt-get install -y --no-install-recommends redis-server
+          sudo systemctl stop redis-server
+          cargo test --locked --test redis_conformance
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: lcov

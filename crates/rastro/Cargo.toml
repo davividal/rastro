@@ -71,3 +71,10 @@ test = false
 [[test]]
 name = "rabbitmq_conformance"
 test = false
+
+# Kept out of the ordinary suite because it starts and stops a live server of its own, and a
+# suite running binaries side by side would let that server appear between the two runs of
+# the determinism harness. Run after the suite, by `ci.yml` and `container-suite.sh`.
+[[test]]
+name = "redis_conformance"
+test = false
