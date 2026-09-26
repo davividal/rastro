@@ -4,6 +4,7 @@ use std::path::Path;
 
 use rastro_collector::CollectionError;
 
+use super::acl_list::AclList;
 use super::config_get::ConfigGet;
 use super::info_replication::InfoReplication;
 use super::info_server::InfoServer;
@@ -54,6 +55,7 @@ fn read_instance(
         identity: None,
         settings: None,
         replication: None,
+        acl: None,
         errors: Vec::new(),
     };
 
@@ -88,6 +90,17 @@ fn read_instance(
     {
         Ok(replication) => instance.replication = Some(replication),
         Err(error) => instance.errors.push(error.to_string()),
+    }
+
+    let has_accounts = instance
+        .identity
+        .as_ref()
+        .is_some_and(ServerIdentity::has_accounts);
+    if has_accounts {
+        match reply_to(&mut connection, &["ACL", "LIST"]).and_then(AclList::parse) {
+            Ok(acl) => instance.acl = Some(acl),
+            Err(error) => instance.errors.push(error.to_string()),
+        }
     }
 
     instance

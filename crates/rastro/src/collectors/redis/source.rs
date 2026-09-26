@@ -1,5 +1,6 @@
 //! How a server is found and read: one module per host interface.
 
+mod acl_list;
 mod config_get;
 mod config_password;
 mod info_fields;
@@ -14,6 +15,7 @@ mod server_inventory;
 mod server_password;
 mod server_unit;
 
+pub use acl_list::AclList;
 pub use config_get::ConfigGet;
 pub use config_password::requirepass_in;
 pub use info_fields::info_fields;

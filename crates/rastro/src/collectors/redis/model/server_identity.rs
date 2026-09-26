@@ -30,3 +30,24 @@ pub struct ServerIdentity {
     /// comes from the server; this says which file an operator would have to edit.
     pub config_file: Option<String>,
 }
+
+/// The first release with accounts, `ACL`.
+///
+/// One rule for both families, because valkey forked from redis 7.2 and has had them from its
+/// first release.
+const ACCOUNTS_SINCE: u32 = 6;
+
+impl ServerIdentity {
+    /// Whether this server can have accounts at all, so that asking for them is not a question
+    /// it cannot understand.
+    ///
+    /// A version that does not parse is asked anyway: the refusal, if one comes, then says what
+    /// really happened rather than rastro guessing it.
+    pub fn has_accounts(&self) -> bool {
+        self.version
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_none_or(|major| major >= ACCOUNTS_SINCE)
+    }
+}

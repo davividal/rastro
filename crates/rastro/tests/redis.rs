@@ -338,3 +338,55 @@ fn a_refused_replication_read_costs_only_itself() {
     assert!(text(&field(&instance, "error")).contains("INFO replication"));
     assert_eq!(keys_of(&field(&instance, "settings")).len(), 3);
 }
+
+#[test]
+fn an_instance_lists_its_accounts() {
+    // Arrange
+    let server = FakeRedis::stock("facet-acl", &[]);
+    let proc = server.proc("redis-facet-acl");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let acl = field(&instance_of(&observation, &key_of(&server)), "acl");
+    assert_eq!(keys_of(&acl), ["default"]);
+}
+
+#[test]
+fn a_server_older_than_accounts_is_not_asked_for_them() {
+    // Arrange: the field host's 5.0, where `ACL` does not exist. Measured on 5.0.14.
+    let info = bulk("# Server\r\nredis_version:5.0.3\r\nredis_mode:standalone\r\n");
+    let server = FakeRedis::stock("facet-acl-old", &[("INFO server", &info)]);
+    let proc = server.proc("redis-facet-acl-old");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: absent rather than refused, so no error, and nothing sent to find out.
+    let instance = instance_of(&observation, &key_of(&server));
+    assert!(is_null(&field(&instance, "acl")));
+    assert!(is_null(&field(&instance, "error")));
+    assert!(!server.received().iter().any(|words| words[0] == "ACL"));
+}
+
+#[test]
+fn a_refused_account_list_says_so() {
+    // Arrange: an account allowed to read everything but its own kind.
+    let server = FakeRedis::stock(
+        "facet-acl-noperm",
+        &[(
+            "ACL LIST",
+            "-NOPERM User default has no permissions to run the 'acl|list' command\r\n",
+        )],
+    );
+    let proc = server.proc("redis-facet-acl-noperm");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = instance_of(&observation, &key_of(&server));
+    assert!(is_null(&field(&instance, "acl")));
+    assert!(text(&field(&instance, "error")).contains("ACL LIST"));
+}
