@@ -1,0 +1,149 @@
+//! Which Elasticsearch servers are running, read from a `/proc` a test built.
+//!
+//! This is the gate every request hangs on: rastro sends nothing to a listener whose holder it
+//! has not identified as an Elasticsearch server, so the identification has to be right in
+//! both directions, across the two argv shapes the supported versions start with.
+
+use std::path::Path;
+
+use rastro::collectors::elasticsearch::ResidentNode;
+
+mod support;
+
+use support::fs_tree::{scratch_tree, write};
+
+/// A 7.17 server, trimmed to the tokens that matter.
+///
+/// One process, the main class on the classpath. The real argv is forty tokens of JVM tuning,
+/// and on the docker image each setting passed as an environment variable follows as `-E`.
+const SERVER_7_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0-Xms512m\0\
+    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/usr/share/elasticsearch/config\0\
+    -Des.distribution.type=docker\0-cp\0/usr/share/elasticsearch/lib/*\0\
+    org.elasticsearch.bootstrap.Elasticsearch\0-Ediscovery.type=single-node\0";
+
+/// An 8.x or 9.x server: the same class, started as a module rather than from the classpath.
+const SERVER_8_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0-Xms512m\0\
+    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
+    --module-path\0/usr/share/elasticsearch/lib\0\
+    -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
+
+/// The 8.x launcher that forks the server. It holds no listener and is not a node.
+const LAUNCHER_8_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
+    -Dcli.script=/usr/share/elasticsearch/bin/elasticsearch\0\
+    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
+    -cp\0/usr/share/elasticsearch/lib/*:/usr/share/elasticsearch/lib/cli-launcher/*\0\
+    org.elasticsearch.launcher.CliToolLauncher\0";
+
+/// OpenSearch, the fork: same shape, its own class and property names, and not what an
+/// Elasticsearch request should be sent to.
+const OPENSEARCH_ARGV: &str = "/usr/share/opensearch/jdk/bin/java\0\
+    -Dopensearch.path.home=/usr/share/opensearch\0-Dopensearch.path.conf=/etc/opensearch\0\
+    -cp\0/usr/share/opensearch/lib/*\0org.opensearch.bootstrap.OpenSearch\0";
+
+#[test]
+fn all_in_finds_a_7_server_started_from_the_classpath() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-residency-7", &["812"]);
+    write(&proc, "812/cmdline", SERVER_7_ARGV);
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].process_id(), 812);
+    assert_eq!(nodes[0].home(), Some(Path::new("/usr/share/elasticsearch")));
+    assert_eq!(
+        nodes[0].config(),
+        Some(Path::new("/usr/share/elasticsearch/config"))
+    );
+}
+
+#[test]
+fn all_in_finds_an_8_server_started_as_a_module_and_not_its_launcher() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-residency-8", &["40", "97"]);
+    write(&proc, "40/cmdline", LAUNCHER_8_ARGV);
+    write(&proc, "97/cmdline", SERVER_8_ARGV);
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].process_id(), 97);
+    assert_eq!(nodes[0].config(), Some(Path::new("/etc/elasticsearch")));
+}
+
+#[test]
+fn all_in_does_not_mistake_opensearch_for_elasticsearch() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-residency-opensearch", &["300"]);
+    write(&proc, "300/cmdline", OPENSEARCH_ARGV);
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert!(nodes.is_empty());
+}
+
+#[test]
+fn all_in_does_not_match_the_class_name_inside_another_argument() {
+    // Arrange: a script that merely mentions the class, as a grep or a wrapper's log line would.
+    let proc = scratch_tree("elasticsearch-residency-mention", &["55"]);
+    write(
+        &proc,
+        "55/cmdline",
+        "/usr/bin/grep\0-r\0org.elasticsearch.bootstrap.Elasticsearch-notes\0/var/log\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert!(nodes.is_empty());
+}
+
+#[test]
+fn all_in_lists_several_servers_in_process_id_order() {
+    // Arrange: two nodes on one box, created so directory order is not the answer.
+    let proc = scratch_tree("elasticsearch-residency-two", &["9000", "120"]);
+    write(&proc, "9000/cmdline", SERVER_8_ARGV);
+    write(&proc, "120/cmdline", SERVER_7_ARGV);
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    let process_ids: Vec<u32> = nodes.iter().map(ResidentNode::process_id).collect();
+    assert_eq!(process_ids, [120, 9000]);
+}
+
+#[test]
+fn all_in_keeps_a_server_whose_paths_are_not_in_its_argv() {
+    // Arrange: a server started by hand without the launcher's `-D` properties.
+    let proc = scratch_tree("elasticsearch-residency-bare", &["7"]);
+    write(
+        &proc,
+        "7/cmdline",
+        "java\0-cp\0lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert: a node still, with nothing claimed about where it lives.
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].home(), None);
+    assert_eq!(nodes[0].config(), None);
+}
+
+#[test]
+fn all_in_finds_nothing_in_an_unreadable_process_table() {
+    // Act
+    let nodes = ResidentNode::all_in(Path::new("/nonexistent/proc"));
+
+    // Assert
+    assert!(nodes.is_empty());
+}
