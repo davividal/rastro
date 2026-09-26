@@ -5,6 +5,7 @@ pub mod block_devices;
 pub mod canonical_tool;
 pub mod containers;
 pub mod cron;
+pub mod elasticsearch;
 pub mod exporters;
 pub mod file_glob;
 pub mod file_metadata;
