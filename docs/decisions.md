@@ -5633,6 +5633,10 @@ And the redaction stand-in of a plain-text password is exactly as guessable as t
 its unsalted hash, a bargain `SECURITY.md` already states for every redacted value. What carrying
 buys is that a rotation shows in a diff. `--raw` discloses both.
 
+**An empty credential is carried as it stands.** `masterauth` is `""` on every server that is no
+replica, measured on a systemd-managed redis 8.0.2, and a digest of nothing would tell a reader a
+secret exists where none does.
+
 ## A refused read costs itself
 
 `INFO server` goes first and is the gate: it doubles as the probe for `NOAUTH`, and a server that

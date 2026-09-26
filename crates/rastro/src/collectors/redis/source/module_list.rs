@@ -59,7 +59,8 @@ fn module_of(entry: Reply) -> Result<(String, Module), CollectionError> {
         match (field.as_str(), value) {
             ("name", Reply::Bulk(value)) => name = Some(value),
             ("ver", Reply::Integer(value)) => version = Some(value),
-            ("path", Reply::Bulk(value)) => path = Some(value),
+            // Empty for a module built into the server, measured on redis 8's `vectorset`.
+            ("path", Reply::Bulk(value)) => path = Some(value).filter(|path| !path.is_empty()),
             ("args", Reply::Array(values)) => args = Some(texts_of(values)?),
             ("name" | "ver" | "path" | "args", _) => {
                 return Err(misread(format!("has a {field} of an unexpected kind")));

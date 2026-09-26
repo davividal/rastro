@@ -96,3 +96,18 @@ fn a_reply_that_is_not_text_pairs_is_refused() {
     // Assert
     assert!(result.is_err(), "{result:?}");
 }
+
+#[test]
+fn an_unset_credential_is_shown_as_unset() {
+    // Arrange: measured on a stock redis 8.0.2, `masterauth` is `""` on a server that is no
+    // replica. A digest there would say a secret exists where none does.
+    let reply = pairs(&[("masterauth", "")]);
+
+    // Act
+    let settings = Observation::from(&ConfigGet::parse(reply).expect("a real reply"));
+
+    // Assert
+    let masterauth = field(&settings, "masterauth");
+    assert_eq!(masterauth.sensitivity(), Sensitivity::Public);
+    assert_eq!(text(&masterauth), "");
+}

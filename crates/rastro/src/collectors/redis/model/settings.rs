@@ -32,7 +32,9 @@ impl From<&Settings> for Observation {
 
             (
                 name.as_str(),
-                match name.holds_credential() {
+                // An empty credential is an unset one, and a digest of it would say a secret
+                // exists; measured, `masterauth` is `""` on every server that is no replica.
+                match name.holds_credential() && !value.is_empty() {
                     true => observed.sensitive(),
                     false => observed,
                 },
