@@ -9,6 +9,7 @@ use super::config_get::ConfigGet;
 use super::info_replication::InfoReplication;
 use super::info_server::InfoServer;
 use super::installed_servers::InstalledServers;
+use super::module_list::ModuleList;
 use super::reply::Reply;
 use super::resp_connection::RespConnection;
 use super::server_discovery::{DiscoveredServer, discover};
@@ -56,6 +57,7 @@ fn read_instance(
         settings: None,
         replication: None,
         acl: None,
+        modules: None,
         errors: Vec::new(),
     };
 
@@ -101,6 +103,11 @@ fn read_instance(
             Ok(acl) => instance.acl = Some(acl),
             Err(error) => instance.errors.push(error.to_string()),
         }
+    }
+
+    match reply_to(&mut connection, &["MODULE", "LIST"]).and_then(ModuleList::parse) {
+        Ok(modules) => instance.modules = Some(modules),
+        Err(error) => instance.errors.push(error.to_string()),
     }
 
     instance
