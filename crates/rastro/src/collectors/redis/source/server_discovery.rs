@@ -7,6 +7,7 @@
 //! there.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -28,6 +29,15 @@ const NET: &str = "net";
 pub enum DialTarget {
     Unix(PathBuf),
     Tcp(SocketAddr),
+}
+
+impl fmt::Display for DialTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DialTarget::Unix(path) => write!(formatter, "{}", path.display()),
+            DialTarget::Tcp(address) => write!(formatter, "{address}"),
+        }
+    }
 }
 
 /// One server process, before anything has been asked of it.

@@ -27,6 +27,7 @@ use redis_protocol::resp2::encode::encode;
 use redis_protocol::resp2::types::{OwnedFrame, Resp2Frame};
 
 use super::reply::Reply;
+use super::server_discovery::DialTarget;
 
 /// How long a server gets to accept a request or finish a reply.
 ///
@@ -40,6 +41,12 @@ const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 /// `ACL LIST` grows with the accounts. Megabytes are headroom; the bound is against a server, or
 /// something impersonating one on its port, that never stops.
 const REPLY_BOUND: usize = 4 * 1024 * 1024;
+
+/// How long a TCP connection gets to be accepted.
+///
+/// Only ever to an address the server was seen listening on, so a slow accept is a wedged server
+/// rather than a distant one.
+const CONNECT_WITHIN: Duration = Duration::from_secs(1);
 
 /// How much one read asks the kernel for.
 const READ_CHUNK: usize = 16 * 1024;
@@ -122,6 +129,22 @@ impl RespConnection {
             within: ANSWER_WITHIN,
         }
         .timing_out_after(ANSWER_WITHIN)
+    }
+
+    /// A connection to the socket discovery chose.
+    pub fn dial(target: &DialTarget) -> Result<Self, CollectionError> {
+        let stream: io::Result<ServerStream> = match target {
+            DialTarget::Unix(path) => UnixStream::connect(path).map(ServerStream::from),
+            DialTarget::Tcp(address) => {
+                TcpStream::connect_timeout(address, CONNECT_WITHIN).map(ServerStream::from)
+            }
+        };
+
+        let stream = stream.map_err(|error| {
+            CollectionError::new(format!("could not connect to {target}: {error}"))
+        })?;
+
+        Self::over(stream)
     }
 
     /// The same, giving up on a server sooner or later than the default.

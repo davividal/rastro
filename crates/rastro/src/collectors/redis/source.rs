@@ -5,9 +5,11 @@ mod reply;
 mod resident_servers;
 mod resp_connection;
 mod server_discovery;
+mod server_inventory;
 
 pub use installed_servers::InstalledServers;
 pub use reply::Reply;
 pub use resident_servers::{ResidentServer, resident_servers};
 pub use resp_connection::{RespConnection, ServerStream};
 pub use server_discovery::{DialTarget, DiscoveredServer, discover};
+pub use server_inventory::read_installation;

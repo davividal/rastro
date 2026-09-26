@@ -8,10 +8,10 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::Installation;
+pub use model::{Installation, Instance};
 pub use source::{
     DialTarget, DiscoveredServer, InstalledServers, Reply, ResidentServer, RespConnection,
-    ServerStream, discover, resident_servers,
+    ServerStream, discover, read_installation, resident_servers,
 };
 pub use value_objects::{Listener, ServerKind};
 
@@ -87,17 +87,12 @@ impl Collector for RedisCollector {
         }
     }
 
+    /// Never an `error` as a whole: what could not be read of a server is that instance's own
+    /// `error`, so one unreadable server does not cost the others.
     fn collect(&self) -> Result<Observation, CollectionError> {
-        if !resident_servers(&self.proc).is_empty() {
-            return Err(CollectionError::new(
-                "a redis server is running and reading one is not built yet",
-            ));
-        }
-
-        let installation = Installation {
-            installed: self.installed.kinds().clone(),
-        };
-
-        Ok(Observation::from(&installation))
+        Ok(Observation::from(&read_installation(
+            &self.proc,
+            &self.installed,
+        )))
     }
 }
