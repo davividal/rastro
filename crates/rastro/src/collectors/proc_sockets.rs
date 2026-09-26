@@ -21,11 +21,13 @@
 //! of it.
 
 mod kernel_address;
+mod listeners;
 mod listening_inodes;
 mod socket_holders;
 mod unix_columns;
 
 pub use kernel_address::{ipv4_of, ipv6_of};
+pub use listeners::{InetListener, UnixListener, inet_listeners, unix_listeners};
 pub use listening_inodes::listening_inodes;
-pub use socket_holders::{HeldDescriptor, SocketHolders};
+pub use socket_holders::{HeldDescriptor, SocketHolders, sockets_held_by};
 pub use unix_columns::{UnixColumns, unix_columns};

@@ -32,6 +32,13 @@ impl PortNumber {
     }
 }
 
+/// Every `u16` is a port, so a number the kernel already decoded needs no parse.
+impl From<u16> for PortNumber {
+    fn from(port: u16) -> Self {
+        Self(port)
+    }
+}
+
 impl From<&PortNumber> for Observation {
     fn from(port: &PortNumber) -> Self {
         Observation::integer(i64::from(port.as_u16()))
