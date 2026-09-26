@@ -10,12 +10,15 @@ pub mod value_objects;
 
 pub use model::{Installation, Instance, ServerIdentity, Settings};
 pub use source::{
-    ConfigGet, DialTarget, DiscoveredServer, InfoServer, InstalledServers, Reply, ResidentServer,
-    RespConnection, ServerStream, discover, read_installation, resident_servers,
+    ConfigGet, Credential, DialTarget, DiscoveredServer, InfoServer, InstalledServers, Reply,
+    ResidentServer, RespConnection, ServerStart, ServerStream, discover, password_for,
+    read_installation, requirepass_in, resident_servers, start_of, unit_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 
 use std::path::{Path, PathBuf};
+
+use crate::collectors::canonical_tool::CanonicalTool;
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
@@ -26,16 +29,28 @@ use rastro_collector::{
 /// Where the kernel publishes its process table.
 const PROC: &str = "/proc";
 
+/// The tool that says how a unit starts its server.
+const SYSTEMCTL: &str = "systemctl";
+
 pub struct RedisCollector {
     name: FacetName,
     identity: CollectorIdentity,
     installed: InstalledServers,
     proc: PathBuf,
+
+    /// Asked only about a server that refused to answer without a password, for the command
+    /// that started it; see [`password_for`].
+    systemctl: Option<CanonicalTool>,
 }
 
 impl RedisCollector {
     pub fn new() -> Self {
-        Self::reading(InstalledServers::located(), Path::new(PROC))
+        let collector = Self::reading(InstalledServers::located(), Path::new(PROC));
+
+        match CanonicalTool::located(SYSTEMCTL) {
+            Some(systemctl) => collector.asking_systemd(systemctl),
+            None => collector,
+        }
     }
 
     /// The same collector over sources the caller chose.
@@ -48,7 +63,14 @@ impl RedisCollector {
             ),
             installed,
             proc: proc.to_path_buf(),
+            systemctl: None,
         }
+    }
+
+    /// The same, able to ask systemd how a password-protected server was started.
+    pub fn asking_systemd(mut self, systemctl: CanonicalTool) -> Self {
+        self.systemctl = Some(systemctl);
+        self
     }
 }
 
@@ -93,6 +115,7 @@ impl Collector for RedisCollector {
         Ok(Observation::from(&read_installation(
             &self.proc,
             &self.installed,
+            self.systemctl.as_ref(),
         )))
     }
 }
