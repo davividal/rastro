@@ -70,6 +70,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # `openat2`, to read its files inside its own root. Safe and pure Rust on Linux, which keeps
 # `unsafe_code = "forbid"` true of the workspace's own code.
 rustix = { version = "1", default-features = false, features = ["fs", "std", "thread"] }
+# The redis wire protocol, framing only: rastro holds the socket, the timeouts, the reply bound
+# and every command sent, which a full client would have taken over. MIT, pure Rust, no
+# `unsafe`. Four crates new to the tree, `nom` being here already for `x509-parser`, where the
+# `redis` client brings fifty-four. See `docs/decisions.md`.
+# Default features: 6.0.0 does not build with `resp2` alone, its decoder naming `resp3` either way.
+redis-protocol = "6"
 
 [profile.release]
 strip = true
