@@ -1,5 +1,6 @@
 pub mod captured_cell;
 pub mod es_node;
+pub mod fake_redis;
 pub mod fs_tree;
 pub mod narrowing;
 pub mod observation;
