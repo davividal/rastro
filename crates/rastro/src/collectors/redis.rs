@@ -14,7 +14,8 @@ pub use model::{
 pub use source::{
     AclList, ConfigGet, Credential, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
     InstalledServers, ModuleList, Reply, ResidentServer, RespConnection, ServerStart, ServerStream,
-    discover, password_for, read_installation, requirepass_in, resident_servers, start_of, unit_of,
+    data_directory_of, discover, password_for, read_installation, requirepass_in, resident_servers,
+    start_of, unit_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 
@@ -24,8 +25,8 @@ use crate::collectors::canonical_tool::CanonicalTool;
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
-    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    ClaimQualifier, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 /// Where the kernel publishes its process table.
@@ -109,6 +110,32 @@ impl Collector for RedisCollector {
             true => Presence::Present,
             false => Presence::Absent,
         }
+    }
+
+    /// Each server's data directory, sealed.
+    ///
+    /// **Sealed rather than merely unhashed**, for the reason the postgres cluster directory and
+    /// the rabbitmq store are: every attribute of the dump moves whenever the server saves, which
+    /// its `save` rules decide and nobody touching the box does, and a fingerprint of an unchanged
+    /// host must be byte-identical. What the server holds, this facet reports from the server.
+    ///
+    /// One claim per instance, qualified by the instance's key, so a directory two servers share
+    /// says which two. A key a qualifier cannot hold still gets its directory sealed: losing which
+    /// instance asked costs a label, and losing the claim would put a live dump under the walk.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        discover(&self.proc)
+            .into_iter()
+            .filter_map(|server| {
+                let directory = data_directory_of(&self.proc, server.process_id)?;
+                let tree = WalkedTree::new(directory.to_str()?).ok()?;
+                let sealed = FilesystemClaim::sealed(tree);
+
+                Some(match ClaimQualifier::new(server.key) {
+                    Ok(qualifier) => sealed.for_entry(qualifier),
+                    Err(_) => sealed,
+                })
+            })
+            .collect()
     }
 
     /// Never an `error` as a whole: what could not be read of a server is that instance's own
