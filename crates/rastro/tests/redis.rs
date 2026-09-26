@@ -8,7 +8,9 @@ use rastro_collector::{Collector, CollectorCategory, Presence};
 
 mod support;
 
-use support::fake_redis::{DEBIAN_12_INFO, FakeRedis, bulk, dead_socket, key_of, proc_holding};
+use support::fake_redis::{
+    FakeRedis, array_of, bulk, dead_socket, key_of, proc_holding, unknown_command,
+};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, is_null, items_of, keys_of, text};
 
@@ -115,8 +117,7 @@ fn instance_of(
 #[test]
 fn a_server_that_answers_is_an_instance_with_nothing_missing() {
     // Arrange
-    let info = bulk(DEBIAN_12_INFO);
-    let server = FakeRedis::answering("facet-answers", &[("INFO server", &info)]);
+    let server = FakeRedis::stock("facet-answers", &[]);
     let proc = server.proc("redis-facet-answers");
 
     // Act
@@ -210,7 +211,7 @@ fn a_valkey_answering_under_the_redis_name_is_reported_as_valkey() {
     let info = bulk(
         "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:8.1.1\r\nserver_mode:standalone\r\n",
     );
-    let server = FakeRedis::answering("facet-valkey", &[("INFO server", &info)]);
+    let server = FakeRedis::stock("facet-valkey", &[("INFO server", &info)]);
     let proc = server.proc("redis-facet-valkey");
 
     // Act
@@ -238,4 +239,67 @@ fn a_server_that_was_not_asked_has_no_version() {
     let instance = instance_of(&observation, &key_of(&server));
     assert_eq!(text(&field(&instance, "server")), "redis");
     assert!(is_null(&field(&instance, "version")));
+}
+
+#[test]
+fn an_instance_carries_the_settings_the_server_is_running_with() {
+    // Arrange: `maxmemory` and `save` applied with `CONFIG SET` and in no file, which is the
+    // estate's arrangement and the reason this facet asks the server.
+    let config = array_of(&[
+        "maxmemory",
+        "32212254720",
+        "save",
+        "",
+        "requirepass",
+        "hunter2",
+    ]);
+    let server = FakeRedis::stock("facet-settings", &[("CONFIG GET *", &config)]);
+    let proc = server.proc("redis-facet-settings");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let settings = field(&instance_of(&observation, &key_of(&server)), "settings");
+    assert_eq!(text(&field(&settings, "maxmemory")), "32212254720");
+    assert_eq!(text(&field(&settings, "save")), "");
+    assert_eq!(
+        field(&settings, "requirepass").sensitivity(),
+        rastro_fingerprint::Sensitivity::Sensitive
+    );
+}
+
+#[test]
+fn a_server_with_config_renamed_away_keeps_everything_else() {
+    // Arrange: `rename-command CONFIG ""`, common hardening. Measured: `ERR unknown command`,
+    // and `INFO` still answers.
+    let refused = unknown_command("CONFIG");
+    let server = FakeRedis::stock("facet-no-config", &[("CONFIG GET *", &refused)]);
+    let proc = server.proc("redis-facet-no-config");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: the refused read is null and says why; what was read stays.
+    let instance = instance_of(&observation, &key_of(&server));
+    assert!(is_null(&field(&instance, "settings")));
+    let error = text(&field(&instance, "error"));
+    assert!(error.contains("CONFIG GET"), "{error}");
+    assert_eq!(text(&field(&instance, "version")), "7.0.15");
+}
+
+#[test]
+fn a_server_that_wants_a_password_is_asked_nothing_more() {
+    // Arrange
+    let server = FakeRedis::stock(
+        "facet-noauth-quiet",
+        &[("INFO server", "-NOAUTH Authentication required.\r\n")],
+    );
+    let proc = server.proc("redis-facet-noauth-quiet");
+
+    // Act
+    collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: every command sent is one more thing a server logs or counts.
+    assert_eq!(server.received(), [["INFO", "server"]]);
 }

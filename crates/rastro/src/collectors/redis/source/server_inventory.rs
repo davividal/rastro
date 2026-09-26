@@ -4,12 +4,13 @@ use std::path::Path;
 
 use rastro_collector::CollectionError;
 
+use super::config_get::ConfigGet;
 use super::info_server::InfoServer;
 use super::installed_servers::InstalledServers;
 use super::reply::Reply;
 use super::resp_connection::RespConnection;
 use super::server_discovery::{DiscoveredServer, discover};
-use crate::collectors::redis::model::{Installation, Instance, ServerIdentity};
+use crate::collectors::redis::model::{Installation, Instance};
 
 /// The redis on the box behind `proc`.
 ///
@@ -26,52 +27,72 @@ pub fn read_installation(proc: &Path, installed: &InstalledServers) -> Installat
 }
 
 fn read_instance(server: DiscoveredServer) -> Instance {
-    let asked = match &server.reach {
-        Ok(target) => RespConnection::dial(target).and_then(|mut connection| ask(&mut connection)),
-        Err(refusal) => Err(CollectionError::new(refusal.as_str())),
-    };
-
-    let (identity, error) = match asked {
-        Ok(identity) => (Some(identity), None),
-        Err(error) => (None, Some(error.to_string())),
-    };
-
-    Instance {
+    let mut instance = Instance {
         process_kind: server.kind,
         listening: server.listeners,
-        identity,
-        error,
+        identity: None,
+        settings: None,
+        errors: Vec::new(),
+    };
+
+    let connected = match &server.reach {
+        Ok(target) => RespConnection::dial(target),
+        Err(refusal) => Err(CollectionError::new(refusal.as_str())),
+    };
+    let mut connection = match connected {
+        Ok(connection) => connection,
+        Err(error) => {
+            instance.errors.push(error.to_string());
+            return instance;
+        }
+    };
+
+    // **`INFO server` first, and it doubles as the probe.** A server wanting a password answers
+    // it `NOAUTH` just as it would `PING`, and a server that will not say what it is has nothing
+    // else worth asking.
+    match text_reply(&mut connection, &["INFO", "server"]).and_then(|text| InfoServer::parse(&text))
+    {
+        Ok(identity) => instance.identity = Some(identity),
+        Err(error) => {
+            instance.errors.push(error.to_string());
+            return instance;
+        }
     }
+
+    // A refusal from here on is one item's: `rename-command CONFIG ""` leaves `INFO` answering.
+    match reply_to(&mut connection, &["CONFIG", "GET", "*"]).and_then(ConfigGet::parse) {
+        Ok(settings) => instance.settings = Some(settings),
+        Err(error) => instance.errors.push(error.to_string()),
+    }
+
+    instance
 }
 
-/// Everything one server is asked, in order.
-///
-/// **`INFO server` first, and it doubles as the probe.** A server wanting a password answers it
-/// `NOAUTH` just as it would `PING`, so nothing is sent merely to find out whether the others
-/// may be.
-fn ask(connection: &mut RespConnection) -> Result<ServerIdentity, CollectionError> {
-    let text = text_reply(connection, &["INFO", "server"])?;
-
-    InfoServer::parse(&text)
-}
-
-/// A command whose answer is text, with the server's refusals said in words.
-fn text_reply(
-    connection: &mut RespConnection,
-    command: &[&str],
-) -> Result<String, CollectionError> {
+/// A command's answer, with the server's refusals said in words.
+fn reply_to(connection: &mut RespConnection, command: &[&str]) -> Result<Reply, CollectionError> {
     let name = command.join(" ");
 
     match connection.ask(command)? {
-        Reply::Bulk(text) => Ok(text),
         Reply::Error(message) if message.starts_with("NOAUTH") => Err(CollectionError::new(
             "the server requires a password, and none was given",
         )),
         Reply::Error(message) => Err(CollectionError::new(format!(
             "the server refused {name}: {message}"
         ))),
+        reply => Ok(reply),
+    }
+}
+
+/// A command whose answer is text.
+fn text_reply(
+    connection: &mut RespConnection,
+    command: &[&str],
+) -> Result<String, CollectionError> {
+    match reply_to(connection, command)? {
+        Reply::Bulk(text) => Ok(text),
         other => Err(CollectionError::new(format!(
-            "the server answered {name} with {other:?} rather than text"
+            "the server answered {} with {other:?} rather than text",
+            command.join(" ")
         ))),
     }
 }

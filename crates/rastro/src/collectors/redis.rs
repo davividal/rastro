@@ -8,12 +8,12 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{Installation, Instance, ServerIdentity};
+pub use model::{Installation, Instance, ServerIdentity, Settings};
 pub use source::{
-    DialTarget, DiscoveredServer, InfoServer, InstalledServers, Reply, ResidentServer,
+    ConfigGet, DialTarget, DiscoveredServer, InfoServer, InstalledServers, Reply, ResidentServer,
     RespConnection, ServerStream, discover, read_installation, resident_servers,
 };
-pub use value_objects::{Listener, ServerKind};
+pub use value_objects::{Listener, ServerKind, SettingName};
 
 use std::path::{Path, PathBuf};
 
