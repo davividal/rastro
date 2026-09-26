@@ -12,13 +12,11 @@
 use rastro_collector::CollectionError;
 
 use super::socket_row::SocketRow;
+use crate::collectors::proc_sockets::unix_columns;
 use crate::collectors::sockets::model::SocketAddress;
 use crate::collectors::sockets::value_objects::{SocketKind, SocketPath, SocketState};
 
-/// How many whitespace-separated columns come before the path.
-const LEADING_COLUMNS: usize = 7;
-
-/// Which of those holds the flags word.
+/// Which of the columns before the path holds the flags word.
 const FLAGS: usize = 3;
 
 /// Which holds the socket type.
@@ -56,7 +54,7 @@ pub fn parse(text: &str) -> Result<Vec<SocketRow>, CollectionError> {
             continue;
         }
 
-        let Some(row) = split_off_path(line) else {
+        let Some(row) = unix_columns(line) else {
             return Err(CollectionError::new(format!(
                 "{line:?} has too few columns, so the table was misread"
             )));
@@ -91,34 +89,6 @@ pub fn parse(text: &str) -> Result<Vec<SocketRow>, CollectionError> {
     }
 
     Ok(rows)
-}
-
-/// One row split into its columns and its path.
-struct UnixRow<'a> {
-    fields: Vec<&'a str>,
-    path: &'a str,
-}
-
-/// Takes the fixed columns off the front and leaves the path untouched.
-///
-/// **Not `split_whitespace` over the whole line.** A unix socket path may legally contain a
-/// space, and splitting the path into columns would silently truncate it at the first one.
-fn split_off_path(line: &str) -> Option<UnixRow<'_>> {
-    let mut fields = Vec::with_capacity(LEADING_COLUMNS);
-    let mut rest = line;
-
-    for _ in 0..LEADING_COLUMNS {
-        let start = rest.find(|character: char| !character.is_whitespace())?;
-        rest = &rest[start..];
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        fields.push(&rest[..end]);
-        rest = &rest[end..];
-    }
-
-    Some(UnixRow {
-        fields,
-        path: rest.trim_start(),
-    })
 }
 
 /// The word for a socket type, in the vocabulary `ss` established.
