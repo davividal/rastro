@@ -3,6 +3,7 @@
 mod config_get;
 mod config_password;
 mod info_fields;
+mod info_replication;
 mod info_server;
 mod installed_servers;
 mod reply;
@@ -16,6 +17,7 @@ mod server_unit;
 pub use config_get::ConfigGet;
 pub use config_password::requirepass_in;
 pub use info_fields::info_fields;
+pub use info_replication::InfoReplication;
 pub use info_server::InfoServer;
 pub use installed_servers::InstalledServers;
 pub use reply::Reply;

@@ -45,9 +45,11 @@ impl FakeRedis {
     pub fn stock_with_password(name: &str, password: &str, overrides: &[(&str, &str)]) -> Self {
         let info = bulk(DEBIAN_12_INFO);
         let config = debian_12_config();
+        let replication = bulk(DEBIAN_12_REPLICATION);
         let mut script: BTreeMap<&str, &str> = [
             ("INFO server", info.as_str()),
             ("CONFIG GET *", config.as_str()),
+            ("INFO replication", replication.as_str()),
         ]
         .into_iter()
         .collect();
@@ -130,9 +132,11 @@ impl FakeRedis {
     pub fn stock(name: &str, overrides: &[(&str, &str)]) -> Self {
         let info = bulk(DEBIAN_12_INFO);
         let config = debian_12_config();
+        let replication = bulk(DEBIAN_12_REPLICATION);
         let mut script: BTreeMap<&str, &str> = [
             ("INFO server", info.as_str()),
             ("CONFIG GET *", config.as_str()),
+            ("INFO replication", replication.as_str()),
         ]
         .into_iter()
         .collect();
@@ -205,6 +209,9 @@ pub fn bulk(text: &str) -> String {
 
 /// `INFO server` from a Debian 12 package, trimmed.
 pub const DEBIAN_12_INFO: &str = "# Server\r\nredis_version:7.0.15\r\nredis_mode:standalone\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\n";
+
+/// `INFO replication` from a stock server, which replicates nothing.
+pub const DEBIAN_12_REPLICATION: &str = "# Replication\r\nrole:master\r\nconnected_slaves:0\r\n";
 
 /// An array reply of bulk strings, which is how `CONFIG GET` answers.
 pub fn array_of(items: &[&str]) -> String {
