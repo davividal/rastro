@@ -5,6 +5,7 @@ use std::path::Path;
 use rastro_collector::CollectionError;
 
 use super::config_get::ConfigGet;
+use super::info_replication::InfoReplication;
 use super::info_server::InfoServer;
 use super::installed_servers::InstalledServers;
 use super::reply::Reply;
@@ -52,6 +53,7 @@ fn read_instance(
         listening: server.listeners,
         identity: None,
         settings: None,
+        replication: None,
         errors: Vec::new(),
     };
 
@@ -78,6 +80,13 @@ fn read_instance(
     // A refusal from here on is one item's: `rename-command CONFIG ""` leaves `INFO` answering.
     match reply_to(&mut connection, &["CONFIG", "GET", "*"]).and_then(ConfigGet::parse) {
         Ok(settings) => instance.settings = Some(settings),
+        Err(error) => instance.errors.push(error.to_string()),
+    }
+
+    match text_reply(&mut connection, &["INFO", "replication"])
+        .and_then(|text| InfoReplication::parse(&text))
+    {
+        Ok(replication) => instance.replication = Some(replication),
         Err(error) => instance.errors.push(error.to_string()),
     }
 
@@ -149,6 +158,16 @@ fn refusal_of(command: &[&str], reply: Reply) -> Result<Reply, CollectionError> 
         ))),
         reply => Ok(reply),
     }
+}
+
+/// A command whose answer is text.
+fn text_reply(
+    connection: &mut RespConnection,
+    command: &[&str],
+) -> Result<String, CollectionError> {
+    let reply = connection.ask(command)?;
+
+    text_of(command, reply)
 }
 
 /// A reply that should be text.

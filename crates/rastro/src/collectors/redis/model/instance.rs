@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::redis::model::{ServerIdentity, Settings};
+use crate::collectors::redis::model::{Replication, ServerIdentity, Settings};
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 /// A server process on this box.
@@ -24,6 +24,9 @@ pub struct Instance {
 
     /// The settings the server is running with, where it let them be read.
     pub settings: Option<Settings>,
+
+    /// Its place in replication, where it let that be read.
+    pub replication: Option<Replication>,
 
     /// Each thing this run could not find out about the server, in the order it was asked.
     ///
@@ -84,6 +87,13 @@ impl From<&Instance> for Observation {
                 "settings",
                 match &instance.settings {
                     Some(settings) => Observation::from(settings),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "replication",
+                match &instance.replication {
+                    Some(replication) => Observation::from(replication),
                     None => Observation::null(),
                 },
             ),

@@ -303,3 +303,38 @@ fn a_server_that_wants_a_password_is_asked_nothing_more() {
     // Assert: every command sent is one more thing a server logs or counts.
     assert_eq!(server.received(), [["INFO", "server"]]);
 }
+
+#[test]
+fn an_instance_says_what_it_replicates() {
+    // Arrange
+    let replication = bulk(
+        "# Replication\r\nrole:slave\r\nmaster_host:10.0.0.1\r\nmaster_port:6379\r\nmaster_link_status:up\r\n",
+    );
+    let server = FakeRedis::stock("facet-replica", &[("INFO replication", &replication)]);
+    let proc = server.proc("redis-facet-replica");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let replication = field(&instance_of(&observation, &key_of(&server)), "replication");
+    assert_eq!(text(&field(&replication, "role")), "slave");
+    assert_eq!(text(&field(&replication, "master")), "10.0.0.1:6379");
+}
+
+#[test]
+fn a_refused_replication_read_costs_only_itself() {
+    // Arrange
+    let refused = unknown_command("INFO");
+    let server = FakeRedis::stock("facet-no-replication", &[("INFO replication", &refused)]);
+    let proc = server.proc("redis-facet-no-replication");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = instance_of(&observation, &key_of(&server));
+    assert!(is_null(&field(&instance, "replication")));
+    assert!(text(&field(&instance, "error")).contains("INFO replication"));
+    assert_eq!(keys_of(&field(&instance, "settings")).len(), 3);
+}
