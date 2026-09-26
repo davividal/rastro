@@ -80,6 +80,25 @@ impl FakeRedis {
         Self { socket, received }
     }
 
+    /// A server answering every read as a stock Debian 12 server would, each override replacing
+    /// or adding one command's answer.
+    ///
+    /// So a test states only what is peculiar to its box, and a read added to the collector later
+    /// does not turn every earlier test into one about a server that refuses it.
+    pub fn stock(name: &str, overrides: &[(&str, &str)]) -> Self {
+        let info = bulk(DEBIAN_12_INFO);
+        let config = debian_12_config();
+        let mut script: BTreeMap<&str, &str> = [
+            ("INFO server", info.as_str()),
+            ("CONFIG GET *", config.as_str()),
+        ]
+        .into_iter()
+        .collect();
+        script.extend(overrides.iter().copied());
+
+        Self::answering(name, &script.into_iter().collect::<Vec<_>>())
+    }
+
     /// Every command received so far, as its words.
     pub fn received(&self) -> Vec<Vec<String>> {
         self.received.lock().expect("an unpoisoned lock").clone()
@@ -138,6 +157,30 @@ pub fn bulk(text: &str) -> String {
 
 /// `INFO server` from a Debian 12 package, trimmed.
 pub const DEBIAN_12_INFO: &str = "# Server\r\nredis_version:7.0.15\r\nredis_mode:standalone\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\n";
+
+/// An array reply of bulk strings, which is how `CONFIG GET` answers.
+pub fn array_of(items: &[&str]) -> String {
+    let elements: String = items.iter().map(|item| bulk(item)).collect();
+
+    format!("*{}\r\n{elements}", items.len())
+}
+
+/// `CONFIG GET *` from a stock server, trimmed to three settings.
+pub fn debian_12_config() -> String {
+    array_of(&[
+        "bind",
+        "127.0.0.1 -::1",
+        "port",
+        "6379",
+        "save",
+        "3600 1 300 100 60 10000",
+    ])
+}
+
+/// What a server says about a command renamed away. Measured on Debian 12 and redis 8.
+pub fn unknown_command(command: &str) -> String {
+    format!("-ERR unknown command '{command}', with args beginning with: \r\n")
+}
 
 /// The socket path a fixture server's `/proc` names, as the facet keys it.
 pub fn key_of(server: &FakeRedis) -> String {

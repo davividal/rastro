@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::redis::model::ServerIdentity;
+use crate::collectors::redis::model::{ServerIdentity, Settings};
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 /// A server process on this box.
@@ -22,8 +22,14 @@ pub struct Instance {
     /// What the server said it is, where it was asked and answered.
     pub identity: Option<ServerIdentity>,
 
-    /// What this run could not find out about the server, if anything.
-    pub error: Option<String>,
+    /// The settings the server is running with, where it let them be read.
+    pub settings: Option<Settings>,
+
+    /// Each thing this run could not find out about the server, in the order it was asked.
+    ///
+    /// One reason per refused read rather than the first alone: a server with `CONFIG` renamed
+    /// away may refuse `ACL` too, and each refusal is a separate fact about its hardening.
+    pub errors: Vec<String>,
 }
 
 impl Instance {
@@ -32,6 +38,14 @@ impl Instance {
         self.identity
             .as_ref()
             .map_or(self.process_kind, |identity| identity.kind)
+    }
+
+    /// Every refusal, as one sentence, where there was any.
+    pub fn error(&self) -> Option<String> {
+        match self.errors.is_empty() {
+            true => None,
+            false => Some(self.errors.join("; ")),
+        }
     }
 }
 
@@ -65,8 +79,15 @@ impl From<&Instance> for Observation {
                 "config_file",
                 text_or_null(identity.and_then(|identity| identity.config_file.as_ref())),
             ),
-            ("error", text_or_null(instance.error.as_ref())),
+            (
+                "settings",
+                match &instance.settings {
+                    Some(settings) => Observation::from(settings),
+                    None => Observation::null(),
+                },
+            ),
+            ("error", text_or_null(instance.error().as_ref())),
         ])
-        .incomplete_when(instance.error.is_some())
+        .incomplete_when(!instance.errors.is_empty())
     }
 }
