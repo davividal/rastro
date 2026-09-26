@@ -93,3 +93,15 @@ fn a_module_without_a_name_is_refused() {
     // Assert
     assert!(result.is_err(), "{result:?}");
 }
+
+#[test]
+fn a_module_built_into_the_server_has_no_path() {
+    // Arrange: measured on redis 8.0.2, whose built-in `vectorset` reports `path` empty.
+    let reply = Reply::Array(vec![module("vectorset", 1, "", &[])]);
+
+    // Act
+    let vectorset = field(&modules(reply), "vectorset");
+
+    // Assert: empty is not a file, so it is null like a path never reported.
+    assert!(is_null(&field(&vectorset, "path")));
+}

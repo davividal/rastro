@@ -10,7 +10,8 @@ pub struct Module {
     /// The module's own version number, as the integer it reports.
     pub version: i64,
 
-    /// The shared object it was loaded from, where the server reports one; redis 7 and later do.
+    /// The shared object it was loaded from, where the server reports one; redis 7 and later do,
+    /// except for a module built into the server.
     pub path: Option<String>,
 
     /// The arguments it was loaded with, where the server reports them.
