@@ -316,7 +316,7 @@ path with `-o`, to a tmpfs, or off the box.
 
 ## Security posture
 
-Of the following, the `unsafe`-free build, the absence of network I/O, the output
+Of the following, the `unsafe`-free build, the network boundary, the output
 file's mode, redaction and `--raw` are all true today. The root requirement arrives
 with Layer 1.
 
@@ -334,8 +334,11 @@ with Layer 1.
   the two a document was rendered under is in the `invocation` facet as
   `config.disclosure`, beside the view, because both axes rewrite the document and a
   diff across either would otherwise report changes nothing accounts for.
-- **No network I/O in v1.** A simplification, not policy — a firewall collector
-  verifying rules from outside the ruleset dump would be legitimate.
+- **No network I/O beyond a GET to a service already running on the box.** A request
+  goes only to a listener held by a process rastro found in `/proc`, on the address it
+  bound, from inside its network namespace: no name resolution, no remote address, no
+  probing. Elasticsearch is the reason; see
+  [decisions.md](decisions.md#rastro-may-send-a-get-to-a-service-already-running-on-the-box).
 
 ## Verification
 

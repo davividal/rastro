@@ -115,7 +115,8 @@ Violating one is a plan change, not a detail.
   carries only the fingerprint, which with the document in a file means nothing at
   all. Progress, `--debug` timings and the summary of what the run could not see go to
   stderr, and never into the document.
-- v1 boundaries: single box, generate-only, no network I/O, JSON only.
+- v1 boundaries: single box, generate-only, JSON only, and no network I/O beyond a
+  `GET` to a service already running on the box (see `docs/design.md`).
 
 ## Comment scope
 
