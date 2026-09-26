@@ -8,7 +8,7 @@ use rastro_collector::{Collector, CollectorCategory, Presence};
 
 mod support;
 
-use support::fake_redis::{FakeRedis, dead_socket, key_of, proc_holding};
+use support::fake_redis::{DEBIAN_12_INFO, FakeRedis, bulk, dead_socket, key_of, proc_holding};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, is_null, items_of, keys_of, text};
 
@@ -115,7 +115,8 @@ fn instance_of(
 #[test]
 fn a_server_that_answers_is_an_instance_with_nothing_missing() {
     // Arrange
-    let server = FakeRedis::answering("facet-answers", &[("PING", "+PONG\r\n")]);
+    let info = bulk(DEBIAN_12_INFO);
+    let server = FakeRedis::answering("facet-answers", &[("INFO server", &info)]);
     let proc = server.proc("redis-facet-answers");
 
     // Act
@@ -126,6 +127,16 @@ fn a_server_that_answers_is_an_instance_with_nothing_missing() {
     // Assert
     let instance = instance_of(&observation, &key_of(&server));
     assert_eq!(text(&field(&instance, "server")), "redis");
+    assert_eq!(text(&field(&instance, "version")), "7.0.15");
+    assert_eq!(text(&field(&instance, "mode")), "standalone");
+    assert_eq!(
+        text(&field(&instance, "executable")),
+        "/usr/bin/redis-server"
+    );
+    assert_eq!(
+        text(&field(&instance, "config_file")),
+        "/etc/redis/redis.conf"
+    );
     let listening: Vec<String> = items_of(&field(&instance, "listening"))
         .iter()
         .map(text)
@@ -139,7 +150,7 @@ fn a_server_that_wants_a_password_is_an_instance_with_an_error() {
     // Arrange
     let server = FakeRedis::answering(
         "facet-noauth",
-        &[("PING", "-NOAUTH Authentication required.\r\n")],
+        &[("INFO server", "-NOAUTH Authentication required.\r\n")],
     );
     let proc = server.proc("redis-facet-noauth");
 
@@ -190,4 +201,41 @@ fn a_server_that_was_not_reached_is_an_instance_with_the_reason() {
     let error = text(&field(&instance, "error"));
     assert!(error.contains("descriptors"), "{error}");
     assert_eq!(items_of(&field(&instance, "listening")).len(), 0);
+}
+
+#[test]
+fn a_valkey_answering_under_the_redis_name_is_reported_as_valkey() {
+    // Arrange: Debian's valkey compatibility package installs a `redis-server` symlink, so the
+    // kernel's `comm` says redis about a server that is not.
+    let info = bulk(
+        "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:8.1.1\r\nserver_mode:standalone\r\n",
+    );
+    let server = FakeRedis::answering("facet-valkey", &[("INFO server", &info)]);
+    let proc = server.proc("redis-facet-valkey");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: once connected, the server's own account of itself wins.
+    let instance = instance_of(&observation, &key_of(&server));
+    assert_eq!(text(&field(&instance, "server")), "valkey");
+    assert_eq!(text(&field(&instance, "version")), "8.1.1");
+}
+
+#[test]
+fn a_server_that_was_not_asked_has_no_version() {
+    // Arrange
+    let server = FakeRedis::answering(
+        "facet-unasked",
+        &[("INFO server", "-NOAUTH Authentication required.\r\n")],
+    );
+    let proc = server.proc("redis-facet-unasked");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: null, never a guessed version, and the family from `comm` still stands.
+    let instance = instance_of(&observation, &key_of(&server));
+    assert_eq!(text(&field(&instance, "server")), "redis");
+    assert!(is_null(&field(&instance, "version")));
 }
