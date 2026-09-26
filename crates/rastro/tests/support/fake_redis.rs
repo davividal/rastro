@@ -52,6 +52,7 @@ impl FakeRedis {
             ("CONFIG GET *", config.as_str()),
             ("INFO replication", replication.as_str()),
             ("ACL LIST", acl.as_str()),
+            ("MODULE LIST", "*0\r\n"),
         ]
         .into_iter()
         .collect();
@@ -141,6 +142,7 @@ impl FakeRedis {
             ("CONFIG GET *", config.as_str()),
             ("INFO replication", replication.as_str()),
             ("ACL LIST", acl.as_str()),
+            ("MODULE LIST", "*0\r\n"),
         ]
         .into_iter()
         .collect();

@@ -2,7 +2,7 @@
 
 use rastro_collector::Observation;
 
-use crate::collectors::redis::model::{Accounts, Replication, ServerIdentity, Settings};
+use crate::collectors::redis::model::{Accounts, Modules, Replication, ServerIdentity, Settings};
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 /// A server process on this box.
@@ -33,6 +33,9 @@ pub struct Instance {
     /// Absent without an error on a redis older than accounts, which is a server with nothing
     /// to list rather than one that refused.
     pub acl: Option<Accounts>,
+
+    /// The modules it has loaded, where it let them be read.
+    pub modules: Option<Modules>,
 
     /// Each thing this run could not find out about the server, in the order it was asked.
     ///
@@ -106,6 +109,13 @@ impl From<&Instance> for Observation {
                 "acl",
                 match &instance.acl {
                     Some(acl) => Observation::from(acl),
+                    None => Observation::null(),
+                },
+            ),
+            (
+                "modules",
+                match &instance.modules {
+                    Some(modules) => Observation::from(modules),
                     None => Observation::null(),
                 },
             ),

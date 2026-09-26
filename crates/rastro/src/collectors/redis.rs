@@ -8,11 +8,13 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{Accounts, Installation, Instance, Replication, ServerIdentity, Settings};
+pub use model::{
+    Accounts, Installation, Instance, Module, Modules, Replication, ServerIdentity, Settings,
+};
 pub use source::{
     AclList, ConfigGet, Credential, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
-    InstalledServers, Reply, ResidentServer, RespConnection, ServerStart, ServerStream, discover,
-    password_for, read_installation, requirepass_in, resident_servers, start_of, unit_of,
+    InstalledServers, ModuleList, Reply, ResidentServer, RespConnection, ServerStart, ServerStream,
+    discover, password_for, read_installation, requirepass_in, resident_servers, start_of, unit_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 

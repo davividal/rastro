@@ -390,3 +390,34 @@ fn a_refused_account_list_says_so() {
     assert!(is_null(&field(&instance, "acl")));
     assert!(text(&field(&instance, "error")).contains("ACL LIST"));
 }
+
+#[test]
+fn an_instance_lists_the_modules_it_loaded() {
+    // Arrange
+    let modules = "*1\r\n*4\r\n$4\r\nname\r\n$6\r\nReJSON\r\n$3\r\nver\r\n:20609\r\n";
+    let server = FakeRedis::stock("facet-modules", &[("MODULE LIST", modules)]);
+    let proc = server.proc("redis-facet-modules");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let modules = field(&instance_of(&observation, &key_of(&server)), "modules");
+    assert_eq!(keys_of(&modules), ["ReJSON"]);
+}
+
+#[test]
+fn a_refused_module_list_says_so() {
+    // Arrange
+    let refused = unknown_command("MODULE");
+    let server = FakeRedis::stock("facet-no-modules", &[("MODULE LIST", &refused)]);
+    let proc = server.proc("redis-facet-no-modules");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = instance_of(&observation, &key_of(&server));
+    assert!(is_null(&field(&instance, "modules")));
+    assert!(text(&field(&instance, "error")).contains("MODULE LIST"));
+}
