@@ -5823,3 +5823,23 @@ Joining another namespace needs `CAP_SYS_ADMIN`, so an unprivileged run records 
 for such a node rather than guessing. The call goes through `rustix`, whose `setns` is safe
 and pure Rust on Linux, so `unsafe_code = "forbid"` still holds for the workspace's own code,
 as it does beside `libc` and `subprocess`.
+
+## The node's own file is read, for the dispatch and nothing else
+
+Which port serves HTTP and whether it wants TLS have to be known before the first request, so
+they cannot come from the API. They come from what the node was given at start, in the order
+it applies them: a `-E` flag, then an environment variable named after the setting, then
+`elasticsearch.yml`. The environment is not optional: from 8.x the docker image's settings
+appear nowhere in the argv. The file is read through `/proc/<pid>/root`, because a node in a
+container reads the one in its image. `${NAME}` is resolved from the node's own environment,
+as the node resolved it, and a name the environment does not hold is a refusal rather than a
+literal port.
+
+This is the one configuration file the collector parses, and it does not make it into the
+facet. What the node runs with is reported from its API.
+
+**The parser is `yaml-rust2`**, pure Rust, without its default `encoding` feature, which only
+decodes files Elasticsearch would not read. It brings `foldhash` through `hashbrown`, under
+Zlib, which is now allowed beside BSL-1.0 on the same argument: permissive, no copyleft, and
+its one condition concerns source rather than a binary. Hand-rolling a subset of YAML was
+rejected for the reason `x509-parser` is used rather than hand-rolled DER.

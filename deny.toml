@@ -34,6 +34,10 @@ allow = [
   "MIT",
   "Unicode-3.0",
   "Unlicense",
+  # `foldhash`, the default hasher `hashbrown` brings in under `yaml-rust2`. Permissive and
+  # OSI-approved, with no copyleft; its one condition is that the notice stays in the source,
+  # and a binary carries no source, so it is compatible with shipping this one as well.
+  "Zlib",
 ]
 confidence-threshold = 0.9
 
