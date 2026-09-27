@@ -7,4 +7,4 @@
 //! `docs/decisions.md`.
 pub mod source;
 
-pub use source::ResidentNode;
+pub use source::{NodeSettings, ResidentNode, UnreadSettings};

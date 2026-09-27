@@ -40,6 +40,8 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 # Reading a certificate a virtual host serves, rather than only the path it lives at.
 x509-parser = { workspace = true }
+# The few settings an Elasticsearch node's own file gives it, read before it is asked.
+yaml-rust2 = { workspace = true }
 
 [dev-dependencies]
 rastro-fingerprint = { workspace = true }

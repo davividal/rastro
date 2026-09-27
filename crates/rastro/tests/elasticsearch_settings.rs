@@ -1,0 +1,232 @@
+//! What a node was told at start, read from a `/proc` a test built.
+//!
+//! These are the settings the dispatch needs before it may ask the node anything: which port
+//! serves HTTP, and whether that port wants TLS. The node's own answer comes later and is
+//! authoritative; this read exists because asking first would be asking blind.
+
+use std::fs;
+
+use rastro::collectors::elasticsearch::{NodeSettings, ResidentNode};
+
+mod support;
+
+use support::fs_tree::{scratch_tree, write};
+
+const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
+    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
+    -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
+
+/// The node's own file, under its root, because a node in a container reads the one in its
+/// image rather than the host's.
+const CONFIG_FILE: &str = "600/root/etc/elasticsearch/elasticsearch.yml";
+
+fn node_in(proc: &std::path::Path) -> ResidentNode {
+    ResidentNode::all_in(proc)
+        .into_iter()
+        .next()
+        .expect("the fixture holds one server")
+}
+
+#[test]
+fn read_in_flattens_nested_and_dotted_keys_alike() {
+    // Arrange: the same file may spell settings either way, and ES reads both.
+    let proc = scratch_tree("elasticsearch-settings-flatten", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        CONFIG_FILE,
+        "http:\n  port: 9201\nxpack.security.enabled: false\n",
+    );
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9201"));
+    assert_eq!(settings.get("xpack.security.enabled"), Some("false"));
+}
+
+#[test]
+fn read_in_takes_a_dotted_environment_variable_over_the_file() {
+    // Arrange: the docker image hands settings over as variables named after the setting, and
+    // from 8.x they appear nowhere in the argv.
+    let proc = scratch_tree("elasticsearch-settings-environ", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(
+        &proc,
+        "600/environ",
+        "PATH=/usr/bin\0http.port=9300\0ES_JAVA_OPTS=-Xms512m\0",
+    );
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9300"));
+    assert_eq!(settings.get("PATH"), None);
+}
+
+#[test]
+fn read_in_takes_a_command_line_setting_over_the_environment() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-argv", &["600/root"]);
+    let argv = format!("{SERVER_ARGV}-Ehttp.port=9400\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "http.port=9300\0");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9400"));
+}
+
+#[test]
+fn read_in_joins_a_list_with_commas_as_elasticsearch_reads_one() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-list", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "network.host: [_local_, _site_]\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("network.host"), Some("_local_,_site_"));
+}
+
+#[test]
+fn read_in_substitutes_a_variable_from_the_nodes_own_environment() {
+    // Arrange: `${NAME}` in the file is resolved by the node from its environment at start.
+    let proc = scratch_tree("elasticsearch-settings-substitution", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "ES_HTTP_PORT=9250\0");
+    write(&proc, CONFIG_FILE, "http.port: ${ES_HTTP_PORT}\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9250"));
+}
+
+#[test]
+fn read_in_refuses_a_variable_the_environment_does_not_hold() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-unresolved", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "http.port: ${ES_HTTP_PORT}\n");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unresolvable value");
+
+    // Assert: a port rastro cannot resolve is not a port it may dial.
+    assert!(
+        unread.reason().contains("ES_HTTP_PORT"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn read_in_reads_no_file_where_the_config_directory_holds_none() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-no-file", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "http.port=9300\0");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9300"));
+}
+
+#[test]
+fn read_in_refuses_a_node_whose_config_directory_is_not_in_its_argv() {
+    // Arrange: a server started by hand, whose file rastro cannot locate without guessing.
+    let proc = scratch_tree("elasticsearch-settings-no-conf", &["600/root"]);
+    write(
+        &proc,
+        "600/cmdline",
+        "java\0-cp\0lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+    write(&proc, "600/environ", "");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("no config directory");
+
+    // Assert
+    assert!(
+        unread.reason().contains("es.path.conf"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn read_in_refuses_an_environment_it_cannot_read() {
+    // Arrange: a directory where the file should be fails for root as well, where a mode would
+    // not, and the unprivileged refusal this stands for is the ordinary case for this read.
+    let proc = scratch_tree(
+        "elasticsearch-settings-environ-refused",
+        &["600/root", "600/environ"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unreadable environ");
+
+    // Assert
+    assert!(unread.reason().contains("environ"), "{}", unread.reason());
+}
+
+#[test]
+fn read_in_refuses_a_file_that_is_not_yaml() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-malformed", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "http:\n  port: [9201\n");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("malformed YAML");
+
+    // Assert
+    assert!(
+        unread.reason().contains("elasticsearch.yml"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn read_in_refuses_a_file_it_cannot_read() {
+    // Arrange: again a directory, so the refusal holds when the suite runs as root.
+    let proc = scratch_tree(
+        "elasticsearch-settings-file-refused",
+        &["600/root/etc/elasticsearch/elasticsearch.yml"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    assert!(
+        fs::metadata(proc.join(CONFIG_FILE))
+            .expect("the fixture")
+            .is_dir()
+    );
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unreadable file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("elasticsearch.yml"),
+        "{}",
+        unread.reason()
+    );
+}
