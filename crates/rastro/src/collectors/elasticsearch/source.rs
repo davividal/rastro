@@ -6,6 +6,7 @@ mod http_binding;
 mod http_client;
 mod indices_answer;
 mod json_answer;
+mod lifecycle_answer;
 mod node_listeners;
 mod node_namespace;
 mod node_reader;

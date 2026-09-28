@@ -6,7 +6,8 @@ use rastro_collector::Observation;
 
 use crate::collectors::elasticsearch::model::node_identity::optional;
 use crate::collectors::elasticsearch::model::{
-    ClusterSettings, Indices, NamedDefinitions, NodeIdentity, Surface, surface_observation,
+    ClusterSettings, IlmPolicies, Indices, NamedDefinitions, NodeIdentity, SnapshotRepositories,
+    Surface, surface_observation,
 };
 use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, NetworkNamespace, Unread};
 
@@ -32,6 +33,9 @@ pub struct Node {
     pub index_templates: Option<Surface<NamedDefinitions>>,
     pub component_templates: Option<Surface<NamedDefinitions>>,
     pub indices: Option<Surface<Indices>>,
+    pub ilm_policies: Option<Surface<IlmPolicies>>,
+    pub ingest_pipelines: Option<Surface<NamedDefinitions>>,
+    pub snapshot_repositories: Option<Surface<SnapshotRepositories>>,
     pub error: Option<Unread>,
 }
 
@@ -124,6 +128,24 @@ impl From<&Node> for Observation {
             (
                 "indices",
                 surface_observation(node.indices.as_ref(), |indices| Observation::from(indices)),
+            ),
+            (
+                "ilm_policies",
+                surface_observation(node.ilm_policies.as_ref(), |policies| {
+                    Observation::from(policies)
+                }),
+            ),
+            (
+                "ingest_pipelines",
+                surface_observation(node.ingest_pipelines.as_ref(), |pipelines| {
+                    Observation::from(pipelines)
+                }),
+            ),
+            (
+                "snapshot_repositories",
+                surface_observation(node.snapshot_repositories.as_ref(), |repositories| {
+                    Observation::from(repositories)
+                }),
             ),
             ("error", optional(node.error.as_ref().map(Unread::reason))),
         ])
