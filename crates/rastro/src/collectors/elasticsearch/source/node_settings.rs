@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
-use crate::collectors::elasticsearch::value_objects::Transport;
+use crate::collectors::elasticsearch::value_objects::{Transport, Unread};
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
 const SEPARATOR: char = '\0';
@@ -44,39 +44,17 @@ pub struct NodeSettings {
     values: BTreeMap<String, String>,
 }
 
-/// Why a node's settings could not be read.
-///
-/// A node whose settings are unread is one the dispatch may not ask, so this is never
-/// softened into an empty set of settings: that would read as a node on every default.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{reason}")]
-pub struct UnreadSettings {
-    reason: String,
-}
-
-impl UnreadSettings {
-    fn new(reason: impl Into<String>) -> Self {
-        Self {
-            reason: reason.into(),
-        }
-    }
-
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
-}
-
 impl NodeSettings {
     /// Reads a node's settings through the box's `/proc`.
-    pub fn read(node: &ResidentNode) -> Result<Self, UnreadSettings> {
+    pub fn read(node: &ResidentNode) -> Result<Self, Unread> {
         Self::read_in(Path::new("/proc"), node)
     }
 
     /// The same through a process table the caller names.
-    pub fn read_in(proc: &Path, node: &ResidentNode) -> Result<Self, UnreadSettings> {
+    pub fn read_in(proc: &Path, node: &ResidentNode) -> Result<Self, Unread> {
         let process = proc.join(node.process_id().to_string());
         let config = node.config().ok_or_else(|| {
-            UnreadSettings::new(
+            Unread::new(
                 "the node's argv names no es.path.conf, so its elasticsearch.yml cannot be \
                  located without guessing",
             )
@@ -128,10 +106,9 @@ impl FromIterator<(String, String)> for NodeSettings {
     }
 }
 
-fn read_list(path: &Path, what: &str) -> Result<Vec<String>, UnreadSettings> {
-    let text = fs::read_to_string(path).map_err(|error| {
-        UnreadSettings::new(format!("the node's {what} could not be read: {error}"))
-    })?;
+fn read_list(path: &Path, what: &str) -> Result<Vec<String>, Unread> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| Unread::new(format!("the node's {what} could not be read: {error}")))?;
 
     Ok(text
         .split(SEPARATOR)
@@ -140,7 +117,7 @@ fn read_list(path: &Path, what: &str) -> Result<Vec<String>, UnreadSettings> {
         .collect())
 }
 
-fn read_pairs(path: &Path, what: &str) -> Result<BTreeMap<String, String>, UnreadSettings> {
+fn read_pairs(path: &Path, what: &str) -> Result<BTreeMap<String, String>, Unread> {
     Ok(read_list(path, what)?
         .iter()
         .filter_map(|entry| entry.split_once('='))
@@ -156,7 +133,7 @@ fn read_config_file(
     root: &Path,
     config: &Path,
     environment: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, UnreadSettings> {
+) -> Result<BTreeMap<String, String>, Unread> {
     let named = config.join(CONFIG_FILE);
     let under_root: PathBuf = root.join(named.strip_prefix("/").unwrap_or(&named));
 
@@ -164,21 +141,20 @@ fn read_config_file(
         Ok(text) => text,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
-            return Err(UnreadSettings::new(format!(
+            return Err(Unread::new(format!(
                 "{} could not be read: {error}",
                 named.display()
             )));
         }
     };
 
-    let documents = YamlLoader::load_from_str(&text).map_err(|error| {
-        UnreadSettings::new(format!("{} is not YAML: {error}", named.display()))
-    })?;
+    let documents = YamlLoader::load_from_str(&text)
+        .map_err(|error| Unread::new(format!("{} is not YAML: {error}", named.display())))?;
 
     let mut values = BTreeMap::new();
     if let Some(document) = documents.first() {
         flatten(document, None, &mut values)
-            .map_err(|reason| UnreadSettings::new(format!("{}: {reason}", named.display())))?;
+            .map_err(|reason| Unread::new(format!("{}: {reason}", named.display())))?;
     }
 
     values
@@ -238,22 +214,19 @@ fn scalar(node: &Yaml) -> Option<String> {
 ///
 /// A name the environment does not hold is a refusal rather than the literal text: a port
 /// spelled `${ES_HTTP_PORT}` is not one rastro may dial.
-fn substitute(
-    value: &str,
-    environment: &BTreeMap<String, String>,
-) -> Result<String, UnreadSettings> {
+fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<String, Unread> {
     let mut resolved = String::new();
     let mut rest = value;
 
     while let Some(start) = rest.find("${") {
         resolved.push_str(&rest[..start]);
         let after = &rest[start + 2..];
-        let end = after.find('}').ok_or_else(|| {
-            UnreadSettings::new(format!("`{value}` opens a variable it never closes"))
-        })?;
+        let end = after
+            .find('}')
+            .ok_or_else(|| Unread::new(format!("`{value}` opens a variable it never closes")))?;
         let name = &after[..end];
         let found = environment.get(name).ok_or_else(|| {
-            UnreadSettings::new(format!(
+            Unread::new(format!(
                 "`{value}` names {name}, which the node's environment does not hold"
             ))
         })?;
