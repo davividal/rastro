@@ -131,6 +131,8 @@ impl FakeNode {
         .expect("a writable fixture");
         symlink("net:[4026531840]", proc.join("self/ns/net")).expect("a writable fixture");
         symlink("net:[4026531840]", proc.join(PID).join("ns/net")).expect("a writable fixture");
+        symlink("mnt:[4026531841]", proc.join("self/ns/mnt")).expect("a writable fixture");
+        symlink("mnt:[4026531841]", proc.join(PID).join("ns/mnt")).expect("a writable fixture");
 
         if let Some(contents) = config_file {
             write(
