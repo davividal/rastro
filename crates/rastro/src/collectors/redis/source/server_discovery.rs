@@ -148,7 +148,7 @@ fn discovered(
     paths.sort_unstable();
     paths.dedup();
 
-    let Some(reach) = reach_of(&addresses, &paths) else {
+    let Some(reach) = reach_of(&addresses, &paths, titled_port(&title)) else {
         return unreached("it listens on nothing rastro could connect to".to_owned());
     };
 
@@ -181,14 +181,33 @@ fn discovered(
 
 /// The one socket to connect to, in order of how local it is.
 ///
-/// A unix socket first, since it involves no network stack at all; then loopback; then a
-/// wildcard, reached on the loopback address of its own family; then an address of the box's
-/// own, which the kernel delivers locally without it ever reaching a wire. Each list arrives
-/// sorted, so the choice is the same on every run.
-fn reach_of(addresses: &[SocketAddr], paths: &[String]) -> Option<DialTarget> {
+/// A unix socket first, since it involves no network stack at all, and redis serves no TLS on
+/// one; then loopback; then a wildcard, reached on the loopback address of its own family; then
+/// an address of the box's own, which the kernel delivers locally without it ever reaching a
+/// wire. Each list arrives sorted, so the choice is the same on every run.
+///
+/// **Among TCP sockets, the port the title names comes first.** A plain `port` and a `tls-port`
+/// look the same in the kernel's tables, measured, and a plain client on the TLS one is a line in
+/// the server's log at its default level, also measured, so trying one and then the other would
+/// write to the box. redis's title shows the plain port whenever there is one.
+fn reach_of(
+    addresses: &[SocketAddr],
+    paths: &[String],
+    titled_port: Option<u16>,
+) -> Option<DialTarget> {
     if let Some(path) = paths.first() {
         return Some(DialTarget::Unix(PathBuf::from(path)));
     }
+
+    let on_titled_port: Vec<SocketAddr> = addresses
+        .iter()
+        .filter(|address| Some(address.port()) == titled_port)
+        .copied()
+        .collect();
+    let addresses = match on_titled_port.is_empty() {
+        true => addresses,
+        false => on_titled_port.as_slice(),
+    };
 
     let loopback = addresses.iter().find(|address| address.ip().is_loopback());
     let wildcard = addresses
@@ -203,6 +222,17 @@ fn reach_of(addresses: &[SocketAddr], paths: &[String]) -> Option<DialTarget> {
     };
 
     Some(DialTarget::Tcp(chosen))
+}
+
+/// The port in the title's `{listen-addr}`, `127.0.0.1:6379` or `*:6380` after the program, or
+/// nothing where the template leaves it out or names a unix socket instead.
+///
+/// Measured: the plain port whenever the server has one, and the TLS port only where it has no
+/// other, so the port it names is never the TLS one while a plain one exists.
+fn titled_port(title: &str) -> Option<u16> {
+    let listen_address = title.split_whitespace().nth(1)?;
+
+    listen_address.rsplit_once(':')?.1.parse().ok()
 }
 
 fn loopback_of(address: IpAddr) -> IpAddr {

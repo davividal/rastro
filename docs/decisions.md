@@ -6583,6 +6583,24 @@ its own connect handshake with a `CLIENT SETINFO` unless told not to, and no bou
 the socket, the connect and read timeouts, a byte bound refused rather than truncated, and every
 byte sent. The canonical tool seam's guarantees, restated for a socket.
 
+## A TLS port is told apart by the title, and never tried blind
+
+A plain `port` and a `tls-port` are identical in the kernel's socket tables, so choosing by
+locality and sort order alone could pick the TLS one and report a readable server as
+unreachable. Trying one and falling back to the other is not the answer, measured on redis
+8.0.2: a plain client on the TLS port is reset at once and leaves
+`Error accepting a client connection: ... wrong version number` in the server's log **at its
+default level**, so every run would write to the box it describes.
+
+**The process title names the plain port.** Its `{listen-addr}` shows the plain port whenever
+the server has one, and the TLS port only where it has no other, measured both ways, so among a
+server's TCP sockets the port the title names is dialled first, loopback before the box's own
+address within it. A custom `proc-title-template` that leaves the address out falls back to the
+order above. Where the chosen socket still hangs up, nothing else is tried and the instance's
+error names the sockets on other ports that were left, so a reader can tell a TLS port from a
+dead server. A server listening only on its TLS port is spoken to in plain text once and
+reported as a failed read, at the cost of that one log line.
+
 ## An instance is keyed by its port
 
 The TCP port, else the unix socket's path, else the process title for a server whose sockets
@@ -6698,6 +6716,5 @@ containers it never starts, which the Debian image's `policy-rc.d` was measured 
   recognised and left unwalked.
 - **An unprivileged route to the password.** Debian's file is 0640 `redis:redis`, and dropping to
   that account the way `postgresql` runs `psql` is owed rather than built.
-- **A server listening only on its TLS port**, which is spoken to in plain text and reported as a
-  failed read.
+- **TLS.** No socket is spoken to in TLS; a server reachable only on its TLS port is a failed read.
 - **Module-specific settings** beyond what `CONFIG GET *` returns for them.

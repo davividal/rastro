@@ -421,3 +421,56 @@ fn a_refused_module_list_says_so() {
     assert!(is_null(&field(&instance, "modules")));
     assert!(text(&field(&instance, "error")).contains("MODULE LIST"));
 }
+
+#[test]
+fn a_socket_that_hangs_up_names_the_sockets_not_tried_and_why() {
+    // Arrange: a listener that closes every connection unanswered, which is what a TLS port
+    // does to a plain client, and a second socket the server holds on the box's own address.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let port = listener.local_addr().expect("an address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            drop(stream);
+        }
+    });
+    let header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    let row = |address: &str, inode: u64| {
+        format!(
+            "   0: {address} 00000000:0000 0A 00000000:00000000 00:00000000 00000000   101        0 {inode} 1 0000000000000000 100 0 0 10 0\n"
+        )
+    };
+    let proc = proc_with(
+        "redis-facet-hangs-up",
+        &[("412", "redis-server", "redis-server [cache]\0")],
+    );
+    write(
+        &proc,
+        "net/tcp",
+        &format!(
+            "{header}{}{}",
+            row(&format!("0100007F:{port:04X}"), 2001),
+            row("0500000A:18EC", 2002)
+        ),
+    );
+    write(&proc, "net/tcp6", header);
+    write(
+        &proc,
+        "net/unix",
+        "Num       RefCount Protocol Flags    Type St Inode Path\n",
+    );
+    fs::create_dir_all(proc.join("412/fd")).expect("a writable scratch directory");
+    std::os::unix::fs::symlink("socket:[2001]", proc.join("412/fd/3")).expect("a symlink");
+    std::os::unix::fs::symlink("socket:[2002]", proc.join("412/fd/4")).expect("a symlink");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: the other socket is named, and it was not tried, since a plain client on a TLS
+    // port is a line in the server's log.
+    // Keyed by its lowest port, which is the one it was not reached on.
+    let instance = instance_of(&observation, "6380");
+    let error = text(&field(&instance, "error"));
+    assert!(error.contains("10.0.0.5:6380"), "{error}");
+    assert!(error.contains("not tried"), "{error}");
+    assert!(!error.contains(&format!("127.0.0.1:{port}")), "{error}");
+}
