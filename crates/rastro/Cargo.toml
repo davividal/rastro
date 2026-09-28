@@ -43,6 +43,11 @@ x509-parser = { workspace = true }
 # The few settings an Elasticsearch node's own file gives it, read before it is asked.
 yaml-rust2 = { workspace = true }
 
+# Joining a network namespace is a Linux call, and rastro ships for Linux alone; a workstation
+# build compiles the refusal instead.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true }
+
 [dev-dependencies]
 rastro-fingerprint = { workspace = true }
 # `serde_json` is deliberately not repeated here. Tests read the rendered document
