@@ -26,10 +26,14 @@ const ARGUMENT_SEPARATOR: char = '\0';
 const CLASSPATH_MAIN: &str = "org.elasticsearch.bootstrap.Elasticsearch";
 
 /// The main class as 8.x and 9.x name it, `module/class` after `-m`.
-///
-/// Whole arguments are compared rather than searched for the class name, because a process
-/// that merely mentions the class, a `grep` or a wrapper, is not a server.
 const MODULE_MAIN: &str = "org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch";
+
+/// The program a server runs as, whichever JDK it is the `bin/java` of.
+const JAVA: &str = "java";
+
+/// The flags a JVM takes its classpath or its main module from.
+const CLASSPATH_FLAGS: [&str; 3] = ["-cp", "-classpath", "--class-path"];
+const MODULE_FLAGS: [&str; 2] = ["-m", "--module"];
 
 /// The system properties the launcher sets for where the node is installed and configured.
 const HOME_PROPERTY: &str = "-Des.path.home=";
@@ -97,10 +101,7 @@ impl ResidentNode {
             .filter(|argument| !argument.is_empty())
             .collect();
 
-        if !arguments
-            .iter()
-            .any(|argument| *argument == CLASSPATH_MAIN || *argument == MODULE_MAIN)
-        {
+        if !starts_the_server(&arguments) {
             return None;
         }
 
@@ -110,6 +111,29 @@ impl ResidentNode {
             config: property_in(&arguments, CONFIG_PROPERTY),
         })
     }
+}
+
+/// Whether this argv is a JVM started with the server's main class.
+///
+/// **The class has to be the main class, not merely an argument.** Found by the conformance
+/// run, whose own `pgrep -f org.elasticsearch.bootstrap.Elasticsearch` carries the class as a
+/// whole argument and was read as a node. So the program must be `java`, and the class must be
+/// what `-m` names or what follows the classpath `-cp` names, which is where a JVM takes it from.
+fn starts_the_server(arguments: &[&str]) -> bool {
+    let is_java = arguments
+        .first()
+        .map(Path::new)
+        .and_then(Path::file_name)
+        .is_some_and(|program| program == JAVA);
+
+    let module_main = arguments
+        .windows(2)
+        .any(|pair| MODULE_FLAGS.contains(&pair[0]) && pair[1] == MODULE_MAIN);
+    let classpath_main = arguments
+        .windows(3)
+        .any(|triple| CLASSPATH_FLAGS.contains(&triple[0]) && triple[2] == CLASSPATH_MAIN);
+
+    is_java && (module_main || classpath_main)
 }
 
 /// The value of a `-D` system property, where the argv sets it.

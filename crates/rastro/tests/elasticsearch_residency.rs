@@ -106,6 +106,30 @@ fn all_in_does_not_match_the_class_name_inside_another_argument() {
 }
 
 #[test]
+fn all_in_does_not_mistake_a_process_naming_the_class_as_an_argument_for_a_server() {
+    // Arrange: found by the conformance run, whose own `pgrep -f` was read as a third node. The
+    // class is a whole argument here, so matching whole arguments is not enough: it has to be
+    // the main class a JVM was started with.
+    let proc = scratch_tree("elasticsearch-residency-pgrep", &["70", "71"]);
+    write(
+        &proc,
+        "70/cmdline",
+        "pgrep\0-f\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+    write(
+        &proc,
+        "71/cmdline",
+        "/usr/bin/java\0-jar\0tool.jar\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert!(nodes.is_empty(), "{nodes:?}");
+}
+
+#[test]
 fn all_in_lists_several_servers_in_process_id_order() {
     // Arrange: two nodes on one box, created so directory order is not the answer.
     let proc = scratch_tree("elasticsearch-residency-two", &["9000", "120"]);
