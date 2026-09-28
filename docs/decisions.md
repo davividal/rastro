@@ -5929,3 +5929,23 @@ reported whole, and says how a changed digest changed.
 
 Hidden and system indices are left out by `expand_wildcards=open,closed`: they are the node's
 own, and `.ds-ilm-history-*` gains documents while the node is idle.
+
+## An 8.x server is read through its launcher, and a JVM only by its main class
+
+**Corrects the research this collector was planned from**, which reported `-Des.path.home` and
+`-Des.path.conf` on the server's argv in all three versions. The conformance run against live
+nodes found otherwise on 8.15.3: the server's own argv carries neither, and no `-E` flag
+either. The `CliToolLauncher` parent holds them and hands the server its arguments over a
+pipe, which is why the parent exists. So an 8.x server, recognised by starting its main class
+as a module, is read through its parent's argv, found from the fourth field of `stat`, and only
+where that parent is itself the launcher. A server whose parent is anything else lends nothing:
+reading another program's flags as the node's settings would be worse than having none.
+
+The same run found the second fault by being one: its own `pgrep -f
+org.elasticsearch.bootstrap.Elasticsearch` carries the class as a whole argument and was read
+as a node. Matching whole arguments stopped a `grep` and did not stop that. A server is now a
+program named `java` whose main class is the server's, which is what follows `-m` or a `-cp`
+value, and nothing else.
+
+Both were in slice-one code that its fixtures passed, because the fixtures were written from the
+research. That is the case the conformance job exists for.

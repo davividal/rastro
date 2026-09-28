@@ -8,7 +8,9 @@
 //! process with `org.elasticsearch.bootstrap.Elasticsearch` on the classpath, and 8.x and 9.x
 //! are a `CliToolLauncher` parent forking a child that starts the class as a module,
 //! `-m org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch`. The parent holds
-//! no listener and is not a node.
+//! no listener and is not a node, **but it holds the paths**: measured on 8.15.3, the server's
+//! own argv carries no `-Des.path.*` and no `-E`, because the launcher hands them over a pipe.
+//! So an 8.x server is read through its launcher's argv, found by the parent link in `stat`.
 //!
 //! A process id is a plain `u32` here rather than the `processes` facet's `ProcessId`, for the
 //! reason the RabbitMQ residency read gives: that type is another collector's leaf value.
@@ -35,6 +37,9 @@ const JAVA: &str = "java";
 const CLASSPATH_FLAGS: [&str; 3] = ["-cp", "-classpath", "--class-path"];
 const MODULE_FLAGS: [&str; 2] = ["-m", "--module"];
 
+/// The main class of the 8.x launcher, which forks the server.
+const LAUNCHER_MAIN: &str = "org.elasticsearch.launcher.CliToolLauncher";
+
 /// The system properties the launcher sets for where the node is installed and configured.
 const HOME_PROPERTY: &str = "-Des.path.home=";
 const CONFIG_PROPERTY: &str = "-Des.path.conf=";
@@ -43,6 +48,9 @@ const CONFIG_PROPERTY: &str = "-Des.path.conf=";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidentNode {
     process_id: u32,
+
+    /// The argv the node was launched with: its own on 7.x, its launcher's on 8.x and 9.x.
+    launch_arguments: Vec<String>,
 
     /// `es.path.home`, where the node's `lib/` and `bin/` are.
     home: Option<PathBuf>,
@@ -72,7 +80,7 @@ impl ResidentNode {
 
         let mut nodes: Vec<Self> = entries
             .flatten()
-            .filter_map(|entry| Self::from_process_directory(&entry.path()))
+            .filter_map(|entry| Self::from_process_directory(proc, &entry.path()))
             .collect();
 
         // Directory order is the filesystem's, and a list that moves between two runs of an
@@ -93,24 +101,60 @@ impl ResidentNode {
         self.config.as_deref()
     }
 
-    fn from_process_directory(path: &Path) -> Option<Self> {
-        let process_id: u32 = path.file_name()?.to_str()?.parse().ok()?;
-        let cmdline = fs::read_to_string(path.join("cmdline")).ok()?;
-        let arguments: Vec<&str> = cmdline
-            .split(ARGUMENT_SEPARATOR)
-            .filter(|argument| !argument.is_empty())
-            .collect();
+    /// The argv the node was launched with, which is where its command-line settings are.
+    pub fn launch_arguments(&self) -> &[String] {
+        &self.launch_arguments
+    }
 
-        if !starts_the_server(&arguments) {
+    fn from_process_directory(proc: &Path, path: &Path) -> Option<Self> {
+        let process_id: u32 = path.file_name()?.to_str()?.parse().ok()?;
+        let arguments = arguments_of(path)?;
+        let spelled: Vec<&str> = arguments.iter().map(String::as_str).collect();
+
+        if !starts_the_server(&spelled) {
             return None;
         }
 
+        // A launcher that exited, or a parent that is not one, lends nothing: taking any
+        // parent's argv would read another program's flags as the node's settings.
+        let launch_arguments = match starts_as_a_module(&spelled) {
+            true => launcher_arguments(proc, path).unwrap_or(arguments),
+            false => arguments,
+        };
+        let launched: Vec<&str> = launch_arguments.iter().map(String::as_str).collect();
+
         Some(Self {
             process_id,
-            home: property_in(&arguments, HOME_PROPERTY),
-            config: property_in(&arguments, CONFIG_PROPERTY),
+            home: property_in(&launched, HOME_PROPERTY),
+            config: property_in(&launched, CONFIG_PROPERTY),
+            launch_arguments,
         })
     }
+}
+
+fn arguments_of(process: &Path) -> Option<Vec<String>> {
+    let cmdline = fs::read_to_string(process.join("cmdline")).ok()?;
+
+    Some(
+        cmdline
+            .split(ARGUMENT_SEPARATOR)
+            .filter(|argument| !argument.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// The argv of the process's parent, where the parent is the 8.x launcher.
+///
+/// The parent is the fourth field of `stat`, counted after the last `)`, because the second
+/// field is the program name in parentheses and a name may hold spaces and parentheses itself.
+fn launcher_arguments(proc: &Path, process: &Path) -> Option<Vec<String>> {
+    let stat = fs::read_to_string(process.join("stat")).ok()?;
+    let parent = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?;
+    let arguments = arguments_of(&proc.join(parent))?;
+    let spelled: Vec<&str> = arguments.iter().map(String::as_str).collect();
+
+    is_java_running(&spelled, LAUNCHER_MAIN).then_some(arguments)
 }
 
 /// Whether this argv is a JVM started with the server's main class.
@@ -120,20 +164,31 @@ impl ResidentNode {
 /// whole argument and was read as a node. So the program must be `java`, and the class must be
 /// what `-m` names or what follows the classpath `-cp` names, which is where a JVM takes it from.
 fn starts_the_server(arguments: &[&str]) -> bool {
-    let is_java = arguments
+    starts_as_a_module(arguments) || is_java_running(arguments, CLASSPATH_MAIN)
+}
+
+/// Whether this is the 8.x and 9.x server, started as a module.
+fn starts_as_a_module(arguments: &[&str]) -> bool {
+    is_java(arguments)
+        && arguments
+            .windows(2)
+            .any(|pair| MODULE_FLAGS.contains(&pair[0]) && pair[1] == MODULE_MAIN)
+}
+
+/// Whether this is a JVM whose main class, taken from the classpath, is `main`.
+fn is_java_running(arguments: &[&str], main: &str) -> bool {
+    is_java(arguments)
+        && arguments
+            .windows(3)
+            .any(|triple| CLASSPATH_FLAGS.contains(&triple[0]) && triple[2] == main)
+}
+
+fn is_java(arguments: &[&str]) -> bool {
+    arguments
         .first()
         .map(Path::new)
         .and_then(Path::file_name)
-        .is_some_and(|program| program == JAVA);
-
-    let module_main = arguments
-        .windows(2)
-        .any(|pair| MODULE_FLAGS.contains(&pair[0]) && pair[1] == MODULE_MAIN);
-    let classpath_main = arguments
-        .windows(3)
-        .any(|triple| CLASSPATH_FLAGS.contains(&triple[0]) && triple[2] == CLASSPATH_MAIN);
-
-    is_java && (module_main || classpath_main)
+        .is_some_and(|program| program == JAVA)
 }
 
 /// The value of a `-D` system property, where the argv sets it.
