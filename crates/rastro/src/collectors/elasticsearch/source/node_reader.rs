@@ -7,9 +7,10 @@
 use std::path::Path;
 
 use crate::collectors::elasticsearch::model::{
-    ClusterSettings, NamedDefinitions, Node, NodeIdentity, Surface,
+    ClusterSettings, Indices, NamedDefinitions, Node, NodeIdentity, Surface,
 };
 use crate::collectors::elasticsearch::source::cluster_settings_answer::read_cluster_settings;
+use crate::collectors::elasticsearch::source::indices_answer::read_indices;
 use crate::collectors::elasticsearch::source::root_answer::read_identity;
 use crate::collectors::elasticsearch::source::templates_answer::{
     read_component_templates, read_index_templates,
@@ -34,6 +35,7 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         cluster_settings: None,
         index_templates: None,
         component_templates: None,
+        indices: None,
         error: None,
     };
 
@@ -73,6 +75,7 @@ fn read_into(
     node.cluster_settings = Some(answers.cluster_settings);
     node.index_templates = Some(answers.index_templates);
     node.component_templates = Some(answers.component_templates);
+    node.indices = Some(answers.indices);
     Ok(())
 }
 
@@ -82,6 +85,7 @@ struct Answers {
     cluster_settings: Surface<ClusterSettings>,
     index_templates: Surface<NamedDefinitions>,
     component_templates: Surface<NamedDefinitions>,
+    indices: Surface<Indices>,
 }
 
 /// Every read of the node, in one pass inside its namespace.
@@ -94,5 +98,6 @@ fn read_answers(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Answers,
         cluster_settings: read_cluster_settings(client, endpoint),
         index_templates: read_index_templates(client, endpoint),
         component_templates: read_component_templates(client, endpoint),
+        indices: read_indices(client, endpoint),
     })
 }

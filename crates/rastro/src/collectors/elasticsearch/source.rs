@@ -4,6 +4,7 @@ mod api_value_of;
 mod cluster_settings_answer;
 mod http_binding;
 mod http_client;
+mod indices_answer;
 mod json_answer;
 mod node_listeners;
 mod node_namespace;

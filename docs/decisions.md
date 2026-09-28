@@ -5905,3 +5905,27 @@ why the comparison is of the index list rather than of the disk.
 component templates, 28 ILM policies and 21 pipelines, and all of them are reported: they are
 state, they change when the node is upgraded, and an upgrade is a change a before-and-after
 pair should show.
+
+## An index is keyed by its alias, where the alias is its identity, and never by a guess
+
+The field host rebuilds `<app>-<tenant>_<epoch>` indices under new names behind a stable alias.
+Keyed by name, every rebuild reads as an index removed and another added, whatever it changed.
+So an index that is the only one behind exactly one alias is keyed by that alias, and its own
+name becomes a volatile field beside it. An alias over several indices names none of them
+alone, and an index with several aliases has no one alias that is its identity, so both keep
+their names; so does an unaliased index. Normalising a name by stripping what looks like an
+epoch was rejected: it would be a guess, and it would mangle a numbered index that has
+nothing to do with rotation.
+
+`index.uuid`, `index.creation_date` and `index.provided_name` differ for every index made, so
+the first two are recorded as volatile and the third is dropped, being the name again.
+`index.version.created` stays, as the release that made the index.
+
+**The mappings are a digest**, XXH3-64 over an encoding that tags every value's kind and
+length and takes object keys sorted, so a rebuild with the same schema digests alike whatever
+order the node printed its fields in. The mappings themselves run to thousands of lines on a
+real index and would bury every other change; the component template they came from is
+reported whole, and says how a changed digest changed.
+
+Hidden and system indices are left out by `expand_wildcards=open,closed`: they are the node's
+own, and `.ds-ilm-history-*` gains documents while the node is idle.
