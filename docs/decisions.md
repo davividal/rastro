@@ -5584,6 +5584,10 @@ kernel delivers without it reaching a wire. Never a resolved name, never a defau
 an address the server was not seen bound to. Nothing is dialled to find out whether redis is
 there. The boundary that matters is the box's edge, and this stays inside it.
 
+**Protected mode cannot trip, by construction.** redis refuses a client without a password only
+when it arrives from outside the box, and every socket this dials is a unix socket, loopback, or
+an address of the box's own.
+
 **Not through `redis-cli`.** Every alternative there was worse, measured: `-a` puts the password
 in argv, which the `processes` facet records; `REDISCLI_AUTH` and a piped `AUTH` each need a hole
 in the canonical tool's cleared environment or its immediate end of input; `--raw` prints
@@ -5704,6 +5708,12 @@ containers it never starts, which the Debian image's `policy-rc.d` was measured 
 
 - **Cluster and Sentinel topology.** `mode` is recorded; `CLUSTER NODES` and `SENTINEL MASTERS`
   are reads of many boxes.
+- **A server no systemd unit started has no route to its password**, even with its file readable:
+  the file is found through the unit, and a hand-started server or one under another supervisor
+  is reported as unreachable rather than matched to a file by guesswork.
+- **A box running only `redis-sentinel` reports the facet `absent`.** Discovery matches
+  `redis-server` and `valkey-server`, so a sentinel is not recognised at all, rather than
+  recognised and left unwalked.
 - **An unprivileged route to the password.** Debian's file is 0640 `redis:redis`, and dropping to
   that account the way `postgresql` runs `psql` is owed rather than built.
 - **A server listening only on its TLS port**, which is spoken to in plain text and reported as a
