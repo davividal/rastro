@@ -6,7 +6,7 @@ use rastro_collector::Observation;
 
 use crate::collectors::elasticsearch::model::node_identity::optional;
 use crate::collectors::elasticsearch::model::{
-    ClusterSettings, NodeIdentity, Surface, surface_observation,
+    ClusterSettings, NamedDefinitions, NodeIdentity, Surface, surface_observation,
 };
 use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, NetworkNamespace, Unread};
 
@@ -29,6 +29,8 @@ pub struct Node {
 
     /// Each surface is absent where the node was never asked, which its `error` explains.
     pub cluster_settings: Option<Surface<ClusterSettings>>,
+    pub index_templates: Option<Surface<NamedDefinitions>>,
+    pub component_templates: Option<Surface<NamedDefinitions>>,
     pub error: Option<Unread>,
 }
 
@@ -104,6 +106,18 @@ impl From<&Node> for Observation {
                 "cluster_settings",
                 surface_observation(node.cluster_settings.as_ref(), |settings| {
                     Observation::from(settings)
+                }),
+            ),
+            (
+                "index_templates",
+                surface_observation(node.index_templates.as_ref(), |templates| {
+                    Observation::from(templates)
+                }),
+            ),
+            (
+                "component_templates",
+                surface_observation(node.component_templates.as_ref(), |templates| {
+                    Observation::from(templates)
                 }),
             ),
             ("error", optional(node.error.as_ref().map(Unread::reason))),

@@ -11,6 +11,7 @@ mod node_reader;
 mod node_settings;
 mod resident_node;
 mod root_answer;
+mod templates_answer;
 
 pub use http_binding::http_endpoint;
 pub use http_client::HttpClient;
