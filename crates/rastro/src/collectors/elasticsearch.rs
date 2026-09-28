@@ -16,8 +16,8 @@ pub mod value_objects;
 use std::path::{Path, PathBuf};
 
 pub use model::{
-    ClusterSettings, IndexEntry, Indices, Installation, NamedDefinitions, Node, NodeIdentity,
-    NodeVersion, Surface,
+    ClusterSettings, IlmPolicies, IlmPolicy, IndexEntry, Indices, Installation, NamedDefinitions,
+    Node, NodeIdentity, NodeVersion, SnapshotRepositories, SnapshotRepository, Surface,
 };
 pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,

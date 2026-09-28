@@ -7,10 +7,14 @@
 use std::path::Path;
 
 use crate::collectors::elasticsearch::model::{
-    ClusterSettings, Indices, NamedDefinitions, Node, NodeIdentity, Surface,
+    ClusterSettings, IlmPolicies, Indices, NamedDefinitions, Node, NodeIdentity,
+    SnapshotRepositories, Surface,
 };
 use crate::collectors::elasticsearch::source::cluster_settings_answer::read_cluster_settings;
 use crate::collectors::elasticsearch::source::indices_answer::read_indices;
+use crate::collectors::elasticsearch::source::lifecycle_answer::{
+    read_ilm_policies, read_ingest_pipelines, read_snapshot_repositories,
+};
 use crate::collectors::elasticsearch::source::root_answer::read_identity;
 use crate::collectors::elasticsearch::source::templates_answer::{
     read_component_templates, read_index_templates,
@@ -36,6 +40,9 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         index_templates: None,
         component_templates: None,
         indices: None,
+        ilm_policies: None,
+        ingest_pipelines: None,
+        snapshot_repositories: None,
         error: None,
     };
 
@@ -76,6 +83,9 @@ fn read_into(
     node.index_templates = Some(answers.index_templates);
     node.component_templates = Some(answers.component_templates);
     node.indices = Some(answers.indices);
+    node.ilm_policies = Some(answers.ilm_policies);
+    node.ingest_pipelines = Some(answers.ingest_pipelines);
+    node.snapshot_repositories = Some(answers.snapshot_repositories);
     Ok(())
 }
 
@@ -86,6 +96,9 @@ struct Answers {
     index_templates: Surface<NamedDefinitions>,
     component_templates: Surface<NamedDefinitions>,
     indices: Surface<Indices>,
+    ilm_policies: Surface<IlmPolicies>,
+    ingest_pipelines: Surface<NamedDefinitions>,
+    snapshot_repositories: Surface<SnapshotRepositories>,
 }
 
 /// Every read of the node, in one pass inside its namespace.
@@ -99,5 +112,8 @@ fn read_answers(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Answers,
         index_templates: read_index_templates(client, endpoint),
         component_templates: read_component_templates(client, endpoint),
         indices: read_indices(client, endpoint),
+        ilm_policies: read_ilm_policies(client, endpoint),
+        ingest_pipelines: read_ingest_pipelines(client, endpoint),
+        snapshot_repositories: read_snapshot_repositories(client, endpoint),
     })
 }
