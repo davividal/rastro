@@ -33,6 +33,12 @@ const COMMAND_LINE_SETTING: &str = "-E";
 
 const CONFIG_FILE: &str = "elasticsearch.yml";
 
+/// Where a node keeps its data, one directory or a comma-joined list of them.
+const DATA_PATH: &str = "path.data";
+
+/// Where a node keeps its data when nothing says, relative to its home.
+const DEFAULT_DATA_DIRECTORY: &str = "data";
+
 /// The setting that puts the HTTP listener behind TLS.
 const TLS_SETTING: &str = "xpack.security.http.ssl.enabled";
 
@@ -83,6 +89,33 @@ impl NodeSettings {
 
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
+    }
+
+    /// The directories the node keeps its data in, as paths in its own mount namespace.
+    ///
+    /// `path.data` where it is set, each entry of a list separately and a relative one against
+    /// the home, which is how the node resolves it; `data` under the home otherwise. Nothing
+    /// where neither the setting nor the home is known, since a guessed path would seal a tree
+    /// that is not the node's.
+    pub fn data_directories(&self, home: Option<&Path>) -> Vec<PathBuf> {
+        let resolved = |directory: &str| {
+            let directory = Path::new(directory);
+            match (directory.is_absolute(), home) {
+                (true, _) => Some(directory.to_path_buf()),
+                (false, Some(home)) => Some(home.join(directory)),
+                (false, None) => None,
+            }
+        };
+
+        match self.get(DATA_PATH) {
+            Some(listed) => listed
+                .split(',')
+                .map(str::trim)
+                .filter(|directory| !directory.is_empty())
+                .filter_map(resolved)
+                .collect(),
+            None => resolved(DEFAULT_DATA_DIRECTORY).into_iter().collect(),
+        }
     }
 
     /// Plain only where the TLS setting is absent or exactly `false`.

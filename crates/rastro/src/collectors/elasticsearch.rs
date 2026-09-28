@@ -21,13 +21,14 @@ pub use model::{
 };
 pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,
+    shares_mounts_in,
 };
 pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Transport, Unread};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
     CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
-    CollectorVersion, FacetName, Observation, Presence,
+    CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
 /// The launcher every package of Elasticsearch installs, deb, rpm and tarball alike.
@@ -97,6 +98,29 @@ impl Collector for ElasticsearchCollector {
             true => Presence::Present,
             false => Presence::Absent,
         }
+    }
+
+    /// Each running node's data directories, sealed.
+    ///
+    /// **Sealed**, the strongest claim, for the reason the PostgreSQL and RabbitMQ stores are:
+    /// measured on 7.17, a node with no request at all moved every index's translog checkpoint
+    /// and retention-lease file within ninety seconds. What is in there, the indices and their
+    /// schemas, this facet reports properly, from the node.
+    ///
+    /// Only for a node that shares rastro's mount namespace. A node in a container names a
+    /// directory in its own image, and the walk reads the host.
+    fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
+        ResidentNode::all_in(&self.proc)
+            .iter()
+            .filter(|node| shares_mounts_in(&self.proc, node.process_id()))
+            .filter_map(|node| {
+                let settings = NodeSettings::read_in(&self.proc, node).ok()?;
+                Some(settings.data_directories(node.home()))
+            })
+            .flatten()
+            .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())
+            .map(FilesystemClaim::sealed)
+            .collect()
     }
 
     /// Shared, the default, and for a reason the RabbitMQ facet could not claim: a request
