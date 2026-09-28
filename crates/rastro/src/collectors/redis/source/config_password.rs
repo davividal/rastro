@@ -1,9 +1,11 @@
-//! The one directive rastro reads out of a redis configuration file: the password.
+//! The directives rastro reads out of a redis configuration file: the ones that decide the
+//! password.
 //!
 //! **Not a reading of the configuration.** What a server runs with comes from the server, and
 //! this file is opened only because a server that wants a password has no other way to be
-//! asked. One directive is looked for, `requirepass`, through the `include`s the server followed,
-//! and nothing else found here reaches the document.
+//! asked. Three directives are looked for through the `include`s the server followed:
+//! `requirepass`, the `user default` line that outranks it, and `aclfile`, which outranks both.
+//! Nothing found here reaches the document.
 //!
 //! **Tokenised the way redis tokenises it**, `sdssplitargs`, because a password is exactly the
 //! value most likely to hold a quote or a space, and reading it differently from the server means
@@ -18,6 +20,11 @@ use crate::collectors::file_glob;
 
 const REQUIREPASS: &str = "requirepass";
 const INCLUDE: &str = "include";
+const USER: &str = "user";
+const ACLFILE: &str = "aclfile";
+
+/// The account `requirepass` sets, and the only one whose password rastro ever needs.
+const DEFAULT_USER: &str = "default";
 
 /// How deep includes may nest before the file is taken to be broken.
 ///
@@ -25,22 +32,62 @@ const INCLUDE: &str = "include";
 /// of open files: a cycle nests without end, and no real configuration nests this deep.
 const INCLUDE_DEPTH: usize = 16;
 
-/// The password the file leaves the server with, if it sets one.
-///
-/// **The last directive wins**, the file read top to bottom with each include read in place,
-/// because that is the order the server applies them in. `requirepass ""` clears a password set
-/// earlier, as it does in the server.
-pub fn requirepass_in(file: &Path) -> Result<Option<String>, CollectionError> {
-    let mut password = None;
-    read_into(file, 0, &mut password)?;
+/// What a configuration file says about the default account's password.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PasswordDirectives {
+    /// The last `requirepass`, where it sets one; `requirepass ""` clears an earlier one.
+    pub requirepass: Option<String>,
 
-    Ok(password.filter(|password: &String| !password.is_empty()))
+    /// The rules of the `user default` line, in order, where there is one.
+    pub default_user: Option<Vec<String>>,
+
+    /// The ACL file, where one is named; the server then ignores `requirepass` entirely.
+    pub acl_file: Option<PathBuf>,
+}
+
+/// The password directives the file leaves the server with.
+///
+/// **The last `requirepass` wins**, the file read top to bottom with each include read in place,
+/// because that is the order the server applies them in. **A second `user default` is refused**:
+/// measured, the server will not start on such a file, so it is not the file of a running one.
+pub fn password_directives_in(file: &Path) -> Result<PasswordDirectives, CollectionError> {
+    let mut directives = PasswordDirectives::default();
+    read_into(file, 0, &mut directives)?;
+    directives.requirepass = directives
+        .requirepass
+        .filter(|password: &String| !password.is_empty());
+
+    Ok(directives)
+}
+
+/// The rules of the `default` account in an ACL file, or nothing where it declares none.
+///
+/// Nothing is an answer, not a failure: measured, a server whose ACL file declares no `default`
+/// leaves that account without a password, whatever `requirepass` says.
+pub fn default_user_in_acl_file(file: &Path) -> Result<Option<Vec<String>>, CollectionError> {
+    let text = fs::read_to_string(file).map_err(|error| {
+        CollectionError::new(format!("{} could not be read: {error}", file.display()))
+    })?;
+
+    let mut default_user = None;
+    for line in text.lines() {
+        let Some(words) = words_of(file, line)? else {
+            continue;
+        };
+        if let Some(rules) = default_user_rules(&words)
+            && default_user.replace(rules).is_some()
+        {
+            return Err(declared_twice(file));
+        }
+    }
+
+    Ok(default_user)
 }
 
 fn read_into(
     file: &Path,
     depth: usize,
-    password: &mut Option<String>,
+    directives: &mut PasswordDirectives,
 ) -> Result<(), CollectionError> {
     if depth > INCLUDE_DEPTH {
         return Err(CollectionError::new(format!(
@@ -54,24 +101,23 @@ fn read_into(
     })?;
 
     for line in text.lines() {
-        let line = line.trim_matches([' ', '\t', '\r', '\n']);
-        if line.is_empty() || line.starts_with('#') {
+        let Some(words) = words_of(file, line)? else {
+            continue;
+        };
+
+        if let Some(rules) = default_user_rules(&words) {
+            if directives.default_user.replace(rules).is_some() {
+                return Err(declared_twice(file));
+            }
             continue;
         }
 
-        let words = split_arguments(line).ok_or_else(|| {
-            CollectionError::new(format!(
-                "{} has a line rastro cannot split the way the server does: unbalanced quotes, or a \
-                 byte escape outside ASCII",
-                file.display()
-            ))
-        })?;
-
         match (words[0].to_ascii_lowercase().as_str(), words.len()) {
-            (REQUIREPASS, 2) => *password = Some(words[1].clone()),
+            (REQUIREPASS, 2) => directives.requirepass = Some(words[1].clone()),
+            (ACLFILE, 2) => directives.acl_file = Some(PathBuf::from(&words[1])),
             (INCLUDE, 2) => {
                 for included in included_files(file, &words[1])? {
-                    read_into(&included, depth + 1, password)?;
+                    read_into(&included, depth + 1, directives)?;
                 }
             }
             _ => {}
@@ -79,6 +125,43 @@ fn read_into(
     }
 
     Ok(())
+}
+
+/// A line's arguments, nothing for a blank line or a comment, or a failure where it will not
+/// split the way the server splits it.
+fn words_of(file: &Path, line: &str) -> Result<Option<Vec<String>>, CollectionError> {
+    let line = line.trim_matches([' ', '\t', '\r', '\n']);
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(None);
+    }
+
+    split_arguments(line).map(Some).ok_or_else(|| {
+        CollectionError::new(format!(
+            "{} has a line rastro cannot split the way the server does: unbalanced quotes, or a \
+             byte escape outside ASCII",
+            file.display()
+        ))
+    })
+}
+
+/// The rules of a `user default …` line; the directive is matched in any case, the account name
+/// exactly, as the server matches them.
+fn default_user_rules(words: &[String]) -> Option<Vec<String>> {
+    match words {
+        [directive, name, rules @ ..]
+            if directive.eq_ignore_ascii_case(USER) && name == DEFAULT_USER =>
+        {
+            Some(rules.to_vec())
+        }
+        _ => None,
+    }
+}
+
+fn declared_twice(file: &Path) -> CollectionError {
+    CollectionError::new(format!(
+        "{} declares the default account twice, which the server refuses to start with",
+        file.display()
+    ))
 }
 
 /// The files one `include` names, in the order the server reads them.

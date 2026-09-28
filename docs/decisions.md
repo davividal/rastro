@@ -5603,21 +5603,42 @@ The TCP port, else the unix socket's path, else the process title for a server w
 cannot be attributed. A port rather than an address, so a change of `bind`, the field host's
 finding, reads as a change to one instance rather than one vanishing and another appearing.
 
-## The configuration file is read for one directive, to authenticate
+## The configuration file is read for the password, to authenticate
 
 Narrower than the nginx exception and for a different reason: redis reports its effective state
 perfectly well, to a client with the password. So on `NOAUTH`, and only then, the password is
 looked for where the server itself got it: the unit from `/proc/<pid>/cgroup`, the start command
 from `systemctl show` on that unit, the file from the command's first argument where it is not
-an option, which is redis's rule, and `requirepass` from the file and its `include`s, tokenised
-as `sdssplitargs` does and the last one winning. A `--requirepass` on the command line outranks
-the file, as it does in the server. Nothing else read from the file reaches the document.
+an option, which is redis's rule, and from the file and its `include`s, tokenised as
+`sdssplitargs` does, the three directives that decide the password. Nothing else read from the
+file reaches the document.
+
+**The `default` account is replayed, not `requirepass` read.** Measured on redis 8.0.2, after a
+review found the first version read `requirepass` alone:
+
+- a `user default` line outranks `requirepass` whatever their order, because the server resets
+  the account and applies the line after the rest of the file, so without `on` the account is off;
+- with an `aclfile`, both are ignored and that file's `default` line is the account, and an ACL
+  file declaring no `default` leaves the account without a password;
+- `CONFIG REWRITE`, the ordinary way to persist a runtime change, keeps `requirepass` and appends
+  `user default on #<sha256>`, so a file rewritten once states one password twice, and a later
+  edit to `requirepass` alone leaves it stating two;
+- two `user default` lines, or an uppercase hash, and the server refuses to start.
+
+So the account's rules are replayed from a reset account, `on`, `off`, `>`, `<`, `#`, `!`,
+`nopass`, `resetpass` and `reset`, and a password is sent only where its `sha256` is among the
+hashes the account ends with. `requirepass`, the command line's winning over the file's, is one
+candidate among the account's own plaintexts; that it matches the rewritten hash is what lets
+the common case through. An account that is off, left without a password, or holding only
+hashes nothing matches is refused with that reason and nothing is sent. The unsalted verifier
+that the credentials entry below calls weak is what makes this checkable without asking.
 
 **One `AUTH`, never retried, never guessed.** A server started from another file would be sent
 the wrong password by an assumed `/etc/redis/redis.conf`, and each refusal is an `ACL LOG` entry.
 A password set with `CONFIG SET` and written nowhere is unreachable by any route, and the
-instance says so: that is the box telling the truth about how it was provisioned. A password
-the server refuses means the running server and its start disagree, which is itself the finding.
+instance says so: that is the box telling the truth about how it was provisioned. With the files
+checked against themselves first, a password the server refuses has been changed since it
+started, which is itself the finding, and that is the one refusal left to cost an `ACL LOG` entry.
 
 **A unit name from a cgroup is refused unless it is a plain service name**, and is passed after
 `--`: it is the one argument to `systemctl` rastro did not write.
@@ -5683,8 +5704,6 @@ containers it never starts, which the Debian image's `policy-rc.d` was measured 
 
 - **Cluster and Sentinel topology.** `mode` is recorded; `CLUSTER NODES` and `SENTINEL MASTERS`
   are reads of many boxes.
-- **An `aclfile`, or `user` lines in the configuration file**, as a source of the password; only
-  `requirepass` is looked for, and an account-only server is reported as unreachable.
 - **An unprivileged route to the password.** Debian's file is 0640 `redis:redis`, and dropping to
   that account the way `postgresql` runs `psql` is owed rather than built.
 - **A server listening only on its TLS port**, which is spoken to in plain text and reported as a

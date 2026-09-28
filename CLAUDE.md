@@ -103,8 +103,8 @@ Violating one is a plan change, not a detail.
   non-mutating way to report its own. nginx is that exception and reads as the
   counter-example it is: `nginx -T` creates every log file the config names, so
   rastro resolves the includes itself. `docs/decisions.md` has the measurement. redis
-  reads its file too, for `requirepass` alone and only after `NOAUTH`: not as effective
-  state, but to be allowed to ask the server for it.
+  reads its file too, for the directives that decide the password and only after
+  `NOAUTH`: not as effective state, but to be allowed to ask the server for it.
 - **Exclusions, never inclusions.** Config is optional and can only narrow.
 - **Absence is state.** Statuses are `ok|absent|error`; excluded collectors are
   omitted with a WARN. Failures are loud in the output, never silent.

@@ -13,9 +13,10 @@ pub use model::{
 };
 pub use source::{
     AclList, ConfigGet, Credential, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
-    InstalledServers, ModuleList, Reply, ResidentServer, RespConnection, ServerStart, ServerStream,
-    data_directory_of, discover, password_for, read_installation, requirepass_in, resident_servers,
-    start_of, unit_of,
+    InstalledServers, ModuleList, PasswordDirectives, Reply, ResidentServer, RespConnection,
+    ServerStart, ServerStream, data_directory_of, default_user_in_acl_file, discover,
+    password_directives_in, password_for, password_for_default_account, read_installation,
+    resident_servers, start_of, unit_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 

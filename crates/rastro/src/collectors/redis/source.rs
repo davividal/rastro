@@ -4,6 +4,7 @@ mod acl_list;
 mod config_get;
 mod config_password;
 mod data_directory;
+mod default_account;
 mod info_fields;
 mod info_replication;
 mod info_server;
@@ -19,8 +20,9 @@ mod server_unit;
 
 pub use acl_list::AclList;
 pub use config_get::ConfigGet;
-pub use config_password::requirepass_in;
+pub use config_password::{PasswordDirectives, default_user_in_acl_file, password_directives_in};
 pub use data_directory::data_directory_of;
+pub use default_account::password_for_default_account;
 pub use info_fields::info_fields;
 pub use info_replication::InfoReplication;
 pub use info_server::InfoServer;
