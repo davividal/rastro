@@ -5683,3 +5683,14 @@ A wildcard is dialled on its family's loopback, `::` on `::1`, which it accepts 
 it is dual-stack, a socket option `/proc` does not publish. An address that is neither is
 dialled as bound: a node given one interface listens on nothing else, and that address is on
 this box.
+
+## A plaintext request to a TLS listener is a write, measured
+
+On 8.15.3 with default security, one plaintext `GET /` to the TLS-only HTTP port got no answer:
+the node closed the connection and logged a WARN, `received plaintext http traffic on an https
+channel, closing connection`. An idle control of 30 s before it logged nothing. This is what
+the settings gate exists for: the auto-configuration writes `xpack.security.http.ssl.enabled:
+true` into the node's own `elasticsearch.yml`, nested, and that file is the one read, so a
+default 8.x node is never sent plaintext at all. Where the settings failed to say so, a closed
+connection or an answer that is not HTTP is reported as a listener wanting TLS, and a 401 or
+403 as a node wanting credentials. All three are the facet's `error`, never `absent`.

@@ -178,3 +178,68 @@ fn get_refuses_a_listener_nothing_holds() {
     // Assert
     assert!(unread.reason().contains("connect"), "{}", unread.reason());
 }
+
+#[test]
+fn get_reports_a_node_that_wants_credentials() {
+    // Arrange: what 8.x answers without them, measured on 8.15.3 with security on and TLS off.
+    let (endpoint, _) = serve_once(
+        b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"security\"\r\ncontent-length: 2\r\n\r\n{}"
+            .to_vec(),
+    );
+
+    // Act
+    let unread = HttpClient::new().get(&endpoint, "/").expect_err("a 401");
+
+    // Assert
+    assert!(
+        unread.reason().contains("credentials"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn get_reports_a_node_that_forbids_the_read() {
+    // Arrange
+    let (endpoint, _) =
+        serve_once(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 2\r\n\r\n{}".to_vec());
+
+    // Act
+    let unread = HttpClient::new().get(&endpoint, "/").expect_err("a 403");
+
+    // Assert
+    assert!(
+        unread.reason().contains("credentials"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn get_reports_a_listener_that_closes_without_answering_as_wanting_tls() {
+    // Arrange: measured on 8.15.3, a TLS-only listener closes a plaintext connection with no
+    // answer at all, and logs a WARN, which is why the settings are read first.
+    let (endpoint, _) = serve_once(Vec::new());
+
+    // Act
+    let unread = HttpClient::new()
+        .get(&endpoint, "/")
+        .expect_err("no answer");
+
+    // Assert
+    assert!(unread.reason().contains("TLS"), "{}", unread.reason());
+}
+
+#[test]
+fn get_reports_a_listener_that_answers_in_tls_as_wanting_tls() {
+    // Arrange: a TLS alert record, which is what some TLS stacks send to a plaintext client.
+    let (endpoint, _) = serve_once(vec![0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x46]);
+
+    // Act
+    let unread = HttpClient::new()
+        .get(&endpoint, "/")
+        .expect_err("a TLS alert");
+
+    // Assert
+    assert!(unread.reason().contains("TLS"), "{}", unread.reason());
+}

@@ -27,6 +27,11 @@ const DEFAULT_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const HEAD_ALLOWANCE: usize = 64 * 1024;
 
 const HEAD_END: &[u8] = b"\r\n\r\n";
+const HTTP_VERSION_PREFIX: &[u8] = b"HTTP/";
+
+/// The two answers a secured node gives a request without credentials.
+const UNAUTHORISED: u16 = 401;
+const FORBIDDEN: u16 = 403;
 const LAST_CHUNK: &[u8] = b"0\r\n\r\n";
 
 /// A client for one node's HTTP API.
@@ -52,8 +57,30 @@ impl HttpClient {
     pub fn get(&self, endpoint: &HttpEndpoint, path: &str) -> Result<String, Unread> {
         let address = socket_address_of(endpoint)?;
         let raw = self.exchange(address, path)?;
+
+        // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered.
+        if raw.is_empty() {
+            return Err(Unread::new(format!(
+                "{address} closed the connection without an HTTP answer, as a listener that \
+                 wants TLS does; v1 speaks plain HTTP only"
+            )));
+        }
+        if !raw.starts_with(HTTP_VERSION_PREFIX) {
+            return Err(Unread::new(format!(
+                "{address} answered in something other than HTTP, most likely TLS; v1 speaks \
+                 plain HTTP only"
+            )));
+        }
+
         let answer = Answer::parse(&raw, path)?;
 
+        if matches!(answer.status, UNAUTHORISED | FORBIDDEN) {
+            return Err(Unread::new(format!(
+                "the node answered {} to GET {path}: it requires credentials, which v1 does \
+                 not send",
+                answer.status
+            )));
+        }
         if answer.status != 200 {
             return Err(Unread::new(format!(
                 "the node answered {} to GET {path}",
