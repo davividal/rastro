@@ -417,3 +417,92 @@ fn loopback_is_reached_before_an_address_of_the_box() {
         ))
     );
 }
+
+/// 6380, the plain port beside a TLS one on 6379.
+const WILDCARD_6380: &str = "00000000:18EC";
+
+#[test]
+fn the_port_the_process_title_names_is_reached_before_one_that_sorts_first() {
+    // Arrange: TLS on 6379, plain on 6380, both wildcard. Measured, the kernel's tables cannot
+    // tell them apart, and redis's title names the plain port whenever there is one.
+    let titled = Process {
+        title: "/usr/bin/redis-server *:6380\0",
+        ..server("412", &[1001, 1006])
+    };
+    let proc = proc_with(
+        "redis-discovery-titled-port",
+        &[titled],
+        &format!(
+            "{}{}",
+            tcp_row(WILDCARD_6379, 1001),
+            tcp_row(WILDCARD_6380, 1006)
+        ),
+        "",
+        "",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        only(&proc).reach,
+        Ok(DialTarget::Tcp(
+            "127.0.0.1:6380".parse().expect("an address")
+        ))
+    );
+}
+
+#[test]
+fn within_the_titled_port_loopback_is_still_reached_first() {
+    // Arrange: the title names the port and the box's own address, since it shows the first
+    // `bind`; loopback on the same port is the more local choice.
+    let titled = Process {
+        title: "/usr/bin/redis-server 10.0.0.5:6379\0",
+        ..server("412", &[1001, 1005])
+    };
+    let proc = proc_with(
+        "redis-discovery-titled-loopback",
+        &[titled],
+        &format!(
+            "{}{}",
+            tcp_row(OWN_6379, 1005),
+            tcp_row(LOOPBACK_6379, 1001)
+        ),
+        "",
+        "",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        only(&proc).reach,
+        Ok(DialTarget::Tcp(
+            "127.0.0.1:6379".parse().expect("an address")
+        ))
+    );
+}
+
+#[test]
+fn a_title_naming_no_port_leaves_the_usual_order() {
+    // Arrange: a custom `proc-title-template` that leaves the address out.
+    let untitled = Process {
+        title: "redis-server [cache]\0",
+        ..server("412", &[1001, 1006])
+    };
+    let proc = proc_with(
+        "redis-discovery-untitled-port",
+        &[untitled],
+        &format!(
+            "{}{}",
+            tcp_row(WILDCARD_6379, 1001),
+            tcp_row(WILDCARD_6380, 1006)
+        ),
+        "",
+        "",
+    );
+
+    // Act & Assert
+    assert_eq!(
+        only(&proc).reach,
+        Ok(DialTarget::Tcp(
+            "127.0.0.1:6379".parse().expect("an address")
+        ))
+    );
+}

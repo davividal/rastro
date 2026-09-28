@@ -12,10 +12,11 @@ use super::installed_servers::InstalledServers;
 use super::module_list::ModuleList;
 use super::reply::Reply;
 use super::resp_connection::RespConnection;
-use super::server_discovery::{DiscoveredServer, discover};
+use super::server_discovery::{DialTarget, DiscoveredServer, discover};
 use super::server_password::{Credential, password_for};
 use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::redis::model::{Installation, Instance, ServerIdentity};
+use crate::collectors::redis::value_objects::Listener;
 
 /// The first command any server is sent.
 const INFO_SERVER: [&str; 2] = ["INFO", "server"];
@@ -61,19 +62,31 @@ fn read_instance(
         errors: Vec::new(),
     };
 
-    let connected = match &server.reach {
-        Ok(target) => RespConnection::dial(target),
-        Err(refusal) => Err(CollectionError::new(refusal.as_str())),
-    };
-    let mut connection = match connected {
-        Ok(connection) => connection,
-        Err(error) => {
-            instance.errors.push(error.to_string());
+    let target = match &server.reach {
+        Ok(target) => target,
+        Err(refusal) => {
+            instance.errors.push(refusal.clone());
             return instance;
         }
     };
 
-    match identify(&mut connection, proc, process_id, systemctl) {
+    // Dialling and the first answer are where a TLS port hangs up on a plain client.
+    let answered = RespConnection::dial(target).and_then(|mut connection| {
+        let first = connection.ask(&INFO_SERVER)?;
+        Ok((connection, first))
+    });
+    let (mut connection, first) = match answered {
+        Ok(answered) => answered,
+        Err(error) => {
+            instance.errors.push(format!(
+                "{error}{}",
+                untried_note(target, &instance.listening)
+            ));
+            return instance;
+        }
+    };
+
+    match identify(first, &mut connection, proc, process_id, systemctl) {
         Ok(identity) => instance.identity = Some(identity),
         Err(error) => {
             instance.errors.push(error.to_string());
@@ -120,12 +133,12 @@ fn read_instance(
 /// only ever sent to a server that asked for one. Sending it to one that did not is an error the
 /// server logs.
 fn identify(
+    first: Reply,
     connection: &mut RespConnection,
     proc: &Path,
     process_id: u32,
     systemctl: Option<&CanonicalTool>,
 ) -> Result<ServerIdentity, CollectionError> {
-    let first = connection.ask(&INFO_SERVER)?;
     let answered = match &first {
         Reply::Error(message) if message.starts_with(NOAUTH) => {
             let credential =
@@ -137,6 +150,34 @@ fn identify(
     };
 
     InfoServer::parse(&text_of(&INFO_SERVER, answered)?)
+}
+
+/// The TCP sockets on other ports that were not tried after the chosen one failed, and why not.
+///
+/// Measured, a plain client on a TLS port is a line in the server's log at its default level, and
+/// the kernel's tables cannot say which port is which, so nothing else is tried; the document says
+/// what was left instead, so a reader can tell a TLS port from a dead server.
+fn untried_note(target: &DialTarget, listening: &[Listener]) -> String {
+    let DialTarget::Tcp(address) = target else {
+        return String::new();
+    };
+
+    let untried: Vec<String> = listening
+        .iter()
+        .filter(|listener| {
+            matches!(listener, Listener::Inet { port, .. } if port.as_u16() != address.port())
+        })
+        .map(Listener::to_string)
+        .collect();
+
+    match untried.is_empty() {
+        true => String::new(),
+        false => format!(
+            "; it also listens on {}, not tried, because that may be its TLS port and a plain \
+             client there is a line in the server's log",
+            untried.join(", ")
+        ),
+    }
 }
 
 /// One `AUTH`, never repeated.
