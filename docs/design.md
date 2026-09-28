@@ -152,6 +152,21 @@ one holding the distribution port epmd named for it. Addressing another
 application's node would make it log an authentication failure, which is a write
 to a box rastro was asked to read.
 
+**Layer 3, Elasticsearch.** One `elasticsearch` facet listing every node running on the box,
+whether the host installed it or a container runs it. **7.17 through 9.x**, over plain HTTP
+only. It is the one collector that makes a request over the network, and the boundary is
+narrow: a `GET`, to a listener held by a process `/proc` names as an Elasticsearch server,
+from a thread that has joined that process's network namespace, so a node with no published
+port is read the same way as one on the host. **Nothing is asked blind**: which listener
+serves HTTP is inferred from the node's own listeners and how it binds, and whether it wants
+TLS from the settings it started with, because a request to the transport port or a
+plaintext request to a TLS listener is something the node logs. A node that wants TLS or
+credentials is that node's `error`. Every request was measured before it was written, and
+none writes; the one family that does, deprecated parameters and legacy routes, is not sent.
+An index is keyed by its alias where the alias is its identity, so a rotation that changed
+nothing reads as volatile fields moving; the mappings are a digest. Snapshot repository
+settings are sensitive whole.
+
 A node's name is **read, never composed**: the broker writes it into the Ra
 directories it holds open, so a node under long names is keyed and addressed by the
 name it actually runs under. The same directories give the store, which is sealed:
@@ -365,6 +380,12 @@ unannotated volatile fields at CI time instead of on a production box.
   attribution rather than one of the two undetermined ones. It cannot run in the
   container suite, because attributing a node means reading the broker process's
   descriptors and a default container refuses that even to root.
+- The `elasticsearch` facet against live nodes, behind the same label: 7.17 and 8.15 with
+  security off and 8.15 at its secured default, in containers with no published port, read
+  as root through the namespace join; each node's own answer to compare against, no index
+  changed by a read, two reads identical, the secured node never sent plaintext according to
+  its own log, and an unprivileged run naming on each node what it could not read
+  (`live-search.yml`).
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.
