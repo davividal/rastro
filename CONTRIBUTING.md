@@ -98,7 +98,7 @@ That label is a *tier*, not this workflow. It says two things at once: this chan
 needs more than the ordinary gates, and the deeper checks are now running for it.
 Every workflow in the tier reacts to that one label, so you never have to work out
 which deep check your change needs — that is a reviewer's question. The tier holds the
-distributions run, the live-engine conformance run and the live-broker conformance run
+distributions run, the live-engine, live-broker and live-search conformance runs
 today, and `docs/design.md`'s "Planned, not yet running" list is what joins it next.
 
 **A change to the `containers` facet wants the label**, because the fixture tests pass
@@ -111,6 +111,12 @@ reading the descriptors of the process holding that node's distribution port, an
 container in this project's suite is allowed to do that. Every ordinary run therefore
 exercises the *undetermined* path only. The live-broker job is the one place the
 confirmed path is reachable.
+
+**So does a change to the `elasticsearch` facet**: reading a node in a container means joining
+its network namespace, which needs `CAP_SYS_ADMIN` that no container in the suite has, so the
+fixture tests prove every decision around the join and only the live-search job proves the
+join. It is also the job that found the 8.x launcher holds the paths the research said the
+server did.
 
 ## Working conventions
 

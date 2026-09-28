@@ -165,6 +165,7 @@ Then dispatch:
 | postgres | `pg_dumpall --globals-only`; `psql -c "SHOW ALL"` |
 | mysql/mariadb | `mysqldump --no-data`; `SHOW GLOBAL VARIABLES` |
 | rabbitmq | `rabbitmqctl export_definitions -` |
+| elasticsearch | none: `GET /_cluster/settings`, `/_index_template` and siblings over HTTP |
 | redis | `redis-cli CONFIG GET '*'`; `ACL LIST` |
 | docker | `docker inspect $(docker ps -aq)`; `volume ls`; `network ls` |
 | haproxy | `haproxy -f /etc/haproxy/haproxy.cfg -c -V` |
