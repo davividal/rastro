@@ -2,9 +2,16 @@
 
 use std::path::Path;
 
-use super::config_password::requirepass_in;
+use super::config_password::{
+    PasswordDirectives, default_user_in_acl_file, password_directives_in,
+};
+use super::default_account::password_for_default_account;
 use super::server_unit::{start_of, unit_of};
 use crate::collectors::canonical_tool::CanonicalTool;
+
+/// The rules an ACL file without a `default` line leaves that account with, measured.
+const SWITCHED_ON: &str = "on";
+const NO_PASSWORD: &str = "nopass";
 
 /// A password, and where it was read from, for a message that must never quote it.
 pub struct Credential {
@@ -43,24 +50,48 @@ pub fn password_for(
         )
     })?;
 
-    if let Some(password) = start.password {
-        return Ok(Credential {
-            password,
-            origin: format!("the command line of {unit}"),
-        });
+    let file = start.config_file;
+    if file.is_none() && start.password.is_none() {
+        return Err(format!(
+            "the server requires a password, and {unit} starts it with no configuration file"
+        ));
     }
 
-    let file = start.config_file.ok_or_else(|| {
-        format!("the server requires a password, and {unit} starts it with no configuration file")
-    })?;
-    let origin = file.display().to_string();
+    let directives = match &file {
+        Some(file) => password_directives_in(file)
+            .map_err(|error| format!("the server requires a password, and {error}"))?,
+        None => PasswordDirectives::default(),
+    };
 
-    match requirepass_in(&file) {
-        Ok(Some(password)) => Ok(Credential { password, origin }),
-        Ok(None) => Err(format!(
-            "the server requires a password and {origin} sets no password, so it was set at \
-             runtime, where rastro has no way to read it"
-        )),
-        Err(error) => Err(format!("the server requires a password, and {error}")),
-    }
+    // Measured: with an ACL file the server ignores `requirepass` and the file's own `user`
+    // lines, and an ACL file that declares no `default` leaves that account without a password.
+    let (default_user, origin) = match &directives.acl_file {
+        Some(acl_file) if acl_file.is_relative() => {
+            return Err(format!(
+                "the server requires a password, and its ACL file {} is named by a relative \
+                 path, which the server resolved against a working directory nothing records",
+                acl_file.display()
+            ));
+        }
+        Some(acl_file) => {
+            let rules = default_user_in_acl_file(acl_file)
+                .map_err(|error| format!("the server requires a password, and {error}"))?
+                .unwrap_or_else(|| vec![SWITCHED_ON.to_owned(), NO_PASSWORD.to_owned()]);
+            (Some(rules), acl_file.display().to_string())
+        }
+        None => (
+            directives.default_user,
+            match &file {
+                Some(file) => file.display().to_string(),
+                None => format!("the command line of {unit}"),
+            },
+        ),
+    };
+
+    // The command line is applied after the file, so its `--requirepass` is the later one.
+    let requirepass = start.password.or(directives.requirepass);
+    let password = password_for_default_account(requirepass.as_deref(), default_user.as_deref())
+        .map_err(|reason| format!("the server requires a password, and {reason} ({origin})"))?;
+
+    Ok(Credential { password, origin })
 }

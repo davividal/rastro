@@ -197,9 +197,10 @@ password are argv, the environment and stdin, and whose text output cannot tell 
 value from a missing one; `redis-protocol` frames the replies and rastro holds the
 socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
 seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
-the password its own unit started it with, read from the file that unit names, because a
-refused one is an entry in the server's `ACL LOG`; a password set only at runtime is
-unreachable and the instance says so. `INFO server` is the gate, and every read after it
+a password the files its own unit names give the `default` account, replayed the way the
+server builds it and checked against its hashes first, because a refused one is an entry in
+the server's `ACL LOG`; a password set only at runtime is unreachable and the instance says
+so. `INFO server` is the gate, and every read after it
 fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
 The data directory is sealed from the process's working directory, since `dir` is a
 `chdir`, and never when that is `/`.

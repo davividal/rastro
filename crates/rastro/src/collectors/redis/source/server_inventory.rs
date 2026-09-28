@@ -151,8 +151,8 @@ fn authenticate(
     match connection.ask(&["AUTH", credential.password.as_str()])? {
         Reply::Simple(ok) if ok == "OK" => Ok(()),
         _ => Err(CollectionError::new(format!(
-            "the server refused the password {} sets, so the running server and the way it was \
-             started disagree",
+            "the server refused the password {} gives the default account, so it has been \
+             changed since the server started",
             credential.origin
         ))),
     }
