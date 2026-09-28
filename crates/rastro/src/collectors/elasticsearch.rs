@@ -8,5 +8,7 @@
 pub mod source;
 pub mod value_objects;
 
-pub use source::{HttpClient, NodeListener, NodeSettings, ResidentNode, http_endpoint};
+pub use source::{
+    HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
+};
 pub use value_objects::{HttpEndpoint, Transport, Unread};
