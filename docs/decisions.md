@@ -5872,3 +5872,36 @@ true` into the node's own `elasticsearch.yml`, nested, and that file is the one 
 default 8.x node is never sent plaintext at all. Where the settings failed to say so, a closed
 connection or an answer that is not HTTP is reported as a listener wanting TLS, and a 401 or
 403 as a node wanting credentials. All three are the facet's `error`, never `absent`.
+
+## Every request the facet sends, measured before it was written
+
+On 7.17.24 and 8.15.3 with security off, set up with a composable template over a component
+template, an aliased index named like a rotation (`myapp-tenant1_1790000000`), an unaliased
+index, an ILM policy, a pipeline, a snapshot repository and one persistent and one transient
+setting. Each request was sent twice and the bodies compared; the node's index list, hidden and
+system indices and their document counts included, was taken before the reads, after a 20 s
+idle control, and 12 s after the last read.
+
+| request | 7.17 | 8.15 |
+| --- | --- | --- |
+| `/` | 547 B | 541 B |
+| `/_cluster/settings?flat_settings=true` | 116 B | 116 B |
+| `/_index_template` | 19 KB | 137 KB |
+| `/_component_template` | 3.8 KB | 38 KB |
+| `/*/_alias?expand_wildcards=open,closed` | 88 B | 88 B |
+| `/*/_settings?flat_settings=true&expand_wildcards=open,closed` | 627 B | 627 B |
+| `/*/_mapping?expand_wildcards=open,closed` | 135 B | 135 B |
+| `/_ilm/policy` | 7.0 KB | 15 KB |
+| `/_ingest/pipeline` | 716 B | 19 KB |
+| `/_snapshot` | 66 B | 66 B |
+| `/_nodes/_local/plugins` | 21 KB | 27 KB |
+
+Every body was byte-identical across the two reads, none carried a `Warning` header, and the
+index list did not change, before or after. The idle control did not change either, over a
+window shorter than the one in which the node was earlier seen writing its ILM history, which is
+why the comparison is of the index list rather than of the disk.
+
+**The size is the node's own content.** An 8.x node ships about 45 index templates, 64
+component templates, 28 ILM policies and 21 pipelines, and all of them are reported: they are
+state, they change when the node is upgraded, and an upgrade is a change a before-and-after
+pair should show.

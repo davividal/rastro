@@ -4,8 +4,10 @@ use std::cmp::Ordering;
 
 use rastro_collector::Observation;
 
-use crate::collectors::elasticsearch::model::NodeIdentity;
 use crate::collectors::elasticsearch::model::node_identity::optional;
+use crate::collectors::elasticsearch::model::{
+    ClusterSettings, NodeIdentity, Surface, surface_observation,
+};
 use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, NetworkNamespace, Unread};
 
 /// A running Elasticsearch server.
@@ -24,6 +26,9 @@ pub struct Node {
     pub network_namespace: Option<NetworkNamespace>,
     pub http: Option<HttpEndpoint>,
     pub identity: Option<NodeIdentity>,
+
+    /// Each surface is absent where the node was never asked, which its `error` explains.
+    pub cluster_settings: Option<Surface<ClusterSettings>>,
     pub error: Option<Unread>,
 }
 
@@ -94,6 +99,12 @@ impl From<&Node> for Observation {
                     Some(identity) => Observation::from(&identity.version),
                     None => Observation::null(),
                 },
+            ),
+            (
+                "cluster_settings",
+                surface_observation(node.cluster_settings.as_ref(), |settings| {
+                    Observation::from(settings)
+                }),
             ),
             ("error", optional(node.error.as_ref().map(Unread::reason))),
         ])
