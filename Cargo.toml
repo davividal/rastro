@@ -56,6 +56,12 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # still links; MIT/Apache-2.0, both already allowed. What it buys over hand-rolled DER is
 # the part nobody should hand-roll in a binary that runs as root: the ASN.1.
 x509-parser = "0.18"
+# The redis wire protocol, framing only: rastro holds the socket, the timeouts, the reply bound
+# and every command sent, which a full client would have taken over. MIT, pure Rust, no
+# `unsafe`. Four crates new to the tree, `nom` being here already for `x509-parser`, where the
+# `redis` client brings fifty-four. See `docs/decisions.md`.
+# Default features: 6.0.0 does not build with `resp2` alone, its decoder naming `resp3` either way.
+redis-protocol = "6"
 
 [profile.release]
 strip = true

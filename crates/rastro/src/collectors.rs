@@ -26,6 +26,7 @@ pub mod postgresql;
 pub mod proc_sockets;
 pub mod processes;
 pub mod rabbitmq;
+pub mod redis;
 pub mod repositories;
 pub mod sockets;
 pub mod ssh_access;
@@ -54,6 +55,7 @@ pub use pam::PamCollector;
 pub use postgresql::PostgresqlCollector;
 pub use processes::ProcessesCollector;
 pub use rabbitmq::RabbitmqCollector;
+pub use redis::RedisCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
 pub use ssh_access::SshAccessCollector;
@@ -241,6 +243,7 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
         Box::new(PostgresqlCollector::new()),
         Box::new(ProcessesCollector::new()),
         Box::new(RabbitmqCollector::new()),
+        Box::new(RedisCollector::new()),
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),
         Box::new(SshAccessCollector::new()),

@@ -32,6 +32,9 @@ serde_path_to_error = { workspace = true }
 # Content hashing, which nothing does by default. Kept for the opt-in collector that
 # will name the trees worth reading: see `docs/decisions.md`.
 sha2 = { workspace = true }
+# Reading a redis server over its own protocol, where the reply bound and the handshake are
+# rastro's rather than a client library's: see `docs/decisions.md`.
+redis-protocol = { workspace = true }
 # Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
 # output of a run and can signal the child's whole process group.
 subprocess = { workspace = true }
@@ -67,4 +70,11 @@ test = false
 # grant even to root. `.github/workflows/live-broker.yml` runs it where both hold.
 [[test]]
 name = "rabbitmq_conformance"
+test = false
+
+# Kept out of the ordinary suite because it starts and stops a live server of its own, and a
+# suite running binaries side by side would let that server appear between the two runs of
+# the determinism harness. Run after the suite, by `ci.yml` and `container-suite.sh`.
+[[test]]
+name = "redis_conformance"
 test = false
