@@ -6,8 +6,8 @@ use rastro_collector::Observation;
 
 use crate::collectors::elasticsearch::model::node_identity::optional;
 use crate::collectors::elasticsearch::model::{
-    ClusterSettings, IlmPolicies, Indices, NamedDefinitions, NodeIdentity, SnapshotRepositories,
-    Surface, surface_observation,
+    ClusterSettings, IlmPolicies, Indices, NamedDefinitions, NodeIdentity, Plugins,
+    SnapshotRepositories, Surface, surface_observation,
 };
 use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, NetworkNamespace, Unread};
 
@@ -36,6 +36,7 @@ pub struct Node {
     pub ilm_policies: Option<Surface<IlmPolicies>>,
     pub ingest_pipelines: Option<Surface<NamedDefinitions>>,
     pub snapshot_repositories: Option<Surface<SnapshotRepositories>>,
+    pub plugins: Option<Surface<Plugins>>,
     pub error: Option<Unread>,
 }
 
@@ -146,6 +147,10 @@ impl From<&Node> for Observation {
                 surface_observation(node.snapshot_repositories.as_ref(), |repositories| {
                     Observation::from(repositories)
                 }),
+            ),
+            (
+                "plugins",
+                surface_observation(node.plugins.as_ref(), |plugins| Observation::from(plugins)),
             ),
             ("error", optional(node.error.as_ref().map(Unread::reason))),
         ])

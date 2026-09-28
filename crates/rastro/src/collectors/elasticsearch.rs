@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 pub use model::{
     ClusterSettings, IlmPolicies, IlmPolicy, IndexEntry, Indices, Installation, NamedDefinitions,
-    Node, NodeIdentity, NodeVersion, SnapshotRepositories, SnapshotRepository, Surface,
+    Node, NodeIdentity, NodeVersion, Plugins, SnapshotRepositories, SnapshotRepository, Surface,
 };
 pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,

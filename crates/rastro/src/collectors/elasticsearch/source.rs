@@ -11,6 +11,7 @@ mod node_listeners;
 mod node_namespace;
 mod node_reader;
 mod node_settings;
+mod plugins_answer;
 mod resident_node;
 mod root_answer;
 mod templates_answer;
