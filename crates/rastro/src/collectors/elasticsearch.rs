@@ -6,5 +6,7 @@
 //! that process's network namespace, and never a request that could write. See
 //! `docs/decisions.md`.
 pub mod source;
+pub mod value_objects;
 
 pub use source::{NodeSettings, ResidentNode, UnreadSettings};
+pub use value_objects::Transport;

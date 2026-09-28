@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
+use crate::collectors::elasticsearch::value_objects::Transport;
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
 const SEPARATOR: char = '\0';
@@ -31,6 +32,9 @@ const SEPARATOR: char = '\0';
 const COMMAND_LINE_SETTING: &str = "-E";
 
 const CONFIG_FILE: &str = "elasticsearch.yml";
+
+/// The setting that puts the HTTP listener behind TLS.
+const TLS_SETTING: &str = "xpack.security.http.ssl.enabled";
 
 /// A node's start-up settings, flattened to dotted keys.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -101,6 +105,26 @@ impl NodeSettings {
 
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
+    }
+
+    /// Plain only where the TLS setting is absent or exactly `false`.
+    ///
+    /// A value the node would reject as a boolean is read as TLS, because being wrong that way
+    /// costs an unread facet and being wrong the other way costs a request the node refused.
+    pub fn transport(&self) -> Transport {
+        match self.get(TLS_SETTING) {
+            None | Some("false") => Transport::Plain,
+            Some(_) => Transport::TlsRequired,
+        }
+    }
+}
+
+/// Settings the caller already has, so what depends on them can be exercised without a node.
+impl FromIterator<(String, String)> for NodeSettings {
+    fn from_iter<Pairs: IntoIterator<Item = (String, String)>>(pairs: Pairs) -> Self {
+        Self {
+            values: pairs.into_iter().collect(),
+        }
     }
 }
 
