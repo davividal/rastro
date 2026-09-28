@@ -5665,3 +5665,21 @@ decodes files Elasticsearch would not read. It brings `foldhash` through `hashbr
 Zlib, which is now allowed beside BSL-1.0 on the same argument: permissive, no copyleft, and
 its one condition concerns source rather than a binary. Hand-rolling a subset of YAML was
 rejected for the reason `x509-parser` is used rather than hand-rolled DER.
+
+## The HTTP port is inferred from how the node binds, because asking would be a guess
+
+`http.port` defaults to the range `9200-9300` and `transport.port` to `9300-9400`, so on a
+default node both of its listeners are in the HTTP range. Asking each one is not an option:
+HTTP sent to the transport port is an error the node logs. Measured on 7.17.24 and 8.15.3, a
+node binds transport first and HTTP second, each the lowest free port in its range: a default
+node holds 9300 and 9200, and a second node in the same namespace holds 9301 and 9201.
+
+So the transport port is set aside first, as the lowest of the node's own listeners in its
+range, and exactly one listener must remain in the HTTP range; two is a refusal rather than a
+pick. A pinned `http.port` narrows the range to itself. The listeners are the node's own: its
+descriptors joined against `/proc/<pid>/net/tcp{,6}`, the table of its own namespace.
+
+A wildcard is dialled on its family's loopback, `::` on `::1`, which it accepts whether or not
+it is dual-stack, a socket option `/proc` does not publish. An address that is neither is
+dialled as bound: a node given one interface listens on nothing else, and that address is on
+this box.
