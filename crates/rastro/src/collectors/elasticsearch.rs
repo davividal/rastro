@@ -15,7 +15,9 @@ pub mod value_objects;
 
 use std::path::{Path, PathBuf};
 
-pub use model::{ClusterSettings, Installation, Node, NodeIdentity, NodeVersion, Surface};
+pub use model::{
+    ClusterSettings, Installation, NamedDefinitions, Node, NodeIdentity, NodeVersion, Surface,
+};
 pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,
 };
