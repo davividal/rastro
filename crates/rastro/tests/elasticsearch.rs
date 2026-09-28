@@ -140,7 +140,10 @@ fn collect_asks_the_node_nothing_but_the_reads_it_needs() {
     collector(&proc, false).collect().expect("a facet");
 
     // Assert
-    assert_eq!(node.requests(), ["/"]);
+    assert_eq!(
+        node.requests(),
+        ["/", "/_cluster/settings?flat_settings=true"]
+    );
 }
 
 #[test]

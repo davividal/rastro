@@ -15,11 +15,11 @@ pub mod value_objects;
 
 use std::path::{Path, PathBuf};
 
-pub use model::{Installation, Node, NodeIdentity, NodeVersion};
+pub use model::{ClusterSettings, Installation, Node, NodeIdentity, NodeVersion, Surface};
 pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,
 };
-pub use value_objects::{HttpEndpoint, NetworkNamespace, Transport, Unread};
+pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Transport, Unread};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{

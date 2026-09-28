@@ -6,12 +6,15 @@
 
 use std::path::Path;
 
-use crate::collectors::elasticsearch::model::Node;
+use crate::collectors::elasticsearch::model::{ClusterSettings, Node, NodeIdentity, Surface};
+use crate::collectors::elasticsearch::source::cluster_settings_answer::read_cluster_settings;
 use crate::collectors::elasticsearch::source::root_answer::read_identity;
 use crate::collectors::elasticsearch::source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
 };
-use crate::collectors::elasticsearch::value_objects::{NetworkNamespace, Transport, Unread};
+use crate::collectors::elasticsearch::value_objects::{
+    HttpEndpoint, NetworkNamespace, Transport, Unread,
+};
 
 /// Reads everything this box and this node will say about `resident`.
 pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> Node {
@@ -23,6 +26,7 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         network_namespace: None,
         http: None,
         identity: None,
+        cluster_settings: None,
         error: None,
     };
 
@@ -57,6 +61,25 @@ fn read_into(
     let endpoint = http_endpoint(&listeners, &settings)?;
     node.http = Some(endpoint.clone());
 
-    node.identity = Some(namespace.run(|| read_identity(client, &endpoint))??);
+    let answers = namespace.run(|| read_answers(client, &endpoint))??;
+    node.identity = Some(answers.identity);
+    node.cluster_settings = Some(answers.cluster_settings);
     Ok(())
+}
+
+/// What the node said, one request per surface.
+struct Answers {
+    identity: NodeIdentity,
+    cluster_settings: Surface<ClusterSettings>,
+}
+
+/// Every read of the node, in one pass inside its namespace.
+///
+/// `GET /` first and alone decisive: a node that will not say who it is has refused the read,
+/// and nothing after it is asked. Every later surface fails on its own.
+fn read_answers(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Answers, Unread> {
+    Ok(Answers {
+        identity: read_identity(client, endpoint)?,
+        cluster_settings: read_cluster_settings(client, endpoint),
+    })
 }
