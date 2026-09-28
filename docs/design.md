@@ -188,23 +188,6 @@ everything before Ra's `coordination` or `quorum` bucket is the data directory,
 whatever the operator moved it to. Claims are gathered before the walk and
 sequentially, so nothing there asks the broker anything.
 
-**Layer 3, redis.** One `redis` facet for redis and valkey, which Debian 13 and Alpine
-package side by side, keyed by the instance's TCP port, else its unix socket's path.
-The server is the only honest account of itself, because on the estate this was written
-for `maxmemory` and `save` are applied with `CONFIG SET` and written to no file. It is
-asked over its own protocol rather than through `redis-cli`, whose only ways to carry a
-password are argv, the environment and stdin, and whose text output cannot tell an empty
-value from a missing one; `redis-protocol` frames the replies and rastro holds the
-socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
-seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
-a password the files its own unit names give the `default` account, replayed the way the
-server builds it and checked against its hashes first, because a refused one is an entry in
-the server's `ACL LOG`; a password set only at runtime is unreachable and the instance says
-so. `INFO server` is the gate, and every read after it
-fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
-The data directory is sealed from the process's working directory, since `dir` is a
-`chdir`, and never when that is `/`.
-
 The facet runs **exclusive**, like the walk and for the neighbouring reason: each
 read boots an Erlang VM that binds a distribution port, so sharing the pool would
 let `sockets` and `processes` catch rastro's own transient node in one run and not
@@ -222,6 +205,23 @@ not manage. The
 facet's two halves are the node's own account of itself, `status`, and the durable
 half somebody declared, `export_definitions`, whose credential-bearing values are
 withheld by default. See [decisions.md](decisions.md#a-cli-invocation-starts-epmd-so-nothing-is-asked-speculatively).
+
+**Layer 3, redis.** One `redis` facet for redis and valkey, which Debian 13 and Alpine
+package side by side, keyed by the instance's TCP port, else its unix socket's path.
+The server is the only honest account of itself, because on the estate this was written
+for `maxmemory` and `save` are applied with `CONFIG SET` and written to no file. It is
+asked over its own protocol rather than through `redis-cli`, whose only ways to carry a
+password are argv, the environment and stdin, and whose text output cannot tell an empty
+value from a missing one; `redis-protocol` frames the replies and rastro holds the
+socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
+seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
+a password the files its own unit names give the `default` account, replayed the way the
+server builds it and checked against its hashes first, because a refused one is an entry in
+the server's `ACL LOG`; a password set only at runtime is unreachable and the instance says
+so. `INFO server` is the gate, and every read after it
+fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
+The data directory is sealed from the process's working directory, since `dir` is a
+`chdir`, and never when that is `/`.
 
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
