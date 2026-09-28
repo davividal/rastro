@@ -1,0 +1,62 @@
+//! One node, read in the only order that asks nothing blind.
+//!
+//! Settings, then whether they allow plain HTTP, then the namespace, then the listeners, then
+//! which of them serves HTTP, and only then a request, made inside the node's namespace. Each
+//! step's refusal stops the read there, and what the earlier steps established is kept.
+
+use std::path::Path;
+
+use crate::collectors::elasticsearch::model::Node;
+use crate::collectors::elasticsearch::source::root_answer::read_identity;
+use crate::collectors::elasticsearch::source::{
+    HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
+};
+use crate::collectors::elasticsearch::value_objects::{NetworkNamespace, Transport, Unread};
+
+/// Reads everything this box and this node will say about `resident`.
+pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> Node {
+    let mut node = Node {
+        process_id: resident.process_id(),
+        config_directory: resident
+            .config()
+            .map(|config| config.to_string_lossy().into_owned()),
+        network_namespace: None,
+        http: None,
+        identity: None,
+        error: None,
+    };
+
+    if let Err(unread) = read_into(&mut node, proc, resident, client) {
+        node.error = Some(unread);
+    }
+
+    node
+}
+
+fn read_into(
+    node: &mut Node,
+    proc: &Path,
+    resident: &ResidentNode,
+    client: &HttpClient,
+) -> Result<(), Unread> {
+    let settings = NodeSettings::read_in(proc, resident)?;
+    if settings.transport() == Transport::TlsRequired {
+        return Err(Unread::new(
+            "the node's settings put its HTTP listener behind TLS \
+             (xpack.security.http.ssl.enabled), and v1 speaks plain HTTP only",
+        ));
+    }
+
+    let namespace = NodeNamespace::of_in(proc, resident.process_id())?;
+    node.network_namespace = Some(match namespace.is_ours() {
+        true => NetworkNamespace::Host,
+        false => NetworkNamespace::Separate,
+    });
+
+    let listeners = NodeListener::read_in(proc, resident.process_id())?;
+    let endpoint = http_endpoint(&listeners, &settings)?;
+    node.http = Some(endpoint.clone());
+
+    node.identity = Some(namespace.run(|| read_identity(client, &endpoint))??);
+    Ok(())
+}

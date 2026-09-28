@@ -1,0 +1,145 @@
+#![allow(dead_code)]
+
+//! A stand-in Elasticsearch node: a real listener that answers fixed routes, and a `/proc` that
+//! points at it the way the kernel would point at a real node.
+//!
+//! A real socket, because what the collector does is send bytes, and every request it sends is
+//! recorded, so a test can say that nothing was sent where nothing may be.
+
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::os::unix::fs::symlink;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+use super::fs_tree::{scratch_tree, write};
+
+/// The pid every fixture's server has.
+pub const PID: &str = "600";
+
+const SOCKET_INODE: u64 = 4242;
+
+const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
+    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
+    -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
+
+const TCP_HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
+/// What `GET /` answers on 8.15.3, trimmed.
+pub const ROOT: &str = r#"{
+  "name" : "search-1",
+  "cluster_name" : "docker-cluster",
+  "cluster_uuid" : "uh7ULRBqQ1m4mIbk9MNkIg",
+  "version" : {
+    "number" : "8.15.3",
+    "build_flavor" : "default",
+    "build_type" : "docker",
+    "build_hash" : "f97532e680b555c3a05e73a74c28afb666923018",
+    "build_date" : "2024-10-09T22:08:00.328917561Z",
+    "lucene_version" : "9.11.1"
+  },
+  "tagline" : "You Know, for Search"
+}"#;
+
+/// A node answering `routes`, with a 404 for anything else, and the requests it was sent.
+pub struct FakeNode {
+    pub port: u16,
+    requests: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeNode {
+    pub fn serving(routes: &[(&str, &str)]) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let port = listener.local_addr().expect("a bound port").port();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let routes: Vec<(String, String)> = routes
+            .iter()
+            .map(|(path, body)| ((*path).to_owned(), (*body).to_owned()))
+            .collect();
+
+        let seen = Arc::clone(&requests);
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8_lossy(&request).into_owned();
+                let path = request
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
+                seen.lock().expect("the request log").push(path.clone());
+
+                let response = match routes.iter().find(|(route, _)| *route == path) {
+                    Some((_, body)) => format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                        body.len()
+                    ),
+                    None => "HTTP/1.1 404 Not Found\r\ncontent-length: 2\r\n\r\n{}".to_owned(),
+                };
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+
+        Self { port, requests }
+    }
+
+    /// The paths requested so far, in order.
+    pub fn requests(&self) -> Vec<String> {
+        self.requests.lock().expect("the request log").clone()
+    }
+
+    /// A `/proc` holding one server whose HTTP listener is this node's, in rastro's namespace.
+    ///
+    /// `http.port` is pinned in the environment, because the listener's port is whatever the
+    /// kernel gave the test and not one in the default range.
+    pub fn proc(&self, name: &str) -> PathBuf {
+        self.proc_with(name, &format!("http.port={}\0", self.port), None)
+    }
+
+    /// The same, with the environment and `elasticsearch.yml` the caller gives.
+    pub fn proc_with(&self, name: &str, environ: &str, config_file: Option<&str>) -> PathBuf {
+        let proc = scratch_tree(
+            name,
+            &[
+                "self/ns",
+                &format!("{PID}/fd"),
+                &format!("{PID}/net"),
+                &format!("{PID}/ns"),
+                &format!("{PID}/root/etc/elasticsearch"),
+            ],
+        );
+        write(&proc, &format!("{PID}/cmdline"), SERVER_ARGV);
+        write(&proc, &format!("{PID}/environ"), environ);
+        write(
+            &proc,
+            &format!("{PID}/net/tcp"),
+            &format!(
+                "{TCP_HEADER}   0: 0100007F:{:04X} 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 {SOCKET_INODE} 1 0000000000000000 100 0 0 10 0\n",
+                self.port
+            ),
+        );
+        symlink(
+            format!("socket:[{SOCKET_INODE}]"),
+            proc.join(PID).join("fd/3"),
+        )
+        .expect("a writable fixture");
+        symlink("net:[4026531840]", proc.join("self/ns/net")).expect("a writable fixture");
+        symlink("net:[4026531840]", proc.join(PID).join("ns/net")).expect("a writable fixture");
+
+        if let Some(contents) = config_file {
+            write(
+                &proc,
+                &format!("{PID}/root/etc/elasticsearch/elasticsearch.yml"),
+                contents,
+            );
+        }
+
+        proc
+    }
+}
