@@ -22,10 +22,17 @@ const SERVER_7_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0-Xms512m\0\
     org.elasticsearch.bootstrap.Elasticsearch\0-Ediscovery.type=single-node\0";
 
 /// An 8.x or 9.x server: the same class, started as a module rather than from the classpath.
+///
+/// **No `-Des.path.*` and no `-E`**, measured on 8.15.3 by the conformance run: the launcher
+/// holds them and hands the server its arguments over a pipe, so they are on the parent's argv.
 const SERVER_8_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0-Xms512m\0\
-    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
     --module-path\0/usr/share/elasticsearch/lib\0\
     -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
+
+/// The server's `stat`, naming its parent in the fourth field.
+fn stat_with_parent(process_id: &str, parent: &str) -> String {
+    format!("{process_id} (java) S {parent} 97 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 80 0\n")
+}
 
 /// The 8.x launcher that forks the server. It holds no listener and is not a node.
 const LAUNCHER_8_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
@@ -65,14 +72,37 @@ fn all_in_finds_an_8_server_started_as_a_module_and_not_its_launcher() {
     let proc = scratch_tree("elasticsearch-residency-8", &["40", "97"]);
     write(&proc, "40/cmdline", LAUNCHER_8_ARGV);
     write(&proc, "97/cmdline", SERVER_8_ARGV);
+    write(&proc, "97/stat", &stat_with_parent("97", "40"));
 
     // Act
     let nodes = ResidentNode::all_in(&proc);
 
-    // Assert
+    // Assert: the paths are the launcher's, since the server's own argv carries none.
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].process_id(), 97);
+    assert_eq!(nodes[0].home(), Some(Path::new("/usr/share/elasticsearch")));
     assert_eq!(nodes[0].config(), Some(Path::new("/etc/elasticsearch")));
+}
+
+#[test]
+fn all_in_takes_no_paths_from_a_parent_that_is_not_the_launcher() {
+    // Arrange: a server started by some other JVM that carries a config path of its own, which
+    // is not the node's and must not be read as though it were.
+    let proc = scratch_tree("elasticsearch-residency-orphan", &["30", "97"]);
+    write(
+        &proc,
+        "30/cmdline",
+        "/usr/bin/java\0-Des.path.conf=/opt/other\0-cp\0supervisor.jar\0com.example.Supervisor\0",
+    );
+    write(&proc, "97/cmdline", SERVER_8_ARGV);
+    write(&proc, "97/stat", &stat_with_parent("97", "30"));
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert: a node still, with nothing claimed about where it is configured.
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].config(), None);
 }
 
 #[test]

@@ -7,7 +7,8 @@
 //! guess. See `docs/decisions.md`.
 //!
 //! Three sources, in the precedence the node applies: a `-E` flag over an environment variable
-//! named after the setting, over `elasticsearch.yml`. The docker image hands settings over as
+//! named after the setting, over `elasticsearch.yml`. The flags are on the argv the node was
+//! launched with, which on 8.x is its launcher's rather than its own. The docker image hands settings over as
 //! environment variables whose names are the settings themselves, dots and all, and from 8.x
 //! they appear nowhere in the argv, which is why the environment is read at all.
 //!
@@ -67,7 +68,6 @@ impl NodeSettings {
         })?;
 
         let environment = read_pairs(&process.join("environ"), "environ")?;
-        let arguments = read_list(&process.join("cmdline"), "cmdline")?;
         let file = read_config_file(&process.join("root"), config, &environment)?;
 
         let mut values = file;
@@ -77,7 +77,7 @@ impl NodeSettings {
                 .filter(|(name, _)| name.contains('.'))
                 .map(|(name, value)| (name.clone(), value.clone())),
         );
-        values.extend(arguments.iter().filter_map(|argument| {
+        values.extend(node.launch_arguments().iter().filter_map(|argument| {
             let (name, value) = argument
                 .strip_prefix(COMMAND_LINE_SETTING)?
                 .split_once('=')?;

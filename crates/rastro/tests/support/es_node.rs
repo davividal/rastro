@@ -20,9 +20,11 @@ pub const PID: &str = "600";
 
 const SOCKET_INODE: u64 = 4242;
 
+/// A 7.x-shaped server, which carries its own paths; the 8.x launcher split is the residency
+/// read's to test.
 const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
     -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
-    -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
+    -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0";
 
 const TCP_HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
 

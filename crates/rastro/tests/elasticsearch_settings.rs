@@ -12,9 +12,10 @@ mod support;
 
 use support::fs_tree::{scratch_tree, write};
 
+/// A 7.x server, which carries its own paths.
 const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
     -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
-    -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
+    -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0";
 
 /// The node's own file, under its root, because a node in a container reads the one in its
 /// image rather than the host's.
@@ -74,6 +75,38 @@ fn read_in_takes_a_command_line_setting_over_the_environment() {
     let proc = scratch_tree("elasticsearch-settings-argv", &["600/root"]);
     let argv = format!("{SERVER_ARGV}-Ehttp.port=9400\0");
     write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "http.port=9300\0");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9400"));
+}
+
+#[test]
+fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
+    // Arrange: measured on 8.15.3, the server's argv carries no `-E`; the launcher's does.
+    let proc = scratch_tree("elasticsearch-settings-launcher", &["600/root", "40"]);
+    write(
+        &proc,
+        "40/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0-Des.path.home=/usr/share/elasticsearch\0\
+         -Des.path.conf=/etc/elasticsearch\0-cp\0/usr/share/elasticsearch/lib/*\0\
+         org.elasticsearch.launcher.CliToolLauncher\0-Ehttp.port=9400\0",
+    );
+    write(
+        &proc,
+        "600/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0-m\0\
+         org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+    write(
+        &proc,
+        "600/stat",
+        "600 (java) S 40 600 1 0 -1 4194560 0 0 0 0\n",
+    );
     write(&proc, "600/environ", "http.port=9300\0");
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
 
