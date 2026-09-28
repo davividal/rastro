@@ -75,3 +75,10 @@ test = false
 [[test]]
 name = "rabbitmq_conformance"
 test = false
+
+# Kept out for the reasons above, together: it needs live nodes, and reading one in a container
+# means joining its network namespace, which needs `CAP_SYS_ADMIN`.
+# `.github/workflows/live-search.yml` runs it as root where both hold.
+[[test]]
+name = "elasticsearch_conformance"
+test = false
