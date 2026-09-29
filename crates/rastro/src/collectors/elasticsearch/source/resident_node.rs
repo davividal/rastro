@@ -44,6 +44,9 @@ const LAUNCHER_MAIN: &str = "org.elasticsearch.launcher.CliToolLauncher";
 const HOME_PROPERTY: &str = "-Des.path.home=";
 const CONFIG_PROPERTY: &str = "-Des.path.conf=";
 
+/// The system property naming how the node was installed: `docker`, `tar`, `deb` or `rpm`.
+const DISTRIBUTION_PROPERTY: &str = "-Des.distribution.type=";
+
 /// A running Elasticsearch server process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidentNode {
@@ -64,6 +67,9 @@ pub struct ResidentNode {
     /// node started by hand has no config directory this read can vouch for, and guessing
     /// `/etc/elasticsearch` would read a file that may belong to a different node.
     config: Option<PathBuf>,
+
+    /// `es.distribution.type`, which decides whether the environment holds settings at all.
+    distribution: Option<String>,
 }
 
 impl ResidentNode {
@@ -114,6 +120,11 @@ impl ResidentNode {
         self.launch_arguments_are_exact
     }
 
+    /// How the node was installed, as its launch argv names it.
+    pub fn distribution(&self) -> Option<&str> {
+        self.distribution.as_deref()
+    }
+
     /// The argv the node was launched with, which is where its command-line settings are.
     pub fn launch_arguments(&self) -> &[String] {
         &self.launch_arguments
@@ -140,6 +151,10 @@ impl ResidentNode {
             process_id,
             home: property_in(&launched, HOME_PROPERTY),
             config: property_in(&launched, CONFIG_PROPERTY),
+            distribution: launched
+                .iter()
+                .find_map(|argument| argument.strip_prefix(DISTRIBUTION_PROPERTY))
+                .map(str::to_owned),
             launch_arguments_are_exact: launch.exact,
             launch_arguments: launch.arguments,
         })

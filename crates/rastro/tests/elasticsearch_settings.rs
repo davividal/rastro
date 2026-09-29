@@ -12,9 +12,17 @@ mod support;
 
 use support::fs_tree::{scratch_tree, write};
 
-/// A 7.x server, which carries its own paths.
+/// A 7.x server from the docker image, which carries its own paths, and whose environment holds
+/// settings because it is the docker distribution.
 const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
     -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
+    -Des.distribution.type=docker\0\
+    -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0";
+
+/// The same server from a tarball, whose environment holds no settings at all.
+const TAR_SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
+    -Des.path.home=/usr/share/elasticsearch\0-Des.path.conf=/etc/elasticsearch\0\
+    -Des.distribution.type=tar\0\
     -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0";
 
 /// The node's own file, under its root, because a node in a container reads the one in its
@@ -49,7 +57,7 @@ fn read_in_flattens_nested_and_dotted_keys_alike() {
 }
 
 #[test]
-fn read_in_takes_a_dotted_environment_variable_over_the_file() {
+fn read_in_takes_a_dotted_environment_variable_over_the_file_on_the_docker_distribution() {
     // Arrange: the docker image hands settings over as variables named after the setting, and
     // from 8.x they appear nowhere in the argv.
     let proc = scratch_tree("elasticsearch-settings-environ", &["600/root"]);
@@ -70,10 +78,45 @@ fn read_in_takes_a_dotted_environment_variable_over_the_file() {
 }
 
 #[test]
-fn read_in_takes_a_command_line_setting_over_the_environment() {
-    // Arrange
+fn read_in_takes_the_environment_over_a_command_line_setting_on_the_docker_distribution() {
+    // Arrange: measured by the domain review on the 7.17.24, 8.15.3 and 9.2.0 images, with all
+    // three sources set: the node ran on the environment's value. On 7.17 the entrypoint appends
+    // the variables as `-E` flags after the command's own, and the last flag wins.
     let proc = scratch_tree("elasticsearch-settings-argv", &["600/root"]);
     let argv = format!("{SERVER_ARGV}-Ehttp.port=9400\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "http.port=9300\0");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9300"));
+}
+
+#[test]
+fn read_in_takes_no_setting_from_the_environment_of_a_tarball_install() {
+    // Arrange: measured on the 7.17.24 and 8.15.3 tarballs, a dotted variable is not a setting
+    // outside the docker distribution: the node ran on its file's value with one set.
+    let proc = scratch_tree("elasticsearch-settings-tar-environ", &["600/root"]);
+    write(&proc, "600/cmdline", TAR_SERVER_ARGV);
+    write(&proc, "600/environ", "http.port=9300\0");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9201"));
+}
+
+#[test]
+fn read_in_takes_a_command_line_setting_over_the_file_of_a_tarball_install() {
+    // Arrange: measured on the same tarballs, `-E` over the file, and over an environment
+    // variable the node does not read at all.
+    let proc = scratch_tree("elasticsearch-settings-tar-argv", &["600/root"]);
+    let argv = format!("{TAR_SERVER_ARGV}-Ehttp.port=9400\0");
     write(&proc, "600/cmdline", &argv);
     write(&proc, "600/environ", "http.port=9300\0");
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
@@ -86,6 +129,30 @@ fn read_in_takes_a_command_line_setting_over_the_environment() {
 }
 
 #[test]
+fn read_in_refuses_a_node_that_names_no_distribution() {
+    // Arrange: without it, whether the environment holds settings cannot be told, and the two
+    // answers can disagree on the very port or protocol the node is asked on.
+    let proc = scratch_tree("elasticsearch-settings-no-distribution", &["600/root"]);
+    write(
+        &proc,
+        "600/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0-Des.path.conf=/etc/elasticsearch\0\
+         -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+    write(&proc, "600/environ", "");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("no distribution");
+
+    // Assert
+    assert!(
+        unread.reason().contains("es.distribution.type"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
 fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
     // Arrange: measured on 8.15.3, the server's argv carries no `-E`; the launcher's does.
     let proc = scratch_tree("elasticsearch-settings-launcher", &["600/root", "40"]);
@@ -93,7 +160,8 @@ fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
         &proc,
         "40/cmdline",
         "/usr/share/elasticsearch/jdk/bin/java\0-Des.path.home=/usr/share/elasticsearch\0\
-         -Des.path.conf=/etc/elasticsearch\0-cp\0/usr/share/elasticsearch/lib/*\0\
+         -Des.path.conf=/etc/elasticsearch\0-Des.distribution.type=tar\0\
+         -cp\0/usr/share/elasticsearch/lib/*\0\
          org.elasticsearch.launcher.CliToolLauncher\0-Ehttp.port=9400\0",
     );
     write(
