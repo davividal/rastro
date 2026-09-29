@@ -43,12 +43,7 @@ pub struct NodeNamespace {
 }
 
 impl NodeNamespace {
-    /// Reads a node's namespace through the box's `/proc`.
-    pub fn of(process_id: u32) -> Result<Self, Unread> {
-        Self::of_in(Path::new("/proc"), process_id)
-    }
-
-    /// The same through a process table the caller names, compared with its `self`.
+    /// A node's namespace through a process table the caller names, compared with its `self`.
     pub fn of_in(proc: &Path, process_id: u32) -> Result<Self, Unread> {
         let path = proc.join(process_id.to_string()).join(NETWORK_NAMESPACE);
         let theirs = fs::read_link(&path).map_err(|error| {
