@@ -6,11 +6,20 @@
 //! that port wants TLS, have to be known before the first request, or the first request is a
 //! guess. See `docs/decisions.md`.
 //!
-//! Three sources, in the precedence the node applies: a `-E` flag over an environment variable
-//! named after the setting, over `elasticsearch.yml`. The flags are on the argv the node was
-//! launched with, which on 8.x is its launcher's rather than its own. The docker image hands settings over as
-//! environment variables whose names are the settings themselves, dots and all, and from 8.x
-//! they appear nowhere in the argv, which is why the environment is read at all.
+//! Three sources, in the precedence the node applies, **which depends on how it was installed**,
+//! measured rather than read from the documentation:
+//!
+//! - **the docker distribution**: an environment variable named after the setting, dots and all,
+//!   over a `-E` flag, over `elasticsearch.yml`. The domain review measured the variable winning
+//!   on the 7.17.24, 8.15.3 and 9.2.0 images with all three set, and from 8.x the image's
+//!   settings appear nowhere in the argv;
+//! - **every other distribution**: a `-E` flag over the file, and **the environment holds no
+//!   settings at all**. Measured on the 7.17.24 and 8.15.3 tarballs: with a dotted variable set,
+//!   the node ran on its file's value.
+//!
+//! Which one a node is comes from `es.distribution.type` on its launch argv, and a node that names
+//! none is refused, since the two readings can disagree on the very port or protocol it is asked
+//! on. The flags are on the argv the node was launched with, which on 8.x is its launcher's.
 //!
 //! Everything is read through `/proc/<pid>`, the file included, as `root/<es.path.conf>`: a
 //! node in a container reads the file in its own image, and the host's `/etc/elasticsearch`,
@@ -33,6 +42,9 @@ const SEPARATOR: u8 = b'\0';
 const COMMAND_LINE_SETTING: &str = "-E";
 
 const CONFIG_FILE: &str = "elasticsearch.yml";
+
+/// The one distribution whose environment holds settings.
+const DOCKER_DISTRIBUTION: &str = "docker";
 
 /// Where a node keeps its data, one directory or a comma-joined list of them.
 const DATA_PATH: &str = "path.data";
@@ -73,22 +85,33 @@ impl NodeSettings {
             )
         })?;
 
+        let distribution = node.distribution().ok_or_else(|| {
+            Unread::new(
+                "the node's argv names no es.distribution.type, so whether its environment \
+                 holds settings cannot be told",
+            )
+        })?;
+
+        // Read on every distribution: `${NAME}` in the file is resolved from it wherever the
+        // node was installed, even where the variables are not settings themselves.
         let environment = read_pairs(&process.join("environ"), "environ")?;
         let file = read_config_file(&process.join("root"), config, &environment)?;
-
-        let mut values = file;
-        values.extend(
-            environment
-                .iter()
-                .filter(|(name, _)| name.contains('.'))
-                .map(|(name, value)| (name.clone(), value.clone())),
-        );
-        values.extend(node.launch_arguments().iter().filter_map(|argument| {
+        let command_line = node.launch_arguments().iter().filter_map(|argument| {
             let (name, value) = argument
                 .strip_prefix(COMMAND_LINE_SETTING)?
                 .split_once('=')?;
             Some((name.to_owned(), value.to_owned()))
-        }));
+        });
+
+        let mut values = file;
+        values.extend(command_line);
+        if distribution == DOCKER_DISTRIBUTION {
+            values.extend(
+                environment
+                    .into_iter()
+                    .filter(|(name, _)| name.contains('.')),
+            );
+        }
 
         Ok(Self { values })
     }

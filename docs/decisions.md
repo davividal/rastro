@@ -5782,3 +5782,26 @@ query does leave that out. The backing indices then reached the facet keyed by t
 `.ds-<stream>-<date>-<generation>`, so every rollover read as one index removed and another
 added. An index whose flat settings carry `index.hidden: "true"` is now skipped whichever route
 brought it in. Reporting data streams themselves is a separate gap, recorded in the review.
+
+## Whether the environment holds settings depends on how the node was installed
+
+**Corrects the entry on reading the node's own file**, which gave one precedence for every node:
+`-E`, then an environment variable named after the setting, then `elasticsearch.yml`. Two
+measurements say there are two orders, and neither is that one:
+
+| install | yml only | yml + env | yml + `-E` | yml + env + `-E` |
+| --- | --- | --- | --- | --- |
+| 7.17.24 and 8.15.3 tarball | yml | **yml** | `-E` | `-E` |
+| 7.17.24, 8.15.3 and 9.2.0 docker image | yml | env | `-E` | **env** |
+
+The tarball rows are this entry's, with `cluster.name` set in each source and read back from
+`GET /`; the docker rows are the domain review's, the same way. Outside the docker distribution a
+dotted variable is not a setting at all. Inside it, the variable wins even over an explicit `-E`:
+on 7.17 the entrypoint appends the variables as `-E` flags after the command's own and the last
+flag wins, and from 8.x the image reads them directly.
+
+The node names which one it is: `es.distribution.type` is on the 7.x server's argv and on the 8.x
+launcher's, `docker` for the image and `tar`, `deb` or `rpm` otherwise. A node naming none is
+refused, because the two readings can disagree on the very port or protocol it is asked on.
+`${NAME}` in the file is still resolved from the environment on every distribution, since that is
+the file's own syntax rather than the environment acting as settings.
