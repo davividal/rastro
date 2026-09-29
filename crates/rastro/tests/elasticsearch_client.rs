@@ -243,3 +243,137 @@ fn get_reports_a_listener_that_answers_in_tls_as_wanting_tls() {
     // Assert
     assert!(unread.reason().contains("TLS"), "{}", unread.reason());
 }
+
+/// An endpoint on a listener that accepts and hands each connection to `answer`.
+fn answering_with(answer: impl FnOnce(std::net::TcpStream) + Send + 'static) -> HttpEndpoint {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        if let Ok((stream, _)) = listener.accept() {
+            answer(stream);
+        }
+    });
+    HttpEndpoint::new(
+        InetHost::new("127.0.0.1").expect("a host"),
+        PortNumber::parse(&port.to_string()).expect("a port"),
+    )
+}
+
+#[test]
+fn get_gives_up_on_a_node_that_trickles_its_answer_past_the_deadline() {
+    // Arrange: a byte every 50 ms never completes a status line, and each read succeeds, so a
+    // bound per read alone would wait forever.
+    let endpoint = answering_with(|mut stream| {
+        for _ in 0..100 {
+            if stream.write_all(b"H").is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+    let started = Instant::now();
+
+    // Act
+    let unread = HttpClient::bounded(Duration::from_millis(300), 1024)
+        .get(&endpoint, "/")
+        .expect_err("a trickling node");
+
+    // Assert
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(unread.reason().contains("timed out"), "{}", unread.reason());
+}
+
+#[test]
+fn get_stops_reading_an_answer_that_outgrows_its_bound() {
+    // Arrange: an answer with no length on a connection that never closes, 64 KiB every 10 ms.
+    // Only the bound applied while reading stops it early; without it the read runs to the
+    // deadline with everything so far held in memory. Paced on purpose: loopback delivered a
+    // declared 100 MiB in 80 ms, which made the two outcomes look alike.
+    let endpoint = answering_with(|mut stream| {
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n");
+        let chunk = vec![b'x'; 64 * 1024];
+        while stream.write_all(&chunk).is_ok() {
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let started = Instant::now();
+
+    // Act
+    let unread = HttpClient::bounded(Duration::from_secs(3), 1024)
+        .get(&endpoint, "/")
+        .expect_err("an oversized answer");
+
+    // Assert
+    assert!(
+        unread.reason().contains("larger than 1024"),
+        "{}",
+        unread.reason()
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn get_resolves_no_names() {
+    // Arrange: a host always comes from a kernel table, and a name would mean a lookup, which
+    // the network boundary rules out.
+    let endpoint = HttpEndpoint::new(
+        InetHost::new("localhost").expect("a host"),
+        PortNumber::parse("9200").expect("a port"),
+    );
+
+    // Act
+    let unread = HttpClient::new().get(&endpoint, "/").expect_err("a name");
+
+    // Assert
+    assert!(
+        unread.reason().contains("resolves no names"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn get_reads_an_answer_without_a_length_to_the_end_of_the_connection() {
+    // Act
+    let (endpoint, _) = serve_once(b"HTTP/1.1 200 OK\r\n\r\n{\"closed\":true}".to_vec());
+    let body = HttpClient::new().get(&endpoint, "/").expect("an answer");
+
+    // Assert
+    assert_eq!(body, "{\"closed\":true}");
+}
+
+#[test]
+fn get_refuses_an_answer_with_no_status_code() {
+    // Act
+    let (endpoint, _) = serve_once(b"HTTP/1.1\r\n\r\n{}".to_vec());
+    let unread = HttpClient::new()
+        .get(&endpoint, "/")
+        .expect_err("no status");
+
+    // Assert
+    assert!(
+        unread.reason().contains("no status line"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn get_refuses_headers_that_are_not_text() {
+    // Act
+    let (endpoint, _) = serve_once(b"HTTP/1.1 200 OK\r\nX-Odd: \xff\r\n\r\n{}".to_vec());
+    let unread = HttpClient::new()
+        .get(&endpoint, "/")
+        .expect_err("binary headers");
+
+    // Assert
+    assert!(unread.reason().contains("not text"), "{}", unread.reason());
+}
