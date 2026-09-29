@@ -1,8 +1,11 @@
 //! The indices, in three requests, none of which reaches a hidden or system index.
 //!
-//! `expand_wildcards=open,closed` is what keeps them out: `*` then matches no hidden index, and
-//! every system index is hidden. Measured on 7.17.24 and 8.15.3, the three requests carry no
-//! deprecation warning and change nothing.
+//! `expand_wildcards=open,closed` keeps out most of them: `*` then matches no hidden index, and
+//! every system index is hidden. **Not the backing indices of a data stream that is not itself
+//! hidden**, measured on 8.15.3 and 9.2.0 by the domain review: the filter is applied to the
+//! stream, and the stream then expands to its backing indices, which are hidden. So an index
+//! whose own settings say `index.hidden` is left out here as well. Measured on 7.17.24 and
+//! 8.15.3, the three requests carry no deprecation warning and change nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,6 +24,9 @@ const MAPPINGS: &str = "/*/_mapping?expand_wildcards=open,closed";
 const UUID: &str = "index.uuid";
 const CREATION_DATE: &str = "index.creation_date";
 const PROVIDED_NAME: &str = "index.provided_name";
+
+/// What a hidden index carries in its flat settings, a data stream's backing index included.
+const HIDDEN: &str = "index.hidden";
 
 #[derive(Deserialize)]
 struct AliasesOf {
@@ -60,6 +66,9 @@ pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indi
     // dropped between the three requests is taken as far as they saw it.
     let mut entries = BTreeMap::new();
     for (index, of) in settings {
+        if of.settings.get(HIDDEN).and_then(|value| value.as_str()) == Some("true") {
+            continue;
+        }
         let aliases = aliases_of.get(&index).cloned().unwrap_or_default();
         let keyed_by_alias =
             matches!(aliases.as_slice(), [alias] if indices_behind.get(alias.as_str()) == Some(&1));
