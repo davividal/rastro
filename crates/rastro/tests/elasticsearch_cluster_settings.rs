@@ -105,3 +105,25 @@ fn collect_reports_a_refused_surface_on_the_surface_and_keeps_the_rest() {
     assert_eq!(settings.completeness(), Completeness::Incomplete);
     assert_eq!(text(&field(&reported, "node_name")), "search-1");
 }
+
+#[test]
+fn collect_keeps_a_null_setting_as_null() {
+    // Arrange: `null` is how the API shows a setting that was reset rather than removed.
+    let node = FakeNode::serving(&[
+        ("/", ROOT),
+        (
+            CLUSTER_SETTINGS,
+            r#"{"persistent":{"cluster.routing.allocation.enable":null},"transient":{}}"#,
+        ),
+    ]);
+
+    // Act
+    let reported = node_reported(&node, "elasticsearch-cluster-settings-null");
+
+    // Assert
+    let persistent = field(&field(&reported, "cluster_settings"), "persistent");
+    assert!(support::observation::is_null(&field(
+        &persistent,
+        "cluster.routing.allocation.enable"
+    )));
+}
