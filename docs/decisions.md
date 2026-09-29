@@ -5983,3 +5983,20 @@ launcher's, `docker` for the image and `tar`, `deb` or `rpm` otherwise. A node n
 refused, because the two readings can disagree on the very port or protocol it is asked on.
 `${NAME}` in the file is still resolved from the environment on every distribution, since that is
 the file's own syntax rather than the environment acting as settings.
+
+## A node's file is resolved inside its own root, or not read
+
+Found by the code review, measured in the podman VM: under `/proc/<pid>/root` a relative
+symlink resolves inside the container and an absolute one resolves against the reader's root.
+A container whose `elasticsearch.yml` was an absolute link read as not found, or read the
+host's file at that path when one existed. Not found puts the node on its defaults, and the
+default transport is plaintext, so a symlink defeated the gate that keeps rastro from sending
+plaintext to a TLS listener; the host's file was worse, another node's settings taken as this
+one's.
+
+The file is now opened with `openat2` and `RESOLVE_IN_ROOT`, from the directory
+`/proc/<pid>/root`, so the kernel treats that directory as `/` for the whole walk, `..` at the
+top included. Measured on a live 8.15.3 node whose file is an absolute link pinning port 9350:
+before, the node was an error because no listener was in the default range; after, it is read
+on 9350. `live-search.yml` now runs that node. A kernel without `openat2`, before 5.6, refuses
+the read rather than approximating it, since approximating it is the defect.
