@@ -249,3 +249,24 @@ fn collect_refuses_an_answer_with_more_after_it() {
     let reported = &items_of(&field(&facet, "nodes"))[0];
     assert!(text(&field(reported, "error")).contains("more after it"));
 }
+
+#[test]
+fn collect_reports_a_node_in_a_namespace_it_cannot_join_on_the_node() {
+    // Arrange: the node's namespace link leads to something the kernel will not join.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-unjoinable");
+    let not_a_namespace = proc.join("not-a-namespace");
+    std::fs::write(&not_a_namespace, "").expect("a fixture");
+    let link = proc.join(support::es_node::PID).join("ns/net");
+    std::fs::remove_file(&link).expect("the fixture's link");
+    std::os::unix::fs::symlink(&not_a_namespace, &link).expect("a fixture");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert: where it listens was found from its own table; asking it was not possible.
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(text(&field(reported, "network_namespace")), "separate");
+    assert!(text(&field(reported, "error")).contains("namespace"));
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+}

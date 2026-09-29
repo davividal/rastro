@@ -75,3 +75,47 @@ fn of_in_refuses_a_namespace_link_it_cannot_read() {
     // Assert
     assert!(unread.reason().contains("ns/net"), "{}", unread.reason());
 }
+
+#[test]
+fn of_in_refuses_where_rastros_own_namespace_cannot_be_read() {
+    // Arrange: without rastro's own link there is nothing to compare the node's with.
+    let proc = scratch_tree(
+        "elasticsearch-namespace-self-refused",
+        &["self/ns", "600/ns"],
+    );
+    symlink("net:[4026532512]", proc.join("600/ns/net")).expect("a fixture");
+
+    // Act
+    let unread = NodeNamespace::of_in(&proc, 600).expect_err("no own link");
+
+    // Assert
+    assert!(
+        unread.reason().contains("rastro's own"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn run_does_not_do_the_work_where_the_join_fails() {
+    // Arrange: a link to something that opens and is not a namespace, which the kernel refuses
+    // to join whoever asks, so this holds for root and for an unprivileged run alike.
+    let proc = scratch_tree(
+        "elasticsearch-namespace-join-refused",
+        &["self/ns", "600/ns"],
+    );
+    let not_a_namespace = proc.join("not-a-namespace");
+    std::fs::write(&not_a_namespace, "").expect("a fixture");
+    symlink("net:[4026531840]", proc.join("self/ns/net")).expect("a fixture");
+    symlink(&not_a_namespace, proc.join("600/ns/net")).expect("a fixture");
+    let namespace = NodeNamespace::of_in(&proc, 600).expect("a readable namespace");
+    let mut worked = false;
+
+    // Act
+    let unread = namespace.run(|| worked = true).expect_err("a refused join");
+
+    // Assert: work done anyway would be a request sent in rastro's own namespace instead.
+    assert!(!namespace.is_ours());
+    assert!(!worked);
+    assert!(unread.reason().contains("namespace"), "{}", unread.reason());
+}
