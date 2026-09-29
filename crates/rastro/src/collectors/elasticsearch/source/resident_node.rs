@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 const PROC: &str = "/proc";
 
 /// The argument vector's separator, which is how the kernel writes `cmdline`.
-const ARGUMENT_SEPARATOR: char = '\0';
+const ARGUMENT_SEPARATOR: u8 = b'\0';
 
 /// The main class as 7.x names it, a bare argument after `-cp`.
 const CLASSPATH_MAIN: &str = "org.elasticsearch.bootstrap.Elasticsearch";
@@ -51,6 +51,9 @@ pub struct ResidentNode {
 
     /// The argv the node was launched with: its own on 7.x, its launcher's on 8.x and 9.x.
     launch_arguments: Vec<String>,
+
+    /// Whether every launch argument was UTF-8, so the text above is the argv exactly.
+    launch_arguments_are_exact: bool,
 
     /// `es.path.home`, where the node's `lib/` and `bin/` are.
     home: Option<PathBuf>,
@@ -101,6 +104,16 @@ impl ResidentNode {
         self.config.as_deref()
     }
 
+    /// Whether [`Self::launch_arguments`] is the argv exactly, rather than a lossy reading of
+    /// an argument that was not UTF-8.
+    ///
+    /// The server is still a node either way, because the tokens that identify it are ASCII, and
+    /// dropping it would be the silent absence this read must never produce. What a lossy argv
+    /// cannot give is a setting or a path exactly as the node reads it.
+    pub fn launch_arguments_are_exact(&self) -> bool {
+        self.launch_arguments_are_exact
+    }
+
     /// The argv the node was launched with, which is where its command-line settings are.
     pub fn launch_arguments(&self) -> &[String] {
         &self.launch_arguments
@@ -108,8 +121,8 @@ impl ResidentNode {
 
     fn from_process_directory(proc: &Path, path: &Path) -> Option<Self> {
         let process_id: u32 = path.file_name()?.to_str()?.parse().ok()?;
-        let arguments = arguments_of(path)?;
-        let spelled: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        let own = arguments_of(path)?;
+        let spelled: Vec<&str> = own.arguments.iter().map(String::as_str).collect();
 
         if !starts_the_server(&spelled) {
             return None;
@@ -117,44 +130,61 @@ impl ResidentNode {
 
         // A launcher that exited, or a parent that is not one, lends nothing: taking any
         // parent's argv would read another program's flags as the node's settings.
-        let launch_arguments = match starts_as_a_module(&spelled) {
-            true => launcher_arguments(proc, path).unwrap_or(arguments),
-            false => arguments,
+        let launch = match starts_as_a_module(&spelled) {
+            true => launcher_arguments(proc, path).unwrap_or(own),
+            false => own,
         };
-        let launched: Vec<&str> = launch_arguments.iter().map(String::as_str).collect();
+        let launched: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
 
         Some(Self {
             process_id,
             home: property_in(&launched, HOME_PROPERTY),
             config: property_in(&launched, CONFIG_PROPERTY),
-            launch_arguments,
+            launch_arguments_are_exact: launch.exact,
+            launch_arguments: launch.arguments,
         })
     }
 }
 
-fn arguments_of(process: &Path) -> Option<Vec<String>> {
-    let cmdline = fs::read_to_string(process.join("cmdline")).ok()?;
+/// A process's argv, each argument decoded on its own.
+struct Argv {
+    arguments: Vec<String>,
 
-    Some(
-        cmdline
-            .split(ARGUMENT_SEPARATOR)
-            .filter(|argument| !argument.is_empty())
-            .map(str::to_owned)
+    /// False where any argument was not UTF-8 and was read lossily.
+    exact: bool,
+}
+
+/// Read as bytes, because one argument that is not UTF-8, a Latin-1 path say, would otherwise
+/// fail the whole read and the server would silently stop being a node.
+fn arguments_of(process: &Path) -> Option<Argv> {
+    let cmdline = fs::read(process.join("cmdline")).ok()?;
+    let raw: Vec<&[u8]> = cmdline
+        .split(|byte| *byte == ARGUMENT_SEPARATOR)
+        .filter(|argument| !argument.is_empty())
+        .collect();
+
+    Some(Argv {
+        exact: raw
+            .iter()
+            .all(|argument| std::str::from_utf8(argument).is_ok()),
+        arguments: raw
+            .iter()
+            .map(|argument| String::from_utf8_lossy(argument).into_owned())
             .collect(),
-    )
+    })
 }
 
 /// The argv of the process's parent, where the parent is the 8.x launcher.
 ///
 /// The parent is the fourth field of `stat`, counted after the last `)`, because the second
 /// field is the program name in parentheses and a name may hold spaces and parentheses itself.
-fn launcher_arguments(proc: &Path, process: &Path) -> Option<Vec<String>> {
+fn launcher_arguments(proc: &Path, process: &Path) -> Option<Argv> {
     let stat = fs::read_to_string(process.join("stat")).ok()?;
     let parent = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?;
-    let arguments = arguments_of(&proc.join(parent))?;
-    let spelled: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    let launcher = arguments_of(&proc.join(parent))?;
+    let spelled: Vec<&str> = launcher.arguments.iter().map(String::as_str).collect();
 
-    is_java_running(&spelled, LAUNCHER_MAIN).then_some(arguments)
+    is_java_running(&spelled, LAUNCHER_MAIN).then_some(launcher)
 }
 
 /// Whether this argv is a JVM started with the server's main class.

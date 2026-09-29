@@ -201,3 +201,21 @@ fn all_in_finds_nothing_in_an_unreadable_process_table() {
     // Assert
     assert!(nodes.is_empty());
 }
+
+#[test]
+fn all_in_finds_a_server_with_an_argument_that_is_not_utf_8() {
+    // Arrange: a Latin-1 install path. Read as text the whole argv failed, and the server
+    // silently stopped being a node, which could leave the facet `absent` on a box running one.
+    let proc = scratch_tree("elasticsearch-residency-latin1", &["812"]);
+    let mut argv =
+        b"/usr/share/elasticsearch/jdk/bin/java\0-Des.path.home=/opt/\xe9lastic\0".to_vec();
+    argv.extend_from_slice(b"-cp\0/opt/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0");
+    std::fs::write(proc.join("812/cmdline"), argv).expect("a writable fixture");
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes.len(), 1);
+    assert!(!nodes[0].launch_arguments_are_exact());
+}

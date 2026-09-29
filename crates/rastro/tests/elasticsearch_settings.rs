@@ -263,3 +263,23 @@ fn read_in_refuses_a_file_it_cannot_read() {
         unread.reason()
     );
 }
+
+#[test]
+fn read_in_refuses_a_node_whose_argv_cannot_be_read_exactly() {
+    // Arrange: a setting or a path spelled in bytes that are not UTF-8 cannot be read back as the
+    // node reads it, and a near copy is a wrong port or a wrong file.
+    let proc = scratch_tree("elasticsearch-settings-latin1", &["600/root"]);
+    let mut argv =
+        b"/usr/share/elasticsearch/jdk/bin/java\0-Des.path.conf=/etc/elasticsearch\0".to_vec();
+    argv.extend_from_slice(
+        b"-cp\0/opt/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0-Enode.name=n\xe9\0",
+    );
+    std::fs::write(proc.join("600/cmdline"), argv).expect("a writable fixture");
+    write(&proc, "600/environ", "");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an inexact argv");
+
+    // Assert
+    assert!(unread.reason().contains("UTF-8"), "{}", unread.reason());
+}
