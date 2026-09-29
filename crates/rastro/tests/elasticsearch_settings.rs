@@ -283,3 +283,39 @@ fn read_in_refuses_a_node_whose_argv_cannot_be_read_exactly() {
     // Assert
     assert!(unread.reason().contains("UTF-8"), "{}", unread.reason());
 }
+
+#[test]
+fn read_in_reads_past_a_variable_that_is_not_utf_8_and_is_not_a_setting() {
+    // Arrange: one Latin-1 value anywhere in the environment used to make the whole node
+    // unread, over a variable the collector never looks at.
+    let proc = scratch_tree("elasticsearch-settings-environ-latin1", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    std::fs::write(
+        proc.join("600/environ"),
+        b"LANG_NOTE=caf\xe9\0http.port=9300\0",
+    )
+    .expect("a writable fixture");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9300"));
+}
+
+#[test]
+fn read_in_refuses_a_setting_in_the_environment_that_is_not_utf_8() {
+    // Arrange: a setting rastro cannot read exactly is not one it may act on.
+    let proc = scratch_tree(
+        "elasticsearch-settings-environ-setting-latin1",
+        &["600/root"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    std::fs::write(proc.join("600/environ"), b"node.name=n\xe9\0").expect("a writable fixture");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unreadable setting");
+
+    // Assert
+    assert!(unread.reason().contains("node.name"), "{}", unread.reason());
+}
