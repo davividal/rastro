@@ -215,3 +215,37 @@ fn collect_reports_a_node_that_refuses_the_read_on_the_node() {
     );
     assert!(is_null(&field(reported, "version")));
 }
+
+#[test]
+fn collect_reports_an_answer_of_the_wrong_shape_naming_the_field() {
+    // Arrange: an operator reading the error no longer has the answer, so a byte offset would
+    // name nothing they can act on.
+    let node = FakeNode::serving(&[(
+        "/",
+        r#"{"name":5,"cluster_name":"c","cluster_uuid":"u","version":{"number":"8.15.3"}}"#,
+    )]);
+    let proc = node.proc("elasticsearch-facet-wrong-shape");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    let error = text(&field(reported, "error"));
+    assert!(error.contains("GET /") && error.contains("name"), "{error}");
+}
+
+#[test]
+fn collect_refuses_an_answer_with_more_after_it() {
+    // Arrange: a second document after the first would otherwise be dropped in silence.
+    let doubled = format!("{ROOT}{{}}");
+    let node = FakeNode::serving(&[("/", &doubled)]);
+    let proc = node.proc("elasticsearch-facet-trailing");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(text(&field(reported, "error")).contains("more after it"));
+}

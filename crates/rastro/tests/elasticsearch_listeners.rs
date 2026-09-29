@@ -153,3 +153,25 @@ fn read_in_refuses_a_namespace_with_no_table_it_can_read() {
     // Assert: no table read is not a node listening on nothing.
     assert!(unread.reason().contains("net/tcp"), "{}", unread.reason());
 }
+
+#[test]
+fn read_in_refuses_a_table_it_cannot_parse() {
+    // Arrange: a row it cannot read is a row it cannot promise it would have reported.
+    let proc = scratch_tree("elasticsearch-listeners-malformed", &["600/fd", "600/net"]);
+    write(
+        &proc,
+        "600/net/tcp",
+        &format!("{HEADER}   0: not-an-address 0A\n"),
+    );
+    hold(&proc, "4", "socket:[42]");
+
+    // Act
+    let unread = NodeListener::read_in(&proc, 600).expect_err("a malformed table");
+
+    // Assert
+    assert!(
+        unread.reason().contains("could not be parsed"),
+        "{}",
+        unread.reason()
+    );
+}
