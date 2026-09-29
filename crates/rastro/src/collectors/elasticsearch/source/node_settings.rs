@@ -60,6 +60,12 @@ impl NodeSettings {
     /// The same through a process table the caller names.
     pub fn read_in(proc: &Path, node: &ResidentNode) -> Result<Self, Unread> {
         let process = proc.join(node.process_id().to_string());
+        if !node.launch_arguments_are_exact() {
+            return Err(Unread::new(
+                "the node's argv holds an argument that is not UTF-8, so its paths and \
+                 command-line settings cannot be read exactly as the node reads them",
+            ));
+        }
         let config = node.config().ok_or_else(|| {
             Unread::new(
                 "the node's argv names no es.path.conf, so its elasticsearch.yml cannot be \
