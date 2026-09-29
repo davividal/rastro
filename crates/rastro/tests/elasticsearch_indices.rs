@@ -270,3 +270,33 @@ fn collect_keys_by_name_where_an_index_has_several_aliases() {
         ["orders", "orders-write"]
     );
 }
+
+#[test]
+fn collect_leaves_out_the_backing_index_of_a_data_stream() {
+    // Arrange: measured on 8.15.3 and 9.2.0 by the domain review. `expand_wildcards=open,closed`
+    // is applied to the data stream, which is not hidden, and the stream then expands to its
+    // backing indices, which are. So the answer carries them, flagged only by their own
+    // `index.hidden`, and a plain hidden index is the control that the same query does leave out.
+    let backing = ".ds-logs-myapp-default-2026.09.28-000001";
+    let aliases = format!(r#"{{"unaliased":{{"aliases":{{}}}},"{backing}":{{"aliases":{{}}}}}}"#);
+    let settings = format!(
+        r#"{{{},"{backing}":{{"settings":{{"index.hidden":"true","index.number_of_shards":"1","index.uuid":"dddddddddddddddddddddd","index.creation_date":"4","index.provided_name":"{backing}"}}}}}}"#,
+        settings_answer("unaliased", "DqUoBesrSJGb7PgJWKGoaA", "1790603490341")
+    );
+    let mappings =
+        format!(r#"{{"unaliased":{{"mappings":{{}}}},"{backing}":{{"mappings":{{}}}}}}"#);
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, &aliases),
+            (SETTINGS, &settings),
+            (MAPPINGS, &mappings),
+        ],
+        "elasticsearch-indices-backing",
+    );
+
+    // Assert: a rollover would otherwise read as one index removed and another added.
+    assert_eq!(keys_of(&indices), ["unaliased"]);
+}

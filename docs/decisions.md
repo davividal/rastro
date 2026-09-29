@@ -5771,3 +5771,14 @@ value, and nothing else.
 
 Both were in slice-one code that its fixtures passed, because the fixtures were written from the
 research. That is the case the conformance job exists for.
+
+## A hidden index is left out by its own setting, because the query does not leave out all of them
+
+**Corrects the entry that keyed indices by alias**, which said `expand_wildcards=open,closed`
+leaves hidden indices out. The domain review measured otherwise on 8.15.3 and 9.2.0 for a data
+stream that is not itself hidden: the filter is applied to the stream, and the stream then
+expands to its backing indices, which are. A plain hidden index was the control, and the same
+query does leave that out. The backing indices then reached the facet keyed by their own names,
+`.ds-<stream>-<date>-<generation>`, so every rollover read as one index removed and another
+added. An index whose flat settings carry `index.hidden: "true"` is now skipped whichever route
+brought it in. Reporting data streams themselves is a separate gap, recorded in the review.
