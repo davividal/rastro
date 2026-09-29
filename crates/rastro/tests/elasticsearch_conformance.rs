@@ -31,6 +31,12 @@ const OPEN_7: &str = "conformance-7";
 const OPEN_8: &str = "conformance-8";
 const SECURED_8: &str = "conformance-secured";
 
+/// An 8.15 node whose `elasticsearch.yml` is an absolute symlink inside its image, pinning an
+/// HTTP port outside the default range. Read past the node's root, the file is missing and no
+/// listener is in range, so this node is read only if the file is resolved inside it.
+const SYMLINKED_8: &str = "conformance-symlinked";
+const SYMLINKED_PORT: i64 = 9350;
+
 /// The listing of every index with its document count, hidden and system ones included, which
 /// is where a write the facet caused would appear.
 const INDEX_LIST: &str = "/_cat/indices?expand_wildcards=all&h=index,docs.count&s=index";
@@ -97,10 +103,27 @@ fn every_node_the_workflow_started_is_found() {
     // Assert
     assert_eq!(
         servers.keys().cloned().collect::<Vec<_>>(),
-        [OPEN_7, OPEN_8, SECURED_8],
+        [OPEN_7, OPEN_8, SECURED_8, SYMLINKED_8],
         "start the nodes .github/workflows/live-search.yml starts"
     );
-    assert_eq!(items_of(&field(&facet, "nodes")).len(), 3);
+    assert_eq!(items_of(&field(&facet, "nodes")).len(), 4);
+}
+
+#[test]
+fn a_node_whose_file_is_an_absolute_symlink_is_read_through_it() {
+    // Act
+    let facet = ElasticsearchCollector::new().collect().expect("a facet");
+
+    // Assert
+    let nodes = nodes_by_name(&facet);
+    let reported = nodes
+        .get(SYMLINKED_8)
+        .unwrap_or_else(|| panic!("{SYMLINKED_8} in the facet: {facet:?}"));
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert_eq!(
+        support::observation::integer(&field(&field(reported, "http"), "port")),
+        SYMLINKED_PORT
+    );
 }
 
 #[test]

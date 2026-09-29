@@ -387,3 +387,62 @@ fn read_in_refuses_a_setting_in_the_environment_that_is_not_utf_8() {
     // Assert
     assert!(unread.reason().contains("node.name"), "{}", unread.reason());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn read_in_resolves_an_absolute_symlink_inside_the_nodes_own_root() {
+    // Arrange: measured in the podman VM, an absolute symlink met under `/proc/<pid>/root` resolves
+    // against the reader's root, not the container's: it found nothing, or found the host's file
+    // at that path. Here the link's target exists only inside the node's root, and says TLS, so
+    // reading past the root would put the node on its defaults and send it plaintext.
+    let proc = scratch_tree(
+        "elasticsearch-settings-absolute-link",
+        &["600/root/etc/elasticsearch", "600/root/srv/es-config"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        "600/root/srv/es-config/elasticsearch.yml",
+        "xpack.security.http.ssl:\n  enabled: true\n",
+    );
+    std::os::unix::fs::symlink("/srv/es-config/elasticsearch.yml", proc.join(CONFIG_FILE))
+        .expect("a writable fixture");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(
+        settings.get("xpack.security.http.ssl.enabled"),
+        Some("true")
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn read_in_keeps_a_relative_symlink_that_climbs_out_inside_the_nodes_own_root() {
+    // Arrange: `..` past the top of the root stays at the top, as it does for the node itself.
+    let proc = scratch_tree(
+        "elasticsearch-settings-climbing-link",
+        &["600/root/etc/elasticsearch", "600/root/srv/es-config"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        "600/root/srv/es-config/elasticsearch.yml",
+        "http.port: 9250\n",
+    );
+    std::os::unix::fs::symlink(
+        "../../../../../../../srv/es-config/elasticsearch.yml",
+        proc.join(CONFIG_FILE),
+    )
+    .expect("a writable fixture");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9250"));
+}

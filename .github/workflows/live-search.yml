@@ -9,11 +9,12 @@ name: live search
 # network namespace. None of them publishes a port, so a read that went anywhere but through
 # that join would find nothing to connect to.
 #
-# **Three nodes, one per path through the dispatch.** 7.17 with security off, which is the field
+# **Four nodes, one per path through the dispatch.** 7.17 with security off, which is the field
 # host; 8.15 with security switched off, which proves the settings rather than the version
-# decide the transport; and 8.15 at its secured default, which must come back as an `error` and
-# must never be sent a request. That last one is checked in the node's own log, because a
-# plaintext request to its TLS listener is a WARN there, measured.
+# decide the transport; 8.15 at its secured default, which must come back as an `error` and
+# must never be sent a request, checked in the node's own log because a plaintext request to
+# its TLS listener is a WARN there, measured; and 8.15 whose file is an absolute symlink in its
+# image, which is read only if the file is resolved inside the node's own root.
 #
 # What this catches that the fixture tests cannot: a fixture captured wrong, and the namespace
 # join itself, which needs `CAP_SYS_ADMIN` that no ordinary container grants.
@@ -48,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Start three nodes with no published port
+      - name: Start four nodes with no published port
         run: |
           heap='ES_JAVA_OPTS=-Xms512m -Xmx512m'
           docker run -d --name conformance-7 -e node.name=conformance-7 \
@@ -62,16 +63,34 @@ jobs:
             -e discovery.type=single-node -e "$heap" \
             docker.elastic.co/elasticsearch/elasticsearch:8.15.3
 
+          # A node whose file is an absolute symlink inside its image, pinning a port outside the
+          # default range. Read past its root, the file is missing and the node is an error,
+          # which is how an absolute link under `/proc/<pid>/root` resolves, measured.
+          docker build -q -t conformance-symlinked - <<'IMAGE'
+          FROM docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          USER root
+          RUN mkdir -p /srv/es-config \
+           && printf 'network.host: 0.0.0.0\nhttp.port: 9350\ndiscovery.type: single-node\nxpack.security.enabled: false\n' \
+                > /srv/es-config/elasticsearch.yml \
+           && rm /usr/share/elasticsearch/config/elasticsearch.yml \
+           && chown -R 1000:0 /srv/es-config \
+           && ln -s /srv/es-config/elasticsearch.yml /usr/share/elasticsearch/config/elasticsearch.yml
+          USER 1000:0
+          IMAGE
+          docker run -d --name conformance-symlinked -e node.name=conformance-symlinked \
+            -e "$heap" conformance-symlinked
+
           # Polled, since a cold runner takes a minute to start a JVM. Each node is asked only in
           # the protocol it serves: a plaintext probe of the secured node is itself the WARN the
           # log check below looks for, which a local replay of an earlier version found.
           probe() {
               case "$1" in
                   conformance-secured) echo 'curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:9200/ | grep -q 401' ;;
+                  conformance-symlinked) echo 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9350/ | grep -q 200' ;;
                   *) echo 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9200/ | grep -q 200' ;;
               esac
           }
-          for node in conformance-7 conformance-8 conformance-secured; do
+          for node in conformance-7 conformance-8 conformance-secured conformance-symlinked; do
               waited=0
               until docker exec "$node" sh -c "$(probe "$node")"; do
                   waited=$((waited + 3))
@@ -142,8 +161,8 @@ jobs:
           unprivileged = facet('/tmp/unprivileged.json')
           nodes = unprivileged['data']['nodes']
           silent = [node for node in nodes if node['error'] is None]
-          if len(nodes) != 3 or silent:
-              print('an unprivileged run should report three nodes, each with an error')
+          if len(nodes) != 4 or silent:
+              print('an unprivileged run should report four nodes, each with an error')
               print(json.dumps(unprivileged, indent=1, sort_keys=True))
               sys.exit(1)
           print('unprivileged: every node says why it was not read')

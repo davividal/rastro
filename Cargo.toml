@@ -60,9 +60,10 @@ x509-parser = "0.18"
 # asked anything. Pure Rust; without default features it drops `encoding_rs`, which the file
 # does not need, since Elasticsearch reads it as UTF-8 and nothing else.
 yaml-rust2 = { version = "0.13", default-features = false }
-# `setns`, to read an Elasticsearch node in a container from inside its network namespace. Safe
-# and pure Rust on Linux, which keeps `unsafe_code = "forbid"` true of the workspace's own code.
-rustix = { version = "1", default-features = false, features = ["std", "thread"] }
+# `setns`, to read an Elasticsearch node in a container from inside its network namespace, and
+# `openat2`, to read its files inside its own root. Safe and pure Rust on Linux, which keeps
+# `unsafe_code = "forbid"` true of the workspace's own code.
+rustix = { version = "1", default-features = false, features = ["fs", "std", "thread"] }
 
 [profile.release]
 strip = true
