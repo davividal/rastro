@@ -27,7 +27,7 @@ use crate::collectors::elasticsearch::source::ResidentNode;
 use crate::collectors::elasticsearch::value_objects::{Transport, Unread};
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
-const SEPARATOR: char = '\0';
+const SEPARATOR: u8 = b'\0';
 
 /// The prefix a setting on the command line carries.
 const COMMAND_LINE_SETTING: &str = "-E";
@@ -145,23 +145,41 @@ impl FromIterator<(String, String)> for NodeSettings {
     }
 }
 
-fn read_list(path: &Path, what: &str) -> Result<Vec<String>, Unread> {
-    let text = fs::read_to_string(path)
+/// The environment's variables, read entry by entry as bytes.
+///
+/// One variable that is not UTF-8 used to fail the whole read, over a value the collector never
+/// looks at. Now such a variable is skipped, unless its name is a setting's: a setting rastro
+/// cannot read exactly is one it may not act on, so that is still a refusal.
+fn read_pairs(path: &Path, what: &str) -> Result<BTreeMap<String, String>, Unread> {
+    let raw = fs::read(path)
         .map_err(|error| Unread::new(format!("the node's {what} could not be read: {error}")))?;
 
-    Ok(text
-        .split(SEPARATOR)
+    let mut pairs = BTreeMap::new();
+    for entry in raw
+        .split(|byte| *byte == SEPARATOR)
         .filter(|entry| !entry.is_empty())
-        .map(str::to_owned)
-        .collect())
-}
+    {
+        match std::str::from_utf8(entry) {
+            Ok(text) => {
+                if let Some((name, value)) = text.split_once('=') {
+                    pairs.insert(name.to_owned(), value.to_owned());
+                }
+            }
+            Err(_) => {
+                let name = entry.split(|byte| *byte == b'=').next().unwrap_or_default();
+                if let Ok(name) = std::str::from_utf8(name)
+                    && name.contains('.')
+                {
+                    return Err(Unread::new(format!(
+                        "the setting {name} in the node's {what} is not UTF-8, so it cannot be \
+                         read exactly as the node reads it"
+                    )));
+                }
+            }
+        }
+    }
 
-fn read_pairs(path: &Path, what: &str) -> Result<BTreeMap<String, String>, Unread> {
-    Ok(read_list(path, what)?
-        .iter()
-        .filter_map(|entry| entry.split_once('='))
-        .map(|(name, value)| (name.to_owned(), value.to_owned()))
-        .collect())
+    Ok(pairs)
 }
 
 /// The file's settings, or none where the directory holds no file.
