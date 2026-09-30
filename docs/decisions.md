@@ -6000,3 +6000,16 @@ top included. Measured on a live 8.15.3 node whose file is an absolute link pinn
 before, the node was an error because no listener was in the default range; after, it is read
 on 9350. `live-search.yml` now runs that node. A kernel without `openat2`, before 5.6, refuses
 the read rather than approximating it, since approximating it is the defect.
+
+## A node whose settings switch security or audit on is not asked
+
+Found by review. The TLS gate let through a node that serves plaintext and requires
+credentials, 7.x with `xpack.security.enabled: true` and HTTP TLS off: it was sent `GET /` and
+answered 401, which was already that node's `error`, so the request bought nothing. What it could
+cost is a write: with `xpack.security.audit.enabled: true` the node records every request it
+receives. So both settings are read like the TLS one, anything but absent or exactly `false`
+counting as on, and either stops the read before a connection. Absent is still dialled: security
+is off by default on 7.x, and where an 8.x default leaves it on without saying so the node
+answers 401 and records nothing, because audit logging is never on unless switched on. 8.x's
+auto-configuration writes `xpack.security.enabled: true` into the file, so in practice a
+secured node is caught by its setting.

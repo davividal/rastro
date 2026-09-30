@@ -68,6 +68,19 @@ fn read_into(
              (xpack.security.http.ssl.enabled), and v1 speaks plain HTTP only",
         ));
     }
+    // Found by review: a 401 was already this node's error, and an audit log records the ask.
+    if settings.audits_requests() {
+        return Err(Unread::new(
+            "the node's settings switch audit logging on (xpack.security.audit.enabled), so any \
+             request would be recorded, and v1 sends none",
+        ));
+    }
+    if settings.asks_for_credentials() {
+        return Err(Unread::new(
+            "the node's settings switch security on (xpack.security.enabled), so a request \
+             without credentials would be refused, and v1 sends no credentials",
+        ));
+    }
 
     let namespace = NodeNamespace::of_in(proc, resident.process_id())?;
     node.network_namespace = Some(match namespace.is_ours() {
