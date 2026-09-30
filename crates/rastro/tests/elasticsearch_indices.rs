@@ -234,10 +234,7 @@ fn collect_keys_by_name_where_an_alias_spans_several_indices() {
     // Assert
     assert_eq!(keys_of(&indices), ["logs-1", "logs-2"]);
     assert_eq!(
-        items_of(&field(&field(&indices, "logs-1"), "aliases"))
-            .iter()
-            .map(text)
-            .collect::<Vec<_>>(),
+        keys_of(&field(&field(&indices, "logs-1"), "aliases")),
         ["logs"]
     );
 }
@@ -263,10 +260,7 @@ fn collect_keys_by_name_where_an_index_has_several_aliases() {
     // Assert
     assert_eq!(keys_of(&indices), ["orders-7"]);
     assert_eq!(
-        items_of(&field(&field(&indices, "orders-7"), "aliases"))
-            .iter()
-            .map(text)
-            .collect::<Vec<_>>(),
+        keys_of(&field(&field(&indices, "orders-7"), "aliases")),
         ["orders", "orders-write"]
     );
 }
@@ -299,4 +293,76 @@ fn collect_leaves_out_the_backing_index_of_a_data_stream() {
 
     // Assert: a rollover would otherwise read as one index removed and another added.
     assert_eq!(keys_of(&indices), ["unaliased"]);
+}
+
+#[test]
+fn collect_sees_a_rollover_move_the_write_index() {
+    // Arrange: found by review. Only alias names were kept, so moving `is_write_index` between
+    // the two generations behind a rollover alias, or changing an alias's filter, read as nothing
+    // changed, though where documents are written had.
+    let settings = settings_of(&[
+        settings_answer("logs-1", "aaaaaaaaaaaaaaaaaaaaaa", "1"),
+        settings_answer("logs-2", "bbbbbbbbbbbbbbbbbbbbbb", "2"),
+    ]);
+    let mappings = r#"{"logs-1":{"mappings":{}},"logs-2":{"mappings":{}}}"#;
+    let writing_to = |first: bool| {
+        format!(
+            r#"{{"logs-1":{{"aliases":{{"logs":{{"is_write_index":{first}}}}}}},"logs-2":{{"aliases":{{"logs":{{"is_write_index":{}}}}}}}}}"#,
+            !first
+        )
+    };
+
+    // Act
+    let before = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, &writing_to(true)),
+            (SETTINGS, &settings),
+            (MAPPINGS, mappings),
+        ],
+        "elasticsearch-indices-write-before",
+    );
+    let after = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, &writing_to(false)),
+            (SETTINGS, &settings),
+            (MAPPINGS, mappings),
+        ],
+        "elasticsearch-indices-write-after",
+    );
+
+    // Assert
+    let writes = |indices: &Observation, index: &str| {
+        support::observation::boolean(&field(
+            &field(&field(&field(indices, index), "aliases"), "logs"),
+            "is_write_index",
+        ))
+    };
+    assert!(writes(&before, "logs-1") && !writes(&before, "logs-2"));
+    assert!(!writes(&after, "logs-1") && writes(&after, "logs-2"));
+}
+
+#[test]
+fn collect_keeps_an_aliases_filter() {
+    // Arrange: a filtered alias is a query; changing the filter changes what it returns.
+    let aliases = r#"{"orders-7":{"aliases":{"paid":{"filter":{"term":{"status":"paid"}}}}}}"#;
+    let settings = settings_of(&[settings_answer("orders-7", "cccccccccccccccccccccc", "3")]);
+    let mappings = r#"{"orders-7":{"mappings":{}}}"#;
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, aliases),
+            (SETTINGS, &settings),
+            (MAPPINGS, mappings),
+        ],
+        "elasticsearch-indices-filtered-alias",
+    );
+
+    // Assert: keyed by the alias, which is its identity, and the filter kept on it.
+    let paid = field(&field(&field(&indices, "paid"), "aliases"), "paid");
+    let term = field(&field(&paid, "filter"), "term");
+    assert_eq!(text(&field(&term, "status")), "paid");
 }
