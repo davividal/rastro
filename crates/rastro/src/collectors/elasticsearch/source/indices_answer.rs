@@ -53,12 +53,19 @@ pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indi
     let mut mappings: BTreeMap<String, MappingsOf> =
         read_answer(&client.get(endpoint, MAPPINGS)?, MAPPINGS)?;
 
-    let aliases_of: BTreeMap<String, Vec<String>> = aliases
+    let aliases_of: BTreeMap<String, BTreeMap<String, ApiValue>> = aliases
         .into_iter()
-        .map(|(index, of)| (index, of.aliases.into_keys().collect()))
+        .map(|(index, of)| {
+            let definitions = of
+                .aliases
+                .iter()
+                .map(|(name, definition)| (name.clone(), api_value_of(definition)))
+                .collect();
+            (index, definitions)
+        })
         .collect();
     let mut indices_behind: BTreeMap<&str, usize> = BTreeMap::new();
-    for alias in aliases_of.values().flatten() {
+    for alias in aliases_of.values().flat_map(BTreeMap::keys) {
         *indices_behind.entry(alias).or_default() += 1;
     }
 
@@ -70,8 +77,10 @@ pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indi
             continue;
         }
         let aliases = aliases_of.get(&index).cloned().unwrap_or_default();
-        let keyed_by_alias =
-            matches!(aliases.as_slice(), [alias] if indices_behind.get(alias.as_str()) == Some(&1));
+        let keyed_by_alias = aliases.len() == 1
+            && aliases
+                .keys()
+                .all(|alias| indices_behind.get(alias.as_str()) == Some(&1));
         let mappings = mappings
             .remove(&index)
             .map(|of| api_value_of(&of.mappings))
@@ -86,7 +95,7 @@ pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indi
 fn entry_of(
     index: String,
     keyed_by_alias: bool,
-    aliases: Vec<String>,
+    aliases: BTreeMap<String, ApiValue>,
     settings: BTreeMap<String, serde_json::Value>,
     mappings: &ApiValue,
 ) -> IndexEntry {

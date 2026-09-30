@@ -23,8 +23,10 @@ pub struct IndexEntry {
     /// Whether the entry is keyed by its alias, which makes the index name volatile.
     pub keyed_by_alias: bool,
 
-    /// Sorted, so an alias added in another order is not a change.
-    pub aliases: Vec<String>,
+    /// Each alias with its definition: `is_write_index`, a filter, routing. Found by review:
+    /// keeping the names alone let a rollover move the write index, or an alias filter change,
+    /// read as nothing changed. Keyed, so an alias added in another order is not a change.
+    pub aliases: BTreeMap<String, ApiValue>,
 
     /// Flat settings, less the three that differ for every index made: `index.uuid`,
     /// `index.creation_date` and `index.provided_name`. `index.version.created` is kept, since
@@ -50,8 +52,9 @@ impl IndexEntry {
     /// An alias over several indices names none of them alone, and an index with several aliases
     /// has no one alias that is its identity, so both keep their names rather than rastro picking.
     pub fn key(&self) -> &str {
-        match (self.keyed_by_alias, self.aliases.as_slice()) {
-            (true, [alias]) => alias,
+        let mut names = self.aliases.keys();
+        match (self.keyed_by_alias, names.next(), names.next()) {
+            (true, Some(alias), None) => alias,
             _ => &self.index,
         }
     }
@@ -82,7 +85,12 @@ impl From<&IndexEntry> for Observation {
             ),
             (
                 "aliases",
-                Observation::list(entry.aliases.iter().map(Observation::text)),
+                Observation::object(
+                    entry
+                        .aliases
+                        .iter()
+                        .map(|(name, definition)| (name.as_str(), Observation::from(definition))),
+                ),
             ),
             (
                 "settings",
