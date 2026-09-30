@@ -338,9 +338,12 @@ fn scalar(node: &Yaml) -> Option<String> {
     }
 }
 
-/// Resolves `${NAME}` from the node's own environment, which is what the node did at start.
+/// Resolves `${NAME}` and `${NAME:default}` from the node's own environment, as the node did at
+/// start.
 ///
-/// A name the environment does not hold is a refusal rather than the literal text: a port
+/// The default is used where the variable is unset, measured on 8.15.3: a node whose file said
+/// `node.name: ${ES_UNSET_NAME:from-default}` started named `from-default`. A name the environment
+/// does not hold and that gives no default is a refusal rather than the literal text: a port
 /// spelled `${ES_HTTP_PORT}` is not one rastro may dial.
 fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<String, Unread> {
     let mut resolved = String::new();
@@ -352,12 +355,20 @@ fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<Str
         let end = after
             .find('}')
             .ok_or_else(|| Unread::new(format!("`{value}` opens a variable it never closes")))?;
-        let name = &after[..end];
-        let found = environment.get(name).ok_or_else(|| {
-            Unread::new(format!(
-                "`{value}` names {name}, which the node's environment does not hold"
-            ))
-        })?;
+        let placeholder = &after[..end];
+        let (name, default) = match placeholder.split_once(':') {
+            Some((name, default)) => (name, Some(default)),
+            None => (placeholder, None),
+        };
+        let found = environment
+            .get(name)
+            .map(String::as_str)
+            .or(default)
+            .ok_or_else(|| {
+                Unread::new(format!(
+                    "`{value}` names {name}, which the node's environment does not hold"
+                ))
+            })?;
         resolved.push_str(found);
         rest = &after[end + 1..];
     }

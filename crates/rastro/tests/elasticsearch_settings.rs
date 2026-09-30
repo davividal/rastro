@@ -446,3 +446,35 @@ fn read_in_keeps_a_relative_symlink_that_climbs_out_inside_the_nodes_own_root() 
     // Assert
     assert_eq!(settings.get("http.port"), Some("9250"));
 }
+
+#[test]
+fn read_in_takes_a_placeholders_default_where_its_variable_is_unset() {
+    // Arrange: measured on 8.15.3, `node.name: ${ES_UNSET_NAME:from-default}` with the variable
+    // unset started a node named `from-default`. Found by review: this read took the whole of
+    // `ES_HTTP_PORT:9250` for a variable name and refused the node.
+    let proc = scratch_tree("elasticsearch-settings-placeholder-default", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "http.port: ${ES_HTTP_PORT:9250}\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9250"));
+}
+
+#[test]
+fn read_in_takes_a_placeholders_variable_over_its_default() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-placeholder-set", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "ES_HTTP_PORT=9260\0");
+    write(&proc, CONFIG_FILE, "http.port: ${ES_HTTP_PORT:9250}\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9260"));
+}
