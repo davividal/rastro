@@ -270,3 +270,61 @@ fn collect_reports_a_node_in_a_namespace_it_cannot_join_on_the_node() {
     assert!(text(&field(reported, "error")).contains("namespace"));
     assert!(node.requests().is_empty(), "{:?}", node.requests());
 }
+
+#[test]
+fn collect_does_not_dial_a_node_whose_settings_switch_security_on() {
+    // Arrange: found by review. A 7.x node with security on and HTTP TLS off serves plaintext,
+    // so it passed the TLS gate and was sent a request it could only refuse with a 401, which an
+    // audit log records. The 401 was already this node's error, so asking bought nothing.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc_with(
+        "elasticsearch-facet-security-on",
+        &format!("http.port={}\0", node.port),
+        Some("xpack.security.enabled: true\n"),
+    );
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(text(&field(reported, "error")).contains("credentials"));
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+}
+
+#[test]
+fn collect_does_not_dial_a_node_that_audits_requests() {
+    // Arrange: with audit logging on, any request the node receives is recorded.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc_with(
+        "elasticsearch-facet-audit-on",
+        &format!("http.port={}\0", node.port),
+        Some("xpack.security.audit.enabled: true\n"),
+    );
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(text(&field(reported, "error")).contains("audit"));
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+}
+
+#[test]
+fn collect_reads_a_node_whose_settings_switch_security_off() {
+    // Arrange: the other direction, so the gate cannot be satisfied by refusing everything.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc_with(
+        "elasticsearch-facet-security-off",
+        &format!("http.port={}\0", node.port),
+        Some("xpack.security.enabled: false\nxpack.security.audit.enabled: false\n"),
+    );
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+}

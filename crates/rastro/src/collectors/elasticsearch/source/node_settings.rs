@@ -55,6 +55,12 @@ const DEFAULT_DATA_DIRECTORY: &str = "data";
 /// The setting that puts the HTTP listener behind TLS.
 const TLS_SETTING: &str = "xpack.security.http.ssl.enabled";
 
+/// The setting that makes the node ask every request for credentials.
+const SECURITY_SETTING: &str = "xpack.security.enabled";
+
+/// The setting that makes the node record every request it receives.
+const AUDIT_SETTING: &str = "xpack.security.audit.enabled";
+
 /// A node's start-up settings, flattened to dotted keys.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NodeSettings {
@@ -157,6 +163,24 @@ impl NodeSettings {
             Some(_) => Transport::TlsRequired,
         }
     }
+
+    /// Whether the settings switch security on, so a request without credentials is refused.
+    ///
+    /// Read the way the TLS setting is, anything but absent or exactly `false` counting as on.
+    /// Absent is dialled: it is off on 7.x, and where an 8.x default leaves it on the node answers
+    /// 401 and records nothing unless audit logging, which is never on by default, says so.
+    pub fn asks_for_credentials(&self) -> bool {
+        switched_on(self.get(SECURITY_SETTING))
+    }
+
+    /// Whether the settings switch audit logging on, so any request received is recorded.
+    pub fn audits_requests(&self) -> bool {
+        switched_on(self.get(AUDIT_SETTING))
+    }
+}
+
+fn switched_on(value: Option<&str>) -> bool {
+    !matches!(value, None | Some("false"))
 }
 
 /// Settings the caller already has, so what depends on them can be exercised without a node.
