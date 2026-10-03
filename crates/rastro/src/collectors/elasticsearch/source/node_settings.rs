@@ -112,12 +112,7 @@ impl NodeSettings {
         // node was installed, even where the variables are not settings themselves.
         let environment = read_pairs(&process.join("environ"), "environ")?;
         let file = read_config_file(&process.join("root"), config, &environment)?;
-        let command_line = node.launch_arguments().iter().filter_map(|argument| {
-            let (name, value) = argument
-                .strip_prefix(COMMAND_LINE_SETTING)?
-                .split_once('=')?;
-            Some((name.to_owned(), value.to_owned()))
-        });
+        let command_line = command_line_settings(node.launch_arguments());
 
         let mut values = file;
         values.extend(command_line);
@@ -187,6 +182,27 @@ impl NodeSettings {
 
 fn switched_on(value: Option<&str>) -> bool {
     !matches!(value, None | Some("false"))
+}
+
+/// The `-E` settings on an argv, in both forms Elasticsearch takes: `-Ename=value`, and `-E`
+/// followed by `name=value` as its own argument, since the option is declared with a required
+/// argument. The second was ignored until review found it.
+fn command_line_settings(arguments: &[String]) -> Vec<(String, String)> {
+    let mut settings = Vec::new();
+    let mut rest = arguments.iter();
+
+    while let Some(argument) = rest.next() {
+        let setting = match argument.strip_prefix(COMMAND_LINE_SETTING) {
+            Some("") => rest.next().map(String::as_str),
+            Some(joined) => Some(joined),
+            None => None,
+        };
+        if let Some((name, value)) = setting.and_then(|setting| setting.split_once('=')) {
+            settings.push((name.to_owned(), value.to_owned()));
+        }
+    }
+
+    settings
 }
 
 /// The settings the docker image takes from its environment, in both spellings it accepts.

@@ -558,3 +558,21 @@ fn read_in_refuses_a_node_launched_with_an_argument_file() {
         unread.reason()
     );
 }
+
+#[test]
+fn read_in_takes_a_command_line_setting_given_as_two_arguments() {
+    // Arrange: found by review. Elasticsearch declares `-E` with a required argument, so
+    // `-E http.port=9400` is as valid as `-Ehttp.port=9400`, and was ignored.
+    let proc = scratch_tree("elasticsearch-settings-separated-e", &["600/root"]);
+    let argv = format!("{TAR_SERVER_ARGV}-E\0http.port=9400\0-E\0xpack.security.enabled=true\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9400"));
+    assert!(settings.asks_for_credentials());
+}
