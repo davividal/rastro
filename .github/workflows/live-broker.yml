@@ -53,7 +53,7 @@ jobs:
       # Pinned to the toolchain `mise.toml` pins, on the Debian that carries a supported
       # broker: trixie has RabbitMQ 4.0.5, and bookworm has 3.10, which is below the floor
       # this facet declares. `latest` would drift across both at once.
-      image: rust:1.98.1-trixie
+      image: rust:1.99.0-trixie
       # Root in a container cannot read another account's `/proc/<pid>/fd` without these, and
       # that read is how a node is attributed to its broker.
       options: --cap-add=SYS_PTRACE --cap-add=DAC_READ_SEARCH
