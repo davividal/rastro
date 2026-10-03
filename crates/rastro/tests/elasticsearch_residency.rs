@@ -345,3 +345,33 @@ fn all_in_takes_a_doubled_at_sign_as_a_literal_argument() {
     // Act & Assert: the main class is `@org…`, which is not the server.
     assert!(ResidentNode::all_in(&proc).is_empty());
 }
+
+#[test]
+fn census_in_tells_a_process_it_could_not_inspect_from_one_that_left() {
+    // Arrange: found by the second domain review. Under `hidepid=1` an unprivileged run sees a
+    // process's directory and is refused its `cmdline`, and that was read as a process that had
+    // exited: a node hidden that way left the facet `absent`. A `cmdline` that is a directory is
+    // refused for root as well, so this holds for both runs of the suite.
+    let proc = scratch_tree("elasticsearch-residency-unseen", &["812", "900/cmdline"]);
+    write(&proc, "812/cmdline", SERVER_7_ARGV);
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert_eq!(census.nodes.len(), 1);
+    assert!(census.some_processes_unseen);
+}
+
+#[test]
+fn census_in_takes_a_process_with_no_cmdline_for_one_that_left() {
+    // Arrange: a process that exited between the listing and the read.
+    let proc = scratch_tree("elasticsearch-residency-left", &["812", "901"]);
+    write(&proc, "812/cmdline", SERVER_7_ARGV);
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(!census.some_processes_unseen);
+}

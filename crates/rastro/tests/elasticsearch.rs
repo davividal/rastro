@@ -351,3 +351,34 @@ fn collect_does_not_dial_a_node_that_audits_through_an_encoded_setting() {
     assert!(text(&field(reported, "error")).contains("audit"));
     assert!(node.requests().is_empty(), "{:?}", node.requests());
 }
+
+#[test]
+fn presence_cannot_tell_where_a_process_could_not_be_inspected_and_nothing_else_is_found() {
+    // Arrange: nothing installed, no node found, and one process it was refused.
+    let proc = scratch_tree("elasticsearch-facet-unseen-only", &["900/cmdline"]);
+
+    // Act
+    let presence = collector(&proc, false).presence();
+
+    // Assert: not `absent`, which would be a confident claim about a box it could not see.
+    assert!(
+        matches!(presence, Presence::Undetermined { .. }),
+        "{presence:?}"
+    );
+}
+
+#[test]
+fn collect_marks_the_facet_incomplete_where_a_process_could_not_be_inspected() {
+    // Arrange: one node found, beside a process that may be another.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-unseen-beside-node");
+    std::fs::create_dir_all(proc.join("900/cmdline")).expect("a writable fixture");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert: the node is reported, and so is what could not be looked at.
+    assert_eq!(items_of(&field(&facet, "nodes")).len(), 1);
+    let unseen = field(&facet, "uninspected_processes");
+    assert_eq!(unseen.completeness(), Completeness::Incomplete);
+}

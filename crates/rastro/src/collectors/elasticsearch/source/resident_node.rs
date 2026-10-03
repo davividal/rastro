@@ -107,30 +107,69 @@ pub struct ResidentNode {
     launcher_gone: bool,
 }
 
+/// The servers on a process table, and whether any process could not be inspected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Census {
+    /// In ascending process id order.
+    pub nodes: Vec<ResidentNode>,
+
+    /// Whether some process's argv was refused rather than gone, so a node could be among them.
+    ///
+    /// Found by the second domain review: under `hidepid=1` an unprivileged run sees a process's
+    /// directory and is refused its `cmdline`, and that was read as a process that had exited,
+    /// so a node hidden that way left the facet `absent`. `hidepid=2` hides the directory itself,
+    /// which no reading can tell from no process.
+    pub some_processes_unseen: bool,
+}
+
+/// What one process table entry turned out to be.
+enum Inspection {
+    Node(Box<ResidentNode>),
+    NotANode,
+
+    /// It exited between the listing and the read.
+    Left,
+
+    /// Its argv was refused, for a reason other than having exited.
+    Unseen,
+}
+
 impl ResidentNode {
+    /// The servers on a process table the caller names, and whether any process was unseen.
+    ///
+    /// **Never fails.** An unreadable `/proc` and an entry that vanished mid-walk both mean
+    /// nothing was found to ask.
+    pub fn census_in(proc: &Path) -> Census {
+        let mut census = Census {
+            nodes: Vec::new(),
+            some_processes_unseen: false,
+        };
+        let Ok(entries) = fs::read_dir(proc) else {
+            return census;
+        };
+
+        for entry in entries.flatten() {
+            match Self::inspect(proc, &entry.path()) {
+                Inspection::Node(node) => census.nodes.push(*node),
+                Inspection::Unseen => census.some_processes_unseen = true,
+                Inspection::NotANode | Inspection::Left => {}
+            }
+        }
+
+        // Directory order is the filesystem's, and a list that moves between two runs of an
+        // unchanged box is what the document's contract forbids.
+        census.nodes.sort_unstable_by_key(|node| node.process_id);
+        census
+    }
+
     /// Reads the box's process table.
     pub fn all() -> Vec<Self> {
         Self::all_in(Path::new(PROC))
     }
 
-    /// The same over a process table the caller names, in ascending process id order.
-    ///
-    /// **Never fails.** An unreadable `/proc` and an entry that vanished mid-walk both mean
-    /// nothing was found to ask, and the caller's next step is to ask nothing.
+    /// The servers on a process table the caller names, in ascending process id order.
     pub fn all_in(proc: &Path) -> Vec<Self> {
-        let Ok(entries) = fs::read_dir(proc) else {
-            return Vec::new();
-        };
-
-        let mut nodes: Vec<Self> = entries
-            .flatten()
-            .filter_map(|entry| Self::from_process_directory(proc, &entry.path()))
-            .collect();
-
-        // Directory order is the filesystem's, and a list that moves between two runs of an
-        // unchanged box is what the document's contract forbids.
-        nodes.sort_unstable_by_key(|node| node.process_id);
-        nodes
+        Self::census_in(proc).nodes
     }
 
     pub fn process_id(&self) -> u32 {
@@ -192,9 +231,25 @@ impl ResidentNode {
         &self.application_arguments
     }
 
-    fn from_process_directory(proc: &Path, path: &Path) -> Option<Self> {
-        let process_id: u32 = path.file_name()?.to_str()?.parse().ok()?;
-        let own = arguments_of(path)?;
+    fn inspect(proc: &Path, path: &Path) -> Inspection {
+        let Some(process_id) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            return Inspection::NotANode;
+        };
+        match arguments_of(path) {
+            Ok(own) => Self::from_arguments(proc, path, process_id, own)
+                .map_or(Inspection::NotANode, |node| {
+                    Inspection::Node(Box::new(node))
+                }),
+            Err(error) if has_left(&error) => Inspection::Left,
+            Err(_) => Inspection::Unseen,
+        }
+    }
+
+    fn from_arguments(proc: &Path, path: &Path, process_id: u32, own: Argv) -> Option<Self> {
         let spelled: Vec<&str> = own.arguments.iter().map(String::as_str).collect();
 
         if !starts_the_server(&spelled) {
@@ -249,8 +304,16 @@ struct Argv {
 
 /// Read as bytes, because one argument that is not UTF-8, a Latin-1 path say, would otherwise
 /// fail the whole read and the server would silently stop being a node.
-fn arguments_of(process: &Path) -> Option<Argv> {
-    let cmdline = fs::read(process.join("cmdline")).ok()?;
+/// Whether a read failed because the process exited, as opposed to being refused.
+fn has_left(error: &std::io::Error) -> bool {
+    /// `ESRCH`, which a read of a process that exited mid-read can return.
+    const NO_SUCH_PROCESS: i32 = 3;
+
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(NO_SUCH_PROCESS)
+}
+
+fn arguments_of(process: &Path) -> std::io::Result<Argv> {
+    let cmdline = fs::read(process.join("cmdline"))?;
     let raw: Vec<&[u8]> = cmdline
         .split(|byte| *byte == ARGUMENT_SEPARATOR)
         .filter(|argument| !argument.is_empty())
@@ -262,7 +325,7 @@ fn arguments_of(process: &Path) -> Option<Argv> {
         .collect();
     let expansion = expanded(process, arguments);
 
-    Some(Argv {
+    Ok(Argv {
         exact: raw
             .iter()
             .all(|argument| std::str::from_utf8(argument).is_ok()),
@@ -413,7 +476,7 @@ fn clock_ticks_per_second() -> u64 {
 fn launcher_arguments(proc: &Path, process: &Path) -> Option<Argv> {
     let stat = fs::read_to_string(process.join("stat")).ok()?;
     let parent = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?;
-    let launcher = arguments_of(&proc.join(parent))?;
+    let launcher = arguments_of(&proc.join(parent)).ok()?;
     let spelled: Vec<&str> = launcher.arguments.iter().map(String::as_str).collect();
 
     is_java_running(&spelled, LAUNCHER_MAIN).then_some(launcher)

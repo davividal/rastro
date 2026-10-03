@@ -19,6 +19,12 @@ pub struct Installation {
 
     /// In the order [`Node::ordering`] gives, so two runs list two nodes the same way.
     pub nodes: Vec<Node>,
+
+    /// Whether some process could not be inspected, so a node among them would not be listed.
+    ///
+    /// Rendered as words with no count, and marked incomplete: how many processes a run was
+    /// refused moves between two runs of an unchanged box, which the document must not.
+    pub uninspected_processes: bool,
 }
 
 impl From<&Installation> for Observation {
@@ -31,6 +37,17 @@ impl From<&Installation> for Observation {
             (
                 "nodes",
                 Observation::list(installation.nodes.iter().map(Observation::from)),
+            ),
+            (
+                "uninspected_processes",
+                match installation.uninspected_processes {
+                    true => Observation::text(
+                        "some processes could not be inspected, so a node among them would not \
+                         be listed",
+                    )
+                    .incomplete(),
+                    false => Observation::null(),
+                },
             ),
         ])
     }

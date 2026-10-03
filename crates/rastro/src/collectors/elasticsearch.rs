@@ -101,9 +101,21 @@ impl Collector for ElasticsearchCollector {
     /// one that is not running would mean searching the disk for it, which is a guess. A running
     /// one is found from `/proc` wherever it lives.
     fn presence(&self) -> Presence {
-        match self.package_installed || !ResidentNode::all_in(&self.proc).is_empty() {
-            true => Presence::Present,
-            false => Presence::Absent,
+        let census = ResidentNode::census_in(&self.proc);
+        match (
+            self.package_installed || !census.nodes.is_empty(),
+            census.some_processes_unseen,
+        ) {
+            (true, _) => Presence::Present,
+            (false, false) => Presence::Absent,
+            // Found by the second domain review: a node among processes rastro could not inspect,
+            // under `hidepid=1` say, was reported `absent`, a confident claim about a box it
+            // could not see.
+            (false, true) => Presence::Undetermined {
+                reason: "some processes could not be inspected, so a node among them would not \
+                         be found"
+                    .to_owned(),
+            },
         }
     }
 
@@ -140,7 +152,9 @@ impl Collector for ElasticsearchCollector {
     /// leaves an established connection and no listener, and `sockets` records listeners only,
     /// so no other collector can see this one working.
     fn collect(&self) -> Result<Observation, CollectionError> {
-        let mut nodes: Vec<Node> = ResidentNode::all_in(&self.proc)
+        let census = ResidentNode::census_in(&self.proc);
+        let mut nodes: Vec<Node> = census
+            .nodes
             .iter()
             .map(|resident| read_node(&self.proc, resident, &self.client))
             .collect();
@@ -149,6 +163,7 @@ impl Collector for ElasticsearchCollector {
         Ok(Observation::from(&Installation {
             package_installed: self.package_installed,
             nodes,
+            uninspected_processes: census.some_processes_unseen,
         }))
     }
 }
