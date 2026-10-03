@@ -47,6 +47,28 @@ const CONFIG_FILE: &str = "elasticsearch.yml";
 /// The one distribution whose environment holds settings.
 const DOCKER_DISTRIBUTION: &str = "docker";
 
+/// The server's options that take no value, from its own `--help`.
+const FLAG_OPTIONS: [&str; 12] = [
+    "-d",
+    "--daemonize",
+    "-q",
+    "--quiet",
+    "-s",
+    "--silent",
+    "-v",
+    "--verbose",
+    "-V",
+    "--version",
+    "-h",
+    "--help",
+];
+
+/// The server's options whose value is the next argument.
+const VALUE_OPTIONS: [&str; 3] = ["-p", "--pidfile", "--enrollment-token"];
+
+/// The same options with their value joined: `-p/run/es.pid`, `-p=…`, `--pidfile=…`.
+const JOINED_VALUE_OPTIONS: [&str; 3] = ["-p", "--pidfile=", "--enrollment-token="];
+
 /// How long after the node's start a change to its file is still the node's own start-up write,
 /// in seconds. Auto-configuration measured at 0.67 s; the rest is room for a slow box.
 const START_UP_WRITE_WINDOW: i64 = 60;
@@ -122,7 +144,7 @@ impl NodeSettings {
             )
         })?;
         let file = read_config_file(&process.join("root"), config, &environment, started_at)?;
-        let command_line = command_line_settings(node.launch_arguments());
+        let command_line = command_line_settings(node.application_arguments())?;
 
         let mut values = file;
         values.extend(command_line);
@@ -194,25 +216,56 @@ fn switched_on(value: Option<&str>) -> bool {
     !matches!(value, None | Some("false"))
 }
 
-/// The `-E` settings on an argv, in both forms Elasticsearch takes: `-Ename=value`, and `-E`
-/// followed by `name=value` as its own argument, since the option is declared with a required
-/// argument. The second was ignored until review found it.
-fn command_line_settings(arguments: &[String]) -> Vec<(String, String)> {
+/// The `-E` settings among the server's arguments, every argument placed or the node refused.
+///
+/// **A closed set, found by review the third time a spelling was missed.** `-Ename=value`, then
+/// `-E name=value`, then `-E=name=value` each read as no setting at all, and each let a node whose
+/// TLS was switched on that way be sent plaintext. The server's options, from its own `--help` on
+/// 7.17.24, 8.15.3 and 9.2.0, are few, so each is placed in every spelling jopt-simple takes, a
+/// value joined, after `=` or as the next argument, and anything else refuses the node: a
+/// spelling not yet known is a refusal rather than a misreading.
+fn command_line_settings(arguments: &[String]) -> Result<Vec<(String, String)>, Unread> {
     let mut settings = Vec::new();
     let mut rest = arguments.iter();
+    let unplaced = |argument: &str| {
+        Unread::new(format!(
+            "the node's command line holds `{argument}`, which rastro cannot place, so its \
+             settings cannot be read exactly"
+        ))
+    };
 
     while let Some(argument) = rest.next() {
-        let setting = match argument.strip_prefix(COMMAND_LINE_SETTING) {
-            Some("") => rest.next().map(String::as_str),
-            Some(joined) => Some(joined),
-            None => None,
-        };
-        if let Some((name, value)) = setting.and_then(|setting| setting.split_once('=')) {
-            settings.push((name.to_owned(), value.to_owned()));
+        let argument = argument.as_str();
+        if FLAG_OPTIONS.contains(&argument) {
+            continue;
         }
+        if VALUE_OPTIONS.contains(&argument) {
+            rest.next().ok_or_else(|| unplaced(argument))?;
+            continue;
+        }
+        if JOINED_VALUE_OPTIONS
+            .iter()
+            .any(|option| argument.starts_with(option) && argument.len() > option.len())
+        {
+            continue;
+        }
+
+        let setting = match argument.strip_prefix(COMMAND_LINE_SETTING) {
+            Some("") => rest
+                .next()
+                .map(String::as_str)
+                .ok_or_else(|| unplaced(argument))?,
+            Some(joined) => joined.strip_prefix('=').unwrap_or(joined),
+            None => return Err(unplaced(argument)),
+        };
+        let (name, value) = setting
+            .split_once('=')
+            .filter(|(name, _)| !name.is_empty())
+            .ok_or_else(|| unplaced(argument))?;
+        settings.push((name.to_owned(), value.to_owned()));
     }
 
-    settings
+    Ok(settings)
 }
 
 /// The settings the docker image takes from its environment, in both spellings it accepts.

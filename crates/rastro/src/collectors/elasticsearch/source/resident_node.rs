@@ -77,8 +77,9 @@ const DISTRIBUTION_PROPERTY: &str = "-Des.distribution.type=";
 pub struct ResidentNode {
     process_id: u32,
 
-    /// The argv the node was launched with: its own on 7.x, its launcher's on 8.x and 9.x.
-    launch_arguments: Vec<String>,
+    /// The arguments after the entry point of the argv the node was launched with: the server's
+    /// own on 7.x, its launcher's on 8.x and 9.x. Its command-line settings are among them.
+    application_arguments: Vec<String>,
 
     /// Whether every launch argument was UTF-8, so the text above is the argv exactly.
     launch_arguments_are_exact: bool,
@@ -173,9 +174,10 @@ impl ResidentNode {
         self.launched_with_an_argument_file
     }
 
-    /// The argv the node was launched with, which is where its command-line settings are.
-    pub fn launch_arguments(&self) -> &[String] {
-        &self.launch_arguments
+    /// The arguments after the launch argv's entry point, which is where the command-line
+    /// settings are.
+    pub fn application_arguments(&self) -> &[String] {
+        &self.application_arguments
     }
 
     fn from_process_directory(proc: &Path, path: &Path) -> Option<Self> {
@@ -204,7 +206,15 @@ impl ResidentNode {
             started_at: started_at(proc, path),
             launched_with_an_argument_file: launch.unread_argument_file,
             launch_arguments_are_exact: launch.exact,
-            launch_arguments: launch.arguments,
+            application_arguments: launch_of(&launched)
+                .map(|start| {
+                    launch
+                        .arguments
+                        .get(start.arguments_from..)
+                        .unwrap_or_default()
+                        .to_vec()
+                })
+                .unwrap_or_default(),
         })
     }
 }
@@ -422,6 +432,9 @@ struct Launch<'argv> {
 
     /// The index of the argument the entry point was read from; every option is before it.
     entry_index: usize,
+
+    /// The index of the first argument after the entry point, the application's own.
+    arguments_from: usize,
 }
 
 /// What a JVM was started to run.
@@ -447,25 +460,29 @@ fn launch_of<'argv>(arguments: &[&'argv str]) -> Option<Launch<'argv>> {
 
     let mut index = 1;
     while let Some(argument) = arguments.get(index) {
-        let launch = |entry, entry_index| Launch { entry, entry_index };
+        let launch = |entry, entry_index, arguments_from| Launch {
+            entry,
+            entry_index,
+            arguments_from,
+        };
 
         if MODULE_FLAGS.contains(argument) {
             return arguments
                 .get(index + 1)
-                .map(|module| launch(EntryPoint::Module(module), index));
+                .map(|module| launch(EntryPoint::Module(module), index, index + 2));
         }
         if let Some(module) = argument.strip_prefix("--module=") {
-            return Some(launch(EntryPoint::Module(module), index));
+            return Some(launch(EntryPoint::Module(module), index, index + 1));
         }
         if *argument == JAR_OPTION {
-            return Some(launch(EntryPoint::Jar, index));
+            return Some(launch(EntryPoint::Jar, index, index + 2));
         }
         if OPTIONS_WITH_A_VALUE.contains(argument) {
             index += 2;
             continue;
         }
         if !argument.starts_with('-') {
-            return Some(launch(EntryPoint::Class(argument), index));
+            return Some(launch(EntryPoint::Class(argument), index, index + 1));
         }
         index += 1;
     }

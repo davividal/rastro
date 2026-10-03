@@ -681,3 +681,63 @@ fn read_in_refuses_a_file_swapped_for_a_symlink_after_the_node_started() {
         unread.reason()
     );
 }
+
+#[test]
+fn read_in_takes_a_command_line_setting_spelled_with_an_equals_sign() {
+    // Arrange: found by the second domain review, measured on 8.15.3: jopt-simple also takes
+    // `-E=name=value`, which was read as a setting named `""` and let a TLS node be sent plaintext.
+    let proc = scratch_tree("elasticsearch-settings-e-equals", &["600/root"]);
+    let argv = format!("{TAR_SERVER_ARGV}-E=xpack.security.http.ssl.enabled=true\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(
+        settings.transport(),
+        rastro::collectors::elasticsearch::Transport::TlsRequired
+    );
+}
+
+#[test]
+fn read_in_reads_past_the_servers_own_flags() {
+    // Arrange: the server's options, from its own `--help` on 7.17.24, 8.15.3 and 9.2.0.
+    let proc = scratch_tree("elasticsearch-settings-known-flags", &["600/root"]);
+    let argv = format!(
+        "{TAR_SERVER_ARGV}-d\0-p\0/var/run/es.pid\0--pidfile=/var/run/es.pid\0-q\0--silent\0-Ehttp.port=9400\0"
+    );
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9400"));
+}
+
+#[test]
+fn read_in_refuses_a_command_line_argument_it_cannot_place() {
+    // Arrange: three rounds found three spellings of `-E` one at a time. A closed set of the
+    // server's options, and a refusal for anything else, ends that: a spelling not yet known is
+    // refused rather than misread.
+    let proc = scratch_tree("elasticsearch-settings-unknown-argument", &["600/root"]);
+    let argv = format!("{TAR_SERVER_ARGV}--Ehttp.port=9400\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unplaced argument");
+
+    // Assert
+    assert!(
+        unread.reason().contains("--Ehttp.port=9400"),
+        "{}",
+        unread.reason()
+    );
+}
