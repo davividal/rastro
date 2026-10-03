@@ -219,3 +219,42 @@ fn all_in_finds_a_server_with_an_argument_that_is_not_utf_8() {
     assert_eq!(nodes.len(), 1);
     assert!(!nodes[0].launch_arguments_are_exact());
 }
+
+#[test]
+fn all_in_reads_no_further_than_the_main_class_a_jvm_was_started_with() {
+    // Arrange: found by review. Everything after a JVM's main class is that application's own
+    // argument, so a `-cp` and the server's class appearing there are not the JVM's.
+    let proc = scratch_tree("elasticsearch-residency-after-main", &["90"]);
+    write(
+        &proc,
+        "90/cmdline",
+        "/usr/bin/java\0-cp\0app.jar\0com.example.Main\0-cp\0ignored\0\
+         org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert!(nodes.is_empty(), "{nodes:?}");
+}
+
+#[test]
+fn all_in_finds_a_server_whose_classpath_is_not_the_last_option() {
+    // Arrange: the main class is the first argument that is not an option or an option's value,
+    // wherever the classpath came in the options before it.
+    let proc = scratch_tree("elasticsearch-residency-options-after-cp", &["91"]);
+    write(
+        &proc,
+        "91/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0-cp\0/usr/share/elasticsearch/lib/*\0\
+         -Des.path.home=/usr/share/elasticsearch\0-Xms1g\0\
+         org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes.len(), 1);
+}

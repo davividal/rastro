@@ -34,8 +34,30 @@ const MODULE_MAIN: &str = "org.elasticsearch.server/org.elasticsearch.bootstrap.
 const JAVA: &str = "java";
 
 /// The flags a JVM takes its classpath or its main module from.
-const CLASSPATH_FLAGS: [&str; 3] = ["-cp", "-classpath", "--class-path"];
 const MODULE_FLAGS: [&str; 2] = ["-m", "--module"];
+
+/// The `java` launcher options whose value is the next argument rather than part of their own.
+///
+/// What lets the main class be found: it is the first argument that is neither an option nor
+/// one of these values. Options spelled `--name=value` are one argument and need no entry.
+const OPTIONS_WITH_A_VALUE: [&str; 13] = [
+    "-cp",
+    "-classpath",
+    "--class-path",
+    "-p",
+    "--module-path",
+    "--upgrade-module-path",
+    "--add-modules",
+    "--add-reads",
+    "--add-exports",
+    "--add-opens",
+    "--limit-modules",
+    "--patch-module",
+    "--enable-native-access",
+];
+
+/// The option that makes a jar's manifest name the main class instead.
+const JAR_OPTION: &str = "-jar";
 
 /// The main class of the 8.x launcher, which forks the server.
 const LAUNCHER_MAIN: &str = "org.elasticsearch.launcher.CliToolLauncher";
@@ -206,26 +228,65 @@ fn launcher_arguments(proc: &Path, process: &Path) -> Option<Argv> {
 ///
 /// **The class has to be the main class, not merely an argument.** Found by the conformance
 /// run, whose own `pgrep -f org.elasticsearch.bootstrap.Elasticsearch` carries the class as a
-/// whole argument and was read as a node. So the program must be `java`, and the class must be
-/// what `-m` names or what follows the classpath `-cp` names, which is where a JVM takes it from.
+/// whole argument and was read as a node; and by review, since everything after a JVM's main
+/// class is that application's own argument, a `-cp` and the server's class among them
+/// included. So the program must be `java`, and its entry point, read from the launcher's
+/// options and no further, must be the server's.
 fn starts_the_server(arguments: &[&str]) -> bool {
     starts_as_a_module(arguments) || is_java_running(arguments, CLASSPATH_MAIN)
 }
 
 /// Whether this is the 8.x and 9.x server, started as a module.
 fn starts_as_a_module(arguments: &[&str]) -> bool {
-    is_java(arguments)
-        && arguments
-            .windows(2)
-            .any(|pair| MODULE_FLAGS.contains(&pair[0]) && pair[1] == MODULE_MAIN)
+    entry_point_of(arguments) == Some(EntryPoint::Module(MODULE_MAIN))
 }
 
 /// Whether this is a JVM whose main class, taken from the classpath, is `main`.
 fn is_java_running(arguments: &[&str], main: &str) -> bool {
-    is_java(arguments)
-        && arguments
-            .windows(3)
-            .any(|triple| CLASSPATH_FLAGS.contains(&triple[0]) && triple[2] == main)
+    entry_point_of(arguments) == Some(EntryPoint::Class(main))
+}
+
+/// What a JVM was started to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryPoint<'argv> {
+    /// A main class, from the classpath.
+    Class(&'argv str),
+
+    /// A `module/class`, after `-m`.
+    Module(&'argv str),
+
+    /// A jar, whose manifest names the class.
+    Jar,
+}
+
+/// The entry point of a `java` argv: the launcher's options are skipped, with the values of the
+/// ones that take one, and the first thing that is not an option is it. Nothing after it is read.
+fn entry_point_of<'argv>(arguments: &[&'argv str]) -> Option<EntryPoint<'argv>> {
+    if !is_java(arguments) {
+        return None;
+    }
+
+    let mut rest = arguments.iter().skip(1);
+    while let Some(argument) = rest.next() {
+        if MODULE_FLAGS.contains(argument) {
+            return rest.next().map(|module| EntryPoint::Module(module));
+        }
+        if let Some(module) = argument.strip_prefix("--module=") {
+            return Some(EntryPoint::Module(module));
+        }
+        if *argument == JAR_OPTION {
+            return Some(EntryPoint::Jar);
+        }
+        if OPTIONS_WITH_A_VALUE.contains(argument) {
+            rest.next();
+            continue;
+        }
+        if !argument.starts_with('-') {
+            return Some(EntryPoint::Class(argument));
+        }
+    }
+
+    None
 }
 
 fn is_java(arguments: &[&str]) -> bool {
