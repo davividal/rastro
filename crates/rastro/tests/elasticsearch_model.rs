@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use rastro::collectors::elasticsearch::{ApiValue, HttpEndpoint, Node, Unread};
+use rastro::collectors::elasticsearch::{
+    ApiValue, HttpEndpoint, Node, NodeIdentity, NodeVersion, Unread,
+};
 use rastro::collectors::inet::{InetHost, PortNumber};
 use rastro_fingerprint::Observation;
 
@@ -107,6 +109,39 @@ fn ordering_breaks_a_tie_between_unread_nodes_by_their_error() {
     let mut secured = node(20, None, "/usr/share/elasticsearch/config");
     secured.error = Some(Unread::new("a: the node's settings switch security on"));
     let mut nodes = [tls, secured];
+
+    // Act
+    nodes.sort_by(Node::ordering);
+
+    // Assert
+    let order: Vec<u32> = nodes.iter().map(|node| node.process_id).collect();
+    assert_eq!(order, [20, 10]);
+}
+
+fn identity(cluster_uuid: &str) -> NodeIdentity {
+    NodeIdentity {
+        node_name: "search".to_owned(),
+        cluster_name: "docker-cluster".to_owned(),
+        cluster_uuid: cluster_uuid.to_owned(),
+        version: NodeVersion {
+            number: "8.15.3".to_owned(),
+            build_flavor: None,
+            build_type: None,
+            build_hash: None,
+        },
+    }
+}
+
+#[test]
+fn ordering_breaks_a_tie_between_read_nodes_by_their_cluster() {
+    // Arrange: found by review. Two containers can each serve 9200 in their own namespace, share
+    // the image's config directory and carry the same node name while belonging to different
+    // clusters, so every earlier key ties and process-id order decided.
+    let mut second = node(10, Some(9200), "/usr/share/elasticsearch/config");
+    second.identity = Some(identity("zzzzzzzzzzzzzzzzzzzzzz"));
+    let mut first = node(20, Some(9200), "/usr/share/elasticsearch/config");
+    first.identity = Some(identity("aaaaaaaaaaaaaaaaaaaaaa"));
+    let mut nodes = [second, first];
 
     // Act
     nodes.sort_by(Node::ordering);

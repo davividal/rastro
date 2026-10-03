@@ -41,25 +41,37 @@ pub struct Node {
 }
 
 impl Node {
-    /// The order nodes are listed in: by the port they serve on, then where they are configured,
-    /// then what they are called, then why they were not read, and never by process id, which
-    /// would reorder two nodes on a restart.
+    /// The order nodes are listed in, by what a node is rather than by its process id, which a
+    /// restart of two nodes could swap.
+    ///
+    /// Port, then configuration directory, then name: what tells most nodes apart. Then the
+    /// cluster and the build, found by review: containers can each serve 9200 in their own
+    /// namespace, share the image's config directory and carry one name across two clusters.
+    /// Then the namespace and the address dialled, and the error last, since an unread node has
+    /// none of the rest. Two nodes that still tie are one cluster's two same-named nodes, whose
+    /// surfaces are cluster-wide and identical, so their order changes nothing a diff can see.
     pub fn ordering(left: &Self, right: &Self) -> Ordering {
         let port = |node: &Self| node.http.as_ref().map(|http| http.port().as_u16());
-        let name = |node: &Self| {
-            node.identity
-                .as_ref()
-                .map(|identity| identity.node_name.clone())
+        let host = |node: &Self| node.http.as_ref().map(|http| http.host().clone());
+        let identity = |node: &Self| {
+            node.identity.as_ref().map(|identity| {
+                [
+                    identity.node_name.clone(),
+                    identity.cluster_uuid.clone(),
+                    identity.cluster_name.clone(),
+                    identity.version.number.clone(),
+                ]
+            })
         };
-
-        // The error last, because an unread node has neither port nor name, and two in containers
-        // share a config directory: without it a restart of both could swap them.
+        let namespace = |node: &Self| node.network_namespace.map(|namespace| namespace.as_str());
         let reason = |node: &Self| node.error.as_ref().map(|unread| unread.reason().to_owned());
 
         port(left)
             .cmp(&port(right))
             .then_with(|| left.config_directory.cmp(&right.config_directory))
-            .then_with(|| name(left).cmp(&name(right)))
+            .then_with(|| identity(left).cmp(&identity(right)))
+            .then_with(|| namespace(left).cmp(&namespace(right)))
+            .then_with(|| host(left).cmp(&host(right)))
             .then_with(|| reason(left).cmp(&reason(right)))
     }
 }
