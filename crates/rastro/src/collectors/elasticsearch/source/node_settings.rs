@@ -46,6 +46,9 @@ const CONFIG_FILE: &str = "elasticsearch.yml";
 /// The one distribution whose environment holds settings.
 const DOCKER_DISTRIBUTION: &str = "docker";
 
+/// The prefix of a setting's encoded name, for environments that cannot put dots in a name.
+const ENCODED_SETTING_PREFIX: &str = "ES_SETTING_";
+
 /// Where a node keeps its data, one directory or a comma-joined list of them.
 const DATA_PATH: &str = "path.data";
 
@@ -112,11 +115,7 @@ impl NodeSettings {
         let mut values = file;
         values.extend(command_line);
         if distribution == DOCKER_DISTRIBUTION {
-            values.extend(
-                environment
-                    .into_iter()
-                    .filter(|(name, _)| name.contains('.')),
-            );
+            values.extend(environment_settings(&environment)?);
         }
 
         Ok(Self { values })
@@ -181,6 +180,50 @@ impl NodeSettings {
 
 fn switched_on(value: Option<&str>) -> bool {
     !matches!(value, None | Some("false"))
+}
+
+/// The settings the docker image takes from its environment, in both spellings it accepts.
+///
+/// A variable named after the setting, dots and all, and `ES_SETTING_` followed by the name in
+/// capitals with each dot an underscore and each underscore doubled: measured on the 7.17.24 and
+/// 8.15.3 images, `ES_SETTING_NODE_ATTR_RACK__ID=r1` became `node.attr.rack_id`. Found by review,
+/// after the encoded form had been ignored and audit logging switched on through it read as off.
+/// Nothing measured says which spelling wins where both name one setting, so two that disagree
+/// are a refusal.
+fn environment_settings(
+    environment: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, Unread> {
+    let mut settings: BTreeMap<String, String> = BTreeMap::new();
+
+    for (variable, value) in environment {
+        let name = match variable.strip_prefix(ENCODED_SETTING_PREFIX) {
+            Some(encoded) => decoded(encoded),
+            None if variable.contains('.') => variable.clone(),
+            None => continue,
+        };
+
+        if let Some(earlier) = settings.get(&name)
+            && earlier != value
+        {
+            return Err(Unread::new(format!(
+                "the node's environment sets {name} twice, to `{earlier}` and `{value}`, and \
+                 which one the node took cannot be told"
+            )));
+        }
+        settings.insert(name, value.clone());
+    }
+
+    Ok(settings)
+}
+
+/// A setting's name from its `ES_SETTING_` spelling: `__` is an underscore, `_` a dot.
+fn decoded(encoded: &str) -> String {
+    encoded
+        .split("__")
+        .map(|part| part.replace('_', "."))
+        .collect::<Vec<_>>()
+        .join("_")
+        .to_lowercase()
 }
 
 /// Settings the caller already has, so what depends on them can be exercised without a node.

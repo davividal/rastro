@@ -328,3 +328,26 @@ fn collect_reads_a_node_whose_settings_switch_security_off() {
     let reported = &items_of(&field(&facet, "nodes"))[0];
     assert!(is_null(&field(reported, "error")), "{reported:?}");
 }
+
+#[test]
+fn collect_does_not_dial_a_node_that_audits_through_an_encoded_setting() {
+    // Arrange: found by review. The encoded spelling was ignored, so audit logging switched on
+    // this way read as absent and the node was sent a request it records.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc_with(
+        "elasticsearch-facet-audit-encoded",
+        &format!(
+            "http.port={}\0ES_SETTING_XPACK_SECURITY_AUDIT_ENABLED=true\0",
+            node.port
+        ),
+        None,
+    );
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(text(&field(reported, "error")).contains("audit"));
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+}

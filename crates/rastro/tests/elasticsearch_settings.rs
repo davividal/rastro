@@ -478,3 +478,58 @@ fn read_in_takes_a_placeholders_variable_over_its_default() {
     // Assert
     assert_eq!(settings.get("http.port"), Some("9260"));
 }
+
+#[test]
+fn read_in_decodes_an_encoded_setting_on_the_docker_distribution() {
+    // Arrange: measured on the 7.17.24 and 8.15.3 images, `ES_SETTING_NODE_ATTR_RACK__ID=r1`
+    // became `node.attr.rack_id`: a single underscore is a dot, a doubled one an underscore. For
+    // an orchestrator that cannot put dots in a variable's name. Found by review.
+    let proc = scratch_tree("elasticsearch-settings-encoded", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(
+        &proc,
+        "600/environ",
+        "ES_SETTING_NODE_ATTR_RACK__ID=r1\0ES_SETTING_HTTP_PORT=9300\0",
+    );
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("node.attr.rack_id"), Some("r1"));
+    assert_eq!(settings.get("http.port"), Some("9300"));
+}
+
+#[test]
+fn read_in_refuses_an_encoded_and_a_dotted_setting_that_disagree() {
+    // Arrange: nothing measured says which of the two the image applies, so rastro does not pick.
+    let proc = scratch_tree("elasticsearch-settings-encoded-conflict", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(
+        &proc,
+        "600/environ",
+        "ES_SETTING_HTTP_PORT=9300\0http.port=9400\0",
+    );
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a conflict");
+
+    // Assert
+    assert!(unread.reason().contains("http.port"), "{}", unread.reason());
+}
+
+#[test]
+fn read_in_takes_no_encoded_setting_on_a_tarball_install() {
+    // Arrange: the encoding is the docker image's, as the dotted form is.
+    let proc = scratch_tree("elasticsearch-settings-encoded-tar", &["600/root"]);
+    write(&proc, "600/cmdline", TAR_SERVER_ARGV);
+    write(&proc, "600/environ", "ES_SETTING_HTTP_PORT=9300\0");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9201"));
+}

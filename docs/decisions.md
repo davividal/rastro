@@ -6013,3 +6013,14 @@ is off by default on 7.x, and where an 8.x default leaves it on without saying s
 answers 401 and records nothing, because audit logging is never on unless switched on. 8.x's
 auto-configuration writes `xpack.security.enabled: true` into the file, so in practice a
 secured node is caught by its setting.
+
+## The docker image's encoded setting names are settings too
+
+Found by review, measured on the 7.17.24 and 8.15.3 images: for environments that cannot put
+dots in a variable's name, the image takes `ES_SETTING_` followed by the setting's name in
+capitals, a dot as an underscore and an underscore doubled. `ES_SETTING_NODE_NAME=from-encoded`
+named the node and `ES_SETTING_NODE_ATTR_RACK__ID=r1` became `node.attr.rack_id`. They had been
+ignored, so audit logging switched on this way read as off and the node was asked. They are now
+decoded on the docker distribution, where the dotted spelling is read, and nowhere else. Nothing
+measured says which spelling wins where both name one setting, so two that disagree are a
+refusal rather than a guess.
