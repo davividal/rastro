@@ -31,16 +31,18 @@ use rastro_collector::{
     CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
-/// The launcher every package of Elasticsearch installs, deb, rpm and tarball alike.
-const INSTALLED_LAUNCHER: &str = "/usr/share/elasticsearch/bin/elasticsearch";
+/// The launcher the deb and rpm packages install. An archive is extracted wherever its operator
+/// chose, so this path says nothing about one; see [`Collector::presence`] for what that costs.
+const PACKAGE_LAUNCHER: &str = "/usr/share/elasticsearch/bin/elasticsearch";
 
 pub struct ElasticsearchCollector {
     name: FacetName,
     identity: CollectorIdentity,
     proc: PathBuf,
 
-    /// Whether the host installed Elasticsearch, which a node in a container does not need.
-    installed: bool,
+    /// Whether the package layout's launcher is on the host, which a node in a container does
+    /// not need and an archive install does not have.
+    package_installed: bool,
     client: HttpClient,
 }
 
@@ -48,13 +50,13 @@ impl ElasticsearchCollector {
     pub fn new() -> Self {
         Self::reading(
             Path::new("/proc"),
-            Path::new(INSTALLED_LAUNCHER).exists(),
+            Path::new(PACKAGE_LAUNCHER).exists(),
             HttpClient::new(),
         )
     }
 
     /// The same collector over sources the caller chose.
-    pub fn reading(proc: &Path, installed: bool, client: HttpClient) -> Self {
+    pub fn reading(proc: &Path, package_installed: bool, client: HttpClient) -> Self {
         Self {
             name: FacetName::new("elasticsearch").expect("`elasticsearch` is a legal facet name"),
             identity: CollectorIdentity::new(
@@ -62,7 +64,7 @@ impl ElasticsearchCollector {
                 CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
             proc: proc.to_path_buf(),
-            installed,
+            package_installed,
             client,
         }
     }
@@ -87,14 +89,19 @@ impl Collector for ElasticsearchCollector {
         CollectorCategory::State
     }
 
-    /// `present` where Elasticsearch is installed **or** a node runs, `absent` only where
+    /// `present` where a node runs **or** the package layout is installed, `absent` where
     /// neither.
     ///
     /// A node in a container runs on this box and is installed by nothing on it, so presence by
     /// installation alone would hide exactly the node the field host runs. Neither answer is
     /// `Undetermined`: a node that cannot be read surfaces as that node's `error`.
+    ///
+    /// **A stopped archive install reads `absent`**, a limit of rastro rather than a fact about
+    /// the box, found by review. An archive is extracted wherever its operator chose, and finding
+    /// one that is not running would mean searching the disk for it, which is a guess. A running
+    /// one is found from `/proc` wherever it lives.
     fn presence(&self) -> Presence {
-        match self.installed || !ResidentNode::all_in(&self.proc).is_empty() {
+        match self.package_installed || !ResidentNode::all_in(&self.proc).is_empty() {
             true => Presence::Present,
             false => Presence::Absent,
         }
@@ -140,7 +147,7 @@ impl Collector for ElasticsearchCollector {
         nodes.sort_by(Node::ordering);
 
         Ok(Observation::from(&Installation {
-            installed: self.installed,
+            package_installed: self.package_installed,
             nodes,
         }))
     }

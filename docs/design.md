@@ -153,7 +153,9 @@ application's node would make it log an authentication failure, which is a write
 to a box rastro was asked to read.
 
 **Layer 3, Elasticsearch.** One `elasticsearch` facet listing every node running on the box,
-whether the host installed it or a container runs it. **7.17 through 9.x**, over plain HTTP
+whether a package installed it or a container runs it. A stopped node is seen only where the
+deb or rpm layout is installed: an archive is extracted wherever its operator chose, and a
+stopped one reads `absent`, a limit rather than a fact about the box. **7.17 through 9.x**, over plain HTTP
 only. It is the one collector that makes a request over the network, and the boundary is
 narrow: a `GET`, to a listener held by a process `/proc` names as an Elasticsearch server,
 from a thread that has joined that process's network namespace, so a node with no published

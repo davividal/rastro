@@ -12,8 +12,8 @@ use support::es_node::{FakeNode, ROOT};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, text};
 
-fn collector(proc: &Path, installed: bool) -> ElasticsearchCollector {
-    ElasticsearchCollector::reading(proc, installed, HttpClient::new())
+fn collector(proc: &Path, package_installed: bool) -> ElasticsearchCollector {
+    ElasticsearchCollector::reading(proc, package_installed, HttpClient::new())
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn collect_reports_an_installation_with_nothing_running() {
     let facet = collector(&proc, true).collect().expect("a facet");
 
     // Assert
-    assert!(boolean(&field(&facet, "installed")));
+    assert!(boolean(&field(&facet, "package_installed")));
     assert!(items_of(&field(&facet, "nodes")).is_empty());
 }
 

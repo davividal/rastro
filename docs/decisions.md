@@ -6038,3 +6038,17 @@ path, resolved inside its own root, is the same directory as that path on the ho
 and inode. A packaged node's is, in its private namespace or not. A node in a container names a
 directory in its own image, which is not. A path either side cannot resolve makes no claim, the
 safe direction, as before.
+
+## A stopped archive install is not seen, and the facet says what it does see
+
+Found by review. Presence was a node running or a launcher at `/usr/share/elasticsearch`, which
+the deb and rpm packages install and the archive does not: Elastic's archive instructions
+extract a versioned directory wherever the operator is working. So a stopped archive install
+reads `absent`. It is left that way, as a limit of rastro in the manner of
+[podman](#podman-does-not-come-through-the-gate-and-its-cli-never-will): finding an archive that
+is not running would mean searching the disk for it, which is a guess. A running one is found
+from `/proc` wherever it lives.
+
+What changed is what the document claims. The field that said `installed` said more than was
+observed, and reads `package_installed` now, the launcher at the package path. The comment that
+said the tarball installs it there was wrong and is gone.
