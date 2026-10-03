@@ -11,6 +11,7 @@ mod json_answer;
 mod lifecycle_answer;
 mod mount_table;
 mod node_listeners;
+mod node_local_answer;
 mod node_namespace;
 mod node_reader;
 mod node_settings;

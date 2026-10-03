@@ -7,6 +7,7 @@ mod lifecycle;
 mod named_definitions;
 mod node;
 mod node_identity;
+mod node_local;
 mod plugins;
 mod surface;
 
@@ -17,5 +18,6 @@ pub use lifecycle::{IlmPolicies, IlmPolicy, SnapshotRepositories, SnapshotReposi
 pub use named_definitions::NamedDefinitions;
 pub use node::Node;
 pub use node_identity::{NodeIdentity, NodeVersion};
+pub use node_local::NodeLocal;
 pub use plugins::Plugins;
 pub use surface::{Surface, surface_observation};

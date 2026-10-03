@@ -33,6 +33,7 @@ fn node(process_id: u32, port: Option<u16>, config: &str) -> Node {
         ingest_pipelines: None,
         snapshot_repositories: None,
         plugins: None,
+        node_local: None,
         error: None,
     }
 }

@@ -152,6 +152,7 @@ fn collect_asks_the_node_nothing_but_the_reads_it_needs() {
             "/_ingest/pipeline",
             "/_snapshot",
             "/_nodes/_local/plugins",
+            "/_nodes/_local?flat_settings=true&filter_path=nodes.*.settings,nodes.*.roles,nodes.*.attributes,nodes.*.jvm.input_arguments,nodes.*.jvm.mem.heap_max_in_bytes",
         ]
     );
 }
