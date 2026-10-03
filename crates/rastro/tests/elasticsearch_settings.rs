@@ -234,19 +234,47 @@ fn read_in_refuses_a_variable_the_environment_does_not_hold() {
 }
 
 #[test]
-fn read_in_refuses_a_node_whose_file_is_gone() {
-    // Arrange: found by review. A missing file read as a node on its defaults, and a default is
-    // plaintext; a running node read a file at start, and one gone since is not that file.
-    let proc = scratch_tree("elasticsearch-settings-no-file", &["600/root"]);
+fn read_in_reads_a_node_that_started_with_no_file() {
+    // Arrange: measured by the second domain review, an 8.15.3 node starts and serves with no
+    // `elasticsearch.yml`, configured by `-E` and its environment alone, which is the usual shape
+    // in orchestrators. Its config directory has not changed since it started.
+    let proc = scratch_tree(
+        "elasticsearch-settings-no-file",
+        &["600/root/etc/elasticsearch"],
+    );
     write(&proc, "600/cmdline", SERVER_ARGV);
     write(&proc, "600/environ", "http.port=9300\0");
 
     // Act
-    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("no file");
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9300"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn read_in_refuses_a_node_whose_file_was_removed_after_it_started() {
+    // Arrange: a file removed since start changes its directory, and what the node read then
+    // cannot be told now.
+    let proc = scratch_tree("elasticsearch-settings-file-removed", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        CONFIG_FILE,
+        "xpack.security.http.ssl.enabled: true\n",
+    );
+    support::process::started(&proc, "600", "1", 59);
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    std::fs::remove_file(proc.join(CONFIG_FILE)).expect("the fixture's file");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a removed file");
 
     // Assert
     assert!(
-        unread.reason().contains("elasticsearch.yml"),
+        unread.reason().contains("after the node started"),
         "{}",
         unread.reason()
     );

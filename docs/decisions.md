@@ -6104,3 +6104,14 @@ deprecation lines are unchanged across the reads.
 **Corrects** the request table's entry, which said no answer carried a `Warning` header: a 7.17
 node with security off puts a built-in-security notice on every response. It is a header only,
 not logged; what the table meant, and now says, is that none carried a deprecation the node logged.
+
+## A node may run without its file; one removed since start is what is refused
+
+**Corrects the entry that made a missing `elasticsearch.yml` a refusal.** The second domain review
+measured an 8.15.3 node starting and serving with no file, configured by `-E` and its environment
+alone, the usual shape in orchestrators; the refusal cost a read of every such node, with a
+reason that was false for it. What the refusal was for is a file removed after start, and removing
+one changes the directory that held it. So a missing file now reads as no settings from it where
+its config directory is unchanged since the start window, and is refused where the directory
+changed later. The directory's ctime moves for any entry, a keystore's temporary file say, which
+errs only towards refusing.

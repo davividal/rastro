@@ -57,6 +57,14 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<ReadFile> {
     Ok(ReadFile { text, changed_at })
 }
 
+/// When the directory at `relative` inside `root` last changed: its ctime, in seconds since the
+/// epoch, which any entry created, removed or renamed in it moves.
+pub fn changed_at_inside(root: &Path, relative: &Path) -> std::io::Result<i64> {
+    Ok(open_inside(root, relative, Opening::Directory)?
+        .metadata()?
+        .ctime())
+}
+
 /// The host's own directory at `path`, canonical, where `path` inside `root` is that same
 /// directory, and nothing otherwise.
 ///

@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
-use crate::collectors::elasticsearch::source::in_root::read_inside;
+use crate::collectors::elasticsearch::source::in_root::{changed_at_inside, read_inside};
 use crate::collectors::elasticsearch::value_objects::{Transport, Unread};
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
@@ -371,19 +371,26 @@ fn read_config_file(
     let named = config.join(CONFIG_FILE);
     let relative = named.strip_prefix("/").unwrap_or(&named);
 
-    let file = read_inside(root, relative).map_err(|error| match error.kind() {
-        ErrorKind::NotFound => Unread::new(format!(
-            "{} is gone, and a running node read one at start, so what it runs with cannot \
-             be told",
-            named.display()
-        )),
-        _ => Unread::new(format!("{} could not be read: {error}", named.display())),
-    })?;
-
     // Measured on 8.15.3: security auto-configuration writes the file 0.67 s after the server
     // starts, and the node runs with that write, so a change soon after start is the node's own.
     let started = i64::try_from(started_at).unwrap_or(i64::MAX);
-    if file.changed_at > started.saturating_add(START_UP_WRITE_WINDOW) {
+    let changed_since_start =
+        |changed_at: i64| changed_at > started.saturating_add(START_UP_WRITE_WINDOW);
+
+    let file = match read_inside(root, relative) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return no_file_since_start(root, relative, &named, changed_since_start);
+        }
+        Err(error) => {
+            return Err(Unread::new(format!(
+                "{} could not be read: {error}",
+                named.display()
+            )));
+        }
+    };
+
+    if changed_since_start(file.changed_at) {
         return Err(Unread::new(format!(
             "{} changed after the node started, so it may be staged for the next restart rather \
              than what the node runs with",
@@ -405,6 +412,36 @@ fn read_config_file(
         .into_iter()
         .map(|(name, value)| Ok((name, substitute(&value, environment)?)))
         .collect()
+}
+
+/// The settings a node with no file has from it: none, where its config directory is as it was
+/// when the node started.
+///
+/// Found by the second domain review, measured on 8.15.3: a node starts and serves without the
+/// file, configured by `-E` and its environment alone. What is suspect is a file gone since start,
+/// and removing one changes the directory that held it, so that is what decides.
+fn no_file_since_start(
+    root: &Path,
+    relative: &Path,
+    named: &Path,
+    changed_since_start: impl Fn(i64) -> bool,
+) -> Result<BTreeMap<String, String>, Unread> {
+    let directory = relative.parent().unwrap_or(Path::new(""));
+    let changed_at = changed_at_inside(root, directory).map_err(|error| {
+        Unread::new(format!(
+            "{} is not there, and its directory could not be read: {error}",
+            named.display()
+        ))
+    })?;
+
+    match changed_since_start(changed_at) {
+        true => Err(Unread::new(format!(
+            "{} is not there, and its directory changed after the node started, so the file \
+             may have been removed since and what the node read cannot be told",
+            named.display()
+        ))),
+        false => Ok(BTreeMap::new()),
+    }
 }
 
 /// Folds nested maps into dotted keys, the two spellings the node itself treats as one.
