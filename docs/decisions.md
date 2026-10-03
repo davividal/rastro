@@ -6024,3 +6024,17 @@ ignored, so audit logging switched on this way read as off and the node was aske
 decoded on the docker distribution, where the dotted spelling is read, and nowhere else. Nothing
 measured says which spelling wins where both name one setting, so two that disagree are a
 refusal rather than a guess.
+
+## A data directory is sealed where it is the host's directory, whatever namespace holds it
+
+**Reverses the rule that sealed a node's data directory only where the node shares rastro's
+mount namespace.** Found by review, confirmed in Elastic's own systemd unit: `PrivateTmp=true`,
+on 7.17 and 8.15 alike, so every packaged node started by systemd has a mount namespace of its
+own. The rule sealed none of them, and the walk descended into a data directory the node writes
+while idle, on the most common install there is.
+
+What decides a claim now is the question the namespace stood in for: whether the node's data
+path, resolved inside its own root, is the same directory as that path on the host, by device
+and inode. A packaged node's is, in its private namespace or not. A node in a container names a
+directory in its own image, which is not. A path either side cannot resolve makes no claim, the
+safe direction, as before.

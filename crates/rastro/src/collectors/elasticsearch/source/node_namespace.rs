@@ -23,18 +23,6 @@ use crate::collectors::elasticsearch::value_objects::Unread;
 /// Where a process's network namespace is linked from, relative to its `/proc` entry.
 const NETWORK_NAMESPACE: &str = "ns/net";
 
-/// Where a process's mount namespace is linked from.
-const MOUNT_NAMESPACE: &str = "ns/mnt";
-
-/// Whether a process sees the same filesystem as rastro, so a path it names is a path the walk
-/// reads. False where either link cannot be read, which makes no claim rather than a wrong one.
-pub fn shares_mounts_in(proc: &Path, process_id: u32) -> bool {
-    let theirs = fs::read_link(proc.join(process_id.to_string()).join(MOUNT_NAMESPACE));
-    let ours = fs::read_link(proc.join("self").join(MOUNT_NAMESPACE));
-
-    matches!((theirs, ours), (Ok(theirs), Ok(ours)) if theirs == ours)
-}
-
 /// The network namespace a node listens in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeNamespace {

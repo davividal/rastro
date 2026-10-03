@@ -21,7 +21,7 @@ pub use model::{
 };
 pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,
-    shares_mounts_in,
+    same_directory_on_host,
 };
 pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Transport, Unread};
 
@@ -107,15 +107,21 @@ impl Collector for ElasticsearchCollector {
     /// and retention-lease file within ninety seconds. What is in there, the indices and their
     /// schemas, this facet reports properly, from the node.
     ///
-    /// Only for a node that shares rastro's mount namespace. A node in a container names a
-    /// directory in its own image, and the walk reads the host.
+    /// Only where the node's data path is the same directory on the host, by device and inode,
+    /// which a packaged node's is even in the mount namespace its unit's `PrivateTmp` gives it,
+    /// and a node in a container's is not: its path names a directory in its own image.
     fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
         ResidentNode::all_in(&self.proc)
             .iter()
-            .filter(|node| shares_mounts_in(&self.proc, node.process_id()))
             .filter_map(|node| {
                 let settings = NodeSettings::read_in(&self.proc, node).ok()?;
-                Some(settings.data_directories(node.home()))
+                let root = self.proc.join(node.process_id().to_string()).join("root");
+                let directories: Vec<PathBuf> = settings
+                    .data_directories(node.home())
+                    .into_iter()
+                    .filter(|directory| same_directory_on_host(&root, directory))
+                    .collect();
+                Some(directories)
             })
             .flatten()
             .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())

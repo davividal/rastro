@@ -4,6 +4,7 @@ mod api_value_of;
 mod cluster_settings_answer;
 mod http_binding;
 mod http_client;
+mod in_root;
 mod indices_answer;
 mod json_answer;
 mod lifecycle_answer;
@@ -18,8 +19,9 @@ mod templates_answer;
 
 pub use http_binding::http_endpoint;
 pub use http_client::HttpClient;
+pub use in_root::same_directory_on_host;
 pub use node_listeners::NodeListener;
-pub use node_namespace::{NodeNamespace, shares_mounts_in};
+pub use node_namespace::NodeNamespace;
 pub use node_reader::read_node;
 pub use node_settings::NodeSettings;
 pub use resident_node::ResidentNode;

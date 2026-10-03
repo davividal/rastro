@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
+use crate::collectors::elasticsearch::source::in_root::read_inside;
 use crate::collectors::elasticsearch::value_objects::{Transport, Unread};
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
@@ -308,54 +309,6 @@ fn read_config_file(
         .into_iter()
         .map(|(name, value)| Ok((name, substitute(&value, environment)?)))
         .collect()
-}
-
-/// A file's text, read as the node reads it: every path component, symlinks included, resolved
-/// inside `root` rather than inside rastro's own.
-///
-/// **Measured in the podman VM:** an absolute symlink met under `/proc/<pid>/root` resolves
-/// against the reader's root, so a container whose `elasticsearch.yml` links to
-/// `/srv/config/elasticsearch.yml` read as not found, or read the host's file at that path. Not
-/// found puts the node on its defaults, and a default is plaintext, so the gate that keeps rastro
-/// from sending plaintext to a TLS listener was the thing a symlink defeated. `RESOLVE_IN_ROOT`
-/// makes the kernel treat `root` as `/` for the whole walk, `..` at the top included.
-#[cfg(target_os = "linux")]
-fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
-    use std::io::Read;
-
-    use rustix::fs::{Mode, OFlags, ResolveFlags, open, openat2};
-    use rustix::io::Errno;
-
-    let root = open(
-        root,
-        OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )?;
-    let file = openat2(
-        &root,
-        relative,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::IN_ROOT,
-    )
-    .map_err(|errno| match errno {
-        // Before Linux 5.6 there is no safe way to walk another root, and reading past it is
-        // the defect this exists to prevent, so the read is refused rather than approximated.
-        Errno::NOSYS => std::io::Error::other(
-            "this kernel has no openat2, so the file cannot be resolved inside the node's root",
-        ),
-        other => std::io::Error::from(other),
-    })?;
-
-    let mut text = String::new();
-    fs::File::from(file).read_to_string(&mut text)?;
-    Ok(text)
-}
-
-/// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
-#[cfg(not(target_os = "linux"))]
-fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
-    fs::read_to_string(root.join(relative))
 }
 
 /// Folds nested maps into dotted keys, the two spellings the node itself treats as one.
