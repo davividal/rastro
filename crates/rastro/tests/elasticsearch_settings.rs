@@ -642,3 +642,42 @@ fn read_in_refuses_a_node_whose_start_cannot_be_read() {
     // Assert
     assert!(unread.reason().contains("started"), "{}", unread.reason());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn read_in_refuses_a_file_swapped_for_a_symlink_after_the_node_started() {
+    // Arrange: found by review. Following the link reads the target's ctime, which can be old,
+    // so a file swapped after start for a link to an older one passed. Any change to the entry,
+    // a new file, a swapped link or a ConfigMap's `..data` swap, changes its directory's ctime.
+    let proc = scratch_tree(
+        "elasticsearch-settings-swapped-link",
+        &["600/root/etc/elasticsearch", "600/root/srv"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        CONFIG_FILE,
+        "xpack.security.http.ssl.enabled: true\n",
+    );
+    write(
+        &proc,
+        "600/root/srv/older.yml",
+        "xpack.security.http.ssl.enabled: false\n",
+    );
+    // A start 59 s ago puts the window's end 1 s from now; the swap comes after it.
+    support::process::started(&proc, "600", "1", 59);
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    std::fs::remove_file(proc.join(CONFIG_FILE)).expect("the fixture's file");
+    std::os::unix::fs::symlink("/srv/older.yml", proc.join(CONFIG_FILE)).expect("a fixture");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a swapped file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("after the node started"),
+        "{}",
+        unread.reason()
+    );
+}
