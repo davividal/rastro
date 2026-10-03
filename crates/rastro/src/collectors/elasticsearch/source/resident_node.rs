@@ -92,6 +92,9 @@ pub struct ResidentNode {
 
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
     distribution: Option<String>,
+
+    /// Whether the launch argv names a `java` argument file among its options.
+    launched_with_an_argument_file: bool,
 }
 
 impl ResidentNode {
@@ -147,6 +150,15 @@ impl ResidentNode {
         self.distribution.as_deref()
     }
 
+    /// Whether the node was launched with a `java` argument file, `@file`, among its options.
+    ///
+    /// The launcher expands one in place, so a property in it, a later `es.path.conf` say,
+    /// overrides what the argv shows, and its content is not in `/proc`. A node launched this way
+    /// cannot have its paths read as the JVM read them.
+    pub fn launched_with_an_argument_file(&self) -> bool {
+        self.launched_with_an_argument_file
+    }
+
     /// The argv the node was launched with, which is where its command-line settings are.
     pub fn launch_arguments(&self) -> &[String] {
         &self.launch_arguments
@@ -173,10 +185,10 @@ impl ResidentNode {
             process_id,
             home: property_in(&launched, HOME_PROPERTY),
             config: property_in(&launched, CONFIG_PROPERTY),
-            distribution: launched
-                .iter()
-                .find_map(|argument| argument.strip_prefix(DISTRIBUTION_PROPERTY))
-                .map(str::to_owned),
+            distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
+                .map(|distribution| distribution.to_string_lossy().into_owned()),
+            launched_with_an_argument_file: launch_of(&launched)
+                .is_some_and(|launch| launch.argument_file),
             launch_arguments_are_exact: launch.exact,
             launch_arguments: launch.arguments,
         })
@@ -238,12 +250,24 @@ fn starts_the_server(arguments: &[&str]) -> bool {
 
 /// Whether this is the 8.x and 9.x server, started as a module.
 fn starts_as_a_module(arguments: &[&str]) -> bool {
-    entry_point_of(arguments) == Some(EntryPoint::Module(MODULE_MAIN))
+    launch_of(arguments).is_some_and(|launch| launch.entry == EntryPoint::Module(MODULE_MAIN))
 }
 
 /// Whether this is a JVM whose main class, taken from the classpath, is `main`.
 fn is_java_running(arguments: &[&str], main: &str) -> bool {
-    entry_point_of(arguments) == Some(EntryPoint::Class(main))
+    launch_of(arguments).is_some_and(|launch| launch.entry == EntryPoint::Class(main))
+}
+
+/// How a `java` argv launched: its entry point, where that is, and what its options hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Launch<'argv> {
+    entry: EntryPoint<'argv>,
+
+    /// The index of the argument the entry point was read from; every option is before it.
+    entry_index: usize,
+
+    /// Whether an `@file` came among the options.
+    argument_file: bool,
 }
 
 /// What a JVM was started to run.
@@ -259,31 +283,44 @@ enum EntryPoint<'argv> {
     Jar,
 }
 
-/// The entry point of a `java` argv: the launcher's options are skipped, with the values of the
-/// ones that take one, and the first thing that is not an option is it. Nothing after it is read.
-fn entry_point_of<'argv>(arguments: &[&'argv str]) -> Option<EntryPoint<'argv>> {
+/// The launch of a `java` argv: the launcher's options are skipped, with the values of the ones
+/// that take one, and the first thing that is not an option is the entry point. Nothing after it
+/// is read.
+fn launch_of<'argv>(arguments: &[&'argv str]) -> Option<Launch<'argv>> {
     if !is_java(arguments) {
         return None;
     }
 
-    let mut rest = arguments.iter().skip(1);
-    while let Some(argument) = rest.next() {
+    let mut argument_file = false;
+    let mut index = 1;
+    while let Some(argument) = arguments.get(index) {
+        let launch = |entry, entry_index| Launch {
+            entry,
+            entry_index,
+            argument_file,
+        };
+
         if MODULE_FLAGS.contains(argument) {
-            return rest.next().map(|module| EntryPoint::Module(module));
+            return arguments
+                .get(index + 1)
+                .map(|module| launch(EntryPoint::Module(module), index));
         }
         if let Some(module) = argument.strip_prefix("--module=") {
-            return Some(EntryPoint::Module(module));
+            return Some(launch(EntryPoint::Module(module), index));
         }
         if *argument == JAR_OPTION {
-            return Some(EntryPoint::Jar);
+            return Some(launch(EntryPoint::Jar, index));
         }
         if OPTIONS_WITH_A_VALUE.contains(argument) {
-            rest.next();
+            index += 2;
             continue;
         }
-        if !argument.starts_with('-') {
-            return Some(EntryPoint::Class(argument));
+        if argument.starts_with('@') {
+            argument_file = true;
+        } else if !argument.starts_with('-') {
+            return Some(launch(EntryPoint::Class(argument), index));
         }
+        index += 1;
     }
 
     None
@@ -297,10 +334,16 @@ fn is_java(arguments: &[&str]) -> bool {
         .is_some_and(|program| program == JAVA)
 }
 
-/// The value of a `-D` system property, where the argv sets it.
+/// The value of a `-D` system property, where the argv sets it: the last one, as the JVM takes.
+///
+/// Found by review, and confirmed there on OpenJDK 11 to 25: `-Done=first -Done=second` sets
+/// `second`. Only the launcher's options are read, since a `-D` after the entry point is the
+/// application's argument rather than the JVM's.
 fn property_in(arguments: &[&str], prefix: &str) -> Option<PathBuf> {
-    arguments
+    let options = launch_of(arguments).map_or(arguments.len(), |launch| launch.entry_index);
+    arguments[..options]
         .iter()
+        .rev()
         .find_map(|argument| argument.strip_prefix(prefix))
         .map(PathBuf::from)
 }

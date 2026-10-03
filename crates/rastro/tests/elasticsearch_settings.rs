@@ -533,3 +533,28 @@ fn read_in_takes_no_encoded_setting_on_a_tarball_install() {
     // Assert
     assert_eq!(settings.get("http.port"), Some("9201"));
 }
+
+#[test]
+fn read_in_refuses_a_node_launched_with_an_argument_file() {
+    // Arrange: the `java` launcher expands `@file` in place, so a property in it, a later
+    // `es.path.conf` say, overrides what the argv shows, and rastro cannot read what the JVM did.
+    let proc = scratch_tree("elasticsearch-settings-argument-file", &["600/root"]);
+    write(
+        &proc,
+        "600/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0-Des.path.conf=/etc/elasticsearch\0\
+         -Des.distribution.type=tar\0@/etc/elasticsearch/jvm.args\0\
+         -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+    write(&proc, "600/environ", "");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an argument file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("argument file"),
+        "{}",
+        unread.reason()
+    );
+}

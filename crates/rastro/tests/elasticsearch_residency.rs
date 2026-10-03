@@ -258,3 +258,25 @@ fn all_in_finds_a_server_whose_classpath_is_not_the_last_option() {
     // Assert
     assert_eq!(nodes.len(), 1);
 }
+
+#[test]
+fn all_in_takes_the_last_of_a_repeated_path_property_as_the_jvm_does() {
+    // Arrange: found by review, and confirmed there on OpenJDK 11 to 25: with `-Done=first
+    // -Done=second` the JVM's property is `second`. Taking the first would read another file
+    // than the node's, the one the TLS gate decides from.
+    let proc = scratch_tree("elasticsearch-residency-repeated-property", &["812"]);
+    write(
+        &proc,
+        "812/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0-Des.path.conf=/etc/first\0\
+         -Des.path.home=/opt/first\0-Des.path.conf=/etc/second\0-Des.path.home=/opt/second\0\
+         -cp\0/usr/share/elasticsearch/lib/*\0org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes[0].config(), Some(Path::new("/etc/second")));
+    assert_eq!(nodes[0].home(), Some(Path::new("/opt/second")));
+}

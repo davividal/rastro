@@ -88,6 +88,12 @@ impl NodeSettings {
                  command-line settings cannot be read exactly as the node reads them",
             ));
         }
+        if node.launched_with_an_argument_file() {
+            return Err(Unread::new(
+                "the node was launched with a java argument file, which can set its paths and \
+                 settings where /proc does not show them",
+            ));
+        }
         let config = node.config().ok_or_else(|| {
             Unread::new(
                 "the node's argv names no es.path.conf, so its elasticsearch.yml cannot be \
