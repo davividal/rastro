@@ -27,3 +27,20 @@ failure-output = "final"
 # byte-identity across the whole host any more: a machine in use is not an unchanged host, so
 # that half of the contract is checked over a tree the test owns instead. See
 # `tests/determinism.rs`. Do not add it back without measuring it again.
+
+# The one exception, and it is narrow on purpose. A test that holds a listening socket is visible
+# to every other test that runs the real binary, since `sockets` reports what the box offers. So
+# `two_bare_runs_produce_byte_identical_output` failed in CI when a fake Elasticsearch node opened
+# a listener between its two runs: `127.0.0.1:34847`, held by `elasticsearch_c`. Those tests and
+# that one never run at the same time as each other. Everything else keeps running in parallel,
+# so a test that opens a listener has to join this group, or the race comes back.
+[test-groups]
+host-listeners = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '''
+    binary(~elasticsearch)
+    | (binary(=cli) & test(=two_bare_runs_produce_byte_identical_output))
+    | (binary(=filesystem_walk) & test(=walk_records_a_socket_and_a_fifo_as_having_no_content))
+'''
+test-group = "host-listeners"

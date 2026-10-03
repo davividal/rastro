@@ -5,6 +5,7 @@ pub mod block_devices;
 pub mod canonical_tool;
 pub mod containers;
 pub mod cron;
+pub mod elasticsearch;
 pub mod exporters;
 pub mod file_glob;
 pub mod file_metadata;
@@ -39,6 +40,7 @@ pub use accounts::AccountsCollector;
 pub use block_devices::BlockDevicesCollector;
 pub use containers::ContainersCollector;
 pub use cron::CronCollector;
+pub use elasticsearch::ElasticsearchCollector;
 pub use exporters::ExportersCollector;
 pub use filesystem::FilesystemCollector;
 pub use firewall::FirewallCollector;
@@ -228,6 +230,7 @@ fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>>
         Box::new(BlockDevicesCollector::new()),
         Box::new(ContainersCollector::new()),
         Box::new(CronCollector::new()),
+        Box::new(ElasticsearchCollector::new()),
         Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
         Box::new(HostCollector::reading(hostname)),
