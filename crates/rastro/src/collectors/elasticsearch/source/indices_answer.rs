@@ -1,11 +1,12 @@
 //! The indices, in three requests, none of which reaches a hidden or system index.
 //!
-//! `expand_wildcards=open,closed` keeps out most of them: `*` then matches no hidden index, and
-//! every system index is hidden. **Not the backing indices of a data stream that is not itself
-//! hidden**, measured on 8.15.3 and 9.2.0 by the domain review: the filter is applied to the
-//! stream, and the stream then expands to its backing indices, which are hidden. So an index
-//! whose own settings say `index.hidden` is left out here as well. Measured on 7.17.24 and
-//! 8.15.3, the three requests carry no deprecation warning and change nothing.
+//! Two exclusions in the request and one in the answer. `-.*` leaves out every dot-prefixed name,
+//! which is where the stack keeps its own indices, system ones included; on 7.17 those are not
+//! hidden, and reaching them made the node log and index a deprecation warning. `expand_wildcards=
+//! open,closed` leaves out hidden indices. **Not the backing indices of a data stream that is not
+//! itself hidden**, measured on 8.15.3 and 9.2.0: the filter is applied to the stream, which then
+//! expands to its hidden backing indices. Those are `.ds-` named, so `-.*` now leaves them out
+//! too, and an index whose own settings say `index.hidden` is still skipped as a second guard.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,9 +18,14 @@ use crate::collectors::elasticsearch::source::api_value_of::api_value_of;
 use crate::collectors::elasticsearch::source::json_answer::read_answer;
 use crate::collectors::elasticsearch::value_objects::{ApiValue, HttpEndpoint, Unread};
 
-const ALIASES: &str = "/*/_alias?expand_wildcards=open,closed";
-const SETTINGS: &str = "/*/_settings?flat_settings=true&expand_wildcards=open,closed";
-const MAPPINGS: &str = "/*/_mapping?expand_wildcards=open,closed";
+/// `*,-.*`: every index whose name does not start with a dot. Found by the second domain review,
+/// measured on 7.17.24: there system indices are not hidden, `*` alone matched `.tasks` and
+/// `.kibana_*`, and the node answered with a "this request accesses system indices" warning,
+/// which it logged and indexed into its deprecation data stream. Excluding dot-prefixed names in
+/// the request resolves no system index on any version, so nothing warns.
+const ALIASES: &str = "/*,-.*/_alias?expand_wildcards=open,closed";
+const SETTINGS: &str = "/*,-.*/_settings?flat_settings=true&expand_wildcards=open,closed";
+const MAPPINGS: &str = "/*,-.*/_mapping?expand_wildcards=open,closed";
 
 const UUID: &str = "index.uuid";
 const CREATION_DATE: &str = "index.creation_date";

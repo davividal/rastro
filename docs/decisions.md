@@ -5896,7 +5896,8 @@ idle control, and 12 s after the last read.
 | `/_snapshot` | 66 B | 66 B |
 | `/_nodes/_local/plugins` | 21 KB | 27 KB |
 
-Every body was byte-identical across the two reads, none carried a `Warning` header, and the
+Every body was byte-identical across the two reads, none carried a deprecation warning the node
+logged, and the
 index list did not change, before or after. The idle control did not change either, over a
 window shorter than the one in which the node was earlier seen writing its ILM history, which is
 why the comparison is of the index list rather than of the disk.
@@ -6082,3 +6083,24 @@ a line break continues the line, files do not nest, `@@name` is the argument `@n
 An argument file that cannot be read is still a refusal of the node's settings, since it may hold
 a path the argv does not show. Its token is dropped from the argv rather than kept, because kept it
 reads as the main class and the server stops being a node, the defect itself.
+
+## Dot-prefixed indices are left out of the request, not filtered from the answer
+
+Found by the second domain review, measured on 7.17.24: system indices there are not hidden, so
+`/*/_settings` and its two siblings matched `.tasks`, `.kibana_*`, `.security-7` and the like, and
+the node answered with `Warning: 299 … this request accesses system indices`, which it logged and
+indexed into `.logs-deprecation`: a request the node recorded. `.tasks` alone makes that near
+universal, since any reindex creates it. 8.15.3 and 9.2.0 create these hidden and were clean.
+
+The three requests now name `*,-.*`, every index whose name does not start with a dot, which
+resolves no system index on any version. Measured on 7.17.24 with `.kibana_1` present, no warning;
+on 9.2.0 the same answer shape. It also leaves out data-stream backing indices, which are `.ds-`
+named, at the source; the `index.hidden` check stays as a second guard. **Cost:** an operator's
+own dot-prefixed index leaves the facet on every version. Dot-prefixed is the stack's own
+namespace by convention, and one rule across versions avoids an upgrade showing such an index
+appear. The live job seeds `.kibana_1` and `.tasks` on its 7.17 node and checks the node's
+deprecation lines are unchanged across the reads.
+
+**Corrects** the request table's entry, which said no answer carried a `Warning` header: a 7.17
+node with security off puts a built-in-security notice on every response. It is a header only,
+not logged; what the table meant, and now says, is that none carried a deprecation the node logged.

@@ -200,7 +200,8 @@ fn a_secured_node_is_an_error_and_is_not_dialled() {
 
 #[test]
 fn a_read_changes_no_index_on_any_open_node() {
-    // Arrange: 6 s is past the deprecation logger's 5 s flush, which a quicker look misses.
+    // Arrange: 12 s is well past the deprecation logger's 5 s flush, which a quicker look misses;
+    // the write lands one to five seconds after the response.
     let servers = servers_by_name();
     let before: Vec<String> = [OPEN_7, OPEN_8]
         .iter()
@@ -209,7 +210,7 @@ fn a_read_changes_no_index_on_any_open_node() {
 
     // Act
     ElasticsearchCollector::new().collect().expect("a facet");
-    thread::sleep(Duration::from_secs(6));
+    thread::sleep(Duration::from_secs(12));
 
     // Assert
     let after: Vec<String> = [OPEN_7, OPEN_8]

@@ -14,9 +14,9 @@ mod support;
 use support::es_node::{FakeNode, ROOT};
 use support::observation::{field, items_of, keys_of, text};
 
-const ALIASES: &str = "/*/_alias?expand_wildcards=open,closed";
-const SETTINGS: &str = "/*/_settings?flat_settings=true&expand_wildcards=open,closed";
-const MAPPINGS: &str = "/*/_mapping?expand_wildcards=open,closed";
+const ALIASES: &str = "/*,-.*/_alias?expand_wildcards=open,closed";
+const SETTINGS: &str = "/*,-.*/_settings?flat_settings=true&expand_wildcards=open,closed";
+const MAPPINGS: &str = "/*,-.*/_mapping?expand_wildcards=open,closed";
 
 /// Measured on 8.15.3.
 const ALIAS_ANSWER: &str =

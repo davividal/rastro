@@ -147,7 +147,7 @@ fn collect_asks_the_node_nothing_but_the_reads_it_needs() {
             "/_cluster/settings?flat_settings=true",
             "/_index_template",
             "/_component_template",
-            "/*/_alias?expand_wildcards=open,closed",
+            "/*,-.*/_alias?expand_wildcards=open,closed",
             "/_ilm/policy",
             "/_ingest/pipeline",
             "/_snapshot",
