@@ -245,3 +245,118 @@ fn filesystem_claims_seal_a_data_path_spelled_with_dot_dot_as_the_directory_it_i
     let canonical = fs::canonicalize(&real).expect("the real directory");
     assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
 }
+
+/// A container node: a root of its own, its data on a volume whose host directory is `volume`.
+///
+/// The node's `mountinfo` says the data path is a mount of device 254:1 at `root` inside that
+/// device, and the host's says device 254:1 is mounted at `/` with root `/`, which is how the
+/// kernel publishes a named volume or a bind mount. A mount point holding a space is spelled
+/// `\040`, as the kernel writes it.
+fn container_node_with_a_volume(name: &str, data: &str, volume: &Path) -> Box_ {
+    let host = Box_::host_node(name, true, "");
+    let image = host.directory("image");
+    fs::remove_file(host.proc.join("600/root")).expect("the fixture's link");
+    symlink(&image, host.proc.join("600/root")).expect("a writable fixture");
+    let config = image.join(host.path("conf").strip_prefix("/").expect("absolute"));
+    fs::create_dir_all(&config).expect("a writable fixture");
+    fs::write(
+        config.join("elasticsearch.yml"),
+        format!("path.data: {data}\n"),
+    )
+    .expect("a fixture");
+
+    let escaped = |path: &str| path.replace(' ', "\\040");
+    write(
+        &host.proc,
+        "600/mountinfo",
+        &format!(
+            "21 1 0:99 / / rw - overlay overlay rw\n\
+             22 21 254:1 {root} {point} rw - ext4 /dev/vda1 rw\n",
+            root = escaped(&volume.display().to_string()),
+            point = escaped(data),
+        ),
+    );
+    write(
+        &host.proc,
+        "self/mountinfo",
+        "1 0 254:1 / / rw - ext4 /dev/vda1 rw\n2 1 0:5 / /proc rw - proc proc rw\n",
+    );
+    host
+}
+
+#[test]
+fn filesystem_claims_seal_the_host_directory_behind_a_container_nodes_volume() {
+    // Arrange: found by the second domain review, measured: a node in a container with its data
+    // on a named volume was read fine and 41 entries under the volume were walked, since the
+    // in-container path is not a host path at all. The kernel says which host directory it is.
+    let volume = Box_::host_node("elasticsearch-claims-volume-scratch", false, "")
+        .directory("volumes/es-data/_data");
+    let host = container_node_with_a_volume(
+        "elasticsearch-claims-volume",
+        "/usr/share/elasticsearch/data",
+        &volume,
+    );
+
+    // Act & Assert
+    let canonical = fs::canonicalize(&volume).expect("the volume");
+    assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
+}
+
+#[test]
+fn filesystem_claims_read_a_mount_point_holding_a_space() {
+    // Arrange
+    let volume = Box_::host_node("elasticsearch-claims-volume-space-scratch", false, "")
+        .directory("volumes/es data");
+    let host = container_node_with_a_volume(
+        "elasticsearch-claims-volume-space",
+        "/usr/share/elasticsearch/my data",
+        &volume,
+    );
+
+    // Act & Assert
+    let canonical = fs::canonicalize(&volume).expect("the volume");
+    assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
+}
+
+#[test]
+fn filesystem_claims_seal_the_log_directory_beside_the_data() {
+    // Arrange: measured by the second domain review, `gc.log` under an archive node's `logs`
+    // moved between two runs 100 s apart on an idle box.
+    let host = Box_::host_node("elasticsearch-claims-logs", false, "");
+    let data = host.directory("home/data");
+    let logs = host.directory("home/logs");
+
+    // Act
+    let mut claimed = host.claimed_trees();
+    claimed.sort();
+
+    // Assert
+    assert_eq!(
+        claimed,
+        [data.display().to_string(), logs.display().to_string()]
+    );
+}
+
+#[test]
+fn filesystem_claims_name_the_node_they_were_made_for() {
+    // Arrange: two nodes pointed at one directory is the state worth reading, so each claim
+    // says which node, by the config directory that leads to it in `nodes`.
+    let host = Box_::host_node("elasticsearch-claims-qualified", false, "");
+    host.directory("home/data");
+
+    // Act
+    let qualifiers: Vec<String> =
+        ElasticsearchCollector::reading(&host.proc, false, HttpClient::new())
+            .filesystem_claims()
+            .iter()
+            .map(|claim| {
+                claim
+                    .qualifier()
+                    .map(|qualifier| qualifier.as_str().to_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+
+    // Assert
+    assert_eq!(qualifiers, [host.path("conf").display().to_string()]);
+}

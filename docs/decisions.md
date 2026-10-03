@@ -6115,3 +6115,20 @@ one changes the directory that held it. So a missing file now reads as no settin
 its config directory is unchanged since the start window, and is refused where the directory
 changed later. The directory's ctime moves for any entry, a keystore's temporary file say, which
 errs only towards refusing.
+
+## A volume's host directory is found through the mount tables, and logs are sealed too
+
+Found by the second domain review, measured both. A node in a container with its data on a named
+volume or a bind mount was read fine and left its live store to the walk, 41 entries of it, since
+the path it uses exists only in its own mount namespace. The node's `mountinfo` says which device
+that path is mounted from and where inside the device; the host's says where that device is
+mounted on the host; together they name the host directory, without asking the engine. Only a path
+on a mount of its own is mapped: one on the container's root filesystem is the image, which the
+`containers` facet accounts for. The directory reached is still checked to exist and is claimed by
+its canonical path.
+
+`path.logs` is claimed the same way as `path.data`, `logs` under the home by default: `gc.log` under
+an archive node's `logs` moved between two runs of an idle box. Each claim is qualified by the
+node's config directory, the field that leads to it in `nodes`, so a directory two nodes point at
+says which two. A node whose settings cannot be read still makes no claim, and the `invocation`
+facet's claim table beside that node's own `error` is where that shows.

@@ -9,6 +9,7 @@ mod indices_answer;
 mod java_argument_file;
 mod json_answer;
 mod lifecycle_answer;
+mod mount_table;
 mod node_listeners;
 mod node_namespace;
 mod node_reader;

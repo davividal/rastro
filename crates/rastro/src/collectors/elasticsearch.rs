@@ -27,7 +27,7 @@ pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Transport, Unr
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
-    CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
+    ClaimQualifier, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
 
@@ -134,17 +134,29 @@ impl Collector for ElasticsearchCollector {
             .iter()
             .filter_map(|node| {
                 let settings = NodeSettings::read_in(&self.proc, node).ok()?;
-                let root = self.proc.join(node.process_id().to_string()).join("root");
-                let directories: Vec<PathBuf> = settings
-                    .data_directories(node.home())
+                let mut directories = settings.data_directories(node.home());
+                directories.extend(settings.log_directories(node.home()));
+                // Named by the config directory, the field that leads to the node in `nodes`, so
+                // a directory two nodes point at says which two.
+                let qualifier = node
+                    .config()
+                    .and_then(|config| ClaimQualifier::new(config.to_string_lossy()).ok());
+
+                let claims: Vec<FilesystemClaim> = directories
                     .iter()
-                    .filter_map(|directory| host_directory_of(&root, directory))
+                    .filter_map(|directory| {
+                        host_directory_of(&self.proc, node.process_id(), directory)
+                    })
+                    .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())
+                    .map(FilesystemClaim::sealed)
+                    .map(|claim| match &qualifier {
+                        Some(qualifier) => claim.for_entry(qualifier.clone()),
+                        None => claim,
+                    })
                     .collect();
-                Some(directories)
+                Some(claims)
             })
             .flatten()
-            .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())
-            .map(FilesystemClaim::sealed)
             .collect()
     }
 

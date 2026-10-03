@@ -82,6 +82,12 @@ const DATA_PATH: &str = "path.data";
 /// Where a node keeps its data when nothing says, relative to its home.
 const DEFAULT_DATA_DIRECTORY: &str = "data";
 
+/// Where a node writes its logs.
+const LOGS_PATH: &str = "path.logs";
+
+/// Where a node writes its logs when nothing says, relative to its home.
+const DEFAULT_LOGS_DIRECTORY: &str = "logs";
+
 /// The setting that puts the HTTP listener behind TLS.
 const TLS_SETTING: &str = "xpack.security.http.ssl.enabled";
 
@@ -179,24 +185,16 @@ impl NodeSettings {
     /// where neither the setting nor the home is known, since a guessed path would seal a tree
     /// that is not the node's.
     pub fn data_directories(&self, home: Option<&Path>) -> Vec<PathBuf> {
-        let resolved = |directory: &str| {
-            let directory = Path::new(directory);
-            match (directory.is_absolute(), home) {
-                (true, _) => Some(directory.to_path_buf()),
-                (false, Some(home)) => Some(home.join(directory)),
-                (false, None) => None,
-            }
-        };
+        directories_from(self.get(DATA_PATH), DEFAULT_DATA_DIRECTORY, home)
+    }
 
-        match self.get(DATA_PATH) {
-            Some(listed) => listed
-                .split(',')
-                .map(str::trim)
-                .filter(|directory| !directory.is_empty())
-                .filter_map(resolved)
-                .collect(),
-            None => resolved(DEFAULT_DATA_DIRECTORY).into_iter().collect(),
-        }
+    /// The directories the node writes its logs to, as paths in its own mount namespace.
+    ///
+    /// `path.logs` where it is set, `logs` under the home otherwise, resolved as the data
+    /// directories are. Found by the second domain review: `gc.log` under an archive node's
+    /// `logs` moved between two runs of an idle box.
+    pub fn log_directories(&self, home: Option<&Path>) -> Vec<PathBuf> {
+        directories_from(self.get(LOGS_PATH), DEFAULT_LOGS_DIRECTORY, home)
     }
 
     /// Plain only where the TLS setting is absent or exactly `false`.
@@ -323,6 +321,30 @@ fn decoded(encoded: &str) -> String {
         .collect::<Vec<_>>()
         .join("_")
         .to_lowercase()
+}
+
+/// The directories a path setting names: each entry of a list, a relative one against the home,
+/// or `default` under the home where the setting is not set. Nothing where neither the setting
+/// nor the home is known, since a guessed path would seal a tree that is not the node's.
+fn directories_from(setting: Option<&str>, default: &str, home: Option<&Path>) -> Vec<PathBuf> {
+    let resolved = |directory: &str| {
+        let directory = Path::new(directory);
+        match (directory.is_absolute(), home) {
+            (true, _) => Some(directory.to_path_buf()),
+            (false, Some(home)) => Some(home.join(directory)),
+            (false, None) => None,
+        }
+    };
+
+    match setting {
+        Some(listed) => listed
+            .split(',')
+            .map(str::trim)
+            .filter(|directory| !directory.is_empty())
+            .filter_map(resolved)
+            .collect(),
+        None => resolved(default).into_iter().collect(),
+    }
 }
 
 /// Settings the caller already has, so what depends on them can be exercised without a node.

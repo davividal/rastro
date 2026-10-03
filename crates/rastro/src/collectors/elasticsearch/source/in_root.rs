@@ -12,6 +12,8 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use crate::collectors::elasticsearch::source::mount_table::host_path_of;
+
 /// Which file a path leads to: the device and the inode, which two paths share only if they are
 /// one file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,20 +67,42 @@ pub fn changed_at_inside(root: &Path, relative: &Path) -> std::io::Result<i64> {
         .ctime())
 }
 
-/// The host's own directory at `path`, canonical, where `path` inside `root` is that same
-/// directory, and nothing otherwise.
+/// The host's own directory at `path`, canonical, where `path` inside the process's root is that
+/// same directory, and nothing otherwise.
 ///
-/// What decides whether a node's data directory may be sealed. Found by review: Elastic's own
-/// systemd unit sets `PrivateTmp=true`, so a packaged node has a mount namespace of its own and
-/// still keeps its data in the host's `/var/lib/elasticsearch`, while a node in a container names
-/// a directory in its image. Comparing namespaces sealed neither; comparing the directory seals
-/// the first and not the second. Nothing wherever either side cannot be read, which makes no claim.
+/// What decides whether a node's data and log directories may be sealed. Found by review:
+/// Elastic's own systemd unit sets `PrivateTmp=true`, so a packaged node has a mount namespace of
+/// its own and still keeps its data in the host's `/var/lib/elasticsearch`, while a node in a
+/// container names a directory in its image. Comparing namespaces sealed neither; comparing the
+/// directory seals the first and not the second. Nothing wherever no side can be read, which
+/// makes no claim.
+///
+/// **A volume or a bind mount is found through the mount tables**, found by the second domain
+/// review: there the node's path is not a host path at all, and the kernel says which one it is.
 ///
 /// **Canonical**, found by review: a `path.data` that is a symlink, or spelled with `..`, passed
 /// the comparison while the claim named the spelling, and the walk matches paths as text, so it
 /// would have walked into the directory behind the link, the live store itself.
-pub fn host_directory_of(root: &Path, path: &Path) -> Option<PathBuf> {
-    let relative = path.strip_prefix("/").ok()?;
+pub fn host_directory_of(proc: &Path, process_id: u32, path: &Path) -> Option<PathBuf> {
+    let process = proc.join(process_id.to_string());
+    let host_path = match same_directory(&process.join("root"), path) {
+        true => path.to_path_buf(),
+        false => {
+            let node_table = fs::read_to_string(process.join("mountinfo")).ok()?;
+            let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok()?;
+            host_path_of(&node_table, &host_table, path)?
+        }
+    };
+
+    fs::metadata(&host_path).ok().filter(fs::Metadata::is_dir)?;
+    fs::canonicalize(host_path).ok()
+}
+
+/// Whether `path` inside `root` is the same directory as `path` on rastro's own filesystem.
+fn same_directory(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix("/") else {
+        return false;
+    };
     let host = fs::metadata(path)
         .ok()
         .filter(fs::Metadata::is_dir)
@@ -88,10 +112,7 @@ pub fn host_directory_of(root: &Path, path: &Path) -> Option<PathBuf> {
         .ok()
         .map(identity_of);
 
-    match (host, node) {
-        (Some(host), Some(node)) if host == node => fs::canonicalize(path).ok(),
-        _ => None,
-    }
+    matches!((host, node), (Some(host), Some(node)) if host == node)
 }
 
 fn identity_of(metadata: fs::Metadata) -> FileIdentity {
