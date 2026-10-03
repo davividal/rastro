@@ -206,3 +206,41 @@ fn filesystem_claims_make_no_claim_where_the_settings_cannot_be_read() {
     // Act & Assert
     assert!(host.claimed_trees().is_empty());
 }
+
+#[test]
+fn filesystem_claims_seal_the_directory_a_symlinked_data_path_leads_to() {
+    // Arrange: found by review. `/var/lib/elasticsearch` linking to `/mnt/es` passed the identity
+    // check, and the claim named the link, which the walk matches as text: it would have walked
+    // into `/mnt/es`, the live store itself.
+    let host = Box_::host_node("elasticsearch-claims-symlinked-data", false, "");
+    let real = host.directory("mnt-es");
+    let link = host.path("var-lib-elasticsearch");
+    symlink(&real, &link).expect("a writable fixture");
+    write(
+        &host.scratch,
+        "conf/elasticsearch.yml",
+        &data_setting(&[&link]),
+    );
+
+    // Act & Assert
+    let canonical = fs::canonicalize(&real).expect("the real directory");
+    assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
+}
+
+#[test]
+fn filesystem_claims_seal_a_data_path_spelled_with_dot_dot_as_the_directory_it_is() {
+    // Arrange
+    let host = Box_::host_node("elasticsearch-claims-dot-dot", false, "");
+    let real = host.directory("data");
+    host.directory("home");
+    let spelled = host.path("home/../data");
+    write(
+        &host.scratch,
+        "conf/elasticsearch.yml",
+        &data_setting(&[&spelled]),
+    );
+
+    // Act & Assert
+    let canonical = fs::canonicalize(&real).expect("the real directory");
+    assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
+}

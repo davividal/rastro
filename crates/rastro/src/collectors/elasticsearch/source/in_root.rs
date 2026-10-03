@@ -10,7 +10,7 @@
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Which file a path leads to: the device and the inode, which two paths share only if they are
 /// one file.
@@ -27,17 +27,20 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
-/// Whether `path` inside `root` is the same directory as `path` on rastro's own filesystem.
+/// The host's own directory at `path`, canonical, where `path` inside `root` is that same
+/// directory, and nothing otherwise.
 ///
 /// What decides whether a node's data directory may be sealed. Found by review: Elastic's own
 /// systemd unit sets `PrivateTmp=true`, so a packaged node has a mount namespace of its own and
 /// still keeps its data in the host's `/var/lib/elasticsearch`, while a node in a container names
 /// a directory in its image. Comparing namespaces sealed neither; comparing the directory seals
-/// the first and not the second. False wherever either side cannot be read, which makes no claim.
-pub fn same_directory_on_host(root: &Path, path: &Path) -> bool {
-    let Ok(relative) = path.strip_prefix("/") else {
-        return false;
-    };
+/// the first and not the second. Nothing wherever either side cannot be read, which makes no claim.
+///
+/// **Canonical**, found by review: a `path.data` that is a symlink, or spelled with `..`, passed
+/// the comparison while the claim named the spelling, and the walk matches paths as text, so it
+/// would have walked into the directory behind the link, the live store itself.
+pub fn host_directory_of(root: &Path, path: &Path) -> Option<PathBuf> {
+    let relative = path.strip_prefix("/").ok()?;
     let host = fs::metadata(path)
         .ok()
         .filter(fs::Metadata::is_dir)
@@ -47,7 +50,10 @@ pub fn same_directory_on_host(root: &Path, path: &Path) -> bool {
         .ok()
         .map(identity_of);
 
-    matches!((host, node), (Some(host), Some(node)) if host == node)
+    match (host, node) {
+        (Some(host), Some(node)) if host == node => fs::canonicalize(path).ok(),
+        _ => None,
+    }
 }
 
 fn identity_of(metadata: fs::Metadata) -> FileIdentity {

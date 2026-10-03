@@ -20,8 +20,8 @@ pub use model::{
     Node, NodeIdentity, NodeVersion, Plugins, SnapshotRepositories, SnapshotRepository, Surface,
 };
 pub use source::{
-    HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint, read_node,
-    same_directory_on_host,
+    HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, host_directory_of,
+    http_endpoint, read_node,
 };
 pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Transport, Unread};
 
@@ -118,8 +118,8 @@ impl Collector for ElasticsearchCollector {
                 let root = self.proc.join(node.process_id().to_string()).join("root");
                 let directories: Vec<PathBuf> = settings
                     .data_directories(node.home())
-                    .into_iter()
-                    .filter(|directory| same_directory_on_host(&root, directory))
+                    .iter()
+                    .filter_map(|directory| host_directory_of(&root, directory))
                     .collect();
                 Some(directories)
             })

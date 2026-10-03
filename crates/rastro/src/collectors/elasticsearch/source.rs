@@ -19,7 +19,7 @@ mod templates_answer;
 
 pub use http_binding::http_endpoint;
 pub use http_client::HttpClient;
-pub use in_root::same_directory_on_host;
+pub use in_root::host_directory_of;
 pub use node_listeners::NodeListener;
 pub use node_namespace::NodeNamespace;
 pub use node_reader::read_node;
