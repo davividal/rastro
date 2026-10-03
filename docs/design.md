@@ -165,7 +165,11 @@ TLS from the settings it started with, because a request to the transport port o
 plaintext request to a TLS listener is something the node logs. A node that wants TLS or
 credentials is that node's `error`. Every request was measured before it was written, and
 none writes; the one family that does, deprecated parameters and legacy routes, is not sent.
-An index is keyed by its alias where the alias is its identity, so a rotation that changed
+A node that reports no cluster yet is refused. For a second or two after a first start or an
+upgrade, while its built-in templates, policies and pipelines are still being installed, a read
+is complete-looking and partial, and no request can tell, so a fingerprint taken then is a partial
+one; measured on 8.15.3, it settled within two seconds. An index is keyed by its alias where the
+alias is its identity, so a rotation that changed
 nothing reads as volatile fields moving; the mappings are a digest. Snapshot repository
 settings are sensitive whole.
 

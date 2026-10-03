@@ -382,3 +382,23 @@ fn collect_marks_the_facet_incomplete_where_a_process_could_not_be_inspected() {
     let unseen = field(&facet, "uninspected_processes");
     assert_eq!(unseen.completeness(), Completeness::Incomplete);
 }
+
+#[test]
+fn collect_does_not_read_a_node_that_has_not_joined_a_cluster() {
+    // Arrange: found by the second domain review. `GET /` answers `"_na_"` for the cluster UUID
+    // while a node has not formed or joined a cluster, and its surfaces are not the cluster's yet.
+    let unjoined = ROOT.replace("uh7ULRBqQ1m4mIbk9MNkIg", "_na_");
+    let node = FakeNode::serving(&[("/", &unjoined)]);
+    let proc = node.proc("elasticsearch-facet-unjoined");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(
+        text(&field(reported, "error")).contains("cluster"),
+        "{reported:?}"
+    );
+    assert_eq!(node.requests(), ["/"]);
+}

@@ -9,6 +9,9 @@ use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, Unread};
 
 const PATH: &str = "/";
 
+/// The cluster UUID a node reports before it has formed or joined a cluster.
+const NO_CLUSTER: &str = "_na_";
+
 /// The answer as the node spells it. `build_date` and `lucene_version` follow from the build
 /// and are left out, `tagline` is a slogan.
 #[derive(Deserialize)]
@@ -30,6 +33,13 @@ struct VersionAnswer {
 /// Asks the node who it is.
 pub fn read_identity(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<NodeIdentity, Unread> {
     let answer: RootAnswer = read_answer(&client.get(endpoint, PATH)?, PATH)?;
+    // Found by the second domain review: until then the node's surfaces are not a cluster's, and
+    // the UUID would be recorded as though it were one.
+    if answer.cluster_uuid == NO_CLUSTER {
+        return Err(Unread::new(
+            "the node has not formed or joined a cluster yet, so it has no cluster state to read",
+        ));
+    }
 
     Ok(NodeIdentity {
         node_name: answer.name,
