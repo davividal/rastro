@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use rastro::collectors::elasticsearch::{
-    ApiValue, HttpEndpoint, Node, NodeIdentity, NodeVersion, Unread,
+    ApiValue, HttpEndpoint, Node, NodeIdentity, NodeVersion, Plugins, Unread,
 };
 use rastro::collectors::inet::{InetHost, PortNumber};
 use rastro_fingerprint::Observation;
@@ -149,4 +149,33 @@ fn ordering_breaks_a_tie_between_read_nodes_by_their_cluster() {
     // Assert
     let order: Vec<u32> = nodes.iter().map(|node| node.process_id).collect();
     assert_eq!(order, [20, 10]);
+}
+
+#[test]
+fn ordering_is_the_same_whichever_order_nodes_arrive_in_when_only_node_local_state_differs() {
+    // Arrange: found by review, the third time this comparator was. Two nodes alike in every
+    // identity key, one with a plugin the other lacks; plugins come from `_nodes/_local`, so they
+    // are this node's own. Rather than one more key, the comparator ends on the node's whole
+    // stable rendering, so two nodes it cannot tell apart render the same.
+    let alike = |process_id: u32, plugins: &[(&str, &str)]| {
+        let mut node = node(process_id, Some(9200), "/usr/share/elasticsearch/config");
+        node.identity = Some(identity("aaaaaaaaaaaaaaaaaaaaaa"));
+        node.plugins = Some(Ok(Plugins(
+            plugins
+                .iter()
+                .map(|(name, version)| ((*name).to_owned(), (*version).to_owned()))
+                .collect(),
+        )));
+        node
+    };
+    let mut forwards = [alike(10, &[]), alike(20, &[("analysis-icu", "8.15.3")])];
+    let mut backwards = [alike(20, &[("analysis-icu", "8.15.3")]), alike(10, &[])];
+
+    // Act
+    forwards.sort_by(Node::ordering);
+    backwards.sort_by(Node::ordering);
+
+    // Assert
+    let order = |nodes: &[Node]| nodes.iter().map(|node| node.process_id).collect::<Vec<_>>();
+    assert_eq!(order(&forwards), order(&backwards));
 }

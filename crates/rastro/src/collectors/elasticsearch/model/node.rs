@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use rastro_collector::Observation;
+use rastro_collector::{Content, Observation, Scalar, Volatility};
 
 use crate::collectors::elasticsearch::model::node_identity::optional;
 use crate::collectors::elasticsearch::model::{
@@ -73,6 +73,64 @@ impl Node {
             .then_with(|| namespace(left).cmp(&namespace(right)))
             .then_with(|| host(left).cmp(&host(right)))
             .then_with(|| reason(left).cmp(&reason(right)))
+            .then_with(|| stable_rendering(left).cmp(&stable_rendering(right)))
+    }
+}
+
+/// A node's rendering as the diffable view shows it, encoded so that two nodes compare equal
+/// only where they render the same.
+///
+/// The comparator's last key, found by review the third time it was: every key added before
+/// it named one more thing two nodes could differ in, and `plugins`, read per node, was the
+/// next. Ending on the whole rendering closes that for good. Two nodes that still tie render
+/// identically, so which one is listed first changes nothing a diff can see. Volatile values are
+/// left out, the process id among them, because they are what the diffable view leaves out.
+fn stable_rendering(node: &Node) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encode_stable(&Observation::from(node), &mut encoded);
+    encoded
+}
+
+/// Every value tagged with its kind and every text and collection with its length, so that no
+/// two different renderings encode alike.
+fn encode_stable(observation: &Observation, encoded: &mut Vec<u8>) {
+    let length = |encoded: &mut Vec<u8>, length: usize| {
+        encoded.extend_from_slice(&(length as u64).to_be_bytes());
+    };
+
+    if observation.volatility() == Volatility::Volatile {
+        encoded.push(0);
+        return;
+    }
+
+    match observation.content() {
+        Content::Scalar(Scalar::Null) => encoded.push(1),
+        Content::Scalar(Scalar::Boolean(flag)) => encoded.extend_from_slice(&[2, u8::from(*flag)]),
+        Content::Scalar(Scalar::Integer(number)) => {
+            encoded.push(3);
+            encoded.extend_from_slice(&number.to_be_bytes());
+        }
+        Content::Scalar(Scalar::Text(text)) => {
+            encoded.push(4);
+            length(encoded, text.len());
+            encoded.extend_from_slice(text.as_bytes());
+        }
+        Content::List(items) => {
+            encoded.push(5);
+            length(encoded, items.len());
+            for item in items {
+                encode_stable(item, encoded);
+            }
+        }
+        Content::Object(entries) => {
+            encoded.push(6);
+            length(encoded, entries.len());
+            for (key, value) in entries {
+                length(encoded, key.len());
+                encoded.extend_from_slice(key.as_bytes());
+                encode_stable(value, encoded);
+            }
+        }
     }
 }
 
