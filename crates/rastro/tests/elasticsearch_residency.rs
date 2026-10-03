@@ -280,3 +280,68 @@ fn all_in_takes_the_last_of_a_repeated_path_property_as_the_jvm_does() {
     assert_eq!(nodes[0].config(), Some(Path::new("/etc/second")));
     assert_eq!(nodes[0].home(), Some(Path::new("/opt/second")));
 }
+
+/// A process `java @args`, run from `/work` in its own root, with `args` holding `contents`.
+fn launched_from_an_argument_file(name: &str, contents: &str) -> std::path::PathBuf {
+    let proc = scratch_tree(name, &["90/root/work"]);
+    write(
+        &proc,
+        "90/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0@args\0",
+    );
+    write(&proc, "90/root/work/args", contents);
+    std::os::unix::fs::symlink("/work", proc.join("90/cwd")).expect("a writable fixture");
+    proc
+}
+
+#[test]
+fn all_in_finds_a_server_whose_entry_point_is_in_an_argument_file() {
+    // Arrange: found by review. `java @args` may carry the whole launch, main class included, in
+    // the file; read only as the argv, the server silently stopped being a node.
+    let proc = launched_from_an_argument_file(
+        "elasticsearch-residency-argfile-entry",
+        "-Des.path.conf=/etc/es -Des.distribution.type=tar\n\
+         -cp /usr/share/elasticsearch/lib/* org.elasticsearch.bootstrap.Elasticsearch\n",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes.len(), 1, "{nodes:?}");
+    assert_eq!(nodes[0].config(), Some(Path::new("/etc/es")));
+}
+
+#[test]
+fn all_in_reads_an_argument_file_as_java_does() {
+    // Arrange: measured on the bundled JDK of 8.15.3. Quotes group and are removed, `#` outside
+    // them comments to the end of the line, and inside them a backslash before a line break
+    // continues onto the next line without its leading spaces.
+    let proc = launched_from_an_argument_file(
+        "elasticsearch-residency-argfile-syntax",
+        "-Des.path.conf=\"/etc/my es\" # -Des.path.conf=/wrong\n\
+         -Des.path.home='/opt/\\\n     es'\n\
+         -cp lib/* org.elasticsearch.bootstrap.Elasticsearch\n",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes[0].config(), Some(Path::new("/etc/my es")));
+    assert_eq!(nodes[0].home(), Some(Path::new("/opt/es")));
+}
+
+#[test]
+fn all_in_takes_a_doubled_at_sign_as_a_literal_argument() {
+    // Arrange: measured, `@@name` is the argument `@name`, not a file.
+    let proc = scratch_tree("elasticsearch-residency-argfile-literal", &["90"]);
+    write(
+        &proc,
+        "90/cmdline",
+        "/usr/bin/java\0-cp\0x.jar\0@@org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act & Assert: the main class is `@org…`, which is not the server.
+    assert!(ResidentNode::all_in(&proc).is_empty());
+}

@@ -6067,3 +6067,18 @@ file 0.67 s after the server process starts, and the node runs with what it wrot
 is the server's own, from field 22 of its `stat` and `btime`. A node whose start cannot be read
 is refused, since whether its file changed cannot be told. Every refusal here costs an unread
 node and never a request.
+
+## A `java` argument file is expanded as the launcher expands it
+
+**Reverses refusing every node launched with an `@file`.** Found by review: `java @args` may carry
+the whole launch, main class included, and read only as the argv the server silently stopped being
+a node, its data directory unsealed. So argument files among the launcher's options are expanded in
+place, read inside the node's root from its working directory, with the launcher's syntax measured
+on the JDK bundled with 8.15.3: whitespace separates and quotes group, `#` comments to the end of
+the line, a backslash is itself outside quotes and an escape inside them, a quoted backslash before
+a line break continues the line, files do not nest, `@@name` is the argument `@name`,
+`--disable-@files` stops the expansion, and nothing after the entry point is expanded.
+
+An argument file that cannot be read is still a refusal of the node's settings, since it may hold
+a path the argv does not show. Its token is dropped from the argv rather than kept, because kept it
+reads as the main class and the server stops being a node, the defect itself.

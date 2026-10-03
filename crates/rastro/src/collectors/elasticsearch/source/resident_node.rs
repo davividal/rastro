@@ -18,6 +18,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::collectors::elasticsearch::source::in_root::read_inside;
+use crate::collectors::elasticsearch::source::java_argument_file;
+
 /// Where the kernel publishes its process table.
 const PROC: &str = "/proc";
 
@@ -93,7 +96,7 @@ pub struct ResidentNode {
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
     distribution: Option<String>,
 
-    /// Whether the launch argv names a `java` argument file among its options.
+    /// Whether a `java` argument file among the launch argv's options could not be read.
     launched_with_an_argument_file: bool,
 
     /// When the server process started, in seconds since the epoch.
@@ -161,11 +164,11 @@ impl ResidentNode {
         self.started_at
     }
 
-    /// Whether the node was launched with a `java` argument file, `@file`, among its options.
+    /// Whether the node was launched with a `java` argument file, `@file`, that could not be read.
     ///
-    /// The launcher expands one in place, so a property in it, a later `es.path.conf` say,
-    /// overrides what the argv shows, and its content is not in `/proc`. A node launched this way
-    /// cannot have its paths read as the JVM read them.
+    /// The launcher expands one in place, and a readable one is expanded here the same way. One
+    /// that cannot be read may hold a property, a later `es.path.conf` say, that overrides what the
+    /// argv shows, so a node launched with one cannot have its paths read as the JVM read them.
     pub fn launched_with_an_argument_file(&self) -> bool {
         self.launched_with_an_argument_file
     }
@@ -199,20 +202,23 @@ impl ResidentNode {
             distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
                 .map(|distribution| distribution.to_string_lossy().into_owned()),
             started_at: started_at(proc, path),
-            launched_with_an_argument_file: launch_of(&launched)
-                .is_some_and(|launch| launch.argument_file),
+            launched_with_an_argument_file: launch.unread_argument_file,
             launch_arguments_are_exact: launch.exact,
             launch_arguments: launch.arguments,
         })
     }
 }
 
-/// A process's argv, each argument decoded on its own.
+/// A process's argv, each argument decoded on its own, its argument files expanded.
 struct Argv {
     arguments: Vec<String>,
 
     /// False where any argument was not UTF-8 and was read lossily.
     exact: bool,
+
+    /// Whether an argument file among the launcher's options could not be read, so the argv
+    /// may hold options, a path among them, that `/proc` does not show.
+    unread_argument_file: bool,
 }
 
 /// Read as bytes, because one argument that is not UTF-8, a Latin-1 path say, would otherwise
@@ -224,15 +230,120 @@ fn arguments_of(process: &Path) -> Option<Argv> {
         .filter(|argument| !argument.is_empty())
         .collect();
 
+    let arguments: Vec<String> = raw
+        .iter()
+        .map(|argument| String::from_utf8_lossy(argument).into_owned())
+        .collect();
+    let expansion = expanded(process, arguments);
+
     Some(Argv {
         exact: raw
             .iter()
             .all(|argument| std::str::from_utf8(argument).is_ok()),
-        arguments: raw
-            .iter()
-            .map(|argument| String::from_utf8_lossy(argument).into_owned())
-            .collect(),
+        arguments: expansion.arguments,
+        unread_argument_file: expansion.unread_argument_file,
     })
+}
+
+/// An argv with its argument files expanded in place.
+struct Expansion {
+    arguments: Vec<String>,
+    unread_argument_file: bool,
+}
+
+/// The argv as the `java` launcher sees it: each `@file` among the options replaced by the
+/// arguments it holds, read inside the process's own root and relative to its working directory.
+///
+/// Found by review: `java @args` may carry the whole launch in the file, main class included,
+/// and read only as the argv the server silently stopped being a node. As the launcher does,
+/// measured on the bundled JDK: `@@name` is the argument `@name`, `--disable-@files` stops the
+/// expansion, and nothing after the entry point is expanded, being the application's own.
+fn expanded(process: &Path, arguments: Vec<String>) -> Expansion {
+    let mut expansion = Expansion {
+        arguments: Vec::with_capacity(arguments.len()),
+        unread_argument_file: false,
+    };
+    let mut scan = OptionScan::default();
+    let mut rest = arguments.into_iter();
+    expansion.arguments.extend(rest.next());
+
+    for argument in rest {
+        let from_argument: Vec<String> = match (scan.expanding(), argument.strip_prefix('@')) {
+            (true, Some(literal)) if literal.starts_with('@') => vec![literal.to_owned()],
+            (true, Some(file)) => match argument_file_text(process, file) {
+                Some(text) => java_argument_file::arguments_in(&text),
+                // Dropped rather than kept: kept, `@file` reads as the main class and the server
+                // silently stops being a node, the defect this expansion exists to close.
+                None => {
+                    expansion.unread_argument_file = true;
+                    Vec::new()
+                }
+            },
+            _ => vec![argument],
+        };
+        for token in from_argument {
+            scan.feed(&token);
+            expansion.arguments.push(token);
+        }
+    }
+
+    expansion
+}
+
+/// An argument file's text, resolved inside the process's root from its working directory.
+fn argument_file_text(process: &Path, file: &str) -> Option<String> {
+    let named = Path::new(file);
+    let absolute = match named.is_absolute() {
+        true => named.to_path_buf(),
+        false => fs::read_link(process.join("cwd")).ok()?.join(named),
+    };
+    let relative = absolute.strip_prefix("/").ok()?;
+    read_inside(&process.join("root"), relative)
+        .ok()
+        .map(|file| file.text)
+}
+
+/// Where the launcher's option scan is, fed one argument at a time.
+#[derive(Debug, Default)]
+struct OptionScan {
+    /// The next argument is the value of the option before it.
+    awaiting_value: bool,
+
+    /// The next argument is the entry point, after `-m` or `-jar`.
+    awaiting_entry: bool,
+
+    /// The entry point has been read, so what follows is the application's.
+    done: bool,
+
+    /// `--disable-@files` was seen.
+    disabled: bool,
+}
+
+impl OptionScan {
+    fn expanding(&self) -> bool {
+        !self.done && !self.disabled
+    }
+
+    fn feed(&mut self, argument: &str) {
+        if self.done {
+            return;
+        }
+        if self.awaiting_entry {
+            self.done = true;
+        } else if self.awaiting_value {
+            self.awaiting_value = false;
+        } else if argument == "--disable-@files" {
+            self.disabled = true;
+        } else if MODULE_FLAGS.contains(&argument) || argument == JAR_OPTION {
+            self.awaiting_entry = true;
+        } else if argument.starts_with("--module=") {
+            self.done = true;
+        } else if OPTIONS_WITH_A_VALUE.contains(&argument) {
+            self.awaiting_value = true;
+        } else if !argument.starts_with('-') {
+            self.done = true;
+        }
+    }
 }
 
 /// When a process started: the boot time from `/proc/stat` plus field 22 of its own `stat`, which
@@ -311,9 +422,6 @@ struct Launch<'argv> {
 
     /// The index of the argument the entry point was read from; every option is before it.
     entry_index: usize,
-
-    /// Whether an `@file` came among the options.
-    argument_file: bool,
 }
 
 /// What a JVM was started to run.
@@ -337,14 +445,9 @@ fn launch_of<'argv>(arguments: &[&'argv str]) -> Option<Launch<'argv>> {
         return None;
     }
 
-    let mut argument_file = false;
     let mut index = 1;
     while let Some(argument) = arguments.get(index) {
-        let launch = |entry, entry_index| Launch {
-            entry,
-            entry_index,
-            argument_file,
-        };
+        let launch = |entry, entry_index| Launch { entry, entry_index };
 
         if MODULE_FLAGS.contains(argument) {
             return arguments
@@ -361,9 +464,7 @@ fn launch_of<'argv>(arguments: &[&'argv str]) -> Option<Launch<'argv>> {
             index += 2;
             continue;
         }
-        if argument.starts_with('@') {
-            argument_file = true;
-        } else if !argument.starts_with('-') {
+        if !argument.starts_with('-') {
             return Some(launch(EntryPoint::Class(argument), index));
         }
         index += 1;

@@ -94,8 +94,8 @@ impl NodeSettings {
         }
         if node.launched_with_an_argument_file() {
             return Err(Unread::new(
-                "the node was launched with a java argument file, which can set its paths and \
-                 settings where /proc does not show them",
+                "the node was launched with a java argument file that could not be read, which \
+                 can set its paths and settings where /proc does not show them",
             ));
         }
         let config = node.config().ok_or_else(|| {
