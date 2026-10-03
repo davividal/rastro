@@ -77,6 +77,26 @@ impl Node {
     }
 }
 
+/// The address a node was dialled on, volatile where an engine assigned it.
+///
+/// Found by the second domain review, measured: `network.host=_site_` in a container dialled the
+/// container's own address, which moves whenever the container is recreated while nothing about
+/// the node changed. Loopback is the same wherever the node runs, and a host's address is its
+/// own configuration, so those stay.
+fn dialled_host(http: &HttpEndpoint, namespace: Option<NetworkNamespace>) -> Observation {
+    let host = Observation::from(http.host());
+    let assigned = namespace == Some(NetworkNamespace::Separate)
+        && !matches!(
+            http.host().as_str(),
+            "127.0.0.1" | "::1" | "::ffff:127.0.0.1" | "0.0.0.0" | "::"
+        );
+
+    match assigned {
+        true => host.volatile(),
+        false => host,
+    }
+}
+
 /// A node's rendering as the diffable view shows it, encoded so that two nodes compare equal
 /// only where they render the same.
 ///
@@ -155,7 +175,7 @@ impl From<&Node> for Observation {
                 "http",
                 match &node.http {
                     Some(http) => Observation::object([
-                        ("host", Observation::from(http.host())),
+                        ("host", dialled_host(http, node.network_namespace)),
                         (
                             "port",
                             Observation::integer(i64::from(http.port().as_u16())),

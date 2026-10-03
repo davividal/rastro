@@ -4,14 +4,14 @@
 use std::collections::BTreeMap;
 
 use rastro::collectors::elasticsearch::{
-    ApiValue, HttpEndpoint, Node, NodeIdentity, NodeVersion, Plugins, Unread,
+    ApiValue, HttpEndpoint, NetworkNamespace, Node, NodeIdentity, NodeVersion, Plugins, Unread,
 };
 use rastro::collectors::inet::{InetHost, PortNumber};
-use rastro_fingerprint::Observation;
+use rastro_fingerprint::{Observation, Volatility};
 
 mod support;
 
-use support::observation::is_null;
+use support::observation::{field, is_null};
 
 fn node(process_id: u32, port: Option<u16>, config: &str) -> Node {
     Node {
@@ -178,4 +178,38 @@ fn ordering_is_the_same_whichever_order_nodes_arrive_in_when_only_node_local_sta
     // Assert
     let order = |nodes: &[Node]| nodes.iter().map(|node| node.process_id).collect::<Vec<_>>();
     assert_eq!(order(&forwards), order(&backwards));
+}
+
+fn dialled(host: &str, namespace: NetworkNamespace) -> Observation {
+    let mut node = node(10, Some(9200), "/usr/share/elasticsearch/config");
+    node.http = Some(HttpEndpoint::new(
+        InetHost::new(host).expect("a host"),
+        PortNumber::parse("9200").expect("a port"),
+    ));
+    node.network_namespace = Some(namespace);
+    field(&field(&Observation::from(&node), "http"), "host")
+}
+
+#[test]
+fn a_containers_own_address_is_volatile() {
+    // Act: found by the second domain review, measured: `network.host=_site_` in a container
+    // dialled the container's address, which moves when the container is recreated.
+    let host = dialled("::ffff:10.88.0.188", NetworkNamespace::Separate);
+
+    // Assert
+    assert_eq!(host.volatility(), Volatility::Volatile);
+}
+
+#[test]
+fn a_loopback_address_and_a_hosts_address_are_not() {
+    // Act & Assert: loopback is the same wherever the node is, and a host's address is its
+    // configuration rather than an engine's assignment.
+    assert_eq!(
+        dialled("::1", NetworkNamespace::Separate).volatility(),
+        Volatility::Stable
+    );
+    assert_eq!(
+        dialled("10.0.0.5", NetworkNamespace::Host).volatility(),
+        Volatility::Stable
+    );
 }
