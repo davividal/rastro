@@ -6052,3 +6052,18 @@ from `/proc` wherever it lives.
 What changed is what the document claims. The field that said `installed` said more than was
 observed, and reads `package_installed` now, the launcher at the package path. The comment that
 said the tarball installs it there was wrong and is gone.
+
+## The file is trusted only as the node read it: present, and unchanged since start
+
+Found by review. `elasticsearch.yml` was read as it is now, which is not necessarily what the
+running node read: a change staged for the next restart, TLS switched off say, would have sent
+plaintext to a listener still on TLS, and a missing file read as a node on its defaults. Now a
+missing file is a refusal, and so is one whose ctime is later than the node's start by more than
+60 seconds. ctime rather than mtime, because a copy or a tool can set an mtime to anything.
+
+The window is measured rather than chosen: on 8.15.3, security auto-configuration writes the
+file 0.67 s after the server process starts, and the node runs with what it wrote, so a rule of
+"changed after start" would have refused every default 8.x node for the wrong reason. The start
+is the server's own, from field 22 of its `stat` and `btime`. A node whose start cannot be read
+is refused, since whether its file changed cannot be told. Every refusal here costs an unread
+node and never a request.

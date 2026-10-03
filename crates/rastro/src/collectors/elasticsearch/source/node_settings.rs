@@ -47,6 +47,10 @@ const CONFIG_FILE: &str = "elasticsearch.yml";
 /// The one distribution whose environment holds settings.
 const DOCKER_DISTRIBUTION: &str = "docker";
 
+/// How long after the node's start a change to its file is still the node's own start-up write,
+/// in seconds. Auto-configuration measured at 0.67 s; the rest is room for a slow box.
+const START_UP_WRITE_WINDOW: i64 = 60;
+
 /// The prefix of a setting's encoded name, for environments that cannot put dots in a name.
 const ENCODED_SETTING_PREFIX: &str = "ES_SETTING_";
 
@@ -111,7 +115,13 @@ impl NodeSettings {
         // Read on every distribution: `${NAME}` in the file is resolved from it wherever the
         // node was installed, even where the variables are not settings themselves.
         let environment = read_pairs(&process.join("environ"), "environ")?;
-        let file = read_config_file(&process.join("root"), config, &environment)?;
+        let started_at = node.started_at().ok_or_else(|| {
+            Unread::new(
+                "when the node started cannot be read, so whether its elasticsearch.yml changed \
+                 since cannot be told",
+            )
+        })?;
+        let file = read_config_file(&process.join("root"), config, &environment, started_at)?;
         let command_line = command_line_settings(node.launch_arguments());
 
         let mut values = file;
@@ -303,20 +313,31 @@ fn read_config_file(
     root: &Path,
     config: &Path,
     environment: &BTreeMap<String, String>,
+    started_at: u64,
 ) -> Result<BTreeMap<String, String>, Unread> {
     let named = config.join(CONFIG_FILE);
     let relative = named.strip_prefix("/").unwrap_or(&named);
 
-    let text = match read_inside(root, relative) {
-        Ok(text) => text,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(error) => {
-            return Err(Unread::new(format!(
-                "{} could not be read: {error}",
-                named.display()
-            )));
-        }
-    };
+    let file = read_inside(root, relative).map_err(|error| match error.kind() {
+        ErrorKind::NotFound => Unread::new(format!(
+            "{} is gone, and a running node read one at start, so what it runs with cannot \
+             be told",
+            named.display()
+        )),
+        _ => Unread::new(format!("{} could not be read: {error}", named.display())),
+    })?;
+
+    // Measured on 8.15.3: security auto-configuration writes the file 0.67 s after the server
+    // starts, and the node runs with that write, so a change soon after start is the node's own.
+    let started = i64::try_from(started_at).unwrap_or(i64::MAX);
+    if file.changed_at > started.saturating_add(START_UP_WRITE_WINDOW) {
+        return Err(Unread::new(format!(
+            "{} changed after the node started, so it may be staged for the next restart rather \
+             than what the node runs with",
+            named.display()
+        )));
+    }
+    let text = file.text;
 
     let documents = YamlLoader::load_from_str(&text)
         .map_err(|error| Unread::new(format!("{} is not YAML: {error}", named.display())))?;

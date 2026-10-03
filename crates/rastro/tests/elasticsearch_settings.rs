@@ -30,6 +30,9 @@ const TAR_SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
 const CONFIG_FILE: &str = "600/root/etc/elasticsearch/elasticsearch.yml";
 
 fn node_in(proc: &std::path::Path) -> ResidentNode {
+    if !proc.join("600/stat").exists() {
+        support::process::started(proc, "600", "1", 5);
+    }
     ResidentNode::all_in(proc)
         .into_iter()
         .next()
@@ -170,11 +173,7 @@ fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
         "/usr/share/elasticsearch/jdk/bin/java\0-m\0\
          org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
     );
-    write(
-        &proc,
-        "600/stat",
-        "600 (java) S 40 600 1 0 -1 4194560 0 0 0 0\n",
-    );
+    support::process::started(&proc, "600", "40", 5);
     write(&proc, "600/environ", "http.port=9300\0");
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
 
@@ -235,17 +234,22 @@ fn read_in_refuses_a_variable_the_environment_does_not_hold() {
 }
 
 #[test]
-fn read_in_reads_no_file_where_the_config_directory_holds_none() {
-    // Arrange
+fn read_in_refuses_a_node_whose_file_is_gone() {
+    // Arrange: found by review. A missing file read as a node on its defaults, and a default is
+    // plaintext; a running node read a file at start, and one gone since is not that file.
     let proc = scratch_tree("elasticsearch-settings-no-file", &["600/root"]);
     write(&proc, "600/cmdline", SERVER_ARGV);
     write(&proc, "600/environ", "http.port=9300\0");
 
     // Act
-    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("no file");
 
     // Assert
-    assert_eq!(settings.get("http.port"), Some("9300"));
+    assert!(
+        unread.reason().contains("elasticsearch.yml"),
+        "{}",
+        unread.reason()
+    );
 }
 
 #[test]
@@ -363,6 +367,8 @@ fn read_in_reads_past_a_variable_that_is_not_utf_8_and_is_not_a_setting() {
         b"LANG_NOTE=caf\xe9\0http.port=9300\0",
     )
     .expect("a writable fixture");
+
+    write(&proc, CONFIG_FILE, "");
 
     // Act
     let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
@@ -512,6 +518,8 @@ fn read_in_refuses_an_encoded_and_a_dotted_setting_that_disagree() {
         "ES_SETTING_HTTP_PORT=9300\0http.port=9400\0",
     );
 
+    write(&proc, CONFIG_FILE, "");
+
     // Act
     let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a conflict");
 
@@ -575,4 +583,62 @@ fn read_in_takes_a_command_line_setting_given_as_two_arguments() {
     // Assert
     assert_eq!(settings.get("http.port"), Some("9400"));
     assert!(settings.asks_for_credentials());
+}
+
+#[test]
+fn read_in_refuses_a_file_changed_after_the_node_started() {
+    // Arrange: found by review. A change staged for the next restart, TLS switched off say, is not
+    // what the running node read, and reading it would send plaintext to a listener still on TLS.
+    let proc = scratch_tree("elasticsearch-settings-staged", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        CONFIG_FILE,
+        "xpack.security.http.ssl.enabled: false\n",
+    );
+    support::process::started(&proc, "600", "1", 3600);
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a staged file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("after the node started"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn read_in_reads_a_file_written_as_the_node_started() {
+    // Arrange: measured on 8.15.3, security auto-configuration writes the file 0.67 s after the
+    // server process starts, and the node runs with what it wrote.
+    let proc = scratch_tree("elasticsearch-settings-start-up-write", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+    support::process::started(&proc, "600", "1", 2);
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9201"));
+}
+
+#[test]
+fn read_in_refuses_a_node_whose_start_cannot_be_read() {
+    // Arrange: without it, whether the file changed since cannot be told.
+    let proc = scratch_tree("elasticsearch-settings-no-start", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
+    write(&proc, "600/stat", "600 (java) S\n");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("no start time");
+
+    // Assert
+    assert!(unread.reason().contains("started"), "{}", unread.reason());
 }

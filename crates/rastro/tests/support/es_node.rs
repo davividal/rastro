@@ -137,13 +137,13 @@ impl FakeNode {
         symlink("mnt:[4026531841]", proc.join("self/ns/mnt")).expect("a writable fixture");
         symlink("mnt:[4026531841]", proc.join(PID).join("ns/mnt")).expect("a writable fixture");
 
-        if let Some(contents) = config_file {
-            write(
-                &proc,
-                &format!("{PID}/root/etc/elasticsearch/elasticsearch.yml"),
-                contents,
-            );
-        }
+        // Every running node read a file at start, so the fixture always has one.
+        write(
+            &proc,
+            &format!("{PID}/root/etc/elasticsearch/elasticsearch.yml"),
+            config_file.unwrap_or(""),
+        );
+        super::process::started(&proc, PID, "1", 5);
 
         proc
     }

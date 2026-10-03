@@ -41,6 +41,7 @@ impl Box_ {
         );
         write(&proc, "600/cmdline", &argv);
         write(&proc, "600/environ", "");
+        support::process::started(&proc, "600", "1", 5);
         symlink("/", proc.join("600/root")).expect("a writable fixture");
         symlink("mnt:[4026531841]", proc.join("self/ns/mnt")).expect("a writable fixture");
         let theirs = match own_mount_namespace {

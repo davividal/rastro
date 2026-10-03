@@ -20,11 +20,23 @@ struct FileIdentity {
     inode: u64,
 }
 
-/// A file's text, every component of `relative` resolved inside `root`.
-pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
+/// A file read inside a node's root: its text, and when it last changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadFile {
+    pub text: String,
+
+    /// The ctime, in seconds since the epoch: when the file's content or metadata last changed.
+    /// Not the mtime, which a copy or a tool can set to anything.
+    pub changed_at: i64,
+}
+
+/// A file's text and change time, every component of `relative` resolved inside `root`.
+pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<ReadFile> {
+    let mut file = open_inside(root, relative, Opening::Read)?;
+    let changed_at = file.metadata()?.ctime();
     let mut text = String::new();
-    open_inside(root, relative, Opening::Read)?.read_to_string(&mut text)?;
-    Ok(text)
+    file.read_to_string(&mut text)?;
+    Ok(ReadFile { text, changed_at })
 }
 
 /// The host's own directory at `path`, canonical, where `path` inside `root` is that same

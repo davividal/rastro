@@ -95,6 +95,9 @@ pub struct ResidentNode {
 
     /// Whether the launch argv names a `java` argument file among its options.
     launched_with_an_argument_file: bool,
+
+    /// When the server process started, in seconds since the epoch.
+    started_at: Option<u64>,
 }
 
 impl ResidentNode {
@@ -150,6 +153,14 @@ impl ResidentNode {
         self.distribution.as_deref()
     }
 
+    /// When the server process started, in seconds since the epoch, where `/proc` says.
+    ///
+    /// What the node's file is compared against, since the file the node read is the one it
+    /// had at start: see [`NodeSettings`](super::NodeSettings).
+    pub fn started_at(&self) -> Option<u64> {
+        self.started_at
+    }
+
     /// Whether the node was launched with a `java` argument file, `@file`, among its options.
     ///
     /// The launcher expands one in place, so a property in it, a later `es.path.conf` say,
@@ -187,6 +198,7 @@ impl ResidentNode {
             config: property_in(&launched, CONFIG_PROPERTY),
             distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
                 .map(|distribution| distribution.to_string_lossy().into_owned()),
+            started_at: started_at(proc, path),
             launched_with_an_argument_file: launch_of(&launched)
                 .is_some_and(|launch| launch.argument_file),
             launch_arguments_are_exact: launch.exact,
@@ -221,6 +233,40 @@ fn arguments_of(process: &Path) -> Option<Argv> {
             .map(|argument| String::from_utf8_lossy(argument).into_owned())
             .collect(),
     })
+}
+
+/// When a process started: the boot time from `/proc/stat` plus field 22 of its own `stat`, which
+/// counts clock ticks since boot. Counted after the last `)`, as the parent is, because the name
+/// before it may hold spaces.
+fn started_at(proc: &Path, process: &Path) -> Option<u64> {
+    let stat = fs::read_to_string(process.join("stat")).ok()?;
+    let ticks: u64 = stat
+        .rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()?;
+    let boot: u64 = fs::read_to_string(proc.join("stat"))
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse()
+        .ok()?;
+
+    Some(boot + ticks / clock_ticks_per_second())
+}
+
+#[cfg(target_os = "linux")]
+fn clock_ticks_per_second() -> u64 {
+    rustix::param::clock_ticks_per_second()
+}
+
+/// The Linux default, for a workstation build that reads no real node.
+#[cfg(not(target_os = "linux"))]
+fn clock_ticks_per_second() -> u64 {
+    100
 }
 
 /// The argv of the process's parent, where the parent is the 8.x launcher.
