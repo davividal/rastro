@@ -794,3 +794,50 @@ fn read_in_names_a_launcher_that_has_exited_as_the_reason() {
     assert!(unread.reason().contains("-d"), "{}", unread.reason());
     assert!(unread.reason().contains("launcher"), "{}", unread.reason());
 }
+
+#[test]
+fn read_in_substitutes_a_placeholder_in_an_environment_setting() {
+    // Arrange: measured by the second domain review on 8.15.3, `-e http.port='${HP:9250}'` bound
+    // 9250: the node resolves placeholders after merging every source, not in its file alone.
+    let proc = scratch_tree("elasticsearch-settings-placeholder-environ", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "http.port=${HP:9250}\0");
+    write(&proc, CONFIG_FILE, "");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9250"));
+}
+
+#[test]
+fn read_in_substitutes_a_placeholder_in_a_command_line_setting() {
+    // Arrange
+    let proc = scratch_tree("elasticsearch-settings-placeholder-argv", &["600/root"]);
+    let argv = format!("{TAR_SERVER_ARGV}-Ehttp.port=${{HP}}\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "HP=9300\0");
+    write(&proc, CONFIG_FILE, "");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9300"));
+}
+
+#[test]
+fn read_in_resolves_a_placeholder_whose_default_is_a_placeholder() {
+    // Arrange: stopping at the first `}` read `${A:${B}` as the placeholder and mangled it.
+    let proc = scratch_tree("elasticsearch-settings-placeholder-nested", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "B=9400\0");
+    write(&proc, CONFIG_FILE, "http.port: ${A:${B}}\n");
+
+    // Act
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
+
+    // Assert
+    assert_eq!(settings.get("http.port"), Some("9400"));
+}

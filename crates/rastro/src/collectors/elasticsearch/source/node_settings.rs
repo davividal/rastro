@@ -149,7 +149,7 @@ impl NodeSettings {
                  since cannot be told",
             )
         })?;
-        let file = read_config_file(&process.join("root"), config, &environment, started_at)?;
+        let file = read_config_file(&process.join("root"), config, started_at)?;
         let command_line = command_line_settings(node.application_arguments())?;
 
         let mut values = file;
@@ -157,6 +157,13 @@ impl NodeSettings {
         if distribution == DOCKER_DISTRIBUTION {
             values.extend(environment_settings(&environment)?);
         }
+
+        // After the merge, as the node does it: measured by the second domain review on 8.15.3,
+        // a placeholder in an environment setting was resolved, not only one in the file.
+        let values = values
+            .into_iter()
+            .map(|(name, value)| Ok((name, substitute(&value, &environment)?)))
+            .collect::<Result<_, Unread>>()?;
 
         Ok(Self { values })
     }
@@ -371,7 +378,6 @@ fn read_pairs(path: &Path, what: &str) -> Result<BTreeMap<String, String>, Unrea
 fn read_config_file(
     root: &Path,
     config: &Path,
-    environment: &BTreeMap<String, String>,
     started_at: u64,
 ) -> Result<BTreeMap<String, String>, Unread> {
     let named = config.join(CONFIG_FILE);
@@ -414,10 +420,7 @@ fn read_config_file(
             .map_err(|reason| Unread::new(format!("{}: {reason}", named.display())))?;
     }
 
-    values
-        .into_iter()
-        .map(|(name, value)| Ok((name, substitute(&value, environment)?)))
-        .collect()
+    Ok(values)
 }
 
 /// The settings a node with no file has from it: none, where its config directory is as it was
@@ -511,27 +514,48 @@ fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<Str
     while let Some(start) = rest.find("${") {
         resolved.push_str(&rest[..start]);
         let after = &rest[start + 2..];
-        let end = after
-            .find('}')
+        let end = closing_brace_of(after)
             .ok_or_else(|| Unread::new(format!("`{value}` opens a variable it never closes")))?;
         let placeholder = &after[..end];
         let (name, default) = match placeholder.split_once(':') {
             Some((name, default)) => (name, Some(default)),
             None => (placeholder, None),
         };
-        let found = environment
-            .get(name)
-            .map(String::as_str)
-            .or(default)
-            .ok_or_else(|| {
-                Unread::new(format!(
+        let found = match (environment.get(name), default) {
+            (Some(found), _) => found.clone(),
+            // A default may itself hold a placeholder, which resolves the same way.
+            (None, Some(default)) => substitute(default, environment)?,
+            (None, None) => {
+                return Err(Unread::new(format!(
                     "`{value}` names {name}, which the node's environment does not hold"
-                ))
-            })?;
-        resolved.push_str(found);
+                )));
+            }
+        };
+        resolved.push_str(&found);
         rest = &after[end + 1..];
     }
 
     resolved.push_str(rest);
     Ok(resolved)
+}
+
+/// Where the placeholder that `text` is inside of closes, counting the ones it holds: stopping
+/// at the first `}` read `${A:${B}}` as `${A:${B}` and mangled it, found by review.
+fn closing_brace_of(text: &str) -> Option<usize> {
+    let mut depth = 0_usize;
+    let mut characters = text.char_indices().peekable();
+
+    while let Some((index, character)) = characters.next() {
+        match character {
+            '$' if characters.peek().map(|(_, next)| *next) == Some('{') => {
+                characters.next();
+                depth += 1;
+            }
+            '}' if depth == 0 => return Some(index),
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+
+    None
 }
