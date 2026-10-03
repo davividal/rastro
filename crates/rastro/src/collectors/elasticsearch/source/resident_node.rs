@@ -102,6 +102,9 @@ pub struct ResidentNode {
 
     /// When the server process started, in seconds since the epoch.
     started_at: Option<u64>,
+
+    /// Whether this is an 8.x or 9.x server whose parent is not its launcher.
+    launcher_gone: bool,
 }
 
 impl ResidentNode {
@@ -157,6 +160,15 @@ impl ResidentNode {
         self.distribution.as_deref()
     }
 
+    /// Whether this is an 8.x or 9.x server whose launcher is no longer its parent.
+    ///
+    /// Found by the second domain review, measured on 8.15.3: `bin/elasticsearch -d` returns once
+    /// the node is up and its launcher exits, so the server is reparented, and the paths and
+    /// settings the launcher passed it over a pipe are nowhere on the box.
+    pub fn launcher_gone(&self) -> bool {
+        self.launcher_gone
+    }
+
     /// When the server process started, in seconds since the epoch, where `/proc` says.
     ///
     /// What the node's file is compared against, since the file the node read is the one it
@@ -191,9 +203,12 @@ impl ResidentNode {
 
         // A launcher that exited, or a parent that is not one, lends nothing: taking any
         // parent's argv would read another program's flags as the node's settings.
-        let launch = match starts_as_a_module(&spelled) {
-            true => launcher_arguments(proc, path).unwrap_or(own),
-            false => own,
+        let (launch, launcher_gone) = match starts_as_a_module(&spelled) {
+            true => match launcher_arguments(proc, path) {
+                Some(launcher) => (launcher, false),
+                None => (own, true),
+            },
+            false => (own, false),
         };
         let launched: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
 
@@ -204,6 +219,7 @@ impl ResidentNode {
             distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
                 .map(|distribution| distribution.to_string_lossy().into_owned()),
             started_at: started_at(proc, path),
+            launcher_gone,
             launched_with_an_argument_file: launch.unread_argument_file,
             launch_arguments_are_exact: launch.exact,
             application_arguments: launch_of(&launched)

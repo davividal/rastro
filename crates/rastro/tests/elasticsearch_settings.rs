@@ -769,3 +769,28 @@ fn read_in_refuses_a_command_line_argument_it_cannot_place() {
         unread.reason()
     );
 }
+
+#[test]
+fn read_in_names_a_launcher_that_has_exited_as_the_reason() {
+    // Arrange: measured by the second domain review on 8.15.3, `bin/elasticsearch -d` returns
+    // once the node is up and its launcher exits, so the server is reparented and the paths and
+    // settings the launcher passed over a pipe are nowhere on the box. Refusing is right; saying
+    // the argv names no `es.path.conf` sent the operator looking for something never there.
+    let proc = scratch_tree("elasticsearch-settings-daemonised", &["600/root", "1"]);
+    write(&proc, "1/cmdline", "/sbin/init\0");
+    write(
+        &proc,
+        "600/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0--module-path\0/usr/share/elasticsearch/lib\0\
+         -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+    write(&proc, "600/environ", "");
+    support::process::started(&proc, "600", "1", 5);
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a gone launcher");
+
+    // Assert
+    assert!(unread.reason().contains("-d"), "{}", unread.reason());
+    assert!(unread.reason().contains("launcher"), "{}", unread.reason());
+}

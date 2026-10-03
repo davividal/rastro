@@ -120,6 +120,12 @@ impl NodeSettings {
                  can set its paths and settings where /proc does not show them",
             ));
         }
+        if node.launcher_gone() {
+            return Err(Unread::new(
+                "the node's launcher is no longer its parent, as after a start with -d, so the \
+                 paths and settings it passed the server over a pipe are not on the box",
+            ));
+        }
         let config = node.config().ok_or_else(|| {
             Unread::new(
                 "the node's argv names no es.path.conf, so its elasticsearch.yml cannot be \
