@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use rastro::collectors::elasticsearch::{ApiValue, HttpEndpoint, Node};
+use rastro::collectors::elasticsearch::{ApiValue, HttpEndpoint, Node, Unread};
 use rastro::collectors::inet::{InetHost, PortNumber};
 use rastro_fingerprint::Observation;
 
@@ -93,4 +93,25 @@ fn a_null_renders_as_null() {
 
     // Assert
     assert!(is_null(&rendered));
+}
+
+#[test]
+fn ordering_breaks_a_tie_between_unread_nodes_by_their_error() {
+    // Arrange: found by review. Two nodes in containers share a config directory and, unread,
+    // have no port or name, so every key tied and process-id order decided, which a restart of
+    // both reverses. Their errors are stable, and different.
+    let mut tls = node(10, None, "/usr/share/elasticsearch/config");
+    tls.error = Some(Unread::new(
+        "b: the node's settings put its HTTP listener behind TLS",
+    ));
+    let mut secured = node(20, None, "/usr/share/elasticsearch/config");
+    secured.error = Some(Unread::new("a: the node's settings switch security on"));
+    let mut nodes = [tls, secured];
+
+    // Act
+    nodes.sort_by(Node::ordering);
+
+    // Assert
+    let order: Vec<u32> = nodes.iter().map(|node| node.process_id).collect();
+    assert_eq!(order, [20, 10]);
 }

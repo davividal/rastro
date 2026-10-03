@@ -42,8 +42,8 @@ pub struct Node {
 
 impl Node {
     /// The order nodes are listed in: by the port they serve on, then where they are configured,
-    /// then what they are called, and never by process id, which would reorder two nodes on a
-    /// restart.
+    /// then what they are called, then why they were not read, and never by process id, which
+    /// would reorder two nodes on a restart.
     pub fn ordering(left: &Self, right: &Self) -> Ordering {
         let port = |node: &Self| node.http.as_ref().map(|http| http.port().as_u16());
         let name = |node: &Self| {
@@ -52,10 +52,15 @@ impl Node {
                 .map(|identity| identity.node_name.clone())
         };
 
+        // The error last, because an unread node has neither port nor name, and two in containers
+        // share a config directory: without it a restart of both could swap them.
+        let reason = |node: &Self| node.error.as_ref().map(|unread| unread.reason().to_owned());
+
         port(left)
             .cmp(&port(right))
             .then_with(|| left.config_directory.cmp(&right.config_directory))
             .then_with(|| name(left).cmp(&name(right)))
+            .then_with(|| reason(left).cmp(&reason(right)))
     }
 }
 
