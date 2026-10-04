@@ -36,7 +36,12 @@ impl From<&Installation> for Observation {
             ),
             (
                 "nodes",
-                Observation::list(installation.nodes.iter().map(Observation::from)),
+                // A set: nothing on the host orders its nodes. Led by what tells nodes apart,
+                // so a node stays in place when something else about it changes.
+                Observation::set_by(
+                    ["http", "config_directory", "node_name"],
+                    installation.nodes.iter().map(Observation::from),
+                ),
             ),
             (
                 "uninspected_processes",

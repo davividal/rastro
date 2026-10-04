@@ -146,7 +146,7 @@ fn encode_stable(observation: &Observation, encoded: &mut Vec<u8>) {
             length(encoded, text.len());
             encoded.extend_from_slice(text.as_bytes());
         }
-        Content::List(items) => {
+        Content::Sequence(items) | Content::Set { items, .. } => {
             encoded.push(5);
             length(encoded, items.len());
             for item in items {

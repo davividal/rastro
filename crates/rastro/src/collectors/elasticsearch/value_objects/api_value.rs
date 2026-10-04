@@ -78,7 +78,9 @@ impl From<&ApiValue> for Observation {
             ApiValue::Boolean(flag) => Observation::boolean(*flag),
             ApiValue::Integer(number) => Observation::integer(*number),
             ApiValue::Text(text) => Observation::text(text),
-            ApiValue::List(items) => Observation::list(items.iter().map(Observation::from)),
+            // A sequence: an answer's array may be an order the node acts on, a pipeline's
+            // processors say, and nothing in the answer tells which arrays are.
+            ApiValue::List(items) => Observation::sequence(items.iter().map(Observation::from)),
             ApiValue::Object(entries) => Observation::object(
                 entries
                     .iter()

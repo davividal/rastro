@@ -164,7 +164,7 @@ impl Collector for InvocationCollector {
             (
                 "credentials",
                 match &self.credentials {
-                    Some(names) => Observation::list(names.iter().map(Observation::text)),
+                    Some(names) => Observation::set(names.iter().map(Observation::text)),
                     None => Observation::null(),
                 },
             ),

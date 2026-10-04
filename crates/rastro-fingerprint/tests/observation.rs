@@ -670,7 +670,10 @@ fn approximate_items_counts_every_marked_node_however_deep() {
             "more",
             Observation::sequence([Observation::null().approximate(), Observation::null()]),
         ),
-        ("again", Observation::set([Observation::null().approximate()])),
+        (
+            "again",
+            Observation::set([Observation::null().approximate()]),
+        ),
     ]);
 
     // Act & Assert

@@ -121,7 +121,7 @@ fn an_ok_facet_read_with_another_versions_rules_is_counted_as_approximate() {
         "elasticsearch",
         FacetOutcome::ok(Observation::object([(
             "nodes",
-            Observation::list([Observation::null().approximate()]),
+            Observation::set([Observation::null().approximate()]),
         )])),
     )]);
 
