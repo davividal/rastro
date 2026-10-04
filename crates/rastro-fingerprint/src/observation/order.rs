@@ -6,7 +6,9 @@
 
 use std::cmp::Ordering;
 
-use super::{Completeness, Observation, Scalar, Sensitivity, Visible, VisibleContent, Volatility};
+use super::{
+    Completeness, Content, Observation, Scalar, Sensitivity, Visible, VisibleContent, Volatility,
+};
 use crate::presentation::Presentation;
 
 /// Orders two items as a view shows them.
@@ -65,8 +67,29 @@ pub(super) fn sort_observations(items: &mut [Observation], leading: &[String]) {
             (Some(left), Some(right)) => compare_led_by(leading, &left, &right),
             _ => unreachable!("the complete view drops nothing"),
         };
-        shown.then_with(|| annotations_of(left).cmp(&annotations_of(right)))
+        shown.then_with(|| compare_annotations(left, right))
     });
+}
+
+/// Breaks a tie between two items whose content is equal by their annotations, root first
+/// and then through the subtree, since a child marked volatile is a different item.
+fn compare_annotations(left: &Observation, right: &Observation) -> Ordering {
+    annotations_of(left)
+        .cmp(&annotations_of(right))
+        .then_with(|| match (&left.content, &right.content) {
+            (Content::Object(left), Content::Object(right)) => {
+                lexicographic(left.values(), right.values(), |left, right| {
+                    compare_annotations(left, right)
+                })
+            }
+            (Content::Sequence(left), Content::Sequence(right))
+            | (Content::Set { items: left, .. }, Content::Set { items: right, .. }) => {
+                lexicographic(left.iter(), right.iter(), |left, right| {
+                    compare_annotations(left, right)
+                })
+            }
+            _ => Ordering::Equal,
+        })
 }
 
 fn annotations_of(observation: &Observation) -> (Volatility, Sensitivity, Completeness) {

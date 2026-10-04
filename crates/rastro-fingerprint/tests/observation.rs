@@ -611,3 +611,18 @@ fn a_set_by_orders_an_item_missing_a_named_field_first() {
     // Assert
     assert_eq!(items_of(&set), [without, with_name]);
 }
+
+#[test]
+fn a_set_is_equal_whatever_order_when_items_differ_only_in_a_nested_annotation() {
+    // Arrange: the same content, told apart only by an annotation below the item's root,
+    // so a tie-break on the root alone would leave them in the order they were given.
+    let with_volatile_child = Observation::object([("a", Observation::integer(1).volatile())]);
+    let plain = Observation::object([("a", Observation::integer(1))]);
+
+    // Act
+    let given = Observation::set([with_volatile_child.clone(), plain.clone()]);
+    let reversed = Observation::set([plain, with_volatile_child]);
+
+    // Assert
+    assert_eq!(given, reversed);
+}
