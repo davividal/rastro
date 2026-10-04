@@ -24,7 +24,7 @@ pub use source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, host_directory_of,
     http_endpoint, read_node,
 };
-pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Transport, Unread};
+pub use value_objects::{ApiValue, HttpEndpoint, NetworkNamespace, Release, Transport, Unread};
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{

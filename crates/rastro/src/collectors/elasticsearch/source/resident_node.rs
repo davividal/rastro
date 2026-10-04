@@ -22,8 +22,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::collectors::elasticsearch::source::in_root::read_inside;
+use crate::collectors::elasticsearch::source::in_root::{names_inside, read_inside};
 use crate::collectors::elasticsearch::source::java_argument_file;
+use crate::collectors::elasticsearch::value_objects::Release;
 
 /// Where the kernel publishes its process table.
 const PROC: &str = "/proc";
@@ -82,6 +83,10 @@ const CONFIG_VARIABLE: &[u8] = b"ES_PATH_CONF=";
 /// The config directory under the install, where neither the property nor the variable is set.
 const DEFAULT_CONFIG: &str = "config";
 
+/// The server jar's name around its version, `elasticsearch-<version>.jar` in `<home>/lib`.
+const SERVER_JAR_PREFIX: &str = "elasticsearch-";
+const SERVER_JAR_SUFFIX: &str = ".jar";
+
 /// The system property naming how the node was installed: `docker`, `tar`, `deb` or `rpm`.
 const DISTRIBUTION_PROPERTY: &str = "-Des.distribution.type=";
 
@@ -107,6 +112,9 @@ pub struct ResidentNode {
     /// Absent where the environment cannot be read: the variable may be set there, a package
     /// install sets it to `/etc/elasticsearch`, and the default would name another directory.
     config: Option<PathBuf>,
+
+    /// The release, from the server jar in the install, read inside the node's own root.
+    release: Option<Release>,
 
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
     distribution: Option<String>,
@@ -198,6 +206,15 @@ impl ResidentNode {
         self.config.as_deref()
     }
 
+    /// Which release the node runs, as its install's server jar names it.
+    ///
+    /// Not `GET /`, which a node with security on refuses: the version decides how a node is
+    /// read before it is asked. Nothing where the install is unknown or unreadable, or holds no
+    /// server jar, or more than one.
+    pub fn release(&self) -> Option<Release> {
+        self.release
+    }
+
     /// Whether [`Self::application_arguments`], and the paths before them, are the argv exactly,
     /// rather than a lossy reading of an argument that was not UTF-8.
     ///
@@ -285,10 +302,15 @@ impl ResidentNode {
         };
         let launched: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
 
+        let release = home
+            .as_deref()
+            .and_then(|home| installed_release(path, home));
+
         Some(Self {
             process_id,
             home,
             config,
+            release,
             distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
                 .map(|distribution| distribution.to_string_lossy().into_owned()),
             started_at: started_at(proc, path),
@@ -606,6 +628,21 @@ fn module_install(arguments: &[&str]) -> Option<PathBuf> {
     let lib = Path::new(module_path);
 
     (lib.file_name()? == "lib").then(|| lib.parent().map(Path::to_path_buf))?
+}
+
+/// The server jar's version among the install's `lib/`, read inside the process's root. The
+/// other jars there are named `elasticsearch-<module>-<version>.jar`, which no version parses.
+fn installed_release(process: &Path, home: &Path) -> Option<Release> {
+    let lib = home.join("lib");
+    let names = names_inside(&process.join("root"), lib.strip_prefix("/").ok()?).ok()?;
+    let mut versions = names.iter().filter_map(|name| {
+        name.strip_prefix(SERVER_JAR_PREFIX)?
+            .strip_suffix(SERVER_JAR_SUFFIX)
+            .and_then(Release::parse)
+    });
+    let version = versions.next()?;
+
+    versions.next().is_none().then_some(version)
 }
 
 /// The config directory as the server's environment gives it: `ES_PATH_CONF`, else the default

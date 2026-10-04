@@ -122,11 +122,34 @@ fn identity_of(metadata: fs::Metadata) -> FileIdentity {
     }
 }
 
+/// The names in a directory inside a node's root, resolved there as [`read_inside`] resolves a file.
+#[cfg(target_os = "linux")]
+pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
+    let directory = open_inside(root, relative, Opening::List)?;
+    let mut names = Vec::new();
+    for entry in rustix::fs::Dir::read_from(&directory)? {
+        names.push(entry?.file_name().to_string_lossy().into_owned());
+    }
+    Ok(names)
+}
+
+/// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
+#[cfg(not(target_os = "linux"))]
+pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
+    fs::read_dir(root.join(relative))?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect()
+}
+
 /// What a file is opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Opening {
     /// Its content.
     Read,
+
+    /// Its entries: a directory, opened for reading.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    List,
 
     /// Only which directory it is, which reads nothing in it.
     Directory,
@@ -147,6 +170,7 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
     )?;
     let flags = match opening {
         Opening::Read => OFlags::RDONLY | OFlags::CLOEXEC,
+        Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Entry => OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
     };
