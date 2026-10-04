@@ -10,7 +10,7 @@ mod support;
 
 use support::es_node::{FakeNode, ROOT, install};
 use support::fs_tree::scratch_tree;
-use support::observation::{boolean, field, integer, is_null, items_of, text};
+use support::observation::{boolean, field, integer, is_null, items_of, keys_of, text};
 
 fn collector(proc: &Path, package_installed: bool) -> ElasticsearchCollector {
     ElasticsearchCollector::reading(proc, package_installed, HttpClient::new())
@@ -362,26 +362,6 @@ fn collect_marks_the_facet_incomplete_where_a_process_could_not_be_inspected() {
     assert_eq!(unseen.completeness(), Completeness::Incomplete);
 }
 
-#[test]
-fn collect_does_not_read_a_node_that_has_not_joined_a_cluster() {
-    // Arrange: found by the second domain review. `GET /` answers `"_na_"` for the cluster UUID
-    // while a node has not formed or joined a cluster, and its surfaces are not the cluster's yet.
-    let unjoined = ROOT.replace("uh7ULRBqQ1m4mIbk9MNkIg", "_na_");
-    let node = FakeNode::serving(&[("/", &unjoined)]);
-    let proc = node.proc("elasticsearch-facet-unjoined");
-
-    // Act
-    let facet = collector(&proc, false).collect().expect("a facet");
-
-    // Assert
-    let reported = &items_of(&field(&facet, "nodes"))[0];
-    assert!(
-        text(&field(reported, "error")).contains("cluster"),
-        "{reported:?}"
-    );
-    assert_eq!(node.requests(), ["/"]);
-}
-
 /// `GET /` as a node of `release` answers it.
 fn root_of(release: &str) -> String {
     ROOT.replace(
@@ -487,4 +467,79 @@ fn collect_refuses_a_node_whose_answer_names_another_release_than_its_install() 
         text(&field(reported, "error"))
     );
     assert!(is_null(&field(reported, "cluster_settings")));
+}
+
+/// What a node of a cluster with security on answers a request without credentials, measured on
+/// 8.19.22 (cell 02), trimmed.
+const MISSING_CREDENTIALS: &str = r#"{"error":{"root_cause":[{"type":"security_exception","reason":"missing authentication credentials for REST request [/]"}],"type":"security_exception","reason":"missing authentication credentials for REST request [/]"},"status":401}"#;
+
+#[test]
+fn collect_reports_a_node_that_wants_credentials_as_not_read_and_asks_nothing_more() {
+    // Arrange
+    let node = FakeNode::answering(&[("/", 401, MISSING_CREDENTIALS)]);
+    let proc = node.proc("elasticsearch-facet-wants-credentials");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert: what the box shows is kept, the node is not an error, and the read stopped at `/`.
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(node.requests(), ["/"]);
+    assert_eq!(
+        text(&field(reported, "not_read")),
+        "security is on and no credential was given (see --credentials)"
+    );
+    assert!(is_null(&field(reported, "error")));
+    assert_eq!(text(&field(reported, "release")), "8.19.22");
+    assert_eq!(reported.completeness(), Completeness::Incomplete);
+}
+
+/// `GET /` from a node that has not formed or joined a cluster, measured on 8.19.22 (cell 15).
+const NO_MASTER_ROOT: &str = r#"{
+  "name" : "cell15",
+  "cluster_name" : "docker-cluster",
+  "cluster_uuid" : "_na_",
+  "version" : {
+    "number" : "8.19.22",
+    "build_flavor" : "default",
+    "build_type" : "docker",
+    "build_hash" : "3b2a41103de35e0af4064d647974032fcc1bcde9"
+  },
+  "tagline" : "You Know, for Search"
+}"#;
+
+#[test]
+fn collect_reads_what_a_node_with_no_master_holds_itself_and_asks_nothing_cluster_wide() {
+    // Arrange: measured on cell 15, each cluster-wide read of a node with no master waits out the
+    // 30 s master timeout and answers 503. `GET /` says so at once, so they are not asked.
+    let node = FakeNode::serving(&[
+        ("/", NO_MASTER_ROOT),
+        (
+            "/_nodes/_local/plugins",
+            r#"{"nodes":{"n":{"name":"cell15","plugins":[]}}}"#,
+        ),
+    ]);
+    let proc = node.proc("elasticsearch-facet-no-master");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    let asked = node.requests();
+    assert!(
+        asked
+            .iter()
+            .all(|path| path == "/" || path.starts_with("/_nodes/_local")),
+        "{asked:?}"
+    );
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert!(is_null(&field(reported, "cluster_uuid")));
+    assert_eq!(text(&field(reported, "node_name")), "cell15");
+    assert_eq!(
+        text(&field(&field(reported, "cluster_settings"), "not_read")),
+        "the node has no master, so there is no cluster state to read"
+    );
+    assert!(!is_null(&field(reported, "plugins")));
+    assert!(!keys_of(&field(reported, "plugins")).contains(&"not_read".to_owned()));
 }

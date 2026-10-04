@@ -12,7 +12,8 @@ use rastro_collector::Observation;
 pub struct NodeIdentity {
     pub node_name: String,
     pub cluster_name: String,
-    pub cluster_uuid: String,
+    /// Absent on a node that has not formed or joined a cluster, which reports `_na_`.
+    pub cluster_uuid: Option<String>,
     pub version: NodeVersion,
 }
 

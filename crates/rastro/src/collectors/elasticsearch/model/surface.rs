@@ -20,7 +20,11 @@ pub fn surface_observation<Answer>(
         None => Observation::null(),
         Some(Ok(answer)) => render(answer),
         Some(Err(unread)) => {
-            Observation::object([("error", Observation::text(unread.reason()))]).incomplete()
+            let kind = match unread.is_not_read() {
+                true => "not_read",
+                false => "error",
+            };
+            Observation::object([(kind, Observation::text(unread.reason()))]).incomplete()
         }
     }
 }

@@ -75,8 +75,10 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         }
     }
 
-    if let Err(unread) = read_into(&mut node, proc, resident, release, client) {
-        node.error = Some(unread);
+    match read_into(&mut node, proc, resident, release, client) {
+        Ok(()) => {}
+        Err(unread) if unread.is_not_read() => node.not_read = Some(unread),
+        Err(unread) => node.error = Some(unread),
     }
 
     node
@@ -148,16 +150,38 @@ struct Answers {
 /// `GET /` first and alone decisive: a node that will not say who it is has refused the read,
 /// and nothing after it is asked. Every later surface fails on its own.
 fn read_answers(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Answers, Unread> {
+    let identity = read_identity(client, endpoint)?;
+    // Measured on cell 15: each cluster-wide read of a node with no master waits out the 30 s
+    // master timeout and answers 503. `GET /` has already said so, so none is asked.
+    let cluster_wide = identity.cluster_uuid.is_some();
+
     Ok(Answers {
-        identity: read_identity(client, endpoint)?,
-        cluster_settings: read_cluster_settings(client, endpoint),
-        index_templates: read_index_templates(client, endpoint),
-        component_templates: read_component_templates(client, endpoint),
-        indices: read_indices(client, endpoint),
-        ilm_policies: read_ilm_policies(client, endpoint),
-        ingest_pipelines: read_ingest_pipelines(client, endpoint),
-        snapshot_repositories: read_snapshot_repositories(client, endpoint),
+        cluster_settings: cluster_read(cluster_wide, || read_cluster_settings(client, endpoint)),
+        index_templates: cluster_read(cluster_wide, || read_index_templates(client, endpoint)),
+        component_templates: cluster_read(cluster_wide, || {
+            read_component_templates(client, endpoint)
+        }),
+        indices: cluster_read(cluster_wide, || read_indices(client, endpoint)),
+        ilm_policies: cluster_read(cluster_wide, || read_ilm_policies(client, endpoint)),
+        ingest_pipelines: cluster_read(cluster_wide, || read_ingest_pipelines(client, endpoint)),
+        snapshot_repositories: cluster_read(cluster_wide, || {
+            read_snapshot_repositories(client, endpoint)
+        }),
         plugins: read_plugins(client, endpoint),
         node_local: read_node_local(client, endpoint),
+        identity,
     })
+}
+
+/// A cluster-wide surface, read only where the node has a cluster to read it from.
+fn cluster_read<Answer>(
+    cluster_wide: bool,
+    read: impl FnOnce() -> Surface<Answer>,
+) -> Surface<Answer> {
+    match cluster_wide {
+        true => read(),
+        false => Err(Unread::not_read(
+            "the node has no master, so there is no cluster state to read",
+        )),
+    }
 }

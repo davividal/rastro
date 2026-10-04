@@ -126,7 +126,7 @@ fn identity(cluster_uuid: &str) -> NodeIdentity {
     NodeIdentity {
         node_name: "search".to_owned(),
         cluster_name: "docker-cluster".to_owned(),
-        cluster_uuid: cluster_uuid.to_owned(),
+        cluster_uuid: Some(cluster_uuid.to_owned()),
         version: NodeVersion {
             number: "8.15.3".to_owned(),
             build_flavor: None,

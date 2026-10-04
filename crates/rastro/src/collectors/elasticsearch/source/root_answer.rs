@@ -33,18 +33,13 @@ struct VersionAnswer {
 /// Asks the node who it is.
 pub fn read_identity(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<NodeIdentity, Unread> {
     let answer: RootAnswer = read_answer(&client.get(endpoint, PATH)?, PATH)?;
-    // Found by the second domain review: until then the node's surfaces are not a cluster's, and
-    // the UUID would be recorded as though it were one.
-    if answer.cluster_uuid == NO_CLUSTER {
-        return Err(Unread::new(
-            "the node has not formed or joined a cluster yet, so it has no cluster state to read",
-        ));
-    }
 
     Ok(NodeIdentity {
         node_name: answer.name,
         cluster_name: answer.cluster_name,
-        cluster_uuid: answer.cluster_uuid,
+        // Found by the second domain review: `_na_` is no cluster, and recorded as a UUID it
+        // would read as one.
+        cluster_uuid: (answer.cluster_uuid != NO_CLUSTER).then_some(answer.cluster_uuid),
         version: NodeVersion {
             number: answer.version.number,
             build_flavor: answer.version.build_flavor,

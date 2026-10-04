@@ -74,11 +74,14 @@ impl HttpClient {
 
         let answer = Answer::parse(&raw, path)?;
 
-        if matches!(answer.status, UNAUTHORISED | FORBIDDEN) {
-            return Err(Unread::new(format!(
-                "the node answered {} to GET {path}: it requires credentials, which v1 does \
-                 not send",
-                answer.status
+        if answer.status == UNAUTHORISED {
+            return Err(Unread::not_read(
+                "security is on and no credential was given (see --credentials)",
+            ));
+        }
+        if answer.status == FORBIDDEN {
+            return Err(Unread::not_read(format!(
+                "the node refused GET {path} to the credential given"
             )));
         }
         if answer.status != 200 {

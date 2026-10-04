@@ -180,8 +180,9 @@ fn get_refuses_a_listener_nothing_holds() {
 }
 
 #[test]
-fn get_reports_a_node_that_wants_credentials() {
-    // Arrange: what 8.x answers without them, measured on 8.15.3 with security on and TLS off.
+fn get_reports_a_node_that_wants_credentials_as_not_read() {
+    // Arrange: what 8.x answers without them, measured on 8.19.22 (cell 02). Security switched on
+    // is the node's configuration, not a failure of rastro's, so the node is not an error.
     let (endpoint, _) = serve_once(
         b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"security\"\r\ncontent-length: 2\r\n\r\n{}"
             .to_vec(),
@@ -191,16 +192,16 @@ fn get_reports_a_node_that_wants_credentials() {
     let unread = HttpClient::new().get(&endpoint, "/").expect_err("a 401");
 
     // Assert
-    assert!(
-        unread.reason().contains("credentials"),
-        "{}",
-        unread.reason()
+    assert!(unread.is_not_read());
+    assert_eq!(
+        unread.reason(),
+        "security is on and no credential was given (see --credentials)"
     );
 }
 
 #[test]
-fn get_reports_a_node_that_forbids_the_read() {
-    // Arrange
+fn get_reports_a_node_that_forbids_the_read_as_not_read() {
+    // Arrange: a credential without the privilege for one read.
     let (endpoint, _) =
         serve_once(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 2\r\n\r\n{}".to_vec());
 
@@ -208,11 +209,21 @@ fn get_reports_a_node_that_forbids_the_read() {
     let unread = HttpClient::new().get(&endpoint, "/").expect_err("a 403");
 
     // Assert
-    assert!(
-        unread.reason().contains("credentials"),
-        "{}",
-        unread.reason()
-    );
+    assert!(unread.is_not_read());
+    assert!(unread.reason().contains("refused"), "{}", unread.reason());
+}
+
+#[test]
+fn get_reports_a_node_that_answers_with_a_server_error_as_an_error() {
+    // Arrange
+    let (endpoint, _) =
+        serve_once(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 2\r\n\r\n{}".to_vec());
+
+    // Act
+    let unread = HttpClient::new().get(&endpoint, "/").expect_err("a 500");
+
+    // Assert
+    assert!(!unread.is_not_read());
 }
 
 #[test]

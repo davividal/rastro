@@ -59,12 +59,21 @@ pub struct FakeNode {
 
 impl FakeNode {
     pub fn serving(routes: &[(&str, &str)]) -> Self {
+        let answered: Vec<(&str, u16, &str)> = routes
+            .iter()
+            .map(|(path, body)| (*path, 200, *body))
+            .collect();
+        Self::answering(&answered)
+    }
+
+    /// A node answering each route with its own status, and a 404 for anything else.
+    pub fn answering(routes: &[(&str, u16, &str)]) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let port = listener.local_addr().expect("a bound port").port();
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let routes: Vec<(String, String)> = routes
+        let routes: Vec<(String, u16, String)> = routes
             .iter()
-            .map(|(path, body)| ((*path).to_owned(), (*body).to_owned()))
+            .map(|(path, status, body)| ((*path).to_owned(), *status, (*body).to_owned()))
             .collect();
 
         let seen = Arc::clone(&requests);
@@ -84,9 +93,9 @@ impl FakeNode {
                     .to_owned();
                 seen.lock().expect("the request log").push(path.clone());
 
-                let response = match routes.iter().find(|(route, _)| *route == path) {
-                    Some((_, body)) => format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                let response = match routes.iter().find(|(route, _, _)| *route == path) {
+                    Some((_, status, body)) => format!(
+                        "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
                         body.len()
                     ),
                     None => "HTTP/1.1 404 Not Found\r\ncontent-length: 2\r\n\r\n{}".to_owned(),

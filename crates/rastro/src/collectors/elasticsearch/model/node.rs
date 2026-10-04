@@ -68,7 +68,7 @@ impl Node {
             node.identity.as_ref().map(|identity| {
                 [
                     identity.node_name.clone(),
-                    identity.cluster_uuid.clone(),
+                    identity.cluster_uuid.clone().unwrap_or_default(),
                     identity.cluster_name.clone(),
                     identity.version.number.clone(),
                 ]
@@ -206,7 +206,7 @@ impl From<&Node> for Observation {
             ),
             (
                 "cluster_uuid",
-                optional(identity.map(|identity| identity.cluster_uuid.as_str())),
+                optional(identity.and_then(|identity| identity.cluster_uuid.as_deref())),
             ),
             (
                 "version",
