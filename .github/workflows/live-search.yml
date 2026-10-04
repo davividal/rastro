@@ -9,12 +9,13 @@ name: live search
 # network namespace. None of them publishes a port, so a read that went anywhere but through
 # that join would find nothing to connect to.
 #
-# **Four nodes, one per path through the dispatch.** 7.17 with security off, which is the field
+# **Five nodes, one per path through the dispatch.** 7.17 with security off, which is the field
 # host; 8.15 with security switched off, which proves the settings rather than the version
 # decide the transport; 8.15 at its secured default, which must come back as an `error` and
 # must never be sent a request, checked in the node's own log because a plaintext request to
 # its TLS listener is a WARN there, measured; and 8.15 whose file is an absolute symlink in its
-# image, which is read only if the file is resolved inside the node's own root.
+# image, which is read only if the file is resolved inside the node's own root; and 9.2 with its
+# data on a named volume, whose host directory is found through the mount tables and sealed.
 #
 # What this catches that the fixture tests cannot: a fixture captured wrong, and the namespace
 # join itself, which needs `CAP_SYS_ADMIN` that no ordinary container grants.
@@ -49,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Start four nodes with no published port
+      - name: Start five nodes with no published port
         run: |
           heap='ES_JAVA_OPTS=-Xms512m -Xmx512m'
           docker run -d --name conformance-7 -e node.name=conformance-7 \
@@ -59,6 +60,13 @@ jobs:
             -e discovery.type=single-node -e xpack.security.enabled=false \
             -e path.repo=/tmp/snapshots -e "$heap" \
             docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          # 9.x, open, with its data on a named volume: the path the node uses is not a host path,
+          # and the mount tables are how rastro finds the host directory to seal.
+          docker run -d --name conformance-9 -e node.name=conformance-9 \
+            -e discovery.type=single-node -e xpack.security.enabled=false \
+            -e path.repo=/tmp/snapshots -e "$heap" \
+            -v conformance-data:/usr/share/elasticsearch/data \
+            docker.elastic.co/elasticsearch/elasticsearch:9.2.0
           docker run -d --name conformance-secured -e node.name=conformance-secured \
             -e discovery.type=single-node -e "$heap" \
             docker.elastic.co/elasticsearch/elasticsearch:8.15.3
@@ -90,7 +98,7 @@ jobs:
                   *) echo 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9200/ | grep -q 200' ;;
               esac
           }
-          for node in conformance-7 conformance-8 conformance-secured conformance-symlinked; do
+          for node in conformance-7 conformance-8 conformance-9 conformance-secured conformance-symlinked; do
               waited=0
               until docker exec "$node" sh -c "$(probe "$node")"; do
                   waited=$((waited + 3))
@@ -106,7 +114,7 @@ jobs:
 
       - name: Give the open nodes one of everything the facet reports
         run: |
-          for node in conformance-7 conformance-8; do
+          for node in conformance-7 conformance-8 conformance-9; do
               docker exec -i "$node" sh <<'SEED'
           put() { curl -sf -XPUT -H 'Content-Type: application/json' "http://127.0.0.1:9200$1" -d "$2" > /dev/null; }
           put /_component_template/app-mappings '{"template":{"mappings":{"properties":{"title":{"type":"text"},"score":{"type":"float"}}}}}'
@@ -182,8 +190,8 @@ jobs:
           unprivileged = facet('/tmp/unprivileged.json')
           nodes = unprivileged['data']['nodes']
           silent = [node for node in nodes if node['error'] is None]
-          if len(nodes) != 4 or silent:
-              print('an unprivileged run should report four nodes, each with an error')
+          if len(nodes) != 5 or silent:
+              print('an unprivileged run should report five nodes, each with an error')
               print(json.dumps(unprivileged, indent=1, sort_keys=True))
               sys.exit(1)
           print('unprivileged: every node says why it was not read')

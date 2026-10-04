@@ -29,6 +29,12 @@ use support::observation::{field, is_null, items_of, keys_of, text};
 /// The node names the workflow starts, as `node.name`.
 const OPEN_7: &str = "conformance-7";
 const OPEN_8: &str = "conformance-8";
+
+/// 9.2, open, its data on the named volume `conformance-data`.
+const OPEN_9: &str = "conformance-9";
+
+/// The tail of the volume's host directory, under whichever engine's root holds it.
+const VOLUME_DIRECTORY: &str = "conformance-data/_data";
 const SECURED_8: &str = "conformance-secured";
 
 /// An 8.15 node whose `elasticsearch.yml` is an absolute symlink inside its image, pinning an
@@ -103,10 +109,10 @@ fn every_node_the_workflow_started_is_found() {
     // Assert
     assert_eq!(
         servers.keys().cloned().collect::<Vec<_>>(),
-        [OPEN_7, OPEN_8, SECURED_8, SYMLINKED_8],
+        [OPEN_7, OPEN_8, OPEN_9, SECURED_8, SYMLINKED_8],
         "start the nodes .github/workflows/live-search.yml starts"
     );
-    assert_eq!(items_of(&field(&facet, "nodes")).len(), 4);
+    assert_eq!(items_of(&field(&facet, "nodes")).len(), 5);
 }
 
 #[test]
@@ -136,7 +142,7 @@ fn an_open_node_reads_as_it_answers_itself() {
 
     // Assert
     let nodes = nodes_by_name(&facet);
-    for name in [OPEN_7, OPEN_8] {
+    for name in [OPEN_7, OPEN_8, OPEN_9] {
         let reported = nodes
             .get(name)
             .unwrap_or_else(|| panic!("{name} in the facet"));
@@ -203,7 +209,7 @@ fn a_read_changes_no_index_on_any_open_node() {
     // Arrange: 12 s is well past the deprecation logger's 5 s flush, which a quicker look misses;
     // the write lands one to five seconds after the response.
     let servers = servers_by_name();
-    let before: Vec<String> = [OPEN_7, OPEN_8]
+    let before: Vec<String> = [OPEN_7, OPEN_8, OPEN_9]
         .iter()
         .map(|name| asked_directly(servers[*name], INDEX_LIST))
         .collect();
@@ -213,7 +219,7 @@ fn a_read_changes_no_index_on_any_open_node() {
     thread::sleep(Duration::from_secs(12));
 
     // Assert
-    let after: Vec<String> = [OPEN_7, OPEN_8]
+    let after: Vec<String> = [OPEN_7, OPEN_8, OPEN_9]
         .iter()
         .map(|name| asked_directly(servers[*name], INDEX_LIST))
         .collect();
@@ -228,4 +234,21 @@ fn two_reads_of_unchanged_nodes_are_the_same() {
 
     // Assert
     assert_eq!(first, second);
+}
+
+#[test]
+fn a_nodes_data_on_a_volume_is_sealed_at_its_host_directory() {
+    // Act: the path the node uses exists only in its own mount namespace, so this is the mount
+    // tables' answer, not a path rastro could have guessed.
+    let claimed: Vec<String> = ElasticsearchCollector::new()
+        .filesystem_claims()
+        .iter()
+        .map(|claim| claim.tree().as_str().to_owned())
+        .collect();
+
+    // Assert
+    assert!(
+        claimed.iter().any(|tree| tree.ends_with(VOLUME_DIRECTORY)),
+        "{claimed:?}"
+    );
 }
