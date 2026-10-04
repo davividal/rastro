@@ -4,30 +4,46 @@
 #   CAPTURES: the VM's /captures, copied out (`vagrant ssh -c 'sudo tar -C /captures -czf - .'`)
 #   DEST:     crates/rastro/tests/fixtures/elasticsearch/cells
 set -eu
-src=$(cd "$1" && pwd)
-dest=$2
-rm -rf "$dest"; mkdir -p "$dest"
-for cell in "$src"/[0-9][0-9]; do
+
+readonly PROCESS_FILES=(cmdline environ stat status)
+readonly NODE_FILES=(version-jar elasticsearch.yml config-dir.ls)
+
+export_node() {
+  local node=$1 out=$2 side file
+  for side in server parent; do
+    [[ -d "$node/$side" ]] || continue
+    mkdir -p "$out/$side"
+    for file in "${PROCESS_FILES[@]}"; do
+      [[ -f "$node/$side/$file" ]] && cp "$node/$side/$file" "$out/$side/$file"
+    done
+  done
+  mkdir -p "$out/files"
+  cp "$node/config-dir" "$out/config-dir"
+  for file in "${NODE_FILES[@]}"; do
+    [[ -f "$node/files/$file" ]] && cp "$node/files/$file" "$out/files/$file"
+  done
+  return 0
+}
+
+export_cell() {
+  local cell=$1 dest=$2 name node
   name=$(basename "$cell")
   mkdir -p "$dest/$name"
   # Always written, so a cell with no node is still a directory git keeps.
   cp "$cell/node-count" "$dest/$name/node-count"
   for node in "$cell"/node-[0-9]*; do
-    [ -d "$node" ] || continue
-    out="$dest/$name/$(basename "$node")"
-    for side in server parent; do
-      [ -d "$node/$side" ] || continue
-      mkdir -p "$out/$side"
-      for f in cmdline environ stat status; do
-        [ -f "$node/$side/$f" ] && cp "$node/$side/$f" "$out/$side/$f"
-      done
-    done
-    mkdir -p "$out/files"
-    cp "$node/config-dir" "$out/config-dir"
-    for f in version-jar elasticsearch.yml config-dir.ls; do
-      [ -f "$node/files/$f" ] && cp "$node/files/$f" "$out/files/$f"
-    done
+    [[ -d "$node" ]] || continue
+    export_node "$node" "$dest/$name/$(basename "$node")"
   done
+  return 0
+}
+
+src=$(cd "$1" && pwd)
+dest=$2
+rm -rf "$dest"
+mkdir -p "$dest"
+for cell in "$src"/[0-9][0-9]; do
+  export_cell "$cell" "$dest"
 done
 
 # Cell 16 ran an amd64-only image under qemu-user on the aarch64 VM. qemu's binfmt `P` flag

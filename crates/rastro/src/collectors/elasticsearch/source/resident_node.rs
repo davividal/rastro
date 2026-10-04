@@ -251,7 +251,7 @@ impl ResidentNode {
     fn inspect(proc: &Path, path: &Path) -> Inspection {
         let Some(process_id) = path
             .file_name()
-            .and_then(|name| name.to_str())
+            .and_then(std::ffi::OsStr::to_str)
             .and_then(|name| name.parse::<u32>().ok())
         else {
             return Inspection::NotANode;
