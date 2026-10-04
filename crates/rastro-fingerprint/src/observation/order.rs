@@ -71,8 +71,9 @@ pub(super) fn sort_observations(items: &mut [Observation], leading: &[String]) {
     });
 }
 
-/// Breaks a tie between two items whose content is equal by their annotations, root first
-/// and then through the subtree, since a child marked volatile is a different item.
+/// Breaks a tie between two items whose content is equal by what equality still sees and the
+/// visible comparison does not: annotations, root first and then through the subtree, and the
+/// fields a nested set was told to sort by.
 fn compare_annotations(left: &Observation, right: &Observation) -> Ordering {
     annotations_of(left)
         .cmp(&annotations_of(right))
@@ -82,12 +83,25 @@ fn compare_annotations(left: &Observation, right: &Observation) -> Ordering {
                     compare_annotations(left, right)
                 })
             }
-            (Content::Sequence(left), Content::Sequence(right))
-            | (Content::Set { items: left, .. }, Content::Set { items: right, .. }) => {
+            (Content::Sequence(left), Content::Sequence(right)) => {
                 lexicographic(left.iter(), right.iter(), |left, right| {
                     compare_annotations(left, right)
                 })
             }
+            (
+                Content::Set {
+                    items: left,
+                    leading: left_leading,
+                },
+                Content::Set {
+                    items: right,
+                    leading: right_leading,
+                },
+            ) => left_leading.cmp(right_leading).then_with(|| {
+                lexicographic(left.iter(), right.iter(), |left, right| {
+                    compare_annotations(left, right)
+                })
+            }),
             _ => Ordering::Equal,
         })
 }

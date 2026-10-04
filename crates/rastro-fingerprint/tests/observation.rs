@@ -626,3 +626,18 @@ fn a_set_is_equal_whatever_order_when_items_differ_only_in_a_nested_annotation()
     // Assert
     assert_eq!(given, reversed);
 }
+
+#[test]
+fn a_set_is_equal_whatever_order_when_nested_sets_differ_only_in_their_named_fields() {
+    // Arrange: two empty sets that tie on content and on every annotation, told apart only by
+    // the fields their collectors named.
+    let by_a = Observation::set_by(["a"], Vec::new());
+    let by_b = Observation::set_by(["b"], Vec::new());
+
+    // Act
+    let given = Observation::set([by_a.clone(), by_b.clone()]);
+    let reversed = Observation::set([by_b, by_a]);
+
+    // Assert
+    assert_eq!(given, reversed);
+}
