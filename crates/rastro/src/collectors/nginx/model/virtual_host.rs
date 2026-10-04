@@ -56,10 +56,7 @@ impl From<&VirtualHost> for Observation {
                 "locations",
                 Observation::sequence(host.locations.iter().map(Observation::from)),
             ),
-            (
-                "logs",
-                Observation::set(host.logs.iter().map(Observation::from)),
-            ),
+            ("logs", LogDestination::set_of(host.logs.iter())),
             (
                 "resolvers",
                 Observation::set(host.resolvers.iter().map(Observation::from)),

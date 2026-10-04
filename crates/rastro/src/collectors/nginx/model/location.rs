@@ -41,10 +41,7 @@ impl From<&Location> for Observation {
                 "locations",
                 Observation::sequence(location.locations.iter().map(Observation::from)),
             ),
-            (
-                "logs",
-                Observation::set(location.logs.iter().map(Observation::from)),
-            ),
+            ("logs", LogDestination::set_of(location.logs.iter())),
             (
                 "pass",
                 location

@@ -40,10 +40,7 @@ impl From<&StreamServer> for Observation {
                 "listens",
                 Observation::set(server.listens.iter().map(Observation::from)),
             ),
-            (
-                "logs",
-                Observation::set(server.logs.iter().map(Observation::from)),
-            ),
+            ("logs", LogDestination::set_of(server.logs.iter())),
             (
                 "pass",
                 server

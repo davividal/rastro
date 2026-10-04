@@ -461,6 +461,56 @@ fn a_pool_renders_its_members_in_the_order_written() {
     assert_eq!(hosts, ["10.0.0.8", "10.0.0.7"]);
 }
 
+/// Two access logs whose detail sorts them the other way round from their targets.
+fn two_logs() -> Vec<LogDestination> {
+    let log = |target: &str, format: &str| LogDestination {
+        kind: LogKind::Access,
+        target: words(target),
+        detail: Some(words(format)),
+    };
+    vec![
+        log("/var/log/b.log", "combined"),
+        log("/var/log/a.log", "main"),
+    ]
+}
+
+fn targets_of(logs: &Observation) -> Vec<String> {
+    items_of(logs)
+        .iter()
+        .map(|log| text(&field(log, "target")))
+        .collect()
+}
+
+#[test]
+fn every_log_list_renders_in_order_of_kind_then_target() {
+    // Arrange: alphabetically the detail leads, so changing a log's format would move it.
+    // Ordered by what it is and where it writes, it stays where it was.
+    let host = VirtualHost {
+        logs: two_logs(),
+        ..virtual_host()
+    };
+    let location = Location {
+        logs: two_logs(),
+        ..virtual_host().locations.remove(0)
+    };
+    let server = StreamServer {
+        logs: two_logs(),
+        ..stream_server()
+    };
+
+    // Act
+    let rendered = [
+        field(&Observation::from(&host), "logs"),
+        field(&Observation::from(&location), "logs"),
+        field(&Observation::from(&server), "logs"),
+    ];
+
+    // Assert
+    for logs in &rendered {
+        assert_eq!(targets_of(logs), ["/var/log/a.log", "/var/log/b.log"]);
+    }
+}
+
 #[test]
 fn a_pool_renders_its_members_and_its_settings() {
     // Act

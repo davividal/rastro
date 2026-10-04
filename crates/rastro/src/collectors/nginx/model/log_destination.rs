@@ -24,6 +24,14 @@ pub struct LogDestination {
     pub detail: Option<NonEmptyText>,
 }
 
+impl LogDestination {
+    /// A block's log destinations, ordered by kind and then target: what a log is and where
+    /// it writes identify it, so a change to its format keeps it where it was.
+    pub fn set_of<'a>(logs: impl IntoIterator<Item = &'a LogDestination>) -> Observation {
+        Observation::set_by(["kind", "target"], logs.into_iter().map(Observation::from))
+    }
+}
+
 impl From<&LogDestination> for Observation {
     fn from(log: &LogDestination) -> Self {
         Observation::object([
