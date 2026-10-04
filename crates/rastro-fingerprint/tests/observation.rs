@@ -526,3 +526,88 @@ fn a_set_by_sorts_on_what_the_view_shows_of_a_named_field() {
     assert_eq!(names_of(&set), ["b", "a"]);
     assert_eq!(names_of(&visible), ["a", "b"]);
 }
+
+#[test]
+fn a_set_orders_scalars_null_then_boolean_then_integer_then_text() {
+    // Act
+    let set = Observation::set([
+        Observation::text("1"),
+        Observation::integer(1),
+        Observation::boolean(true),
+        Observation::null(),
+    ]);
+
+    // Assert
+    assert_eq!(
+        items_of(&set),
+        [
+            Observation::null(),
+            Observation::boolean(true),
+            Observation::integer(1),
+            Observation::text("1"),
+        ]
+    );
+}
+
+#[test]
+fn a_set_orders_shapes_scalar_then_object_then_sequence_then_set() {
+    // Arrange
+    let object = Observation::object([("a", Observation::null())]);
+    let sequence = Observation::sequence([Observation::null()]);
+    let set = Observation::set([Observation::null()]);
+
+    // Act
+    let mixed = Observation::set([
+        set.clone(),
+        sequence.clone(),
+        object.clone(),
+        Observation::text("a"),
+    ]);
+
+    // Assert
+    assert_eq!(
+        items_of(&mixed),
+        [Observation::text("a"), object, sequence, set]
+    );
+}
+
+#[test]
+fn a_set_of_sets_orders_them_by_their_own_sorted_items() {
+    // Arrange: given unsorted, each inner set still compares by its sorted items.
+    let inner = |first: &str, second: &str| {
+        Observation::set([Observation::text(first), Observation::text(second)])
+    };
+
+    // Act
+    let outer = Observation::set([inner("d", "b"), inner("c", "a")]);
+
+    // Assert
+    assert_eq!(items_of(&outer), [inner("a", "c"), inner("b", "d")]);
+}
+
+#[test]
+fn a_set_orders_an_item_before_a_longer_one_it_is_a_prefix_of() {
+    // Arrange
+    let short = Observation::sequence([Observation::text("a")]);
+    let long = Observation::sequence([Observation::text("a"), Observation::text("b")]);
+
+    // Act
+    let set = Observation::set([long.clone(), short.clone()]);
+
+    // Assert
+    assert_eq!(items_of(&set), [short, long]);
+}
+
+#[test]
+fn a_set_by_orders_an_item_missing_a_named_field_first() {
+    // Arrange: a field a collector names may be absent from an item, and absent is a value
+    // the order has to place rather than a tie it has to guess about.
+    let with_name = Observation::object([("name", Observation::text("a"))]);
+    let without = Observation::object([("other", Observation::text("z"))]);
+
+    // Act
+    let set = Observation::set_by(["name"], [with_name.clone(), without.clone()]);
+
+    // Assert
+    assert_eq!(items_of(&set), [without, with_name]);
+}
