@@ -175,11 +175,11 @@ fn a_lifetimes_permanence_survives_the_diffable_view_and_its_countdown_does_not(
         .expect("the facet survives the diffable view");
 
     // Act
-    let addresses = items_of(&field(
+    let addresses = field(
         &field(&field(&diffable, "interfaces"), "enp0s8"),
         "addresses",
-    ));
-    let lifetime = field(&addresses[0], "valid_lifetime");
+    );
+    let lifetime = field(&field(&addresses, "10.0.2.15/24"), "valid_lifetime");
 
     // Assert
     assert_eq!(keys_of(&lifetime), ["permanent"]);
@@ -196,14 +196,11 @@ fn a_permanent_lifetime_is_still_marked_volatile_where_it_is_absent() {
     let diffable = observation
         .in_view(View::Diffable)
         .expect("the facet survives");
-    let addresses = items_of(&field(
-        &field(&field(&diffable, "interfaces"), "lo"),
-        "addresses",
-    ));
+    let addresses = field(&field(&field(&diffable, "interfaces"), "lo"), "addresses");
 
     // Assert
     assert_eq!(
-        keys_of(&field(&addresses[0], "valid_lifetime")),
+        keys_of(&field(&field(&addresses, "127.0.0.1/8"), "valid_lifetime")),
         ["permanent"]
     );
 }
@@ -231,6 +228,60 @@ fn parse_sorts_the_addresses_on_an_interface() {
             .map(|address| address.family.as_str())
             .collect::<Vec<&str>>(),
         ["inet", "inet6"]
+    );
+}
+
+#[test]
+fn an_interfaces_addresses_are_keyed_by_address_and_prefix() {
+    // Arrange: the kernel refuses a second identical address and prefix on one interface,
+    // so the pair is an identity, and keying by it lets a change of lifetime or scope read
+    // as a change to that address rather than as one address leaving and another arriving.
+    let observation = Observation::from(&state());
+
+    // Act
+    let addresses = field(
+        &field(&field(&observation, "interfaces"), "enp0s9"),
+        "addresses",
+    );
+
+    // Assert: the key carries the address and prefix, so the value does not repeat them.
+    assert_eq!(
+        keys_of(&addresses),
+        ["192.168.56.103/24", "fe80::a00:27ff:fea0:9cdd/64"]
+    );
+    assert_eq!(
+        keys_of(&field(&addresses, "192.168.56.103/24")),
+        [
+            "dynamic",
+            "family",
+            "preferred_lifetime",
+            "scope",
+            "valid_lifetime"
+        ]
+    );
+}
+
+#[test]
+fn parse_refuses_an_address_reported_twice_on_one_interface() {
+    // Arrange: the kernel cannot hold one, so a repeat means the output was misread, and
+    // keeping the last of the two would drop an address from a complete document.
+    let repeated = r#"[
+  {"ifindex":2,"ifname":"enp0s8","flags":["UP"],"mtu":1500,"operstate":"UP",
+   "link_type":"ether","address":"08:00:27:56:7f:78",
+   "addr_info":[
+     {"family":"inet","local":"10.0.2.15","prefixlen":24,"scope":"global",
+      "valid_life_time":4294967295,"preferred_life_time":4294967295},
+     {"family":"inet","local":"10.0.2.15","prefixlen":24,"scope":"global",
+      "valid_life_time":4294967295,"preferred_life_time":4294967295}]}
+]"#;
+
+    // Act
+    let failure = Ip::parse(repeated, "[]", "[]").expect_err("a repeat must fail");
+
+    // Assert
+    assert!(
+        failure.to_string().contains("10.0.2.15/24"),
+        "the message must name the address, got: {failure}"
     );
 }
 
