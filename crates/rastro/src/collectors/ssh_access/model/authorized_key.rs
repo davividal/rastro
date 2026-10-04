@@ -9,7 +9,7 @@ use crate::collectors::ssh_access::value_objects::{KeyComment, KeyOption, KeyTyp
 /// **The three fields answer three different questions, and a change to any one of them is a
 /// change to who can do what.** The key says *who*, the options say *what they may do*, and
 /// the comment says who somebody believed it was.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorizedKey {
     pub key_type: KeyType,
     pub key: PublicKey,
