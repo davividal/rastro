@@ -106,6 +106,7 @@ fn read_into(
     let held = HeldListener {
         proc: proc.to_path_buf(),
         process_id: resident.process_id(),
+        start: resident.start(),
         port: endpoint.port().as_u16(),
     };
     let client = client
@@ -139,11 +140,22 @@ fn read_into(
 struct HeldListener {
     proc: std::path::PathBuf,
     process_id: u32,
+
+    /// The process's start as the census found it: an id alone can pass to a later process.
+    start: Option<u64>,
     port: u16,
 }
 
 impl HeldListener {
     fn still_the_nodes(&self) -> Result<(), Unread> {
+        let now = ResidentNode::start_of_in(&self.proc, self.process_id);
+        if self.start.is_none() || now != self.start {
+            return Err(Unread::new(format!(
+                "process {} was restarted or replaced since it was found, so nothing more is sent \
+                 to it",
+                self.process_id
+            )));
+        }
         let listeners = NodeListener::read_in(&self.proc, self.process_id)?;
         match listeners
             .iter()

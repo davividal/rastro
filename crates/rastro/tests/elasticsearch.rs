@@ -609,3 +609,32 @@ fn collect_asks_nothing_more_of_a_listener_the_node_no_longer_holds() {
         "{reported:?}"
     );
 }
+
+#[test]
+fn collect_asks_nothing_more_of_a_process_id_another_process_has_taken() {
+    // Arrange: found by review. The node exits and its process id is reused by a program that
+    // binds the same port, which a check of the listener alone accepts. A process is its id and
+    // its start time together, field 22 of `stat`, so the start fixed at the census must hold.
+    let name = "elasticsearch-facet-pid-reused";
+    let stat = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(name)
+        .join("600/stat");
+    let node = FakeNode::serving_then(&[("/", ROOT)], move |path| {
+        if path == "/" {
+            let middle = vec!["0"; 17].join(" ");
+            let _ = std::fs::write(&stat, format!("600 (other) S 1 {middle} 9999 0 0\n"));
+        }
+    });
+    let proc = node.proc(name);
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(node.requests(), ["/"]);
+    assert!(
+        text(&field(&field(reported, "cluster_settings"), "error")).contains("replaced"),
+        "{reported:?}"
+    );
+}

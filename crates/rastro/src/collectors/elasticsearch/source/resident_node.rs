@@ -124,6 +124,10 @@ pub struct ResidentNode {
     /// The release, from the server jar in the install, read inside the node's own root.
     release: Option<Release>,
 
+    /// When the process started, in clock ticks since boot, which with its id names this process
+    /// and no later one given the same id.
+    start: Option<u64>,
+
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
     distribution: Option<String>,
 
@@ -207,6 +211,23 @@ impl ResidentNode {
 
     pub fn config(&self) -> Option<&Path> {
         self.config.as_deref()
+    }
+
+    /// When the process started, in clock ticks since boot, as the census found it.
+    pub fn start(&self) -> Option<u64> {
+        self.start
+    }
+
+    /// When the process with `process_id` started, now: field 22 of its `stat`, counted after the
+    /// last `)`, since the name before it may hold spaces and parentheses.
+    pub fn start_of_in(proc: &Path, process_id: u32) -> Option<u64> {
+        let stat = fs::read_to_string(proc.join(process_id.to_string()).join("stat")).ok()?;
+        stat.rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(19)?
+            .parse()
+            .ok()
     }
 
     /// Which release the node runs, as its install's server jar names it.
@@ -293,6 +314,7 @@ impl ResidentNode {
 
         Some(Self {
             process_id,
+            start: Self::start_of_in(proc, process_id),
             home,
             config,
             release,
