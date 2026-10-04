@@ -23,8 +23,8 @@ const SERVER_7_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0-Xms512m\0\
 
 /// An 8.x or 9.x server: the same class, started as a module rather than from the classpath.
 ///
-/// **No `-Des.path.*` and no `-E`**, measured on 8.15.3 by the conformance run: the launcher
-/// holds them and hands the server its arguments over a pipe, so they are on the parent's argv.
+/// **No `-Des.path.*` and no `-E`**, the 8.15.3 shape: the launcher holds them and hands the
+/// server its settings over a pipe. 8.19 and later add `-Des.path.home`; see the captured cells.
 const SERVER_8_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0-Xms512m\0\
     --module-path\0/usr/share/elasticsearch/lib\0\
     -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0";
@@ -77,11 +77,13 @@ fn all_in_finds_an_8_server_started_as_a_module_and_not_its_launcher() {
     // Act
     let nodes = ResidentNode::all_in(&proc);
 
-    // Assert: the paths are the launcher's, since the server's own argv carries none.
+    // Assert: the install from the server's module path, and no config directory, since the
+    // server's environment is unreadable here and the launcher's `-Des.path.conf` is not the node's
+    // to vouch for: the launcher of a `-d` node has exited, and the 9.4 one carries no property.
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].process_id(), 97);
     assert_eq!(nodes[0].home(), Some(Path::new("/usr/share/elasticsearch")));
-    assert_eq!(nodes[0].config(), Some(Path::new("/etc/elasticsearch")));
+    assert_eq!(nodes[0].config(), None);
 }
 
 #[test]
@@ -102,6 +104,25 @@ fn all_in_takes_no_paths_from_a_parent_that_is_not_the_launcher() {
 
     // Assert: a node still, with nothing claimed about where it is configured.
     assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].config(), None);
+}
+
+#[test]
+fn all_in_claims_no_config_directory_from_a_relative_es_path_conf() {
+    // Arrange: a relative directory resolves against the working directory the node had when it
+    // started, which `/proc` does not keep; the launchers make it absolute before passing it on.
+    let proc = scratch_tree("elasticsearch-residency-relative-conf", &["97"]);
+    write(&proc, "97/cmdline", SERVER_8_ARGV);
+    write(
+        &proc,
+        "97/environ",
+        "HOME=/usr/share/elasticsearch\0ES_PATH_CONF=config\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
     assert_eq!(nodes[0].config(), None);
 }
 

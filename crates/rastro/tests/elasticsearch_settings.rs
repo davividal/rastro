@@ -170,11 +170,15 @@ fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
     write(
         &proc,
         "600/cmdline",
-        "/usr/share/elasticsearch/jdk/bin/java\0-m\0\
-         org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
+        "/usr/share/elasticsearch/jdk/bin/java\0--module-path\0/usr/share/elasticsearch/lib\0\
+         -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
     );
     support::process::started(&proc, "600", "40", 5);
-    write(&proc, "600/environ", "http.port=9300\0");
+    write(
+        &proc,
+        "600/environ",
+        "ES_PATH_CONF=/etc/elasticsearch\0http.port=9300\0",
+    );
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
 
     // Act

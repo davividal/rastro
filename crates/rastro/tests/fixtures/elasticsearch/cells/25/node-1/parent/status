@@ -1,0 +1,57 @@
+Name:	server-launcher
+Umask:	0022
+State:	S (sleeping)
+Tgid:	28993
+Ngid:	0
+Pid:	28993
+PPid:	1
+TracerPid:	0
+Uid:	105	105	105	105
+Gid:	112	112	112	112
+FDSize:	256
+Groups:	112 
+NStgid:	28993
+NSpid:	28993
+NSpgid:	28993
+NSsid:	28993
+VmPeak:	33923312 kB
+VmSize:	33866032 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	   11976 kB
+VmRSS:	   11976 kB
+RssAnon:	    2624 kB
+RssFile:	    9352 kB
+RssShmem:	       0 kB
+VmData:	   45096 kB
+VmStk:	     132 kB
+VmExe:	    5360 kB
+VmLib:	    1856 kB
+VmPTE:	     120 kB
+VmSwap:	       0 kB
+HugetlbPages:	       0 kB
+CoreDumping:	0
+THP_enabled:	1
+Threads:	5
+SigQ:	0/187430
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000000000000
+SigIgn:	0000000000001000
+SigCgt:	0000000101004443
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	000001ffffffffff
+CapAmb:	0000000000000000
+NoNewPrivs:	0
+Seccomp:	0
+Seccomp_filters:	0
+Speculation_Store_Bypass:	vulnerable
+SpeculationIndirectBranch:	unknown
+Cpus_allowed:	f
+Cpus_allowed_list:	0-3
+Mems_allowed:	0001
+Mems_allowed_list:	0
+voluntary_ctxt_switches:	44
+nonvoluntary_ctxt_switches:	0

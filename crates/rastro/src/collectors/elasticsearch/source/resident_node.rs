@@ -4,13 +4,17 @@
 //! not identified as an Elasticsearch server, and this read is that identification. It asks
 //! nothing of anything, so it cannot be the request that writes.
 //!
-//! Two argv shapes carry the same main class, measured on the official images: 7.17 is one
+//! Two argv shapes carry the same main class, measured on the official images: 7.x is one
 //! process with `org.elasticsearch.bootstrap.Elasticsearch` on the classpath, and 8.x and 9.x
-//! are a `CliToolLauncher` parent forking a child that starts the class as a module,
-//! `-m org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch`. The parent holds
-//! no listener and is not a node, **but it holds the paths**: measured on 8.15.3, the server's
-//! own argv carries no `-Des.path.*` and no `-E`, because the launcher hands them over a pipe.
-//! So an 8.x server is read through its launcher's argv, found by the parent link in `stat`.
+//! start the class as a module, `-m org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch`,
+//! forked by a launcher that holds no listener and is not a node.
+//!
+//! **Where the node is comes from the server process alone**, measured on every cell of the
+//! matrix (`tests/fixtures/elasticsearch/cells`): the launcher differs per release (a Java
+//! `CliToolLauncher` up to 9.2, a native `server-launcher` from 9.4) and exits once a node
+//! started with `-d` is up, while the server always carries its install and its environment.
+//! Its command-line settings are the exception: on 8.x and 9.x only the launcher's argv holds
+//! them, so they are read from the parent while it is there.
 //!
 //! A process id is a plain `u32` here rather than the `processes` facet's `ProcessId`, for the
 //! reason the RabbitMQ residency read gives: that type is another collector's leaf value.
@@ -69,6 +73,15 @@ const LAUNCHER_MAIN: &str = "org.elasticsearch.launcher.CliToolLauncher";
 const HOME_PROPERTY: &str = "-Des.path.home=";
 const CONFIG_PROPERTY: &str = "-Des.path.conf=";
 
+/// The option every 8.x and 9.x launcher names the server's module path with, its `lib/`.
+const MODULE_PATH_OPTION: &str = "--module-path";
+
+/// The environment variable the 8.x and 9.x launcher passes the config directory in.
+const CONFIG_VARIABLE: &[u8] = b"ES_PATH_CONF=";
+
+/// The config directory under the install, where neither the property nor the variable is set.
+const DEFAULT_CONFIG: &str = "config";
+
 /// The system property naming how the node was installed: `docker`, `tar`, `deb` or `rpm`.
 const DISTRIBUTION_PROPERTY: &str = "-Des.distribution.type=";
 
@@ -84,14 +97,15 @@ pub struct ResidentNode {
     /// Whether every launch argument was UTF-8, so the text above is the argv exactly.
     launch_arguments_are_exact: bool,
 
-    /// `es.path.home`, where the node's `lib/` and `bin/` are.
+    /// Where the node's `lib/` and `bin/` are: `es.path.home`, or on 8.15 and earlier 8.x, whose
+    /// server is not given the property, the directory above its module path's `lib/`.
     home: Option<PathBuf>,
 
-    /// `es.path.conf`, the directory holding `elasticsearch.yml`.
+    /// The directory holding `elasticsearch.yml`: `es.path.conf` on 7.x, then the server's
+    /// `ES_PATH_CONF`, then `<home>/config`, the order the launchers resolve it in.
     ///
-    /// Absent where the argv does not carry it, which the official launchers always do: a
-    /// node started by hand has no config directory this read can vouch for, and guessing
-    /// `/etc/elasticsearch` would read a file that may belong to a different node.
+    /// Absent where the environment cannot be read: the variable may be set there, a package
+    /// install sets it to `/etc/elasticsearch`, and the default would name another directory.
     config: Option<PathBuf>,
 
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
@@ -256,6 +270,10 @@ impl ResidentNode {
             return None;
         }
 
+        let home = property_in(&spelled, HOME_PROPERTY).or_else(|| module_install(&spelled));
+        let config = property_in(&spelled, CONFIG_PROPERTY)
+            .or_else(|| configured_in_environment(path, home.as_deref()));
+
         // A launcher that exited, or a parent that is not one, lends nothing: taking any
         // parent's argv would read another program's flags as the node's settings.
         let (launch, launcher_gone) = match starts_as_a_module(&spelled) {
@@ -269,8 +287,8 @@ impl ResidentNode {
 
         Some(Self {
             process_id,
-            home: property_in(&launched, HOME_PROPERTY),
-            config: property_in(&launched, CONFIG_PROPERTY),
+            home,
+            config,
             distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
                 .map(|distribution| distribution.to_string_lossy().into_owned()),
             started_at: started_at(proc, path),
@@ -575,6 +593,38 @@ fn is_java(arguments: &[&str]) -> bool {
         .map(Path::new)
         .and_then(Path::file_name)
         .is_some_and(|program| program == JAVA)
+}
+
+/// The install a module-path server was started from: the directory above the `lib/` its
+/// module path names, `--module-path <home>/lib` on every launcher measured.
+fn module_install(arguments: &[&str]) -> Option<PathBuf> {
+    let options = &arguments[..launch_of(arguments)?.entry_index];
+    let module_path = options
+        .windows(2)
+        .rev()
+        .find(|pair| pair[0] == MODULE_PATH_OPTION)?[1];
+    let lib = Path::new(module_path);
+
+    (lib.file_name()? == "lib").then(|| lib.parent().map(Path::to_path_buf))?
+}
+
+/// The config directory as the server's environment gives it: `ES_PATH_CONF`, else the default
+/// under the install. Nothing where the environment cannot be read or names a relative path,
+/// which would resolve against a working directory this read does not know the node had.
+fn configured_in_environment(process: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let environment = fs::read(process.join("environ")).ok()?;
+    let variable = environment
+        .split(|byte| *byte == ARGUMENT_SEPARATOR)
+        .rev()
+        .find_map(|entry| entry.strip_prefix(CONFIG_VARIABLE));
+
+    match variable {
+        Some(value) => {
+            let directory = PathBuf::from(std::str::from_utf8(value).ok()?);
+            directory.is_absolute().then_some(directory)
+        }
+        None => home.map(|home| home.join(DEFAULT_CONFIG)),
+    }
 }
 
 /// The value of a `-D` system property, where the argv sets it: the last one, as the JVM takes.

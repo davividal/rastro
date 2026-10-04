@@ -1,3 +1,4 @@
+pub mod captured_cell;
 pub mod es_node;
 pub mod fs_tree;
 pub mod narrowing;
