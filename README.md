@@ -24,34 +24,15 @@ rastro -o after.json
 diff -u before.json after.json
 ```
 
-This is the whole output, from a Debian container:
+From a Debian container, trimmed to the lines that changed:
 
 ```diff
-@@ -1468,16 +1468,18 @@
-         "/lib": "7a3fdd99eaeb9cd3",
-         "/media": "4958624838a0f80a",
-         "/mnt": "25938a8746c4faf7",
+@@ filesystem @@
 -        "/mnt/demo": "92de90742cafc316",
 +        "/mnt/demo": "60a9b40dba04f729",
-         "/opt": "b6916ce49f11306e",
-         "/proc": "860a5335982d0b1a",
-         "/root": "40f8cbae0305ec33",
-         "/root/.bashrc": "c706c61fe5274377",
-         "/root/.profile": "87174a363c6bfa63",
 +        "/root/before.json": "80014f56f3a03cdb",
-         "/run": "d3e2e3c4baf06846",
-         "/run/.containerenv": "0096c364879cea51",
-         "/run/adduser": "c2caf7a13d562022",
-         "/run/lock": "18b0d854cd36e0b9",
 +        "/run/mount": "fc76396939bf7b95",
-         "/run/secrets": "10078467e1be289a",
-         "/sbin": "acb8a4d2f881f35e",
-         "/srv": "5e02a45a84b90e45",
-@@ -76041,6 +76043,18 @@
-             "rw",
-             "seclabel"
-           ]
-+        },
+@@ mounts @@
 +        {
 +          "device": "tmpfs",
 +          "filesystem": "tmpfs",
@@ -63,9 +44,7 @@ This is the whole output, from a Debian container:
 +            "seclabel",
 +            "size=16384k"
 +          ]
-         }
-       ]
-     },
++        },
 ```
 
 The mount is the change that was asked for, and `/mnt/demo` now stats as the root of
