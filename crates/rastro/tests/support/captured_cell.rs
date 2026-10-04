@@ -70,7 +70,10 @@ pub fn captured_nodes(cell: &str) -> Vec<String> {
         .expect("a captured cell")
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("node-"))
+        .filter(|name| {
+            name.strip_prefix("node-")
+                .is_some_and(|number| number.bytes().all(|byte| byte.is_ascii_digit()))
+        })
         .collect();
     nodes.sort();
     nodes

@@ -72,7 +72,7 @@ cell!(release_of_cell_15_an_8_19_container_with_no_master, "15");
 cell!(release_of_cell_16_a_6_8_container, "16");
 cell!(release_of_cell_17_a_7_10_oss_container, "17");
 cell!(
-    version_of_cell_18_an_8_15_package_without_es_path_home,
+    release_of_cell_18_an_8_15_package_without_es_path_home,
     "18"
 );
 cell!(release_of_cell_19_a_9_2_container, "19");

@@ -10,6 +10,8 @@ rm -rf "$dest"; mkdir -p "$dest"
 for cell in "$src"/[0-9][0-9]; do
   name=$(basename "$cell")
   mkdir -p "$dest/$name"
+  # Always written, so a cell with no node is still a directory git keeps.
+  cp "$cell/node-count" "$dest/$name/node-count"
   for node in "$cell"/node-[0-9]*; do
     [ -d "$node" ] || continue
     out="$dest/$name/$(basename "$node")"
