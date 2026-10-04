@@ -276,7 +276,8 @@ Contractual, and tested:
 - a fixed key order in every object: *declared* where the shape is known
   (document, facet, collector), *sorted* where it is not;
 - every list declares its kind: a *sequence* keeps the order the host acts on, a
-  *set* is sorted by rastro over what the view keeps, and a collection with an
+  *set* is sorted by rastro over what the view keeps, by the fields its
+  collector names first, and a collection with an
   identity is an object keyed by it
   ([decision](decisions.md#a-list-says-what-kind-of-collection-it-is));
 - no map iteration order leaking into output;

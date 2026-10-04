@@ -5662,13 +5662,46 @@ member parameters stay sorted: nginx does not act on their order.
 **Cron jobs are a multiset, not a sequence.** cron forks every job whose schedule matches, so
 the order of lines in a crontab is not something it acts on.
 
+## A set of objects sorts by the fields its collector names, and by the whole item otherwise
+
+The structural order compares an object field by field in key order, so it leads with
+whichever field is alphabetically first. That is safe, since it is total and it never reads
+a value the view hides, and it is often wrong for a diff. Repositories led with
+`archive_type` where they used to lead with their URI, so a repository whose type changed
+would move away from where it was and read as one removed and one added.
+
+**So the collector names the fields that identify an item, and the set sorts by them
+first**, over what the view shows of them, and by the whole item after that. A named field
+the view drops sorts as absent rather than by its hidden value. A set whose collector names
+nothing keeps the structural order, which is the safe default and not an error.
+
+Named where the identity is not already the alphabetically first field: repositories by URI,
+suite and archive type; sockets by kind and address; processes by name and command line;
+RabbitMQ bindings by source exchange; nginx log destinations by kind and target; role
+overrides by database, role and name. Upstreams, listens, holders, alarms and the
+unreadable-object lists already lead with what identifies them.
+
+**This also settles most of what keying was for.** Once a set leads with an item's identity,
+a change anywhere else in the item keeps it in place and reads as that item changing, which
+is what a key would buy, without fixing a key spelling into the format forever. So keying is
+kept for an identity the host guarantees unique and whose shape gains from it: an
+interface's addresses, keyed `10.0.2.15/24`. The rest stay sets:
+
+- **nginx upstreams and listens**, because rastro records a configuration as written,
+  including one nginx would refuse ([order is kept where nginx reads
+  it](#order-is-kept-where-nginx-reads-it-sorted-where-it-does-not)), so a name or a listen
+  can repeat in what rastro reads, and a file included twice repeats everything in it.
+- **The socket table**, because `SO_REUSEPORT` lets several sockets share an address.
+- **Role overrides, RabbitMQ listeners and the unreadable-object lists**, because ordering by
+  their identity gives the same diff a key would.
+
 ## The kind is a type, not a convention
 
 `Content::List` is one variant for three kinds, so nothing in the port says which one a
 collector meant, and review is the only check. It splits:
 
 - `Content::Sequence`, which keeps the order it was given;
-- `Content::Set`, sorted over what the view keeps;
+- `Content::Set`, sorted over what the view keeps, by the fields its collector named first;
 - a keyed set stays an `Object`, built through a constructor that refuses a repeated key.
 
 Every collector then names the kind at its construction site, and the compiler names every
