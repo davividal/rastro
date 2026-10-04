@@ -306,6 +306,44 @@ const ALARMED: &str = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OT
   "alarms":[{"node":"rabbit@box","type":"resource_limit","resource":"memory"}],
   "listeners":[{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}]}"#;
 
+/// A node that reports its plugins, tags and alarms in an order that is not sorted.
+const UNORDERED: &str = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP 27",
+  "active_plugins":["rabbitmq_web_dispatch","rabbitmq_management","amqp_client"],
+  "tags":["zone-b","tier-gold"],
+  "alarms":[{"node":"rabbit@box","type":"resource_limit","resource":"memory"},
+            {"node":"rabbit@box","type":"resource_limit","resource":"disk"}],
+  "listeners":[{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}]}"#;
+
+fn texts_at(rendered: &Observation, key: &str) -> Vec<String> {
+    items_of(&field(rendered, key)).iter().map(text).collect()
+}
+
+#[test]
+fn a_nodes_plugins_tags_and_alarms_are_sets() {
+    // Arrange: the node acts on none of these orders, so the order it printed them in is noise
+    // that would read as a change the day it printed them differently.
+    let status = RabbitmqctlStatus::parse(UNORDERED).expect("well formed");
+
+    // Act
+    let rendered = Observation::from(&status);
+
+    // Assert
+    assert_eq!(
+        texts_at(&rendered, "active_plugins"),
+        [
+            "amqp_client",
+            "rabbitmq_management",
+            "rabbitmq_web_dispatch"
+        ]
+    );
+    assert_eq!(texts_at(&rendered, "tags"), ["tier-gold", "zone-b"]);
+    let resources: Vec<String> = items_of(&field(&rendered, "alarms"))
+        .iter()
+        .map(|alarm| text(&field(alarm, "resource")))
+        .collect();
+    assert_eq!(resources, ["disk", "memory"]);
+}
+
 #[test]
 fn parse_records_an_alarm_the_node_has_raised() {
     // Act

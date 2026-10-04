@@ -287,6 +287,42 @@ fn parse_keys_the_users_by_name_and_records_their_tags() {
 }
 
 #[test]
+fn a_users_tags_and_a_vhosts_tags_are_sets() {
+    // Arrange: the measured definitions with two tags each, written out of order. RabbitMQ
+    // checks a tag by membership, so the order an operator typed them in is not state.
+    let user_tags = "\"tags\": [\n        \"monitoring\"\n      ]";
+    let vhost_tags = "\"description\": \"\",\n        \"tags\": []";
+    assert_eq!(MEASURED.matches(user_tags).count(), 1);
+    assert_eq!(MEASURED.matches(vhost_tags).count(), 1);
+    let unordered = MEASURED
+        .replace(user_tags, "\"tags\": [\"monitoring\", \"management\"]")
+        .replace(
+            vhost_tags,
+            "\"description\": \"\", \"tags\": [\"zeta\", \"alpha\"]",
+        );
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(&unordered).expect("well formed");
+    let rendered = Observation::from(&definitions);
+
+    // Assert
+    let tags_of = |observation: &Observation| -> Vec<String> {
+        items_of(&field(observation, "tags"))
+            .iter()
+            .map(text)
+            .collect()
+    };
+    assert_eq!(
+        tags_of(&field(&field(&rendered, "users"), "spikeuser")),
+        ["management", "monitoring"]
+    );
+    assert_eq!(
+        tags_of(&field(&field(&rendered, "vhosts"), "spike")),
+        ["alpha", "zeta"]
+    );
+}
+
+#[test]
 fn parse_marks_the_stored_verifier_sensitive() {
     // Act
     let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
