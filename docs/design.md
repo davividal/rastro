@@ -155,17 +155,22 @@ to a box rastro was asked to read.
 **Layer 3, Elasticsearch.** One `elasticsearch` facet listing every node running on the box,
 whether a package installed it or a container runs it. A stopped node is seen only where the
 deb or rpm layout is installed: an archive is extracted wherever its operator chose, and a
-stopped one reads `absent`, a limit rather than a fact about the box. **7.17 through 9.x**, over plain HTTP
-only. It is the one collector that makes a request over the network, and the boundary is
+stopped one reads `absent`, a limit rather than a fact about the box. **7.17, 8.19, 9.4 and
+9.5 are supported**, and every other release from 7 is read as the closest of them and marked
+`unsupported`; below 7 a node is listed and not asked. The envelope and the 26-cell matrix it
+was measured on are [`elasticsearch-matrix.md`](elasticsearch-matrix.md). It is the one collector that makes a request over the network, and the boundary is
 narrow: a `GET`, to a listener held by a process `/proc` names as an Elasticsearch server,
 from a thread that has joined that process's network namespace, so a node with no published
 port is read the same way as one on the host. **Nothing is asked blind**: which listener
 serves HTTP is inferred from the node's own listeners and how it binds, and whether it wants
 TLS from the settings it started with, because a request to the transport port or a
-plaintext request to a TLS listener is something the node logs. A node that wants TLS or
-credentials is that node's `error`. Every request was measured before it was written, and
+request in the wrong protocol is something the node logs. A node on TLS is asked over TLS,
+trusting the socket rastro matched to it rather than a certificate chain. Whether it wants
+credentials is its own answer: without `--credentials`, a secured node is `not_read`, which is
+the box's state and not an error. Every request was measured before it was written, and
 none writes; the one family that does, deprecated parameters and legacy routes, is not sent.
-A node that reports no cluster yet is refused. For a second or two after a first start or an
+A node with no master is read for what it holds itself, and its cluster-wide surfaces are
+`not_read` without being asked. For a second or two after a first start or an
 upgrade, while its built-in templates, policies and pipelines are still being installed, a read
 is complete-looking and partial, and no request can tell, so a fingerprint taken then is a partial
 one; measured on 8.15.3, it settled within two seconds. An index is keyed by its alias where the
@@ -390,12 +395,12 @@ unannotated volatile fields at CI time instead of on a production box.
   attribution rather than one of the two undetermined ones. It cannot run in the
   container suite, because attributing a node means reading the broker process's
   descriptors and a default container refuses that even to root.
-- The `elasticsearch` facet against live nodes, behind the same label: 7.17 and 8.15 with
-  security off and 8.15 at its secured default, in containers with no published port, read
-  as root through the namespace join; each node's own answer to compare against, no index
-  changed by a read, two reads identical, the secured node never sent plaintext according to
-  its own log, and an unprivileged run naming on each node what it could not read
-  (`live-search.yml`).
+- The `elasticsearch` facet against live nodes, behind the same label: one node of each
+  supported release, 9.4 started with `-d`, 8.19 at its secured default read with and without a
+  credential, and 8.19 with a symlinked file, in containers with no published port, read as
+  root through the namespace join; each node's own answer to compare against, no index changed
+  by a read, two reads identical, the secured node never sent plaintext according to its own
+  log, and an unprivileged run naming on each node what it could not read (`live-search.yml`).
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.

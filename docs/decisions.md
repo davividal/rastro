@@ -6132,3 +6132,105 @@ an archive node's `logs` moved between two runs of an idle box. Each claim is qu
 node's config directory, the field that leads to it in `nodes`, so a directory two nodes point at
 says which two. A node whose settings cannot be read still makes no claim, and the `invocation`
 facet's claim table beside that node's own `error` is where that shows.
+
+# Elasticsearch: the supported envelope, measured on a matrix of real nodes
+
+_2026-10-04._ Two rounds of domain review and five of code review each found the reading wrong
+somewhere new, and each fix was right for the case it named. The cause was upstream of the code:
+the fixtures were written from a report of what Elasticsearch does, so the tests pinned rastro's
+model of a node rather than a node, and every live run found the model wrong again. What replaced
+it is a written envelope and a matrix of real setups,
+[`elasticsearch-matrix.md`](elasticsearch-matrix.md): 26 cells, captured on real nodes by
+`scripts/elasticsearch-matrix/`, whose `/proc` side is the fixture set the tests read
+(`crates/rastro/tests/fixtures/elasticsearch/cells`). The entries below reverse several of the
+group above; each says which.
+
+## Four releases are supported, and every other one from 7 is read as the closest
+
+7.17, 8.19, 9.4 and 9.5. Any other release from 7 up is read with the rules of the closest one
+by its own major, 7.x as 7.17, 8.x as 8.19, 9.0 to 9.4 as 9.4, and 9.5 and anything newer as
+9.5, the rule the postgresql collector reads a newer major by. Such a node is read and marked
+`unsupported`, and the observation carries `Fidelity::Approximate`, which the run's summary on
+stderr reports. A release below 7 is listed with what the box shows and is not asked:
+`not_read`. Nothing about an unsupported release is an error, since nothing on the box is wrong.
+
+**The release is read before any request**, from the server jar in the node's install,
+`<home>/lib/elasticsearch-<version>.jar`, listed inside its root, because it decides whether and
+how the node is asked. `GET /` must name the same release, or the listener asked may not be the
+node's, and the node is an error.
+
+## A node's paths come from the server process alone
+
+**Corrects "An 8.x server is read through its launcher".** Measured on 8.19.22, 9.4.7 and 9.5.4:
+the server carries `-Des.path.home` itself, and its config directory in `ES_PATH_CONF`, or under
+the install where that is unset. 8.15 is the exception, with no home property, and its install
+is the directory above its `--module-path …/lib`. The launcher is no longer read for paths, for
+two reasons the matrix found: from 9.4 it is a native binary, `lib/tools/server-launcher/`, that
+the Java-launcher match missed, so every 9.4 and 9.5 node lost its config directory; and a node
+started with `-d` outlives its launcher. Its command-line settings are still read from the
+launcher while it is there, the native one included; once it is gone they are on no argv at all.
+
+## Only TLS on HTTP is decided before asking
+
+**Reverses "A node whose settings switch security or audit on is not asked", "The file is trusted
+only as the node read it", and the missing-file refusal that corrected it.** Cell 05 settled it:
+a 9.4 node started with `-d` and `-E xpack.security.enabled=false` has nothing in its file, the
+`-E` left with its launcher, and 9.4's default reads as security on, so the gate called an open
+node secured. Whether a node wants credentials is the node's to say, and a `GET /` without one
+answers 401 at once. So the file decides one thing, TLS on HTTP, whose wrong answer is a request
+the node logs; security, audit and the start-time window are gone.
+
+**The blind spot this accepts:** a node started with `-d` on 8.x or 9.x that switches TLS on
+through `-E` alone, against its file (cell 06), or a file changed since start to say otherwise.
+rastro then asks in the wrong protocol once; the node logs a WARN, measured, and the node is an
+error. A `java` argument file is still expanded: without it a server whose main class is in the
+file would not be found at all, and no launcher in the matrix uses one.
+
+## Not read is not an error
+
+What the box's own state keeps rastro from reading is reported as `not_read`, beside `error`
+rather than in it: no credential, a credential the node rejects, a release below 7, a node with
+no master. Each is still marked incomplete, so the run's summary counts it. `error` is left for
+a node rastro supports and failed to read.
+
+**A node with no master is read**, reversing the refusal of one that reports no cluster. Measured
+on cell 15: `GET /` answers at once with `cluster_uuid` `_na_`, and each cluster-wide read waits
+out the 30 s master timeout and answers 503. So `_na_` decides: the node-local reads are made,
+`/`, `_nodes/_local` and its plugins, and each cluster-wide surface is `not_read` without being
+asked.
+
+## TLS is spoken, and the socket is trusted rather than a certificate chain
+
+**Reverses "Plain HTTP only".** That entry left TLS out because both rustls providers build C and
+the workspace kept to Rust so the musl binary cross-built from a workstation. The static builds
+are native CI runners with `musl-tools`, which compile `ring`'s C and assembly, and the Alpine leg
+of the container suite builds it against musl on every run. The 8.x and 9.x default is TLS, so
+without it the supported releases' default install was unreadable. `ring`, not the default
+`aws-lc-rs`, which wants cmake as well. Two licences arrive with it, ISC and BSD-3-Clause, both
+permissive with no copyleft, and `deny.toml` says which crate brought each.
+
+**No CA is checked.** By the time a node is dialled rastro has matched the listener's inode to the
+node's process and joined its network namespace, so the peer is the node. Its certificate is the
+auto-configured one or the operator's, signed by a CA this box need not hold. The handshake's
+signatures are still verified, so the peer holds the key it presents.
+
+## Credentials come from a file or stdin, one for the box
+
+`--credentials FILE`, `-` for stdin, one `NAME=value` per line: `ELASTICSEARCH_API_KEY`, the
+encoded form Elasticsearch hands out, or `ELASTICSEARCH_USERNAME` with `ELASTICSEARCH_PASSWORD`.
+Not the config, which the `invocation` facet echoes, and not the argv, which any account reads in
+`/proc`. The `invocation` facet records which names were given, never a value, and no value
+reaches any other observation, `--raw` included. A file others can read is warned about, since
+refusing it would not undo the leak. A file that cannot be read, or half a credential, fails the
+run before it starts: going on would read every secured node as given nothing.
+
+"Config can only narrow" is not broken by this. It is about which collectors run, which is never
+the operator's to widen; a credential widens nothing, it lets a collector that runs anyway read.
+
+**One credential for every node, in v1.** Telling two clusters' credentials apart needs the
+cluster's name, which is behind the credential. **What that costs:** with two secured clusters on
+one box, the credential is sent to both, and the one it does not belong to logs a failed
+authentication, in its audit trail too where audit is on. That node is `not_read`, "the credential
+given was rejected". Left for an issue to ask for; the candidate then is a key per label tried on
+every node, which only works if a rejected key leaves no trace with audit off, and that is not
+measured.
