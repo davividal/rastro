@@ -9,13 +9,15 @@ name: live search
 # network namespace. None of them publishes a port, so a read that went anywhere but through
 # that join would find nothing to connect to.
 #
-# **Five nodes, one per path through the dispatch.** 7.17 with security off, which is the field
-# host; 8.15 with security switched off, which proves the settings rather than the version
-# decide the transport; 8.15 at its secured default, which must come back as an `error` and
-# must never be sent a request, checked in the node's own log because a plaintext request to
-# its TLS listener is a WARN there, measured; and 8.15 whose file is an absolute symlink in its
-# image, which is read only if the file is resolved inside the node's own root; and 9.2 with its
-# data on a named volume, whose host directory is found through the mount tables and sealed.
+# **Six nodes, one per supported release and one per path through the read**
+# (`docs/elasticsearch-matrix.md` holds the wider matrix the fixtures come from). 7.17 open,
+# the field host; 8.19 open; 9.5 open with its data on a named volume, whose host directory is
+# found through the mount tables and sealed; 9.4 started with `-d` and switched open by an `-E`
+# that left with its launcher, read from the node itself; 8.19 at its secured default, asked over
+# TLS, not read without a credential and read with one, and never sent plaintext, which its own
+# log would show as a WARN; and 8.19 whose file is an absolute symlink in its image, read only
+# if the file is resolved inside the node's own root. Each is named by its container's
+# hostname, which is also its default `node.name`.
 #
 # What this catches that the fixture tests cannot: a fixture captured wrong, and the namespace
 # join itself, which needs `CAP_SYS_ADMIN` that no ordinary container grants.
@@ -50,32 +52,35 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Start five nodes with no published port
+      - name: Start six nodes with no published port
         run: |
           heap='ES_JAVA_OPTS=-Xms512m -Xmx512m'
-          docker run -d --name conformance-7 -e node.name=conformance-7 \
-            -e discovery.type=single-node -e path.repo=/tmp/snapshots -e "$heap" \
-            docker.elastic.co/elasticsearch/elasticsearch:7.17.24
-          docker run -d --name conformance-8 -e node.name=conformance-8 \
-            -e discovery.type=single-node -e xpack.security.enabled=false \
-            -e path.repo=/tmp/snapshots -e "$heap" \
-            docker.elastic.co/elasticsearch/elasticsearch:8.15.3
-          # 9.x, open, with its data on a named volume: the path the node uses is not a host path,
+          image=docker.elastic.co/elasticsearch/elasticsearch
+          open=(-e discovery.type=single-node -e xpack.security.enabled=false -e path.repo=/tmp/snapshots)
+          docker run -d --name conformance-7 --hostname conformance-7 \
+            -e discovery.type=single-node -e path.repo=/tmp/snapshots -e "$heap" "$image:7.17.29"
+          docker run -d --name conformance-8 --hostname conformance-8 "${open[@]}" -e "$heap" \
+            "$image:8.19.22"
+          # 9.5, open, with its data on a named volume: the path the node uses is not a host path,
           # and the mount tables are how rastro finds the host directory to seal.
-          docker run -d --name conformance-9 -e node.name=conformance-9 \
-            -e discovery.type=single-node -e xpack.security.enabled=false \
-            -e path.repo=/tmp/snapshots -e "$heap" \
-            -v conformance-data:/usr/share/elasticsearch/data \
-            docker.elastic.co/elasticsearch/elasticsearch:9.2.0
-          docker run -d --name conformance-secured -e node.name=conformance-secured \
-            -e discovery.type=single-node -e "$heap" \
-            docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          docker run -d --name conformance-9 --hostname conformance-9 "${open[@]}" -e "$heap" \
+            -v conformance-data:/usr/share/elasticsearch/data "$image:9.5.4"
+          # 9.4, daemonised: the launcher exits once the node is up, and its `-E` settings with it,
+          # so nothing on the box says security is off. The node says so itself when asked.
+          docker run -d --name conformance-94 --hostname conformance-94 -e "$heap" \
+            --entrypoint sh "$image:9.4.7" -c \
+            'bin/elasticsearch -d -p /tmp/es.pid -E discovery.type=single-node \
+               -E xpack.security.enabled=false -E path.repo=/tmp/snapshots \
+             && exec sleep infinity'
+          docker run -d --name conformance-secured --hostname conformance-secured \
+            -e discovery.type=single-node -e ELASTIC_PASSWORD=conformance-password -e "$heap" \
+            "$image:8.19.22"
 
           # A node whose file is an absolute symlink inside its image, pinning a port outside the
           # default range. Read past its root, the file is missing and the node is an error,
           # which is how an absolute link under `/proc/<pid>/root` resolves, measured.
-          docker build -q -t conformance-symlinked - <<'IMAGE'
-          FROM docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          docker build -q -t conformance-symlinked - <<IMAGE
+          FROM $image:8.19.22
           USER root
           RUN mkdir -p /srv/es-config \
            && printf 'network.host: 0.0.0.0\nhttp.port: 9350\ndiscovery.type: single-node\nxpack.security.enabled: false\n' \
@@ -85,7 +90,7 @@ jobs:
            && ln -s /srv/es-config/elasticsearch.yml /usr/share/elasticsearch/config/elasticsearch.yml
           USER 1000:0
           IMAGE
-          docker run -d --name conformance-symlinked -e node.name=conformance-symlinked \
+          docker run -d --name conformance-symlinked --hostname conformance-symlinked \
             -e "$heap" conformance-symlinked
 
           # Polled, since a cold runner takes a minute to start a JVM. Each node is asked only in
@@ -98,7 +103,7 @@ jobs:
                   *) echo 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9200/ | grep -q 200' ;;
               esac
           }
-          for node in conformance-7 conformance-8 conformance-9 conformance-secured conformance-symlinked; do
+          for node in conformance-7 conformance-8 conformance-9 conformance-94 conformance-secured conformance-symlinked; do
               waited=0
               until docker exec "$node" sh -c "$(probe "$node")"; do
                   waited=$((waited + 3))
@@ -114,7 +119,7 @@ jobs:
 
       - name: Give the open nodes one of everything the facet reports
         run: |
-          for node in conformance-7 conformance-8 conformance-9; do
+          for node in conformance-7 conformance-8 conformance-9 conformance-94; do
               docker exec -i "$node" sh <<'SEED'
           put() { curl -sf -XPUT -H 'Content-Type: application/json' "http://127.0.0.1:9200$1" -d "$2" > /dev/null; }
           put /_component_template/app-mappings '{"template":{"mappings":{"properties":{"title":{"type":"text"},"score":{"type":"float"}}}}}'
@@ -189,9 +194,9 @@ jobs:
           print('identical')
           unprivileged = facet('/tmp/unprivileged.json')
           nodes = unprivileged['data']['nodes']
-          silent = [node for node in nodes if node['error'] is None]
-          if len(nodes) != 5 or silent:
-              print('an unprivileged run should report five nodes, each with an error')
+          silent = [node for node in nodes if node['error'] is None and node['not_read'] is None]
+          if len(nodes) != 6 or silent:
+              print('an unprivileged run should report six nodes, each saying why it was not read')
               print(json.dumps(unprivileged, indent=1, sort_keys=True))
               sys.exit(1)
           print('unprivileged: every node says why it was not read')

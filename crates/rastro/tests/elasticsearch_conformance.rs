@@ -5,8 +5,8 @@
 //! way `rabbitmq_conformance.rs` asks a real broker.
 //!
 //! **It needs the nodes `.github/workflows/live-search.yml` starts, and fails without them**
-//! rather than skipping: 7.17 and 8.15 with security off and 8.15 at its secured default, each
-//! in a container with no published port, so every read goes through the join into the node's
+//! rather than skipping: one per supported release and one per path through the read, each in a
+//! container with no published port, so every read goes through the join into the node's
 //! network namespace. That join needs `CAP_SYS_ADMIN`, which is why this file is `test = false`
 //! in `Cargo.toml` and runs as root.
 //!
@@ -18,7 +18,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use rastro::collectors::elasticsearch::ElasticsearchCollector;
+use rastro::collectors::elasticsearch::{ApiCredential, ElasticsearchCollector};
 use rastro_collector::Collector;
 use rastro_fingerprint::{Completeness, Observation};
 
@@ -26,22 +26,33 @@ mod support;
 
 use support::observation::{field, is_null, items_of, keys_of, text};
 
-/// The node names the workflow starts, as `node.name`.
+/// The nodes the workflow starts, each named by its container's hostname, which is also its
+/// default `node.name`: the daemonised node's `-E` settings are on no argv, so no other name
+/// both rastro and `/proc` would agree on.
 const OPEN_7: &str = "conformance-7";
 const OPEN_8: &str = "conformance-8";
 
-/// 9.2, open, its data on the named volume `conformance-data`.
+/// 9.5, open, its data on the named volume `conformance-data`.
 const OPEN_9: &str = "conformance-9";
+
+/// 9.4, started with `-d` and switched open with `-E`, which left with its launcher.
+const DAEMONISED_9_4: &str = "conformance-94";
 
 /// The tail of the volume's host directory, under whichever engine's root holds it.
 const VOLUME_DIRECTORY: &str = "conformance-data/_data";
-const SECURED_8: &str = "conformance-secured";
 
-/// An 8.15 node whose `elasticsearch.yml` is an absolute symlink inside its image, pinning an
+/// 8.19 at its secured default, TLS on HTTP and security on, `elastic` given this password.
+const SECURED_8: &str = "conformance-secured";
+const SECURED_PASSWORD: &str = "conformance-password";
+
+/// An 8.19 node whose `elasticsearch.yml` is an absolute symlink inside its image, pinning an
 /// HTTP port outside the default range. Read past the node's root, the file is missing and no
 /// listener is in range, so this node is read only if the file is resolved inside it.
 const SYMLINKED_8: &str = "conformance-symlinked";
 const SYMLINKED_PORT: i64 = 9350;
+
+/// The open nodes, each seeded with one of everything the facet reports.
+const OPEN: [&str; 4] = [OPEN_7, OPEN_8, OPEN_9, DAEMONISED_9_4];
 
 /// The listing of every index with its document count, hidden and system ones included, which
 /// is where a write the facet caused would appear.
@@ -62,7 +73,7 @@ fn asked_directly(process_id: u32, path: &str) -> String {
     String::from_utf8_lossy(&run.stdout).into_owned()
 }
 
-/// Every server process on the box, by the `node.name` its environment gives it.
+/// Every server process on the box, by the hostname its environment gives it.
 fn servers_by_name() -> BTreeMap<String, u32> {
     let run = Command::new("pgrep")
         .args(["-f", "org.elasticsearch.bootstrap.Elasticsearch"])
@@ -75,7 +86,7 @@ fn servers_by_name() -> BTreeMap<String, u32> {
             let environ = std::fs::read(format!("/proc/{process_id}/environ")).ok()?;
             let name = String::from_utf8_lossy(&environ)
                 .split('\0')
-                .find_map(|entry| entry.strip_prefix("node.name=").map(str::to_owned))?;
+                .find_map(|entry| entry.strip_prefix("HOSTNAME=").map(str::to_owned))?;
             Some((name, process_id))
         })
         .collect()
@@ -91,11 +102,21 @@ fn nodes_by_name(facet: &Observation) -> BTreeMap<String, Observation> {
         .collect()
 }
 
-fn secured_node(facet: &Observation) -> Observation {
+fn reported<'facet>(
+    nodes: &'facet BTreeMap<String, Observation>,
+    name: &str,
+) -> &'facet Observation {
+    nodes
+        .get(name)
+        .unwrap_or_else(|| panic!("{name} in the facet: {nodes:?}"))
+}
+
+/// The one node not asked its name: the secured one, read without a credential.
+fn unnamed_node(facet: &Observation) -> Observation {
     items_of(&field(facet, "nodes"))
         .into_iter()
         .find(|node| is_null(&field(node, "node_name")))
-        .expect("the secured node, which is never asked its name")
+        .expect("the secured node, which tells nobody its name without a credential")
 }
 
 #[test]
@@ -109,10 +130,17 @@ fn every_node_the_workflow_started_is_found() {
     // Assert
     assert_eq!(
         servers.keys().cloned().collect::<Vec<_>>(),
-        [OPEN_7, OPEN_8, OPEN_9, SECURED_8, SYMLINKED_8],
+        [
+            OPEN_7,
+            OPEN_8,
+            OPEN_9,
+            DAEMONISED_9_4,
+            SECURED_8,
+            SYMLINKED_8
+        ],
         "start the nodes .github/workflows/live-search.yml starts"
     );
-    assert_eq!(items_of(&field(&facet, "nodes")).len(), 5);
+    assert_eq!(items_of(&field(&facet, "nodes")).len(), 6);
 }
 
 #[test]
@@ -122,9 +150,7 @@ fn a_node_whose_file_is_an_absolute_symlink_is_read_through_it() {
 
     // Assert
     let nodes = nodes_by_name(&facet);
-    let reported = nodes
-        .get(SYMLINKED_8)
-        .unwrap_or_else(|| panic!("{SYMLINKED_8} in the facet: {facet:?}"));
+    let reported = reported(&nodes, SYMLINKED_8);
     assert!(is_null(&field(reported, "error")), "{reported:?}");
     assert_eq!(
         support::observation::integer(&field(&field(reported, "http"), "port")),
@@ -142,18 +168,24 @@ fn an_open_node_reads_as_it_answers_itself() {
 
     // Assert
     let nodes = nodes_by_name(&facet);
-    for name in [OPEN_7, OPEN_8, OPEN_9] {
-        let reported = nodes
-            .get(name)
-            .unwrap_or_else(|| panic!("{name} in the facet"));
+    for name in OPEN {
+        let reported = reported(&nodes, name);
         let own: serde_json::Value =
             serde_json::from_str(&asked_directly(servers[name], "/")).expect("the node's JSON");
 
         assert!(is_null(&field(reported, "error")), "{name}: {reported:?}");
+        assert!(
+            is_null(&field(reported, "not_read")),
+            "{name}: {reported:?}"
+        );
+        assert!(
+            is_null(&field(reported, "unsupported")),
+            "{name}: {reported:?}"
+        );
         assert_eq!(reported.completeness(), Completeness::Complete, "{name}");
         assert_eq!(text(&field(reported, "network_namespace")), "separate");
         assert_eq!(
-            text(&field(&field(reported, "version"), "number")),
+            text(&field(reported, "release")),
             own["version"]["number"].as_str().expect("a version")
         );
         assert_eq!(
@@ -190,18 +222,55 @@ fn an_open_node_reads_as_it_answers_itself() {
 }
 
 #[test]
-fn a_secured_node_is_an_error_and_is_not_dialled() {
+fn a_secured_node_without_a_credential_is_asked_over_tls_and_not_read() {
     // Act
     let facet = ElasticsearchCollector::new().collect().expect("a facet");
 
-    // Assert: whether it was dialled is the workflow's to check, in the node's own log.
-    let reported = secured_node(&facet);
-    assert!(
-        text(&field(&reported, "error")).contains("TLS"),
+    // Assert: dialled in the protocol it serves, which the workflow checks in the node's own log.
+    let reported = unnamed_node(&facet);
+    assert_eq!(
+        text(&field(&reported, "not_read")),
+        "security is on and no credential was given (see --credentials)",
         "{reported:?}"
     );
-    assert!(is_null(&field(&reported, "http")));
+    assert!(is_null(&field(&reported, "error")), "{reported:?}");
+    assert_eq!(text(&field(&field(&reported, "http"), "scheme")), "https");
     assert_eq!(reported.completeness(), Completeness::Incomplete);
+}
+
+#[test]
+fn a_secured_node_is_read_with_the_operators_credential() {
+    // Arrange
+    let credential = ApiCredential::Basic {
+        username: "elastic".to_owned(),
+        password: SECURED_PASSWORD.to_owned(),
+    };
+
+    // Act
+    let facet = ElasticsearchCollector::authenticating(Some(credential))
+        .collect()
+        .expect("a facet");
+
+    // Assert: the open nodes ignore the credential, so every node is read.
+    let nodes = nodes_by_name(&facet);
+    let reported = reported(&nodes, SECURED_8);
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert!(is_null(&field(reported, "not_read")), "{reported:?}");
+    assert_eq!(text(&field(reported, "release")), "8.19.22");
+    assert!(!keys_of(&field(reported, "cluster_settings")).contains(&"not_read".to_owned()));
+    assert_eq!(nodes.len(), 6);
+}
+
+#[test]
+fn a_daemonised_node_is_read_though_its_launcher_is_gone() {
+    // Act
+    let facet = ElasticsearchCollector::new().collect().expect("a facet");
+
+    // Assert: its `-E` settings left with the launcher, and the node is still read, from itself.
+    let nodes = nodes_by_name(&facet);
+    let reported = reported(&nodes, DAEMONISED_9_4);
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert_eq!(text(&field(reported, "release")), "9.4.7");
 }
 
 #[test]
@@ -209,7 +278,7 @@ fn a_read_changes_no_index_on_any_open_node() {
     // Arrange: 12 s is well past the deprecation logger's 5 s flush, which a quicker look misses;
     // the write lands one to five seconds after the response.
     let servers = servers_by_name();
-    let before: Vec<String> = [OPEN_7, OPEN_8, OPEN_9]
+    let before: Vec<String> = OPEN
         .iter()
         .map(|name| asked_directly(servers[*name], INDEX_LIST))
         .collect();
@@ -219,7 +288,7 @@ fn a_read_changes_no_index_on_any_open_node() {
     thread::sleep(Duration::from_secs(12));
 
     // Assert
-    let after: Vec<String> = [OPEN_7, OPEN_8, OPEN_9]
+    let after: Vec<String> = OPEN
         .iter()
         .map(|name| asked_directly(servers[*name], INDEX_LIST))
         .collect();
