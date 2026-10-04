@@ -25,7 +25,7 @@ use crate::collectors::elasticsearch::source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
 };
 use crate::collectors::elasticsearch::value_objects::{
-    HttpEndpoint, NetworkNamespace, Transport, Unread,
+    HttpEndpoint, NetworkNamespace, Release, ReleaseSupport, Transport, Unread,
 };
 
 /// Reads everything this box and this node will say about `resident`.
@@ -35,6 +35,7 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         config_directory: resident
             .config()
             .map(|config| config.to_string_lossy().into_owned()),
+        release: resident.release().map(|release| release.to_string()),
         network_namespace: None,
         http: None,
         identity: None,
@@ -47,10 +48,34 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         snapshot_repositories: None,
         plugins: None,
         node_local: None,
+        unsupported: None,
+        not_read: None,
         error: None,
     };
 
-    if let Err(unread) = read_into(&mut node, proc, resident, client) {
+    let Some(release) = resident.release() else {
+        node.error = Some(Unread::new(
+            "the node's release could not be read: its install's lib/ holds no single \
+             elasticsearch-<version>.jar rastro could list",
+        ));
+        return node;
+    };
+    match release.support() {
+        ReleaseSupport::Supported(_) => {}
+        ReleaseSupport::ReadAs(closest) => {
+            node.unsupported = Some(format!(
+                "version {release} is not supported, read as {closest}"
+            ));
+        }
+        ReleaseSupport::BelowSeven => {
+            node.not_read = Some(Unread::new(format!(
+                "version {release} is below 7, which rastro does not read"
+            )));
+            return node;
+        }
+    }
+
+    if let Err(unread) = read_into(&mut node, proc, resident, release, client) {
         node.error = Some(unread);
     }
 
@@ -61,6 +86,7 @@ fn read_into(
     node: &mut Node,
     proc: &Path,
     resident: &ResidentNode,
+    release: Release,
     client: &HttpClient,
 ) -> Result<(), Unread> {
     let settings = NodeSettings::read_in(proc, resident)?;
@@ -95,6 +121,14 @@ fn read_into(
     node.http = Some(endpoint.clone());
 
     let answers = namespace.run(|| read_answers(client, &endpoint))??;
+    // The answer is this node's only where it names the release the node's install holds.
+    if answers.identity.version.number != release.to_string() {
+        return Err(Unread::new(format!(
+            "the node answers as version {}, and its install holds {release}, so the listener \
+             asked may not be this node's or its install changed under it",
+            answers.identity.version.number
+        )));
+    }
     node.identity = Some(answers.identity);
     node.cluster_settings = Some(answers.cluster_settings);
     node.index_templates = Some(answers.index_templates);

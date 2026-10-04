@@ -24,6 +24,9 @@ pub struct Node {
     /// `es.path.conf`, as the node's argv names it.
     pub config_directory: Option<String>,
 
+    /// The release its install holds, read before it is asked.
+    pub release: Option<String>,
+
     pub network_namespace: Option<NetworkNamespace>,
     pub http: Option<HttpEndpoint>,
     pub identity: Option<NodeIdentity>,
@@ -38,6 +41,13 @@ pub struct Node {
     pub snapshot_repositories: Option<Surface<SnapshotRepositories>>,
     pub plugins: Option<Surface<Plugins>>,
     pub node_local: Option<Surface<NodeLocal>>,
+
+    /// Where the node's release is not one rastro supports, which one it was read as.
+    pub unsupported: Option<String>,
+
+    /// Why the node was not asked, where that is the box's state and not rastro failing: a
+    /// release below 7, say. The `error` is for a node rastro supports and could not read.
+    pub not_read: Option<Unread>,
     pub error: Option<Unread>,
 }
 
@@ -159,7 +169,7 @@ impl From<&Node> for Observation {
     fn from(node: &Node) -> Self {
         let identity = node.identity.as_ref();
 
-        Observation::object([
+        let observation = Observation::object([
             (
                 "process_id",
                 Observation::integer(i64::from(node.process_id)).volatile(),
@@ -168,6 +178,7 @@ impl From<&Node> for Observation {
                 "config_directory",
                 optional(node.config_directory.as_deref()),
             ),
+            ("release", optional(node.release.as_deref())),
             (
                 "network_namespace",
                 optional(node.network_namespace.map(|namespace| namespace.as_str())),
@@ -252,8 +263,18 @@ impl From<&Node> for Observation {
                 "node_local",
                 surface_observation(node.node_local.as_ref(), |local| Observation::from(local)),
             ),
+            ("unsupported", optional(node.unsupported.as_deref())),
+            (
+                "not_read",
+                optional(node.not_read.as_ref().map(Unread::reason)),
+            ),
             ("error", optional(node.error.as_ref().map(Unread::reason))),
-        ])
-        .incomplete_when(node.error.is_some())
+        ]);
+
+        let read_as_another = match node.unsupported.is_some() {
+            true => observation.approximate(),
+            false => observation,
+        };
+        read_as_another.incomplete_when(node.error.is_some() || node.not_read.is_some())
     }
 }

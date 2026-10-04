@@ -1,6 +1,6 @@
 //! Which release a server jar's name says, and when it says none.
 
-use rastro::collectors::elasticsearch::{Release, ResidentNode};
+use rastro::collectors::elasticsearch::{Release, ReleaseSupport, ResidentNode, SupportedRelease};
 
 mod support;
 
@@ -127,4 +127,86 @@ fn release_names_none_for_an_install_with_no_lib() {
 
     // Assert
     assert_eq!(nodes[0].release(), None);
+}
+
+fn support_of(version: &str) -> ReleaseSupport {
+    Release::parse(version).expect("a release").support()
+}
+
+#[test]
+fn support_of_each_supported_release_is_supported() {
+    // Act & Assert
+    assert_eq!(
+        support_of("7.17.29"),
+        ReleaseSupport::Supported(SupportedRelease::V7_17)
+    );
+    assert_eq!(
+        support_of("8.19.0"),
+        ReleaseSupport::Supported(SupportedRelease::V8_19)
+    );
+    assert_eq!(
+        support_of("9.4.7"),
+        ReleaseSupport::Supported(SupportedRelease::V9_4)
+    );
+    assert_eq!(
+        support_of("9.5.4"),
+        ReleaseSupport::Supported(SupportedRelease::V9_5)
+    );
+}
+
+#[test]
+fn support_of_another_7_is_read_as_7_17() {
+    // Act & Assert
+    assert_eq!(
+        support_of("7.10.2"),
+        ReleaseSupport::ReadAs(SupportedRelease::V7_17)
+    );
+}
+
+#[test]
+fn support_of_another_8_is_read_as_8_19() {
+    // Act & Assert
+    assert_eq!(
+        support_of("8.15.3"),
+        ReleaseSupport::ReadAs(SupportedRelease::V8_19)
+    );
+}
+
+#[test]
+fn support_of_a_9_before_9_4_is_read_as_9_4() {
+    // Act & Assert
+    assert_eq!(
+        support_of("9.2.0"),
+        ReleaseSupport::ReadAs(SupportedRelease::V9_4)
+    );
+}
+
+#[test]
+fn support_of_a_9_after_9_5_is_read_as_9_5() {
+    // Act & Assert
+    assert_eq!(
+        support_of("9.6.0"),
+        ReleaseSupport::ReadAs(SupportedRelease::V9_5)
+    );
+}
+
+#[test]
+fn support_of_a_major_after_9_is_read_as_9_5() {
+    // Act & Assert: the newest shape rastro knows, as the postgresql collector reads a newer major.
+    assert_eq!(
+        support_of("10.1.0"),
+        ReleaseSupport::ReadAs(SupportedRelease::V9_5)
+    );
+}
+
+#[test]
+fn support_of_a_release_below_7_is_below_seven() {
+    // Act & Assert
+    assert_eq!(support_of("6.8.23"), ReleaseSupport::BelowSeven);
+}
+
+#[test]
+fn a_supported_release_is_named_as_major_and_minor() {
+    // Act & Assert
+    assert_eq!(SupportedRelease::V8_19.to_string(), "8.19");
 }

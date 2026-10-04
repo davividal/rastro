@@ -17,6 +17,7 @@ fn node(process_id: u32, port: Option<u16>, config: &str) -> Node {
     Node {
         process_id,
         config_directory: Some(config.to_owned()),
+        release: None,
         network_namespace: None,
         http: port.map(|port| {
             HttpEndpoint::new(
@@ -34,6 +35,8 @@ fn node(process_id: u32, port: Option<u16>, config: &str) -> Node {
         snapshot_repositories: None,
         plugins: None,
         node_local: None,
+        unsupported: None,
+        not_read: None,
         error: None,
     }
 }

@@ -8,7 +8,7 @@ use rastro_fingerprint::{Completeness, Volatility};
 
 mod support;
 
-use support::es_node::{FakeNode, ROOT};
+use support::es_node::{FakeNode, ROOT, install};
 use support::fs_tree::scratch_tree;
 use support::observation::{boolean, field, integer, is_null, items_of, text};
 
@@ -93,7 +93,7 @@ fn collect_reports_what_a_running_node_says_about_itself() {
     );
     assert_eq!(
         text(&field(&field(reported, "version"), "number")),
-        "8.15.3"
+        "8.19.22"
     );
     assert_eq!(
         text(&field(&field(reported, "version"), "build_type")),
@@ -402,4 +402,111 @@ fn collect_does_not_read_a_node_that_has_not_joined_a_cluster() {
         "{reported:?}"
     );
     assert_eq!(node.requests(), ["/"]);
+}
+
+/// `GET /` as a node of `release` answers it.
+fn root_of(release: &str) -> String {
+    ROOT.replace(
+        r#""number" : "8.19.22""#,
+        &format!(r#""number" : "{release}""#),
+    )
+}
+
+#[test]
+fn collect_names_the_release_the_install_holds() {
+    // Arrange
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-release");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(text(&field(reported, "release")), "8.19.22");
+    assert!(is_null(&field(reported, "unsupported")));
+    assert_eq!(facet.approximate_items(), 0);
+}
+
+#[test]
+fn collect_reads_an_unsupported_release_as_the_closest_supported_one_and_says_so() {
+    // Arrange
+    let answer = root_of("8.15.3");
+    let node = FakeNode::serving(&[("/", answer.as_str())]);
+    let proc = node.proc("elasticsearch-facet-unsupported");
+    install(&proc, "8.15.3");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert: read, and marked, so the run's summary tells the operator.
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(text(&field(reported, "node_name")), "search-1");
+    assert_eq!(
+        text(&field(reported, "unsupported")),
+        "version 8.15.3 is not supported, read as 8.19"
+    );
+    assert_eq!(facet.approximate_items(), 1);
+}
+
+#[test]
+fn collect_sends_nothing_to_a_node_below_7_and_says_why() {
+    // Arrange
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-below-seven");
+    install(&proc, "6.8.23");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert: listed with what the box shows, not asked, and not an error.
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+    assert_eq!(text(&field(reported, "release")), "6.8.23");
+    assert_eq!(
+        text(&field(reported, "not_read")),
+        "version 6.8.23 is below 7, which rastro does not read"
+    );
+    assert!(is_null(&field(reported, "error")));
+    assert_eq!(reported.completeness(), Completeness::Incomplete);
+}
+
+#[test]
+fn collect_sends_nothing_to_a_node_whose_release_cannot_be_read() {
+    // Arrange
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-no-release");
+    std::fs::remove_dir_all(proc.join("600/root/usr/share/elasticsearch/lib")).expect("a lib");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+    assert!(
+        text(&field(reported, "error")).contains("release"),
+        "{}",
+        text(&field(reported, "error"))
+    );
+}
+
+#[test]
+fn collect_refuses_a_node_whose_answer_names_another_release_than_its_install() {
+    // Arrange: the jar was replaced under a running node, or the listener is not this node's.
+    let answer = root_of("8.19.21");
+    let node = FakeNode::serving(&[("/", answer.as_str())]);
+    let proc = node.proc("elasticsearch-facet-release-mismatch");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(
+        text(&field(reported, "error")).contains("8.19.21"),
+        "{}",
+        text(&field(reported, "error"))
+    );
+    assert!(is_null(&field(reported, "cluster_settings")));
 }

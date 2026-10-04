@@ -32,7 +32,7 @@ pub use digest::Xxh3Digest;
 pub use error::FingerprintError;
 pub use facet::{Facet, FacetName, FacetOutcome};
 pub use observation::{
-    Completeness, Content, Observation, Scalar, Sensitivity, Visible, VisibleContent,
+    Completeness, Content, Fidelity, Observation, Scalar, Sensitivity, Visible, VisibleContent,
     VisibleObject, VisibleSequence, VisibleSet, Volatility,
 };
 pub use presentation::{Disclosure, Presentation};

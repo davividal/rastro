@@ -1,8 +1,8 @@
 use rastro_fingerprint::View;
 use rastro_fingerprint::observation::redaction;
 use rastro_fingerprint::{
-    Completeness, Content, FingerprintError, Observation, Presentation, Scalar, Sensitivity,
-    Volatility,
+    Completeness, Content, Fidelity, FingerprintError, Observation, Presentation, Scalar,
+    Sensitivity, Volatility,
 };
 
 fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, Observation> {
@@ -640,4 +640,53 @@ fn a_set_is_equal_whatever_order_when_nested_sets_differ_only_in_their_named_fie
 
     // Assert
     assert_eq!(given, reversed);
+}
+
+#[test]
+fn approximate_annotates_the_observation_without_changing_its_content() {
+    // Act
+    let observation = Observation::text("read as 8.19").approximate();
+
+    // Assert
+    assert_eq!(observation.fidelity(), Fidelity::Approximate);
+    assert_eq!(
+        observation.content(),
+        Observation::text("read as 8.19").content()
+    );
+}
+
+#[test]
+fn an_observation_is_exact_unless_marked() {
+    // Act & Assert
+    assert_eq!(Observation::null().fidelity(), Fidelity::Exact);
+}
+
+#[test]
+fn approximate_items_counts_every_marked_node_however_deep() {
+    // Arrange: two nodes read with another release's rules, one inside a sequence and one in a set.
+    let observation = Observation::object([
+        ("one", Observation::null().approximate()),
+        (
+            "more",
+            Observation::sequence([Observation::null().approximate(), Observation::null()]),
+        ),
+        ("again", Observation::set([Observation::null().approximate()])),
+    ]);
+
+    // Act & Assert
+    assert_eq!(observation.approximate_items(), 3);
+}
+
+#[test]
+fn a_view_keeps_the_approximate_mark_on_what_it_keeps() {
+    // Arrange
+    let observation = Observation::object([("node", Observation::null().approximate())]);
+
+    // Act
+    let shown = observation
+        .in_view(View::Diffable)
+        .expect("nothing here is volatile");
+
+    // Assert
+    assert_eq!(shown.approximate_items(), 1);
 }

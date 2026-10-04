@@ -113,6 +113,30 @@ fn an_ok_facet_with_refused_items_is_counted_as_incomplete() {
 }
 
 #[test]
+fn an_ok_facet_read_with_another_versions_rules_is_counted_as_approximate() {
+    // Arrange: an Elasticsearch node of a release rastro does not support, read with the rules of
+    // the closest one it does. Nothing is missing, so it is not incomplete, but the operator
+    // should know the reading is not one rastro vouches for.
+    let run = fingerprint([facet(
+        "elasticsearch",
+        FacetOutcome::ok(Observation::object([(
+            "nodes",
+            Observation::list([Observation::null().approximate()]),
+        )])),
+    )]);
+
+    // Act
+    let messages = Shortfall::of(&run).messages();
+
+    // Assert
+    assert_eq!(
+        messages,
+        ["1 facet was read with another version's rules:\n  \
+          elasticsearch: 1 item"]
+    );
+}
+
+#[test]
 fn a_run_short_both_ways_says_both() {
     // Arrange
     let run = fingerprint([

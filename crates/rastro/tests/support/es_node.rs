@@ -29,13 +29,19 @@ const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
 
 const TCP_HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
 
-/// What `GET /` answers on 8.15.3, trimmed.
+/// The release every fixture's server has installed, which [`ROOT`] answers with.
+pub const RELEASE: &str = "8.19.22";
+
+/// Where the fixture's server is installed, as its argv names it.
+const HOME: &str = "usr/share/elasticsearch";
+
+/// What `GET /` answers on 8.15.3, trimmed, with the release the fixture installs.
 pub const ROOT: &str = r#"{
   "name" : "search-1",
   "cluster_name" : "docker-cluster",
   "cluster_uuid" : "uh7ULRBqQ1m4mIbk9MNkIg",
   "version" : {
-    "number" : "8.15.3",
+    "number" : "8.19.22",
     "build_flavor" : "default",
     "build_type" : "docker",
     "build_hash" : "f97532e680b555c3a05e73a74c28afb666923018",
@@ -144,7 +150,19 @@ impl FakeNode {
             config_file.unwrap_or(""),
         );
         super::process::started(&proc, PID, "1", 5);
+        install(&proc, RELEASE);
 
         proc
     }
+}
+
+/// Puts `release`'s server jar in the fixture server's install, in place of any other.
+pub fn install(proc: &std::path::Path, release: &str) {
+    let lib = proc.join(PID).join("root").join(HOME).join("lib");
+    let _ = std::fs::remove_dir_all(&lib);
+    write(
+        &proc.join(PID).join("root"),
+        &format!("{HOME}/lib/elasticsearch-{release}.jar"),
+        "",
+    );
 }

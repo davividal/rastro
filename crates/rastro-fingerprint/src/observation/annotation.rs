@@ -41,3 +41,15 @@ pub enum Completeness {
     Complete,
     Incomplete,
 }
+
+/// Whether rastro read this item by its own rules, or by those of something close to it.
+///
+/// `Approximate` marks an item read with rules rastro does not vouch for: a service at a version
+/// it does not support, read as the closest one it does. Nothing is missing, so it is not
+/// [`Completeness::Incomplete`]; what reads it is the operator's summary, which says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Fidelity {
+    #[default]
+    Exact,
+    Approximate,
+}
