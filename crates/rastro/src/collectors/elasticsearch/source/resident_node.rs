@@ -161,14 +161,15 @@ enum Inspection {
 impl ResidentNode {
     /// The servers on a process table the caller names, and whether any process was unseen.
     ///
-    /// **Never fails.** An unreadable `/proc` and an entry that vanished mid-walk both mean
-    /// nothing was found to ask.
+    /// **Never fails.** An entry that vanished mid-walk is a process that left; an unreadable
+    /// `/proc` is every process unseen, so the facet cannot call the box empty.
     pub fn census_in(proc: &Path) -> Census {
         let mut census = Census {
             nodes: Vec::new(),
             some_processes_unseen: false,
         };
         let Ok(entries) = fs::read_dir(proc) else {
+            census.some_processes_unseen = true;
             return census;
         };
 

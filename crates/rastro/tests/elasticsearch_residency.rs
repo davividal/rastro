@@ -396,3 +396,17 @@ fn census_in_takes_a_process_with_no_cmdline_for_one_that_left() {
     // Assert
     assert!(!census.some_processes_unseen);
 }
+
+#[test]
+fn census_in_cannot_say_nothing_runs_where_the_process_table_cannot_be_listed() {
+    // Arrange: found by review. An unlistable table reported no node and nothing unseen, which
+    // the facet read as a box with nothing running: `absent`, a claim about a box it never saw.
+    let proc = Path::new("/nonexistent/proc");
+
+    // Act
+    let census = ResidentNode::census_in(proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(census.some_processes_unseen);
+}
