@@ -48,14 +48,32 @@ const UNAUTHORISED: u16 = 401;
 const FORBIDDEN: u16 = 403;
 const LAST_CHUNK: &[u8] = b"0\r\n\r\n";
 
+/// A check that the peer is still the node, run before each request.
+type PeerCheck = Arc<dyn Fn() -> Result<(), Unread> + Send + Sync>;
+
 /// A client for one node's HTTP API.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpClient {
     timeout: Duration,
     body_limit: usize,
 
     /// What every request authenticates with, where the operator gave one.
     credential: Option<ApiCredential>,
+
+    /// Whether the listener is still the node's, asked before each request.
+    peer_check: Option<PeerCheck>,
+}
+
+impl std::fmt::Debug for HttpClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpClient")
+            .field("timeout", &self.timeout)
+            .field("body_limit", &self.body_limit)
+            .field("credential", &self.credential)
+            .field("peer_check", &self.peer_check.is_some())
+            .finish()
+    }
 }
 
 impl HttpClient {
@@ -68,6 +86,23 @@ impl HttpClient {
             timeout,
             body_limit,
             credential: None,
+            peer_check: None,
+        }
+    }
+
+    /// The same client, asking `check` before each request whether the listener is still the
+    /// node's, and sending nothing where it is not.
+    ///
+    /// Found by review: a node that exits after its listener was found leaves the port to whoever
+    /// binds it next, and the next request, a credential with it, would go there. The check
+    /// narrows that to the instant between it and the connection, which nothing closes.
+    pub fn checking_the_peer_with(
+        self,
+        check: impl Fn() -> Result<(), Unread> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            peer_check: Some(Arc::new(check)),
+            ..self
         }
     }
 
@@ -78,6 +113,9 @@ impl HttpClient {
 
     /// The body of a `200` answer to `GET path`; any other outcome is the reason it was not had.
     pub fn get(&self, endpoint: &HttpEndpoint, path: &str) -> Result<String, Unread> {
+        if let Some(check) = &self.peer_check {
+            check()?;
+        }
         let address = socket_address_of(endpoint)?;
         let raw = self.exchange(address, endpoint.transport(), path)?;
 

@@ -87,7 +87,16 @@ impl FakeNode {
 
     /// A node answering each route with its own status, and a 404 for anything else.
     pub fn answering(routes: &[(&str, u16, &str)]) -> Self {
-        Self::listening(routes, false)
+        Self::listening(routes, false, |_| {})
+    }
+
+    /// A node that runs `after` with each path it has answered, to change the box mid-read.
+    pub fn serving_then(routes: &[(&str, &str)], after: impl Fn(&str) + Send + 'static) -> Self {
+        let answered: Vec<(&str, u16, &str)> = routes
+            .iter()
+            .map(|(path, body)| (*path, 200, *body))
+            .collect();
+        Self::listening(&answered, false, after)
     }
 
     /// The same node on TLS, presenting a certificate nothing vouches for.
@@ -96,10 +105,14 @@ impl FakeNode {
             .iter()
             .map(|(path, body)| (*path, 200, *body))
             .collect();
-        Self::listening(&answered, true)
+        Self::listening(&answered, true, |_| {})
     }
 
-    fn listening(routes: &[(&str, u16, &str)], tls: bool) -> Self {
+    fn listening(
+        routes: &[(&str, u16, &str)],
+        tls: bool,
+        after: impl Fn(&str) + Send + 'static,
+    ) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let routes: Vec<(String, u16, String)> = routes
             .iter()
@@ -113,6 +126,7 @@ impl FakeNode {
                 .unwrap_or_default()
                 .to_owned();
             seen.lock().expect("the request log").push(path.clone());
+            after(&path);
             match routes.iter().find(|(route, _, _)| *route == path) {
                 Some((_, status, body)) => format!(
                     "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",

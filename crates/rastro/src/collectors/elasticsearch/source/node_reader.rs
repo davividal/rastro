@@ -103,6 +103,16 @@ fn read_into(
     let endpoint = http_endpoint(&listeners, &settings)?.over(settings.transport());
     node.http = Some(endpoint.clone());
 
+    let held = HeldListener {
+        proc: proc.to_path_buf(),
+        process_id: resident.process_id(),
+        port: endpoint.port().as_u16(),
+    };
+    let client = client
+        .clone()
+        .checking_the_peer_with(move || held.still_the_nodes());
+    let client = &client;
+
     let answers = namespace.run(|| read_answers(client, &endpoint))??;
     // The answer is this node's only where it names the release the node's install holds.
     if answers.identity.version.number != release.to_string() {
@@ -123,6 +133,29 @@ fn read_into(
     node.plugins = Some(answers.plugins);
     node.node_local = Some(answers.node_local);
     Ok(())
+}
+
+/// The listener a node was dialled on, which must still be the node's before each request.
+struct HeldListener {
+    proc: std::path::PathBuf,
+    process_id: u32,
+    port: u16,
+}
+
+impl HeldListener {
+    fn still_the_nodes(&self) -> Result<(), Unread> {
+        let listeners = NodeListener::read_in(&self.proc, self.process_id)?;
+        match listeners
+            .iter()
+            .any(|listener| listener.port.as_u16() == self.port)
+        {
+            true => Ok(()),
+            false => Err(Unread::new(format!(
+                "the node no longer holds its listener on port {}, so nothing more is sent there",
+                self.port
+            ))),
+        }
+    }
 }
 
 /// What the node said, one request per surface.

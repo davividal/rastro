@@ -581,3 +581,31 @@ fn collect_reports_a_node_that_rejects_the_credential_given_as_not_read() {
     );
     assert!(is_null(&field(reported, "error")));
 }
+
+#[test]
+fn collect_asks_nothing_more_of_a_listener_the_node_no_longer_holds() {
+    // Arrange: found by review. The node exits after its listener was found, and another process
+    // could take the port and be sent the next request, a credential with it. Each request checks
+    // the node still holds the listener; here it lets go of it once `/` is answered.
+    let name = "elasticsearch-facet-listener-lost";
+    let descriptor = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(name)
+        .join("600/fd/3");
+    let node = FakeNode::serving_then(&[("/", ROOT)], move |path| {
+        if path == "/" {
+            let _ = std::fs::remove_file(&descriptor);
+        }
+    });
+    let proc = node.proc(name);
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(node.requests(), ["/"]);
+    assert!(
+        text(&field(&field(reported, "cluster_settings"), "error")).contains("no longer"),
+        "{reported:?}"
+    );
+}
