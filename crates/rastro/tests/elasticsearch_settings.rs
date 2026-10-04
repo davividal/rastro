@@ -170,7 +170,8 @@ fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
     write(
         &proc,
         "600/cmdline",
-        "/usr/share/elasticsearch/jdk/bin/java\0--module-path\0/usr/share/elasticsearch/lib\0\
+        "/usr/share/elasticsearch/jdk/bin/java\0-Des.distribution.type=tar\0\
+         --module-path\0/usr/share/elasticsearch/lib\0\
          -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
     );
     support::process::started(&proc, "600", "40", 5);

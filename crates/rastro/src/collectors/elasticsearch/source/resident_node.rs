@@ -67,8 +67,16 @@ const OPTIONS_WITH_A_VALUE: [&str; 13] = [
 /// The option that makes a jar's manifest name the main class instead.
 const JAR_OPTION: &str = "-jar";
 
-/// The main class of the 8.x launcher, which forks the server.
+/// The main class of the Java launcher that forks an 8.x and 9.x server, up to 9.2.
 const LAUNCHER_MAIN: &str = "org.elasticsearch.launcher.CliToolLauncher";
+
+/// The main class of the 9.4 launcher where its native binary cannot run, measured in the
+/// 9.4.7 `bin/elasticsearch`.
+const SERVER_LAUNCHER_MAIN: &str = "org.elasticsearch.server.launcher.ServerLauncher";
+
+/// The native launcher 9.4 and later fork the server from, `lib/tools/server-launcher/`. Not a
+/// JVM, so its argv is its name and then the server's own options, `-E` among them.
+const NATIVE_LAUNCHER: &str = "server-launcher";
 
 /// The system properties the launcher sets for where the node is installed and configured.
 const HOME_PROPERTY: &str = "-Des.path.home=";
@@ -290,10 +298,16 @@ impl ResidentNode {
         let home = property_in(&spelled, HOME_PROPERTY).or_else(|| module_install(&spelled));
         let config = property_in(&spelled, CONFIG_PROPERTY)
             .or_else(|| configured_in_environment(path, home.as_deref()));
+        let distribution = property_in(&spelled, DISTRIBUTION_PROPERTY)
+            .map(|distribution| distribution.to_string_lossy().into_owned());
+        let release = home
+            .as_deref()
+            .and_then(|home| installed_release(path, home));
+        let module_server = starts_as_a_module(&spelled);
 
         // A launcher that exited, or a parent that is not one, lends nothing: taking any
         // parent's argv would read another program's flags as the node's settings.
-        let (launch, launcher_gone) = match starts_as_a_module(&spelled) {
+        let (launch, launcher_gone) = match module_server {
             true => match launcher_arguments(proc, path) {
                 Some(launcher) => (launcher, false),
                 None => (own, true),
@@ -302,29 +316,18 @@ impl ResidentNode {
         };
         let launched: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
 
-        let release = home
-            .as_deref()
-            .and_then(|home| installed_release(path, home));
-
         Some(Self {
             process_id,
             home,
             config,
             release,
-            distribution: property_in(&launched, DISTRIBUTION_PROPERTY)
-                .map(|distribution| distribution.to_string_lossy().into_owned()),
+            distribution,
             started_at: started_at(proc, path),
             launcher_gone,
             launched_with_an_argument_file: launch.unread_argument_file,
             launch_arguments_are_exact: launch.exact,
-            application_arguments: launch_of(&launched)
-                .map(|start| {
-                    launch
-                        .arguments
-                        .get(start.arguments_from..)
-                        .unwrap_or_default()
-                        .to_vec()
-                })
+            application_arguments: application_start(&launched)
+                .map(|start| launch.arguments.get(start..).unwrap_or_default().to_vec())
                 .unwrap_or_default(),
         })
     }
@@ -509,7 +512,24 @@ fn clock_ticks_per_second() -> u64 {
     100
 }
 
-/// The argv of the process's parent, where the parent is the 8.x launcher.
+/// Where a launch argv's own arguments begin: after the entry point of a JVM, after the name of
+/// the native launcher.
+fn application_start(arguments: &[&str]) -> Option<usize> {
+    match is_native_launcher(arguments) {
+        true => Some(1),
+        false => launch_of(arguments).map(|launch| launch.arguments_from),
+    }
+}
+
+fn is_native_launcher(arguments: &[&str]) -> bool {
+    arguments
+        .first()
+        .map(Path::new)
+        .and_then(Path::file_name)
+        .is_some_and(|program| program == NATIVE_LAUNCHER)
+}
+
+/// The argv of the process's parent, where the parent is a launcher that forks the server.
 ///
 /// The parent is the fourth field of `stat`, counted after the last `)`, because the second
 /// field is the program name in parentheses and a name may hold spaces and parentheses itself.
@@ -519,7 +539,11 @@ fn launcher_arguments(proc: &Path, process: &Path) -> Option<Argv> {
     let launcher = arguments_of(&proc.join(parent)).ok()?;
     let spelled: Vec<&str> = launcher.arguments.iter().map(String::as_str).collect();
 
-    is_java_running(&spelled, LAUNCHER_MAIN).then_some(launcher)
+    let launches_the_server = is_native_launcher(&spelled)
+        || is_java_running(&spelled, LAUNCHER_MAIN)
+        || is_java_running(&spelled, SERVER_LAUNCHER_MAIN);
+
+    launches_the_server.then_some(launcher)
 }
 
 /// Whether this argv is a JVM started with the server's main class.

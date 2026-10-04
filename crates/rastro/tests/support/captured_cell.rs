@@ -24,7 +24,14 @@ pub struct Install {
 
 /// The `/proc` a cell's capture describes, with each node's server and parent process.
 pub fn captured_proc(cell: &str, installs: &[Install]) -> PathBuf {
-    let proc = scratch_tree(&format!("elasticsearch-cell-{cell}"), &[]);
+    // Named after the process and the test as well: two tests rebuilding one cell's tree at
+    // once, in one binary or under nextest in two, would each remove the other's.
+    let test = std::thread::current()
+        .name()
+        .unwrap_or("unnamed")
+        .replace("::", "-");
+    let process = std::process::id();
+    let proc = scratch_tree(&format!("elasticsearch-cell-{cell}-{process}-{test}"), &[]);
     let captured = cell_directory(cell);
 
     for install in installs {
