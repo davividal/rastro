@@ -72,7 +72,7 @@ impl From<&VirtualHost> for Observation {
             ),
             (
                 "server_names",
-                Observation::set(host.server_names.iter().map(Observation::from)),
+                Observation::sequence(host.server_names.iter().map(Observation::from)),
             ),
             (
                 "trusted_proxies",

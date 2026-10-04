@@ -416,6 +416,52 @@ fn a_location_renders_where_it_sends_and_what_it_does_not_log() {
 }
 
 #[test]
+fn a_host_renders_its_names_in_the_order_written() {
+    // Arrange: the first name is the primary one, so the order is state and must survive
+    // rendering, not only parsing.
+    let host = VirtualHost {
+        server_names: vec![
+            ServerName::new("www.example.org").expect("a name"),
+            ServerName::new("example.org").expect("a name"),
+        ],
+        ..virtual_host()
+    };
+
+    // Act
+    let rendered = Observation::from(&host);
+
+    // Assert
+    let names: Vec<String> = items_of(&field(&rendered, "server_names"))
+        .iter()
+        .map(text)
+        .collect();
+    assert_eq!(names, ["www.example.org", "example.org"]);
+}
+
+#[test]
+fn a_pool_renders_its_members_in_the_order_written() {
+    // Arrange: round-robin walks the members in order and `hash` maps a key by position.
+    let member = |address: &str| UpstreamServer {
+        endpoint: Endpoint::new(address).expect("an address"),
+        parameters: Vec::new(),
+    };
+    let pool = Upstream {
+        servers: vec![member("10.0.0.8:8080"), member("10.0.0.7:8080")],
+        ..upstream()
+    };
+
+    // Act
+    let rendered = Observation::from(&pool);
+
+    // Assert
+    let hosts: Vec<String> = items_of(&field(&rendered, "servers"))
+        .iter()
+        .map(|member| text(&field(&field(member, "endpoint"), "host")))
+        .collect();
+    assert_eq!(hosts, ["10.0.0.8", "10.0.0.7"]);
+}
+
+#[test]
 fn a_pool_renders_its_members_and_its_settings() {
     // Act
     let pool = items_of(&field(&field(&facet(), "http"), "upstreams")).remove(0);

@@ -9,9 +9,10 @@ use crate::collectors::nginx::value_objects::UpstreamName;
 
 /// An `upstream` block: its name, its members, and how it balances between them.
 ///
-/// **Members are sorted and the settings are a map, because neither order is state.** nginx
-/// weighs a pool by the parameters on each line, not by which line came first, so a member
-/// moved from the top to the bottom has changed nothing and must not read as a change.
+/// **Members keep the order written, and the settings are a map.** Round-robin walks the
+/// members in order, and `hash` and `ip_hash` map a key to a member by its position, so a
+/// member moved from the top to the bottom moves traffic. The settings are directives nginx
+/// reads by name, so their order is not state.
 ///
 /// `settings` carries every directive in the block that is not a `server`, verbatim: the
 /// balancing method (`least_conn`, `ip_hash`, `hash`), `keepalive`, `zone`, and whatever a
@@ -30,7 +31,7 @@ impl From<&Upstream> for Observation {
             ("name", Observation::from(&upstream.name)),
             (
                 "servers",
-                Observation::set(upstream.servers.iter().map(Observation::from)),
+                Observation::sequence(upstream.servers.iter().map(Observation::from)),
             ),
             (
                 "settings",
