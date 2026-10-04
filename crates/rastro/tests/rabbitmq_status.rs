@@ -198,12 +198,16 @@ fn parse_records_every_listener_the_node_bound() {
     let rendered = Observation::from(&RabbitmqctlStatus::parse(MEASURED).expect("well formed"));
 
     // Assert: what the node says it is listening on, which is a different fact from what the
-    // `sockets` facet observed bound, and kept apart so the two can disagree.
+    // `sockets` facet observed bound, and kept apart so the two can disagree. A set, by
+    // interface and then port: the node prints clustering first, and that order means nothing.
     let listeners = items_of(&field(&rendered, "listeners"));
-    assert_eq!(listeners.len(), 2);
+    let protocols: Vec<String> = listeners
+        .iter()
+        .map(|listener| text(&field(listener, "protocol")))
+        .collect();
+    assert_eq!(protocols, ["amqp", "clustering"]);
 
-    let clustering = &listeners[0];
-    assert_eq!(text(&field(clustering, "protocol")), "clustering");
+    let clustering = &listeners[1];
     assert_eq!(integer(&field(clustering, "port")), 25672);
     assert_eq!(text(&field(clustering, "interface")), "[::]");
 }

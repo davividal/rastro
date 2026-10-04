@@ -74,6 +74,7 @@ pub struct NodeStatus {
     /// The plugins the node is actually running, which is the effective half of that file.
     pub active_plugins: Vec<String>,
 
+    /// A set by interface, port and protocol: the node prints them in no order it acts on.
     pub listeners: Vec<Listener>,
 
     /// The resource limits the node has hit, if any.
@@ -138,7 +139,10 @@ impl From<&NodeStatus> for Observation {
             ("active_plugins", text_set(&status.active_plugins)),
             (
                 "listeners",
-                Observation::sequence(status.listeners.iter().map(Observation::from)),
+                Observation::set_by(
+                    ["interface", "port", "protocol"],
+                    status.listeners.iter().map(Observation::from),
+                ),
             ),
             (
                 "alarms",
