@@ -61,7 +61,7 @@ pub struct Definitions {
     ///
     /// A set rather than a list because the ordering is structural: nothing in the source can
     /// hand the document an order that came from the export rather than from the bindings
-    /// themselves.
+    /// themselves. Rendered by source exchange first, which is how RabbitMQ lists them.
     pub bindings: BTreeMap<String, BTreeSet<Binding>>,
 }
 
@@ -191,7 +191,10 @@ impl From<&Definitions> for Observation {
                 Observation::object(definitions.bindings.iter().map(|(vhost, bindings)| {
                     (
                         vhost.as_str(),
-                        Observation::set(bindings.iter().map(Observation::from)),
+                        Observation::set_by(
+                            ["source", "destination_type", "destination", "routing_key"],
+                            bindings.iter().map(Observation::from),
+                        ),
                     )
                 })),
             ),

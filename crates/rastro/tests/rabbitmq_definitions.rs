@@ -793,3 +793,39 @@ fn parse_refuses_anything_after_the_document() {
     assert!(RabbitmqctlDefinitions::parse(&second_document).is_err());
     assert!(RabbitmqctlDefinitions::parse(&trailing_report).is_err());
 }
+
+#[test]
+fn a_vhosts_bindings_render_in_order_of_their_source_exchange() {
+    // Arrange: alphabetically `destination` leads, so a binding re-pointed at another queue
+    // would move. Grouped by the exchange that routes them, which is how RabbitMQ lists them.
+    let binding = r#"{
+      "arguments": {},
+      "destination": "work",
+      "destination_type": "queue",
+      "routing_key": "k",
+      "source": "spike.direct",
+      "vhost": "spike"
+    }"#;
+    assert_eq!(MEASURED.matches(binding).count(), 1);
+    let two = MEASURED.replace(
+        binding,
+        r#"{"arguments": {}, "destination": "z.queue", "destination_type": "queue",
+            "routing_key": "k", "source": "a.exchange", "vhost": "spike"},
+           {"arguments": {}, "destination": "a.queue", "destination_type": "queue",
+            "routing_key": "k", "source": "z.exchange", "vhost": "spike"}"#,
+    );
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(&two).expect("well formed");
+    let bindings = items_of(&field(
+        &field(&Observation::from(&definitions), "bindings"),
+        "spike",
+    ));
+
+    // Assert
+    let sources: Vec<String> = bindings
+        .iter()
+        .map(|binding| text(&field(binding, "source")))
+        .collect();
+    assert_eq!(sources, ["a.exchange", "z.exchange"]);
+}
