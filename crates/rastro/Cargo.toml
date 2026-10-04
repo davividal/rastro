@@ -47,6 +47,7 @@ yaml-rust2 = { workspace = true }
 # build compiles the refusal instead.
 # The one TLS client, for an Elasticsearch node whose HTTP listener wants it.
 rustls = { workspace = true }
+base64 = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true }

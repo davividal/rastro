@@ -25,8 +25,8 @@ pub use source::{
     http_endpoint, read_node,
 };
 pub use value_objects::{
-    ApiValue, HttpEndpoint, NetworkNamespace, Release, ReleaseSupport, SupportedRelease, Transport,
-    Unread,
+    ApiCredential, ApiValue, HttpEndpoint, NetworkNamespace, Release, ReleaseSupport,
+    SupportedRelease, Transport, Unread,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs.
@@ -52,10 +52,15 @@ pub struct ElasticsearchCollector {
 
 impl ElasticsearchCollector {
     pub fn new() -> Self {
+        Self::authenticating(None)
+    }
+
+    /// The box's collector, sending `credential` to every node it asks.
+    pub fn authenticating(credential: Option<ApiCredential>) -> Self {
         Self::reading(
             Path::new("/proc"),
             Path::new(PACKAGE_LAUNCHER).exists(),
-            HttpClient::new(),
+            HttpClient::new().authenticating(credential),
         )
     }
 

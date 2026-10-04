@@ -106,6 +106,16 @@ pub struct Cli {
     /// to detect that one changed.
     #[arg(long)]
     raw: bool,
+
+    /// Read credentials from a file, `-` for stdin: one `NAME=value` per line.
+    ///
+    /// For the collectors that cannot read a service without one, an Elasticsearch
+    /// node with security on today: `ELASTICSEARCH_API_KEY`, or
+    /// `ELASTICSEARCH_USERNAME` and `ELASTICSEARCH_PASSWORD`. Never in the config,
+    /// which the document echoes, and never on the command line, which any account
+    /// can read; the document records which names were given and no value.
+    #[arg(long, value_name = "PATH")]
+    credentials: Option<PathBuf>,
 }
 
 impl Cli {
@@ -137,6 +147,11 @@ impl Cli {
             true => Presentation::from(view).raw(),
             false => Presentation::from(view),
         }
+    }
+
+    /// Where the operator said the run's credentials are, `-` for stdin, if anywhere.
+    pub fn credentials_path(&self) -> Option<&Path> {
+        self.credentials.as_deref()
     }
 
     /// Whether the caller said this binary is a temporary copy of itself.

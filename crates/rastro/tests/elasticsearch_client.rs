@@ -464,3 +464,42 @@ fn get_over_tls_reads_an_answer_whose_peer_closes_without_close_notify() {
     // Assert
     assert_eq!(body, "{\"cluster\":\"one\"}");
 }
+
+#[test]
+fn get_sends_the_credential_it_was_given() {
+    // Arrange
+    let (endpoint, request) =
+        serve_once(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec());
+    let credential = rastro::collectors::elasticsearch::ApiCredential::api_key("a2V5OnNlY3JldA==");
+
+    // Act
+    HttpClient::new()
+        .authenticating(Some(credential))
+        .get(&endpoint, "/")
+        .expect("an answer");
+
+    // Assert
+    let request = request.recv().expect("the request");
+    assert!(
+        request.contains("\r\nAuthorization: ApiKey a2V5OnNlY3JldA==\r\n"),
+        "{request}"
+    );
+}
+
+#[test]
+fn get_reports_a_rejected_credential_as_not_read() {
+    // Arrange
+    let (endpoint, _) =
+        serve_once(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 2\r\n\r\n{}".to_vec());
+    let credential = rastro::collectors::elasticsearch::ApiCredential::api_key("d3Jvbmc6a2V5");
+
+    // Act
+    let unread = HttpClient::new()
+        .authenticating(Some(credential))
+        .get(&endpoint, "/")
+        .expect_err("a 401");
+
+    // Assert
+    assert!(unread.is_not_read());
+    assert_eq!(unread.reason(), "the credential given was rejected");
+}

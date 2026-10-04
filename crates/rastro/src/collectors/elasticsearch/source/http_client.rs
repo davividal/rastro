@@ -27,7 +27,9 @@ use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signat
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
 
-use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, Transport, Unread};
+use crate::collectors::elasticsearch::value_objects::{
+    ApiCredential, HttpEndpoint, Transport, Unread,
+};
 
 /// How long one exchange may take, connecting included.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -51,6 +53,9 @@ const LAST_CHUNK: &[u8] = b"0\r\n\r\n";
 pub struct HttpClient {
     timeout: Duration,
     body_limit: usize,
+
+    /// What every request authenticates with, where the operator gave one.
+    credential: Option<ApiCredential>,
 }
 
 impl HttpClient {
@@ -62,7 +67,13 @@ impl HttpClient {
         Self {
             timeout,
             body_limit,
+            credential: None,
         }
+    }
+
+    /// The same client, sending `credential` with every request.
+    pub fn authenticating(self, credential: Option<ApiCredential>) -> Self {
+        Self { credential, ..self }
     }
 
     /// The body of a `200` answer to `GET path`; any other outcome is the reason it was not had.
@@ -88,9 +99,10 @@ impl HttpClient {
         let answer = Answer::parse(&raw, path)?;
 
         if answer.status == UNAUTHORISED {
-            return Err(Unread::not_read(
-                "security is on and no credential was given (see --credentials)",
-            ));
+            return Err(Unread::not_read(match self.credential {
+                Some(_) => "the credential given was rejected",
+                None => "security is on and no credential was given (see --credentials)",
+            }));
         }
         if answer.status == FORBIDDEN {
             return Err(Unread::not_read(format!(
@@ -155,9 +167,14 @@ impl HttpClient {
         let deadline = Instant::now() + self.timeout;
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
 
+        let authorization = self
+            .credential
+            .as_ref()
+            .map(|credential| format!("Authorization: {}\r\n", credential.authorization()))
+            .unwrap_or_default();
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: {address}\r\nAccept: application/json\r\n\
-             Connection: close\r\n\r\n"
+             {authorization}Connection: close\r\n\r\n"
         );
         stream
             .tcp()

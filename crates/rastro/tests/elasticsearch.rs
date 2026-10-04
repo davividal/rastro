@@ -558,3 +558,26 @@ fn collect_reads_what_a_node_with_no_master_holds_itself_and_asks_nothing_cluste
     assert!(!is_null(&field(reported, "plugins")));
     assert!(!keys_of(&field(reported, "plugins")).contains(&"not_read".to_owned()));
 }
+
+#[test]
+fn collect_reports_a_node_that_rejects_the_credential_given_as_not_read() {
+    // Arrange: the v1 limitation's other cluster, which the box's one credential is not for.
+    let node = FakeNode::answering(&[("/", 401, MISSING_CREDENTIALS)]);
+    let proc = node.proc("elasticsearch-facet-rejected");
+    let client = HttpClient::new().authenticating(Some(
+        rastro::collectors::elasticsearch::ApiCredential::api_key("b3RoZXI6Y2x1c3Rlcg=="),
+    ));
+
+    // Act
+    let facet = ElasticsearchCollector::reading(&proc, false, client)
+        .collect()
+        .expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(
+        text(&field(reported, "not_read")),
+        "the credential given was rejected"
+    );
+    assert!(is_null(&field(reported, "error")));
+}

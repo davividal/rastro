@@ -86,6 +86,7 @@ pub struct InvocationCollector {
     observer: Option<String>,
     output: Option<String>,
     started_at: Result<i64, CollectionError>,
+    credentials: Option<Vec<String>>,
 }
 
 impl InvocationCollector {
@@ -114,11 +115,24 @@ impl InvocationCollector {
             observer,
             output,
             started_at,
+            credentials: None,
             name: FacetName::new("invocation").expect("`invocation` is a legal facet name"),
             identity: CollectorIdentity::new(
                 CollectorId::new("invocation").expect("`invocation` is a legal collector id"),
                 CollectorVersion::new("1").expect("`1` is a legal collector version"),
             ),
+        }
+    }
+}
+
+impl InvocationCollector {
+    /// The names of the credentials the run was given, where it was given any. Never a value:
+    /// the names say which collectors could authenticate, which is what tells a run with a
+    /// credential from one without when two documents differ.
+    pub fn given(self, credentials: Option<Vec<String>>) -> Self {
+        Self {
+            credentials,
+            ..self
         }
     }
 }
@@ -147,6 +161,13 @@ impl Collector for InvocationCollector {
         Ok(Observation::object([
             ("rastro_version", Observation::text(VERSION)),
             ("config", self.effective_config.clone()),
+            (
+                "credentials",
+                match &self.credentials {
+                    Some(names) => Observation::list(names.iter().map(Observation::text)),
+                    None => Observation::null(),
+                },
+            ),
             (
                 "observer",
                 match &self.observer {

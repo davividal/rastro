@@ -64,6 +64,8 @@ pub use time::TimeCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
+use crate::collectors::elasticsearch::ApiCredential;
+use crate::credentials::Credentials;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -133,6 +135,9 @@ pub struct Run {
     /// reading, happens here — which is also where an illegal path becomes a failure of the
     /// `filesystem` facet rather than of the run.
     pub narrowed: Narrowed,
+
+    /// What the operator handed the run to authenticate with, read before anything else ran.
+    pub credentials: Option<Credentials>,
 }
 
 /// What the operator's config asked the walk to step back from.
@@ -185,7 +190,13 @@ pub struct BuiltIn {
 }
 
 pub fn built_in(run: Run) -> BuiltIn {
-    let mut collectors = state_collectors(run.hostname);
+    // Checked by the composition root before the run, which refuses a credential it cannot tell
+    // the meaning of; here it is only handed on.
+    let elasticsearch_credential = run
+        .credentials
+        .as_ref()
+        .and_then(|credentials| ApiCredential::from_credentials(credentials).ok().flatten());
+    let mut collectors = state_collectors(run.hostname, elasticsearch_credential);
     let policy = claimed_policy(&collectors, &run.narrowed);
     let contested = match &policy {
         Ok(resolved) => resolved.contested().cloned().collect(),
@@ -209,13 +220,16 @@ pub fn built_in(run: Run) -> BuiltIn {
             .in_detail(run.detail)
             .writing_to(run.output.clone()),
     }));
-    collectors.push(Box::new(InvocationCollector::new(
-        run.effective_config,
-        table,
-        staged.map(|binary| binary.to_string_lossy().into_owned()),
-        run.started_at,
-        run.output.map(|path| path.to_string_lossy().into_owned()),
-    )));
+    collectors.push(Box::new(
+        InvocationCollector::new(
+            run.effective_config,
+            table,
+            staged.map(|binary| binary.to_string_lossy().into_owned()),
+            run.started_at,
+            run.output.map(|path| path.to_string_lossy().into_owned()),
+        )
+        .given(run.credentials.as_ref().map(Credentials::names)),
+    ));
 
     BuiltIn {
         collectors,
@@ -224,13 +238,18 @@ pub fn built_in(run: Run) -> BuiltIn {
 }
 
 /// The collectors that observe the host, filesystem aside.
-fn state_collectors(hostname: Result<String, String>) -> Vec<Box<dyn Collector>> {
+fn state_collectors(
+    hostname: Result<String, String>,
+    elasticsearch_credential: Option<ApiCredential>,
+) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(AccountsCollector::new()),
         Box::new(BlockDevicesCollector::new()),
         Box::new(ContainersCollector::new()),
         Box::new(CronCollector::new()),
-        Box::new(ElasticsearchCollector::new()),
+        Box::new(ElasticsearchCollector::authenticating(
+            elasticsearch_credential,
+        )),
         Box::new(ExportersCollector::new()),
         Box::new(FirewallCollector::new()),
         Box::new(HostCollector::reading(hostname)),

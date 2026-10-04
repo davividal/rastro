@@ -63,6 +63,8 @@ yaml-rust2 = { version = "0.13", default-features = false }
 # `setns`, to read an Elasticsearch node in a container from inside its network namespace, and
 # `openat2`, to read its files inside its own root. Safe and pure Rust on Linux, which keeps
 # `unsafe_code = "forbid"` true of the workspace's own code.
+# The `Basic` authorization a username and password are sent as.
+base64 = { version = "0.22", default-features = false, features = ["std"] }
 # TLS to an Elasticsearch node whose HTTP listener wants it. `ring` rather than the default
 # `aws-lc-rs`, which needs cmake and a C toolchain the static musl build does not carry; no
 # `logging`, which would route the handshake through `log`. See `docs/decisions.md`.
