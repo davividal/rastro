@@ -513,11 +513,11 @@ run_cell() {
 }
 
 main() {
-  local command=${1:-}
+  local command=${1:-} cell=${2:-}
   case "$command" in
     prepare) prepare ;;
     reset) reset ;;
-    run) run_cell "$2" ;;
+    run) run_cell "$cell" ;;
     *)
       echo "usage: cells.sh prepare | cells.sh reset | cells.sh run NN" >&2
       return 2
