@@ -277,17 +277,31 @@ impl ResidentNode {
         else {
             return Inspection::NotANode;
         };
-        match arguments_of(path) {
-            Ok(own) => Self::from_arguments(proc, path, process_id, own)
-                .map_or(Inspection::NotANode, |node| {
-                    Inspection::Node(Box::new(node))
-                }),
-            Err(error) if has_left(&error) => Inspection::Left,
-            Err(_) => Inspection::Unseen,
+        // Found by review: the start is taken before anything else is read and again after, so a
+        // process id reused mid-read cannot lend the old node's identity to the new process.
+        let start = Self::start_of_in(proc, process_id);
+        let node = match arguments_of(path) {
+            Ok(own) => match Self::from_arguments(proc, path, process_id, start, own) {
+                Some(node) => node,
+                None => return Inspection::NotANode,
+            },
+            Err(error) if has_left(&error) => return Inspection::Left,
+            Err(_) => return Inspection::Unseen,
+        };
+
+        match Self::start_of_in(proc, process_id) == start {
+            true => Inspection::Node(Box::new(node)),
+            false => Inspection::Left,
         }
     }
 
-    fn from_arguments(proc: &Path, path: &Path, process_id: u32, own: Argv) -> Option<Self> {
+    fn from_arguments(
+        proc: &Path,
+        path: &Path,
+        process_id: u32,
+        start: Option<u64>,
+        own: Argv,
+    ) -> Option<Self> {
         let spelled: Vec<&str> = own.arguments.iter().map(String::as_str).collect();
 
         if !starts_the_server(&spelled) {
@@ -314,7 +328,7 @@ impl ResidentNode {
 
         Some(Self {
             process_id,
-            start: Self::start_of_in(proc, process_id),
+            start,
             home,
             config,
             release,
