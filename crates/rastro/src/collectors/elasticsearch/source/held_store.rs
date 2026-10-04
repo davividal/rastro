@@ -77,6 +77,6 @@ fn data_directory_of(target: &Path) -> Option<PathBuf> {
 fn is_a_log(target: &Path) -> bool {
     target
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|name| name == GC_LOG || name.ends_with(SERVER_LOG_SUFFIX))
 }
