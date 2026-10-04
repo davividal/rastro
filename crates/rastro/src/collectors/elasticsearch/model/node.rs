@@ -187,6 +187,7 @@ impl From<&Node> for Observation {
                 "http",
                 match &node.http {
                     Some(http) => Observation::object([
+                        ("scheme", Observation::text(http.transport().scheme())),
                         ("host", dialled_host(http, node.network_namespace)),
                         (
                             "port",

@@ -1,11 +1,17 @@
 //! The one request rastro sends over the network.
 //!
-//! **HTTP/1.1 `GET`, plain, and nothing else.** No TLS, no redirects followed, no retries, no
-//! keep-alive, and no header that names rastro: `X-Opaque-Id` would be recorded in the node's
-//! tasks and logs, and a user agent says who asked to anyone keeping an access log. Hand-written
-//! rather than a client crate because this much of HTTP is thirty lines and a crate would bring
-//! TLS, proxies from the environment and name resolution with it, each of which the boundary in
-//! `docs/decisions.md` rules out.
+//! **HTTP/1.1 `GET`, over plain TCP or TLS, and nothing else.** No redirects followed, no
+//! retries, no keep-alive, and no header that names rastro: `X-Opaque-Id` would be recorded in
+//! the node's tasks and logs, and a user agent says who asked to anyone keeping an access log.
+//! Hand-written rather than a client crate because this much of HTTP is thirty lines and a crate
+//! would bring proxies from the environment and name resolution with it, each of which the
+//! boundary in `docs/decisions.md` rules out.
+//!
+//! **TLS trusts the socket, not a certificate chain.** By the time a node is dialled, rastro has
+//! matched the listener's inode to the node's own process and joined its network namespace, so
+//! the peer is the node. Its certificate is the auto-configured one or the operator's, signed by
+//! a CA this box need not hold, and checking it against one would refuse the node for nothing.
+//! The handshake's signatures are still verified, so the peer holds the key it presents.
 //!
 //! Bounded twice: a deadline over the whole exchange, so a node that trickles bytes cannot hold
 //! a run open, and a size, so a node with ten thousand indices cannot fill the box's memory.
@@ -13,9 +19,15 @@
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, Unread};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
+
+use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, Transport, Unread};
 
 /// How long one exchange may take, connecting included.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -56,19 +68,20 @@ impl HttpClient {
     /// The body of a `200` answer to `GET path`; any other outcome is the reason it was not had.
     pub fn get(&self, endpoint: &HttpEndpoint, path: &str) -> Result<String, Unread> {
         let address = socket_address_of(endpoint)?;
-        let raw = self.exchange(address, path)?;
+        let raw = self.exchange(address, endpoint.transport(), path)?;
 
-        // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered.
+        // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
+        // settings said plain, so this is the blind spot `docs/decisions.md` accepts.
         if raw.is_empty() {
             return Err(Unread::new(format!(
                 "{address} closed the connection without an HTTP answer, as a listener that \
-                 wants TLS does; v1 speaks plain HTTP only"
+                 wants TLS does, although the node's settings say it serves plain HTTP"
             )));
         }
         if !raw.starts_with(HTTP_VERSION_PREFIX) {
             return Err(Unread::new(format!(
-                "{address} answered in something other than HTTP, most likely TLS; v1 speaks \
-                 plain HTTP only"
+                "{address} answered in something other than HTTP, most likely TLS, although the \
+                 node's settings say it serves plain HTTP"
             )));
         }
 
@@ -103,24 +116,54 @@ impl HttpClient {
             .map_err(|_| Unread::new(format!("the answer to GET {path} is not UTF-8")))
     }
 
-    fn exchange(&self, address: SocketAddr, path: &str) -> Result<Vec<u8>, Unread> {
-        let deadline = Instant::now() + self.timeout;
+    fn exchange(
+        &self,
+        address: SocketAddr,
+        transport: Transport,
+        path: &str,
+    ) -> Result<Vec<u8>, Unread> {
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
 
-        let mut stream = TcpStream::connect_timeout(&address, self.timeout).map_err(|error| {
-            match error.kind() {
-                ErrorKind::TimedOut => timed_out(),
-                _ => Unread::new(format!("could not connect to {address}: {error}")),
+        let socket =
+            TcpStream::connect_timeout(&address, self.timeout).map_err(|error| {
+                match error.kind() {
+                    ErrorKind::TimedOut => timed_out(),
+                    _ => Unread::new(format!("could not connect to {address}: {error}")),
+                }
+            })?;
+
+        match transport {
+            Transport::Plain => self.converse(socket, address, path),
+            Transport::Tls => {
+                let peer = ServerName::IpAddress(address.ip().into());
+                let connection =
+                    ClientConnection::new(tls_configuration(), peer).map_err(|error| {
+                        Unread::new(format!("TLS to {address} could not start: {error}"))
+                    })?;
+                self.converse(StreamOwned::new(connection, socket), address, path)
             }
-        })?;
+        }
+    }
+
+    /// Sends the request on `stream` and reads the answer back, within the deadline and the bound.
+    fn converse(
+        &self,
+        mut stream: impl Socket,
+        address: SocketAddr,
+        path: &str,
+    ) -> Result<Vec<u8>, Unread> {
+        let deadline = Instant::now() + self.timeout;
+        let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
 
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: {address}\r\nAccept: application/json\r\n\
              Connection: close\r\n\r\n"
         );
         stream
+            .tcp()
             .set_write_timeout(Some(self.timeout))
             .and_then(|()| stream.write_all(request.as_bytes()))
+            .and_then(|()| stream.flush())
             .map_err(|error| Unread::new(format!("GET {path} could not be sent: {error}")))?;
 
         let mut raw = Vec::new();
@@ -131,6 +174,7 @@ impl HttpClient {
                 return Err(timed_out());
             }
             stream
+                .tcp()
                 .set_read_timeout(Some(remaining))
                 .map_err(|error| Unread::new(format!("GET {path}: {error}")))?;
 
@@ -142,6 +186,9 @@ impl HttpClient {
                 {
                     return Err(timed_out());
                 }
+                // A TLS peer that closes without `close_notify`: what arrived is checked whole
+                // by the answer's own length, so a cut answer is still caught.
+                Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(raw),
                 Err(error) => {
                     return Err(Unread::new(format!(
                         "GET {path} failed while reading: {error}"
@@ -159,6 +206,93 @@ impl HttpClient {
                 return Ok(raw);
             }
         }
+    }
+}
+
+/// A connection the exchange can bound by time: plain TCP, or TLS over it.
+trait Socket: Read + Write {
+    fn tcp(&self) -> &TcpStream;
+}
+
+impl Socket for TcpStream {
+    fn tcp(&self) -> &TcpStream {
+        self
+    }
+}
+
+impl Socket for StreamOwned<ClientConnection, TcpStream> {
+    fn tcp(&self) -> &TcpStream {
+        &self.sock
+    }
+}
+
+/// One TLS configuration for the run, which trusts the node's socket rather than its chain.
+fn tls_configuration() -> Arc<ClientConfig> {
+    static CONFIGURATION: OnceLock<Arc<ClientConfig>> = OnceLock::new();
+
+    Arc::clone(CONFIGURATION.get_or_init(|| {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let configuration = ClientConfig::builder_with_provider(Arc::clone(&provider))
+            .with_safe_default_protocol_versions()
+            .expect("ring supports TLS 1.2 and 1.3")
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TheNodesOwnSocket { provider }))
+            .with_no_client_auth();
+        Arc::new(configuration)
+    }))
+}
+
+/// Accepts the certificate of the peer rastro already knows is the node, and verifies that the
+/// peer holds its key. See the module's account of why the chain is not checked.
+#[derive(Debug)]
+struct TheNodesOwnSocket {
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for TheNodesOwnSocket {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(
+            message,
+            certificate,
+            signature,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(
+            message,
+            certificate,
+            signature,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 

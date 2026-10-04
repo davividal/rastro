@@ -158,9 +158,10 @@ fn collect_asks_the_node_nothing_but_the_reads_it_needs() {
 }
 
 #[test]
-fn collect_does_not_dial_a_node_whose_settings_want_tls() {
-    // Arrange: what 8.x's auto-configuration writes, nested.
-    let node = FakeNode::serving(&[("/", ROOT)]);
+fn collect_reads_a_node_whose_settings_want_tls_over_tls() {
+    // Arrange: what 8.x's auto-configuration writes, nested, before a listener whose certificate
+    // nothing on this box vouches for. rastro trusts the socket it matched to the node instead.
+    let node = FakeNode::serving_tls(&[("/", ROOT)]);
     let proc = node.proc_with(
         "elasticsearch-facet-tls",
         &format!("http.port={}\0", node.port),
@@ -170,11 +171,25 @@ fn collect_does_not_dial_a_node_whose_settings_want_tls() {
     // Act
     let facet = collector(&proc, false).collect().expect("a facet");
 
-    // Assert: measured, a plaintext request to a TLS listener is a WARN in the node's log.
+    // Assert
     let reported = &items_of(&field(&facet, "nodes"))[0];
-    assert!(text(&field(reported, "error")).contains("TLS"));
-    assert_eq!(reported.completeness(), Completeness::Incomplete);
-    assert!(node.requests().is_empty(), "{:?}", node.requests());
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert_eq!(text(&field(reported, "node_name")), "search-1");
+    assert_eq!(text(&field(&field(reported, "http"), "scheme")), "https");
+}
+
+#[test]
+fn collect_dials_a_node_on_plain_http_without_tls() {
+    // Arrange
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-plain");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(text(&field(&field(reported, "http"), "scheme")), "http");
 }
 
 #[test]

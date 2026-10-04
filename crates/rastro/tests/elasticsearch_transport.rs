@@ -38,7 +38,7 @@ fn transport_requires_tls_where_the_settings_switch_it_on() {
     let settings = settings(&[(TLS_SETTING, "true")]);
 
     // Act & Assert
-    assert_eq!(settings.transport(), Transport::TlsRequired);
+    assert_eq!(settings.transport(), Transport::Tls);
 }
 
 #[test]
@@ -47,5 +47,5 @@ fn transport_requires_tls_for_a_value_it_does_not_recognise() {
     let settings = settings(&[(TLS_SETTING, "yes")]);
 
     // Act & Assert
-    assert_eq!(settings.transport(), Transport::TlsRequired);
+    assert_eq!(settings.transport(), Transport::Tls);
 }

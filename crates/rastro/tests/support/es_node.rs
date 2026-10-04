@@ -51,6 +51,25 @@ pub const ROOT: &str = r#"{
   "tagline" : "You Know, for Search"
 }"#;
 
+/// A plaintext listener that serves every connection with what `respond` makes of its request.
+fn plain_listener(respond: impl Fn(&str) -> Vec<u8> + Send + 'static) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                request.push(byte[0]);
+            }
+            let response = respond(&String::from_utf8_lossy(&request));
+            let _ = stream.write_all(&response);
+        }
+    });
+    port
+}
+
 /// A node answering `routes`, with a 404 for anything else, and the requests it was sent.
 pub struct FakeNode {
     pub port: u16,
@@ -68,42 +87,46 @@ impl FakeNode {
 
     /// A node answering each route with its own status, and a 404 for anything else.
     pub fn answering(routes: &[(&str, u16, &str)]) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        let port = listener.local_addr().expect("a bound port").port();
+        Self::listening(routes, false)
+    }
+
+    /// The same node on TLS, presenting a certificate nothing vouches for.
+    pub fn serving_tls(routes: &[(&str, &str)]) -> Self {
+        let answered: Vec<(&str, u16, &str)> = routes
+            .iter()
+            .map(|(path, body)| (*path, 200, *body))
+            .collect();
+        Self::listening(&answered, true)
+    }
+
+    fn listening(routes: &[(&str, u16, &str)], tls: bool) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let routes: Vec<(String, u16, String)> = routes
             .iter()
             .map(|(path, status, body)| ((*path).to_owned(), *status, (*body).to_owned()))
             .collect();
-
         let seen = Arc::clone(&requests);
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let mut request = Vec::new();
-                let mut byte = [0_u8; 1];
-                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
-                    request.push(byte[0]);
-                }
-                let request = String::from_utf8_lossy(&request).into_owned();
-                let path = request
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or_default()
-                    .to_owned();
-                seen.lock().expect("the request log").push(path.clone());
-
-                let response = match routes.iter().find(|(route, _, _)| *route == path) {
-                    Some((_, status, body)) => format!(
-                        "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
-                        body.len()
-                    ),
-                    None => "HTTP/1.1 404 Not Found\r\ncontent-length: 2\r\n\r\n{}".to_owned(),
-                };
-                let _ = stream.write_all(response.as_bytes());
+        let respond = move |request: &str| {
+            let path = request
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_owned();
+            seen.lock().expect("the request log").push(path.clone());
+            match routes.iter().find(|(route, _, _)| *route == path) {
+                Some((_, status, body)) => format!(
+                    "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                    body.len()
+                ),
+                None => "HTTP/1.1 404 Not Found\r\ncontent-length: 2\r\n\r\n{}".to_owned(),
             }
-        });
+            .into_bytes()
+        };
 
+        let port = match tls {
+            true => super::tls_listener::serving(respond),
+            false => plain_listener(respond),
+        };
         Self { port, requests }
     }
 

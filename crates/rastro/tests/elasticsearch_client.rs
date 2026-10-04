@@ -9,8 +9,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rastro::collectors::elasticsearch::{HttpClient, HttpEndpoint};
+use rastro::collectors::elasticsearch::{HttpClient, HttpEndpoint, Transport};
 use rastro::collectors::inet::{InetHost, PortNumber};
+
+mod support;
+
+use support::tls_listener;
 
 /// Serves one connection with `response`, and hands back the request it was sent.
 fn serve_once(response: Vec<u8>) -> (HttpEndpoint, mpsc::Receiver<String>) {
@@ -387,4 +391,76 @@ fn get_refuses_headers_that_are_not_text() {
 
     // Assert
     assert!(unread.reason().contains("not text"), "{}", unread.reason());
+}
+
+fn loopback(port: u16) -> HttpEndpoint {
+    HttpEndpoint::new(
+        InetHost::new("127.0.0.1").expect("a host"),
+        PortNumber::parse(&port.to_string()).expect("a port"),
+    )
+}
+
+#[test]
+fn get_reads_a_node_on_tls_whatever_certificate_it_presents() {
+    // Arrange: a self-signed certificate for another name, which a CA check would refuse. The
+    // socket is the node's by its inode, so its certificate adds nothing a chain could vouch for.
+    let port = tls_listener::serving(|_| {
+        b"HTTP/1.1 200 OK\r\ncontent-length: 17\r\n\r\n{\"cluster\":\"one\"}".to_vec()
+    });
+
+    // Act
+    let body = HttpClient::new()
+        .get(&loopback(port).over(Transport::Tls), "/")
+        .expect("an answer over TLS");
+
+    // Assert
+    assert_eq!(body, "{\"cluster\":\"one\"}");
+}
+
+#[test]
+fn get_over_tls_sends_the_same_bare_get() {
+    // Arrange
+    let (sender, receiver) = mpsc::channel();
+    let port = tls_listener::serving(move |request| {
+        let _ = sender.send(request.to_owned());
+        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec()
+    });
+
+    // Act
+    HttpClient::new()
+        .get(&loopback(port).over(Transport::Tls), "/_cluster/settings")
+        .expect("an answer over TLS");
+
+    // Assert
+    let request = receiver.recv().expect("the request");
+    assert!(
+        request.starts_with("GET /_cluster/settings HTTP/1.1\r\n"),
+        "{request}"
+    );
+    assert!(!request.to_lowercase().contains("user-agent"), "{request}");
+}
+
+#[test]
+fn get_over_tls_reads_an_answer_whose_peer_closes_without_close_notify() {
+    // Arrange: an answer delimited by the close alone, the peer skipping `close_notify`.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        if let Some((_, mut tls)) = listener
+            .accept()
+            .ok()
+            .and_then(|(stream, _)| tls_listener::accept(stream))
+        {
+            let _ = tls.write_all(b"HTTP/1.1 200 OK\r\n\r\n{\"cluster\":\"one\"}");
+            let _ = tls.flush();
+        }
+    });
+
+    // Act
+    let body = HttpClient::new()
+        .get(&loopback(port).over(Transport::Tls), "/")
+        .expect("an answer over TLS");
+
+    // Assert
+    assert_eq!(body, "{\"cluster\":\"one\"}");
 }

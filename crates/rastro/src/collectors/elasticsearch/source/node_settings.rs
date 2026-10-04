@@ -182,7 +182,7 @@ impl NodeSettings {
     pub fn transport(&self) -> Transport {
         match self.get(TLS_SETTING) {
             None | Some("false") => Transport::Plain,
-            Some(_) => Transport::TlsRequired,
+            Some(_) => Transport::Tls,
         }
     }
 }

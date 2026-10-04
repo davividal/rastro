@@ -13,7 +13,7 @@ use support::captured_cell::{captured_proc, installs_of};
 /// The transport each node of a cell serves, as set up; cell 06 as its file says.
 fn set_up(cell: &str) -> Vec<Transport> {
     let tls = match cell {
-        "02" | "12" | "21" | "22" | "24" | "26" => Transport::TlsRequired,
+        "02" | "12" | "21" | "22" | "24" | "26" => Transport::Tls,
         _ => Transport::Plain,
     };
     let mut transports: Vec<Transport> = installs_of(cell).iter().map(|_| tls).collect();

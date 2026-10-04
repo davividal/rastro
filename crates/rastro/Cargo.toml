@@ -45,6 +45,9 @@ yaml-rust2 = { workspace = true }
 
 # Joining a network namespace is a Linux call, and rastro ships for Linux alone; a workstation
 # build compiles the refusal instead.
+# The one TLS client, for an Elasticsearch node whose HTTP listener wants it.
+rustls = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true }
 

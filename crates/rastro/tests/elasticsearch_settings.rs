@@ -641,7 +641,7 @@ fn read_in_takes_a_command_line_setting_spelled_with_an_equals_sign() {
     // Assert
     assert_eq!(
         settings.transport(),
-        rastro::collectors::elasticsearch::Transport::TlsRequired
+        rastro::collectors::elasticsearch::Transport::Tls
     );
 }
 

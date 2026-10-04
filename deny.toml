@@ -31,6 +31,12 @@ allow = [
   # OSI-approved and FSF Free/Libre, with no copyleft and no notice to reproduce in
   # a binary, so it is compatible with shipping this one under AGPL-3.0-only.
   "BSL-1.0",
+  # `subtle`, constant-time comparison under `rustls`. Permissive and OSI-approved, with no
+  # copyleft; its notice condition covers binaries, which the release's licence file carries.
+  "BSD-3-Clause",
+  # `ring`, `untrusted` and `rustls-webpki`, the TLS a secured Elasticsearch listener needs.
+  # Permissive, OSI-approved, functionally MIT, with no copyleft.
+  "ISC",
   "MIT",
   "Unicode-3.0",
   "Unlicense",

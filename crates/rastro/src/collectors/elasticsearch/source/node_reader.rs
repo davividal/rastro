@@ -25,7 +25,7 @@ use crate::collectors::elasticsearch::source::{
     HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
 };
 use crate::collectors::elasticsearch::value_objects::{
-    HttpEndpoint, NetworkNamespace, Release, ReleaseSupport, Transport, Unread,
+    HttpEndpoint, NetworkNamespace, Release, ReleaseSupport, Unread,
 };
 
 /// Reads everything this box and this node will say about `resident`.
@@ -92,12 +92,6 @@ fn read_into(
     client: &HttpClient,
 ) -> Result<(), Unread> {
     let settings = NodeSettings::read_in(proc, resident)?;
-    if settings.transport() == Transport::TlsRequired {
-        return Err(Unread::new(
-            "the node's settings put its HTTP listener behind TLS \
-             (xpack.security.http.ssl.enabled), and v1 speaks plain HTTP only",
-        ));
-    }
 
     let namespace = NodeNamespace::of_in(proc, resident.process_id())?;
     node.network_namespace = Some(match namespace.is_ours() {
@@ -106,7 +100,7 @@ fn read_into(
     });
 
     let listeners = NodeListener::read_in(proc, resident.process_id())?;
-    let endpoint = http_endpoint(&listeners, &settings)?;
+    let endpoint = http_endpoint(&listeners, &settings)?.over(settings.transport());
     node.http = Some(endpoint.clone());
 
     let answers = namespace.run(|| read_answers(client, &endpoint))??;

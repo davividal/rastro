@@ -1,16 +1,24 @@
-//! How a node may be asked, decided before it is.
+//! How a node is asked, decided before it is.
 
-/// How a node may be asked.
+/// The protocol a node's HTTP listener speaks.
 ///
-/// **Decided from the node's settings, never by trying.** v1 speaks plain HTTP only, and a
-/// plaintext request to a TLS listener is a request the node did not want. The settings decide
-/// it rather than the version: an 8.x node with security switched off serves plain HTTP
-/// exactly as 7.17 does, measured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// **Decided from the node's settings, never by trying.** A plaintext request to a TLS listener
+/// is a WARN in the node's log, measured, and a handshake to a plain one is a request it could
+/// not parse. The settings decide it rather than the version: an 8.x node with TLS switched off
+/// serves plain HTTP exactly as 7.17 does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Transport {
-    /// Plain HTTP, the only transport v1 asks over.
+    #[default]
     Plain,
+    Tls,
+}
 
-    /// The listener wants TLS, which v1 does not speak, so the node is not asked at all.
-    TlsRequired,
+impl Transport {
+    /// The URL scheme it is, which is how an operator names it.
+    pub fn scheme(&self) -> &'static str {
+        match self {
+            Self::Plain => "http",
+            Self::Tls => "https",
+        }
+    }
 }
