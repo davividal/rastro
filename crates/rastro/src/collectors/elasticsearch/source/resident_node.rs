@@ -184,8 +184,8 @@ impl ResidentNode {
         self.config.as_deref()
     }
 
-    /// Whether [`Self::launch_arguments`] is the argv exactly, rather than a lossy reading of
-    /// an argument that was not UTF-8.
+    /// Whether [`Self::application_arguments`], and the paths before them, are the argv exactly,
+    /// rather than a lossy reading of an argument that was not UTF-8.
     ///
     /// The server is still a node either way, because the tokens that identify it are ASCII, and
     /// dropping it would be the silent absence this read must never produce. What a lossy argv
