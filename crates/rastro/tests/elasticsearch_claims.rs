@@ -360,3 +360,83 @@ fn filesystem_claims_name_the_node_they_were_made_for() {
     // Assert
     assert_eq!(qualifiers, [host.path("conf").display().to_string()]);
 }
+
+impl Box_ {
+    /// The node holding `target` open, as its descriptor `number`.
+    fn holding(&self, number: u32, target: &Path) {
+        fs::create_dir_all(self.proc.join("600/fd")).expect("a writable fixture");
+        symlink(target, self.proc.join(format!("600/fd/{number}"))).expect("a writable fixture");
+    }
+}
+
+#[test]
+fn filesystem_claims_seal_the_store_the_node_holds_open_over_what_its_settings_say() {
+    // Arrange: found by review. A node on 8.x or 9.x started with `-d -E path.data=/srv/es` takes
+    // that setting away with its launcher, and its file names the default. The node itself holds
+    // `node.lock` in each data directory and its server log in its logs directory, measured on
+    // every cell of the matrix, so what it has open is where it keeps them.
+    let host = Box_::host_node("elasticsearch-claims-held", false, "");
+    host.directory("home/data");
+    host.directory("home/logs");
+    let data = host.directory("srv-es");
+    let logs = host.directory("srv-logs");
+    host.holding(5, &data.join("node.lock"));
+    host.holding(6, &logs.join("search_server.json"));
+
+    // Act
+    let mut claimed = host.claimed_trees();
+    claimed.sort();
+
+    // Assert
+    assert_eq!(
+        claimed,
+        [data.display().to_string(), logs.display().to_string()]
+    );
+}
+
+#[test]
+fn filesystem_claims_seal_a_7_nodes_store_above_its_nodes_directory() {
+    // Arrange: measured on 7.17 and 6.8, the lock is under `<path.data>/nodes/0/`, and one data
+    // path each holds one; the JVM's own `gc.log` marks the logs directory where no server log
+    // is kept, as in a container that logs to stdout.
+    let host = Box_::host_node("elasticsearch-claims-held-7", false, "");
+    let first = host.directory("data-a");
+    let second = host.directory("data-b");
+    let logs = host.directory("jvm-logs");
+    host.directory("data-a/nodes/0");
+    host.directory("data-b/nodes/0");
+    host.holding(5, &first.join("nodes/0/node.lock"));
+    host.holding(6, &second.join("nodes/0/node.lock"));
+    host.holding(7, &logs.join("gc.log"));
+
+    // Act
+    let mut claimed = host.claimed_trees();
+    claimed.sort();
+
+    // Assert
+    assert_eq!(
+        claimed,
+        [
+            first.display().to_string(),
+            second.display().to_string(),
+            logs.display().to_string()
+        ]
+    );
+}
+
+#[test]
+fn filesystem_claims_take_no_directory_from_an_unrelated_open_log() {
+    // Arrange: measured on cell 07, a node started from a shell held the shell's `/tmp/run.log`
+    // as its stdout, which is no directory of the node's.
+    let host = Box_::host_node("elasticsearch-claims-held-stray", false, "");
+    let data = host.directory("srv-es");
+    let elsewhere = host.directory("tmp");
+    host.holding(5, &data.join("node.lock"));
+    host.holding(1, &elsewhere.join("run.log"));
+
+    // Act
+    let claimed = host.claimed_trees();
+
+    // Assert
+    assert_eq!(claimed, [data.display().to_string()]);
+}

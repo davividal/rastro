@@ -2,6 +2,7 @@
 
 mod api_value_of;
 mod cluster_settings_answer;
+mod held_store;
 mod http_binding;
 mod http_client;
 mod in_root;
@@ -20,6 +21,7 @@ mod resident_node;
 mod root_answer;
 mod templates_answer;
 
+pub use held_store::HeldStore;
 pub use http_binding::http_endpoint;
 pub use http_client::HttpClient;
 pub use in_root::host_directory_of;
