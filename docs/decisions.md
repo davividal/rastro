@@ -5617,10 +5617,50 @@ rather than by any format's bytes, so that every format lists a set the same way
 is the one in
 [the digest covers exactly what the view would have shown](#the-digest-covers-exactly-what-the-view-would-have-shown).
 
-**Two elements that render the same in a view are a modelling fault, not a sort tie.** It is
-the defect the socket holders entry found: the count became a property of the moment. The
+**Two elements the host holds as one and the view renders twice are a modelling fault.** It
+is the defect the socket holders entry found: the count became a property of the moment. The
 answer there was to group the volatile part under a stable identity, and that is the answer
 here too, which the type below makes a reviewer see.
+
+**Two elements the host itself holds twice are a multiset, and both are kept.** Two identical
+crontab lines run the job twice, so collapsing them would report half of what the box does.
+An unkeyed set is therefore a multiset: sorted, with every repeat kept.
+
+## Where the host keeps an order, the order is state
+
+The test for a sequence is whether the host acts on the order *at all*, not whether it acts
+on it for every element. Sorting a list the host reads in order renders two different boxes
+as one document, and that is misrepresenting the box, however rarely the difference bites.
+The cases that were not obvious, each checked against the software:
+
+- **nginx `server_names` are a sequence.** The first name is the server's primary one: it is
+  `$server_name`, and it is the name a redirect uses under `server_name_in_redirect`. Sorting
+  hid a change of primary name.
+- **nginx upstream `servers` are a sequence.** Round-robin walks the members in order, and
+  `hash` and `ip_hash` map a key to a member by its position, so reordering them moves traffic.
+- **nginx stream `servers` are a sequence.** Since 1.25.5 several may share a listen, and the
+  first one on an address and port is its default.
+- **An account's authorized keys are a sequence**, in sshd's search order: the files in
+  `AuthorizedKeysFile` order, then lines in file order. The first line that matches a key
+  decides its options, so a duplicate key with different options is decided by position.
+- **resolv.conf `options` stay a sequence.** glibc's parser walks the line left to right and
+  a later `ndots:`, `timeout:` or `attempts:` overwrites an earlier one.
+- **docker IPAM `configured` pools stay a sequence.** libnetwork's `assignAddressVersion`
+  takes the first pool, in configured order, that has a free address.
+- **Routes are a sequence, in the kernel's order**, where they are sorted today. Routes for
+  different prefixes are chosen by prefix and metric, but `ip route append` keeps several
+  IPv4 routes under one destination, TOS and metric, and `fib_table_lookup` uses the first
+  that is alive: the others are failovers, and only the order says which is which. The
+  kernel's dump order is its trie walk, which is the same on two runs of an unchanged box.
+  A key would not work either way: the identity is (table, destination, TOS, metric), rastro
+  reads only the `main` table and records no TOS, and appended routes share it.
+
+Supersedes, in [Order is kept where nginx reads it, sorted where it does not](#order-is-kept-where-nginx-reads-it-sorted-where-it-does-not),
+the sorting of server names and pool members. Listen addresses, listen options and pool
+member parameters stay sorted: nginx does not act on their order.
+
+**Cron jobs are a multiset, not a sequence.** cron forks every job whose schedule matches, so
+the order of lines in a crontab is not something it acts on.
 
 ## The kind is a type, not a convention
 
