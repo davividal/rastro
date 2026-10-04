@@ -503,3 +503,31 @@ fn get_reports_a_rejected_credential_as_not_read() {
     assert!(unread.is_not_read());
     assert_eq!(unread.reason(), "the credential given was rejected");
 }
+
+#[test]
+fn get_over_tls_gives_up_on_a_listener_that_never_completes_the_handshake() {
+    // Arrange: found by review. The handshake reads before the request is written, so a read
+    // deadline set only for the answer left a stalled listener holding the run forever.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        let held = listener.accept();
+        thread::sleep(Duration::from_secs(30));
+        drop(held);
+    });
+    let (sender, receiver) = mpsc::channel();
+
+    // Act
+    thread::spawn(move || {
+        let outcome = HttpClient::bounded(Duration::from_millis(500), 1024)
+            .get(&loopback(port).over(Transport::Tls), "/");
+        let _ = sender.send(outcome);
+    });
+
+    // Assert
+    let outcome = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the client to give up within its deadline");
+    let unread = outcome.expect_err("no handshake");
+    assert!(unread.reason().contains("timed out"), "{}", unread.reason());
+}

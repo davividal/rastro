@@ -176,12 +176,18 @@ impl HttpClient {
             "GET {path} HTTP/1.1\r\nHost: {address}\r\nAccept: application/json\r\n\
              {authorization}Connection: close\r\n\r\n"
         );
+        // The read deadline too, before the first write: over TLS that write drives the handshake,
+        // which reads, and a listener that never answers it would otherwise hold the run.
         stream
             .tcp()
             .set_write_timeout(Some(self.timeout))
+            .and_then(|()| stream.tcp().set_read_timeout(Some(self.timeout)))
             .and_then(|()| stream.write_all(request.as_bytes()))
             .and_then(|()| stream.flush())
-            .map_err(|error| Unread::new(format!("GET {path} could not be sent: {error}")))?;
+            .map_err(|error| match error.kind() {
+                ErrorKind::WouldBlock | ErrorKind::TimedOut => timed_out(),
+                _ => Unread::new(format!("GET {path} could not be sent: {error}")),
+            })?;
 
         let mut raw = Vec::new();
         let mut buffer = [0_u8; 8192];
