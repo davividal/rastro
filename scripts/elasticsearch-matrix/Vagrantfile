@@ -1,0 +1,70 @@
+# -*- mode: ruby; frozen_string_literal: true -*-
+
+# vi: set ft=ruby :
+
+Vagrant.configure('2') do |config|
+  if Vagrant.has_plugin?('vagrant-libvirt')
+    config.vagrant.plugins = 'vagrant-libvirt'
+  end
+  # config.vagrant.plugins = 'vagrant-qemu'
+
+  # Disable the default share of the current code directory. Doing this
+  # provides improved isolation between the vagrant box and your host
+  # by making sure your Vagrantfile isn't accessible to the vagrant box.
+  # If you use this you may want to enable additional shared subfolders as
+  # shown above.
+  config.vm.synced_folder '.', '/vagrant', disabled: true
+
+  config.vm.provider :virtualbox do |vb|
+    vb.memory = Integer(ENV.fetch('VAGRANT_MEMORY', 48_000))
+    vb.cpus = Integer(ENV.fetch('VAGRANT_CPUS', 4))
+    vb.linked_clone = true
+  end
+
+  config.vm.disk :disk, size: '100GB', primary: true
+
+  config.vm.define 'debian12' do |server|
+    if RUBY_PLATFORM =~ /arm/
+      server.vm.box = 'cloud-image/debian-12'
+
+      # Macbook Pro Mx required changes
+      server.vm.provision 'shell', inline: <<-SHELL
+        userdel -rf debian > /dev/null 2>&1 || true
+
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get -qq update
+        apt-get -qqy install qemu-user-static binfmt-support
+        update-binfmts --enable qemu-x86_64
+
+        # VirtualBox on Apple silicon advertises SVE but cannot report its vector length, and
+        # JDK 22 (bundled with Elasticsearch 7.17) dies with SIGILL on it. Takes effect on reboot.
+        echo 'GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX arm64.nosve"' > /etc/default/grub.d/20_nosve.cfg
+        update-grub
+      SHELL
+    else
+      server.vm.box = 'debian/bookworm64'
+    end
+
+    server.vm.hostname = 'debian12'
+    server.vm.network :private_network, ip: '192.168.56.103'
+    server.vm.provision 'shell', inline: <<-SHELL
+      cp .ssh/authorized_keys /root/.ssh
+      mkdir -p /docker
+
+      apt-get -qq update
+
+      # acl is required for ansible to become unpriviledged users
+      DEBIAN_FRONTEND=noninteractive apt-get -qqy install acl cron
+
+      # Container engine and tooling for the Elasticsearch matrix, baked in so a rebuilt VM is ready.
+      DEBIAN_FRONTEND=noninteractive apt-get -qqy install docker.io docker-compose curl jq gnupg apt-transport-https
+      usermod -aG docker vagrant
+
+      # Elasticsearch refuses to start in production mode below this.
+      echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-elasticsearch.conf
+      sysctl -q --system
+    SHELL
+    server.ssh.username = 'vagrant'
+    server.ssh.insert_key = false
+  end
+end
