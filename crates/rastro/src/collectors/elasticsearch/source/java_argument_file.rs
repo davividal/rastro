@@ -10,6 +10,9 @@
 //!   break continues onto the next line with its leading spaces dropped;
 //! - an `@name` inside a file is an argument, not another file: files do not nest.
 
+use std::iter::Peekable;
+use std::str::Chars;
+
 /// The arguments a file holds, in order.
 pub fn arguments_in(text: &str) -> Vec<String> {
     let mut arguments = Vec::new();
@@ -18,55 +21,64 @@ pub fn arguments_in(text: &str) -> Vec<String> {
 
     while let Some(character) = characters.next() {
         match character {
-            '#' if current.is_none() => {
-                for skipped in characters.by_ref() {
-                    if skipped == '\n' {
-                        break;
-                    }
-                }
-            }
+            '#' if current.is_none() => skip_comment(&mut characters),
             '\'' | '"' => {
-                let closing = character;
-                let argument = current.get_or_insert_with(String::new);
-                while let Some(quoted) = characters.next() {
-                    match quoted {
-                        quote if quote == closing => break,
-                        '\\' => match characters.next() {
-                            Some('\n') => {
-                                while characters
-                                    .next_if(|next| *next == ' ' || *next == '\t')
-                                    .is_some()
-                                {}
-                            }
-                            Some('\r') => {
-                                characters.next_if_eq(&'\n');
-                                while characters
-                                    .next_if(|next| *next == ' ' || *next == '\t')
-                                    .is_some()
-                                {}
-                            }
-                            Some('t') => argument.push('\t'),
-                            Some('n') => argument.push('\n'),
-                            Some('r') => argument.push('\r'),
-                            Some('f') => argument.push('\u{c}'),
-                            Some(escaped) => argument.push(escaped),
-                            None => {}
-                        },
-                        other => argument.push(other),
-                    }
-                }
+                read_quoted(
+                    &mut characters,
+                    character,
+                    current.get_or_insert_with(String::new),
+                );
             }
-            whitespace if whitespace.is_whitespace() => {
-                if let Some(argument) = current.take() {
-                    arguments.push(argument);
-                }
-            }
+            whitespace if whitespace.is_whitespace() => arguments.extend(current.take()),
             other => current.get_or_insert_with(String::new).push(other),
         }
     }
 
-    if let Some(argument) = current {
-        arguments.push(argument);
-    }
+    arguments.extend(current);
     arguments
+}
+
+/// Past a comment, to the end of its line.
+fn skip_comment(characters: &mut Peekable<Chars<'_>>) {
+    for skipped in characters.by_ref() {
+        if skipped == '\n' {
+            break;
+        }
+    }
+}
+
+/// A quoted section into `argument`, up to the `closing` quote, its escapes read.
+fn read_quoted(characters: &mut Peekable<Chars<'_>>, closing: char, argument: &mut String) {
+    while let Some(quoted) = characters.next() {
+        match quoted {
+            quote if quote == closing => return,
+            '\\' => read_escape(characters, argument),
+            other => argument.push(other),
+        }
+    }
+}
+
+/// What follows a backslash inside quotes: a line continuation, or one escaped character.
+fn read_escape(characters: &mut Peekable<Chars<'_>>, argument: &mut String) {
+    match characters.next() {
+        Some('\n') => skip_indentation(characters),
+        Some('\r') => {
+            characters.next_if_eq(&'\n');
+            skip_indentation(characters);
+        }
+        Some('t') => argument.push('\t'),
+        Some('n') => argument.push('\n'),
+        Some('r') => argument.push('\r'),
+        Some('f') => argument.push('\u{c}'),
+        Some(escaped) => argument.push(escaped),
+        None => {}
+    }
+}
+
+/// Past the leading spaces of a continued line, which the launcher drops.
+fn skip_indentation(characters: &mut Peekable<Chars<'_>>) {
+    while characters
+        .next_if(|next| *next == ' ' || *next == '\t')
+        .is_some()
+    {}
 }
