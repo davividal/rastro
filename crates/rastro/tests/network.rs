@@ -16,7 +16,7 @@ use rastro::collectors::network::{AddressLifetime, Ip, NetworkCollector, Network
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
 use support::fs_tree::scratch_tree;
-use support::observation::{field, items_of, keys_of};
+use support::observation::{field, items_of, keys_of, text};
 /// Real interfaces: the loopback, a NIC with a static address, and a NIC on DHCP.
 const INTERFACES: &str = r#"[
   {"ifindex":1,"ifname":"lo","flags":["LOOPBACK","UP","LOWER_UP"],"mtu":65536,
@@ -341,15 +341,51 @@ fn the_protocol_that_installed_a_route_survives_the_diffable_view() {
     assert!(protocols.contains(&"dhcp".to_owned()));
 }
 
+/// Two IPv4 default routes under one destination and metric, as `ip route append` leaves them.
+///
+/// The kernel uses the first that is alive and holds the second as its failover, so the order
+/// is the only thing that says which is which. Sorting by gateway would swap them.
+const IPV4_ROUTES_APPENDED: &str = r#"[
+  {"type":"unicast","dst":"default","gateway":"10.0.0.9","dev":"enp0s8","protocol":"static",
+   "scope":"global","metric":100,"flags":[]},
+  {"type":"unicast","dst":"default","gateway":"10.0.0.1","dev":"enp0s8","protocol":"static",
+   "scope":"global","metric":100,"flags":[]}
+]"#;
+
+fn gateways_of(state: &NetworkState) -> Vec<String> {
+    state
+        .routes()
+        .iter()
+        .map(|route| match &route.gateway {
+            Some(gateway) => gateway.as_str().to_owned(),
+            None => "-".to_owned(),
+        })
+        .collect()
+}
+
 #[test]
-fn parse_sorts_the_routes() {
+fn parse_keeps_the_routes_in_the_order_the_kernel_lists_them() {
     // Act
-    let state = state();
+    let state = Ip::parse(INTERFACES, IPV4_ROUTES_APPENDED, "[]").expect("well formed");
 
     // Assert
-    let mut sorted = state.routes().to_vec();
-    sorted.sort();
-    assert_eq!(state.routes(), sorted.as_slice());
+    assert_eq!(gateways_of(&state), ["10.0.0.9", "10.0.0.1"]);
+}
+
+#[test]
+fn the_facet_renders_the_routes_in_the_order_the_kernel_lists_them() {
+    // Arrange
+    let state = Ip::parse(INTERFACES, IPV4_ROUTES_APPENDED, "[]").expect("well formed");
+
+    // Act
+    let observation = Observation::from(&state);
+
+    // Assert
+    let gateways: Vec<String> = items_of(&field(&observation, "routes"))
+        .iter()
+        .map(|route| text(&field(route, "gateway")))
+        .collect();
+    assert_eq!(gateways, ["10.0.0.9", "10.0.0.1"]);
 }
 
 #[test]

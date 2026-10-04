@@ -15,10 +15,11 @@ use crate::collectors::network::value_objects::InterfaceName;
 /// the box can reach the internet; that depends on `enp0s8` being up and holding an
 /// address. Splitting them would also let a config exclude half of an answer.
 ///
-/// Interfaces are keyed by name and routes are a sorted list, which is the
-/// keyed-or-listed rule applied twice with different answers: an interface name is unique
-/// and a route has no unique key at all, since two routes to the same destination through
-/// different gateways are how a box is multi-homed.
+/// Interfaces are keyed by name and routes are a sequence in the kernel's order: an interface
+/// name is unique, and a route's identity is not one rastro can key on. Two routes to the same
+/// destination through different gateways are how a box is multi-homed, and among IPv4 routes
+/// that `ip route append` kept under one destination and metric the kernel uses the first that
+/// is alive, so the order is what says which route is the failover.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NetworkState {
     interfaces: BTreeMap<InterfaceName, NetworkInterface>,
@@ -26,7 +27,7 @@ pub struct NetworkState {
 }
 
 impl NetworkState {
-    /// Files each interface under its name and sorts the routes.
+    /// Files each interface under its name and keeps the routes in the order given.
     ///
     /// A repeated interface name is refused: the kernel cannot produce one, so it means
     /// rastro misread the output, and keeping the last of two would drop an interface from
@@ -45,12 +46,9 @@ impl NetworkState {
             }
         }
 
-        let mut sorted: Vec<Route> = routes.into_iter().collect();
-        sorted.sort();
-
         Ok(Self {
             interfaces: filed,
-            routes: sorted,
+            routes: routes.into_iter().collect(),
         })
     }
 
@@ -77,7 +75,7 @@ impl From<&NetworkState> for Observation {
             ),
             (
                 "routes",
-                Observation::set(state.routes().iter().map(Observation::from)),
+                Observation::sequence(state.routes().iter().map(Observation::from)),
             ),
         ])
     }
