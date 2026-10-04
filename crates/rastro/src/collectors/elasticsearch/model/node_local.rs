@@ -52,8 +52,10 @@ impl From<&NodeLocal> for Observation {
                 "jvm_arguments",
                 // A sequence: the JVM takes the last of two settings of one option.
                 Observation::sequence(local.jvm_arguments.iter().map(|argument| {
+                    // Withheld, found by review: a secret can be passed as a property. Each on
+                    // its own, so a change to one argument is a change to one digest.
+                    let rendered = Observation::text(argument).sensitive();
                     // Measured by the second domain review: new on every start.
-                    let rendered = Observation::text(argument);
                     match argument.contains(PER_START_DIRECTORY) {
                         true => rendered.volatile(),
                         false => rendered,

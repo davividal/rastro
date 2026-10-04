@@ -84,3 +84,25 @@ fn collect_reports_a_refused_node_local_read_on_that_surface_alone() {
     // Assert
     assert_eq!(local.completeness(), Completeness::Incomplete);
 }
+
+#[test]
+fn collect_withholds_each_jvm_argument() {
+    // Arrange: found by review. An operator or a plugin can pass a secret as a property,
+    // `-Dclient.password=…`, and the node reports its JVM's arguments verbatim.
+    let answer = NODE_LOCAL_ANSWER.replace("-XX:+UseG1GC", "-Dclient.password=hunter2");
+
+    // Act
+    let local = node_local(
+        &[("/", ROOT), (NODE_LOCAL, answer.as_str())],
+        "elasticsearch-node-local-jvm-secret",
+    );
+
+    // Assert: each one on its own, so a change to one argument is a change to one digest.
+    let arguments = items_of(&field(&local, "jvm_arguments"));
+    assert!(
+        arguments
+            .iter()
+            .all(|argument| argument.sensitivity() == Sensitivity::Sensitive),
+        "{arguments:?}"
+    );
+}
