@@ -35,7 +35,7 @@ impl Components {
 
 impl From<&Components> for Observation {
     fn from(components: &Components) -> Self {
-        Observation::list(
+        Observation::set(
             components
                 .iter()
                 .map(|component| Observation::text(component.as_str())),

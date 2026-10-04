@@ -33,7 +33,7 @@ impl From<&FirewallChain> for Observation {
             ),
             (
                 "rules",
-                Observation::list(chain.rules.iter().map(Observation::from)),
+                Observation::sequence(chain.rules.iter().map(Observation::from)),
             ),
         ])
     }

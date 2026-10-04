@@ -61,7 +61,7 @@ impl From<&Cluster> for Observation {
             ),
             (
                 "qualifiers",
-                Observation::list(
+                Observation::set(
                     cluster
                         .status
                         .qualifiers()

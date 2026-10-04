@@ -50,7 +50,7 @@ impl From<&ContainerPorts> for Observation {
         Observation::object(ports.ports().iter().map(|(port, bindings)| {
             (
                 port.as_key(),
-                Observation::list(bindings.iter().map(Observation::from)),
+                Observation::set(bindings.iter().map(Observation::from)),
             )
         }))
     }

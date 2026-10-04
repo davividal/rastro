@@ -53,7 +53,7 @@ pub fn effective_config(
         ),
         (
             "excluded_collectors",
-            Observation::list(
+            Observation::set(
                 config
                     .excluded()
                     .iter()

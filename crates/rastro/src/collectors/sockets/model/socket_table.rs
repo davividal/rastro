@@ -12,6 +12,8 @@ use super::listening_socket::ListeningSocket;
 /// precisely so that they can, which is how a load-balanced daemon runs several accepting
 /// processes, so keying would silently drop all but one of them.
 ///
+/// Ordered by kind, then address, which is how `ss` groups a table and how a reader scans one.
+///
 /// Sorting is what stops the facet churning. `ss` walks the kernel's hash tables, and
 /// their order depends on which sockets were opened when.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -40,6 +42,9 @@ impl SocketTable {
 
 impl From<&SocketTable> for Observation {
     fn from(table: &SocketTable) -> Self {
-        Observation::list(table.sockets().iter().map(Observation::from))
+        Observation::set_by(
+            ["kind", "address", "state"],
+            table.sockets().iter().map(Observation::from),
+        )
     }
 }

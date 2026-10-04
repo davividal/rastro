@@ -31,7 +31,7 @@ impl From<&SocketHolder> for Observation {
             ("name", Observation::from(&holder.name)),
             (
                 "processes",
-                Observation::list(holder.processes.iter().map(Observation::from)).volatile(),
+                Observation::set(holder.processes.iter().map(Observation::from)).volatile(),
             ),
         ])
     }

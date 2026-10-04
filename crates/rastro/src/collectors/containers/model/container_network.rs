@@ -41,7 +41,7 @@ impl From<&ContainerNetwork> for Observation {
             ("address", optional_address(network.address.as_ref())),
             (
                 "aliases",
-                Observation::list(
+                Observation::set(
                     network
                         .aliases
                         .iter()

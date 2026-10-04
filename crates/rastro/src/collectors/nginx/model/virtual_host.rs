@@ -36,7 +36,7 @@ impl From<&VirtualHost> for Observation {
         Observation::object([
             (
                 "access",
-                Observation::list(host.access.iter().map(Observation::from)),
+                Observation::sequence(host.access.iter().map(Observation::from)),
             ),
             (
                 "authentication",
@@ -46,23 +46,20 @@ impl From<&VirtualHost> for Observation {
             ),
             (
                 "certificates",
-                Observation::list(host.certificates.iter().map(Observation::from)),
+                Observation::sequence(host.certificates.iter().map(Observation::from)),
             ),
             (
                 "listens",
-                Observation::list(host.listens.iter().map(Observation::from)),
+                Observation::set(host.listens.iter().map(Observation::from)),
             ),
             (
                 "locations",
-                Observation::list(host.locations.iter().map(Observation::from)),
+                Observation::sequence(host.locations.iter().map(Observation::from)),
             ),
-            (
-                "logs",
-                Observation::list(host.logs.iter().map(Observation::from)),
-            ),
+            ("logs", LogDestination::set_of(host.logs.iter())),
             (
                 "resolvers",
-                Observation::list(host.resolvers.iter().map(Observation::from)),
+                Observation::set(host.resolvers.iter().map(Observation::from)),
             ),
             (
                 "root",
@@ -72,11 +69,11 @@ impl From<&VirtualHost> for Observation {
             ),
             (
                 "server_names",
-                Observation::list(host.server_names.iter().map(Observation::from)),
+                Observation::sequence(host.server_names.iter().map(Observation::from)),
             ),
             (
                 "trusted_proxies",
-                Observation::list(host.trusted_proxies.iter().map(Observation::from)),
+                Observation::set(host.trusted_proxies.iter().map(Observation::from)),
             ),
         ])
     }

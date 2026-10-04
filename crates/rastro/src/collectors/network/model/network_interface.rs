@@ -25,9 +25,9 @@ pub struct NetworkInterface {
     pub maximum_transmission_unit: i64,
     pub operational_state: OperationalState,
     pub flags: InterfaceFlags,
-    /// Sorted, so the order the kernel happened to list them in never reaches the
-    /// document. An interface with no addresses at all is ordinary: a bridge port has
-    /// none.
+    /// Keyed by [`InterfaceAddress::identity`] in the document, so the order the kernel
+    /// happened to list them in never reaches it. An interface with no addresses at all is
+    /// ordinary: a bridge port has none.
     pub addresses: Vec<InterfaceAddress>,
 }
 
@@ -36,7 +36,12 @@ impl From<&NetworkInterface> for Observation {
         Observation::object([
             (
                 "addresses",
-                Observation::list(interface.addresses.iter().map(Observation::from)),
+                Observation::object(
+                    interface
+                        .addresses
+                        .iter()
+                        .map(|address| (address.identity(), Observation::from(address))),
+                ),
             ),
             ("flags", Observation::from(&interface.flags)),
             (

@@ -22,8 +22,8 @@ pub fn field(observation: &Observation, name: &str) -> Observation {
 
 pub fn items_of(observation: &Observation) -> Vec<Observation> {
     match observation.content() {
-        Content::List(items) => items.clone(),
-        other => panic!("expected a list, got {other:?}"),
+        Content::Sequence(items) | Content::Set { items, .. } => items.clone(),
+        other => panic!("expected a sequence or a set, got {other:?}"),
     }
 }
 

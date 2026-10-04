@@ -49,7 +49,7 @@ impl From<&Configuration> for Observation {
         Observation::object([
             (
                 "files",
-                Observation::list(configuration.files.iter().map(Observation::from)),
+                Observation::sequence(configuration.files.iter().map(Observation::from)),
             ),
             ("chosen_by", Observation::from(&configuration.chosen_by)),
             (

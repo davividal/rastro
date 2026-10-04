@@ -30,6 +30,6 @@ impl InterfaceFlags {
 
 impl From<&InterfaceFlags> for Observation {
     fn from(flags: &InterfaceFlags) -> Self {
-        Observation::list(flags.iter().map(|flag| Observation::text(flag.as_str())))
+        Observation::set(flags.iter().map(|flag| Observation::text(flag.as_str())))
     }
 }

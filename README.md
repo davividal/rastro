@@ -24,14 +24,15 @@ rastro -o after.json
 diff -u before.json after.json
 ```
 
-This is the whole output:
+From a Debian container, trimmed to the lines that changed:
 
 ```diff
-@@ -194,6 +194,18 @@
-             "rw",
-             "seclabel"
-           ]
-+        },
+@@ filesystem @@
+-        "/mnt/demo": "92de90742cafc316",
++        "/mnt/demo": "60a9b40dba04f729",
++        "/root/before.json": "80014f56f3a03cdb",
++        "/run/mount": "fc76396939bf7b95",
+@@ mounts @@
 +        {
 +          "device": "tmpfs",
 +          "filesystem": "tmpfs",
@@ -43,14 +44,15 @@ This is the whole output:
 +            "seclabel",
 +            "size=16384k"
 +          ]
-         }
-       ],
-       "name": "mounts",
++        },
 ```
 
-The example names both files because a before-and-after pair needs stable names;
-a bare `rastro` writes `./rastro-<host>-<UTC>.json` instead, and `-o -` writes it
-to stdout.
+The mount is the change that was asked for, and `/mnt/demo` now stats as the root of
+the tmpfs on it. `/run/mount` is the one nobody asked for: `mount(8)` created it, and
+nothing reported it. `/root/before.json` is the first run's own document. A run leaves
+out only the file it is writing, so an earlier fingerprint on a walked disk is a trace
+like any other; write both to a tmpfs to keep them out. A bare `rastro` writes
+`./rastro-<host>-<UTC>.json`, and `-o -` writes to stdout.
 
 ## Why
 

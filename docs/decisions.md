@@ -5545,3 +5545,181 @@ that pin each mark check both directions, so a mark removed or made unconditiona
 see". A root run that read everything is still silent. The two tests that asserted an empty
 stderr now check every line against the run's own document: the privilege warning only when
 not root, the failed facets exactly as the document records them, and nothing else.
+
+# A list says what kind of collection it is
+
+Dated 2026-10-04. [Keyed where the name is unique, listed where it is not](#keyed-where-the-name-is-unique-listed-where-it-is-not)
+asked one question of every collection: does a single name identify an element, uniquely,
+by the host's own guarantee? Three later entries had to step outside it:
+[nginx's order kept where nginx reads it](#order-is-kept-where-nginx-reads-it-sorted-where-it-does-not),
+and, each after a real pair of fingerprints showed the cost,
+[grants keyed by grantee](#a-databases-grants-are-keyed-by-grantee-and-the-grantor-stays-a-field)
+and [a socket's holders keyed by program name](#a-sockets-holders-are-keyed-by-the-program-name-not-listed-per-process).
+They are one rule, found three times. This entry states it once, so the next collector
+starts from it instead of rediscovering it on a production diff.
+
+## Every list is a sequence, a keyed set or an unkeyed set
+
+Supersedes [Keyed where the name is unique](#keyed-where-the-name-is-unique-listed-where-it-is-not),
+which becomes one case of it.
+
+| kind | it is | it renders as | a change reads as |
+|---|---|---|---|
+| **sequence** | order is meaning | a list, in the host's order | the element where it moved |
+| **keyed set** | each element has an identity | an object keyed by that identity | one key added, removed, or changed beneath it |
+| **unkeyed set** | nothing identifies an element but its value | a list, sorted | one element removed and one added |
+
+**A sequence is a sequence because the host acts on the order**: the first `pg_hba.conf`
+rule that matches wins, a later `postgresql.conf` setting overrides an earlier one, nginx
+makes the first server on a listen its default and tries regex locations in order, and the
+kernel stacks mounts. Sorting any of them would render two different behaviours as one
+document. What it costs is the insertion that shifts every later position, and that cost is
+the true one: the order *did* change.
+
+**Anything else is a set, and a set's order is rastro's to choose.** A list order that
+nothing on the host acts on is noise in a diff: two runs agree only because the source
+happened to answer in the same order both times, which is a property of the source and not
+of the box.
+
+## The identity is chosen against the diff, not against the data model
+
+The obvious identity is what makes an element unique, and the grants entry measured why that
+is not enough: keying a grant by grantee *and* grantor turned one `ALTER DATABASE … OWNER`
+into every key removed and re-added, and hid the revoke the same statement performed. So:
+
+**The identity is what a reader wants a change reported against.** A field that one ordinary
+operation rewrites across many elements at once does not belong in the key, because it turns
+an edit into a replacement. It stays a field, and the change reads as that field moving.
+
+**Uniqueness is either the host's guarantee or rastro's claim, and the two are treated
+differently.** Where the host enforces it, as the kernel does for module names, a repeated
+key is rastro misreading its source and fails, as before. Where rastro chose the identity,
+the entry for that collection says why it is unique, and where it cannot say so the key
+holds a list, as a grantee does for grants from two grantors. Today `Observation::object`
+keeps the last of two equal keys without a word, so the duplicate check is each collector's
+discipline. It moves into the port, where it cannot be forgotten.
+
+**An identity of several fields is spelled once, in the host's own notation where it has
+one**, because the key is now part of the format contract and a diff reader has to recognise
+it: `10.0.0.5/24` for an address on an interface rather than an invented separator. The
+spelling must be injective, two different identities never one key, and a test pins it.
+
+**An identity that is nearly unique is not unique.** A listening socket's `tcp 0.0.0.0:22`
+looks like a key and is not one: `SO_REUSEPORT` lets several sockets bind it. Keyed anyway,
+the key holds a list, as a grantee's does.
+
+## An unkeyed set is sorted over what the view shows
+
+Sorting by the whole element would put a volatile field into the order: two runs with the
+same visible elements would list them differently because a pid moved. So an unkeyed set is
+sorted at render time, over the value the view keeps, by a structural order the port defines
+rather than by any format's bytes, so that every format lists a set the same way. The reason
+is the one in
+[the digest covers exactly what the view would have shown](#the-digest-covers-exactly-what-the-view-would-have-shown).
+
+**Two elements the host holds as one and the view renders twice are a modelling fault.** It
+is the defect the socket holders entry found: the count became a property of the moment. The
+answer there was to group the volatile part under a stable identity, and that is the answer
+here too, which the type below makes a reviewer see.
+
+**Two elements the host itself holds twice are a multiset, and both are kept.** Two identical
+crontab lines run the job twice, so collapsing them would report half of what the box does.
+An unkeyed set is therefore a multiset: sorted, with every repeat kept.
+
+## Where the host keeps an order, the order is state
+
+The test for a sequence is whether the host acts on the order *at all*, not whether it acts
+on it for every element. Sorting a list the host reads in order renders two different boxes
+as one document, and that is misrepresenting the box, however rarely the difference bites.
+The cases that were not obvious, each checked against the software:
+
+- **nginx `server_names` are a sequence.** The first name is the server's primary one: it is
+  `$server_name`, and it is the name a redirect uses under `server_name_in_redirect`. Sorting
+  hid a change of primary name.
+- **nginx upstream `servers` are a sequence.** Round-robin walks the members in order, and
+  `hash` and `ip_hash` map a key to a member by its position, so reordering them moves traffic.
+- **nginx stream `servers` are a sequence.** Since 1.25.5 several may share a listen, and the
+  first one on an address and port is its default.
+- **An account's authorized keys are a sequence**, in sshd's search order: the files in
+  `AuthorizedKeysFile` order, then lines in file order. The first line that matches a key
+  decides its options, so a duplicate key with different options is decided by position.
+- **resolv.conf `options` stay a sequence.** glibc's parser walks the line left to right and
+  a later `ndots:`, `timeout:` or `attempts:` overwrites an earlier one.
+- **docker IPAM `configured` pools stay a sequence.** libnetwork's `assignAddressVersion`
+  takes the first pool, in configured order, that has a free address.
+- **Routes are a sequence, in the kernel's order**, where they are sorted today. Routes for
+  different prefixes are chosen by prefix and metric, but `ip route append` keeps several
+  IPv4 routes under one destination, TOS and metric, and `fib_table_lookup` uses the first
+  that is alive: the others are failovers, and only the order says which is which. The
+  kernel's dump order is its trie walk, which is the same on two runs of an unchanged box.
+  A key would not work either way: the identity is (table, destination, TOS, metric), rastro
+  reads only the `main` table and records no TOS, and appended routes share it.
+
+Supersedes, in [Order is kept where nginx reads it, sorted where it does not](#order-is-kept-where-nginx-reads-it-sorted-where-it-does-not),
+the sorting of server names and pool members. Listen addresses, listen options and pool
+member parameters stay sorted: nginx does not act on their order.
+
+**Cron jobs are a multiset, not a sequence.** cron forks every job whose schedule matches, so
+the order of lines in a crontab is not something it acts on.
+
+## A set of objects sorts by the fields its collector names, and by the whole item otherwise
+
+The structural order compares an object field by field in key order, so it leads with
+whichever field is alphabetically first. That is safe, since it is total and it never reads
+a value the view hides, and it is often wrong for a diff. Repositories led with
+`archive_type` where they used to lead with their URI, so a repository whose type changed
+would move away from where it was and read as one removed and one added.
+
+**So the collector names the fields that identify an item, and the set sorts by them
+first**, over what the view shows of them, and by the whole item after that. A named field
+the view drops sorts as absent rather than by its hidden value. A set whose collector names
+nothing keeps the structural order, which is the safe default and not an error.
+
+Named where the identity is not already the alphabetically first field: repositories by URI,
+suite and archive type; sockets by kind and address; processes by name and command line;
+RabbitMQ bindings by source exchange; nginx log destinations by kind and target; role
+overrides by database, role and name. Upstreams, listens, holders, alarms and the
+unreadable-object lists already lead with what identifies them.
+
+**This also settles most of what keying was for.** Once a set leads with an item's identity,
+a change anywhere else in the item keeps it in place and reads as that item changing, which
+is what a key would buy, without fixing a key spelling into the format forever. So keying is
+kept for an identity the host guarantees unique and whose shape gains from it: an
+interface's addresses, keyed `10.0.2.15/24`. The rest stay sets:
+
+- **nginx upstreams and listens**, because rastro records a configuration as written,
+  including one nginx would refuse ([order is kept where nginx reads
+  it](#order-is-kept-where-nginx-reads-it-sorted-where-it-does-not)), so a name or a listen
+  can repeat in what rastro reads, and a file included twice repeats everything in it.
+- **The socket table**, because `SO_REUSEPORT` lets several sockets share an address.
+- **Role overrides, RabbitMQ listeners and the unreadable-object lists**, because ordering by
+  their identity gives the same diff a key would.
+
+## The kind is a type, not a convention
+
+`Content::List` is one variant for three kinds, so nothing in the port says which one a
+collector meant, and review is the only check. It splits:
+
+- `Content::Sequence`, which keeps the order it was given;
+- `Content::Set`, sorted over what the view keeps, by the fields its collector named first;
+- a keyed set stays an `Object`, built through a constructor that refuses a repeated key.
+
+Every collector then names the kind at its construction site, and the compiler names every
+site where a list is built today: an exhaustive `match` is the check, not review. The
+determinism rule in
+[design.md](design.md#determinism-rules) changes with it: "a defined ordering for every list"
+becomes "every list declares its kind".
+
+**No collector version bump**, per
+[the release rule](#every-collector-is-version-1-until-rastro-has-a-release).
+
+**Cost:** every collection that changes kind changes shape, so a fingerprint from before it
+cannot be diffed against one from after under that key. That is the whole population of
+documents an unreleased build produced. Each composite identity becomes a spelling the
+format contract has to keep forever once there is a release, which is the reason to settle
+them now.
+
+**What this does not fix.** A sequence still shifts: a rule inserted at the top of
+`pg_hba.conf` moves every rule after it, and a line diff shows that as many lines. It is a
+true report of a real change, and the remedy would be a diff that understands the document,
+which [there is deliberately not](#no-diff-verb-in-v1).

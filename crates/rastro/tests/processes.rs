@@ -16,7 +16,7 @@ use rastro::collectors::processes::{
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Observation, View};
 use support::fs_tree::scratch_tree;
-use support::observation::{items_of, keys_of};
+use support::observation::{field, items_of, keys_of, text};
 /// `/proc/1/status` as the development box writes it, trimmed to the lines rastro reads.
 const SYSTEMD_STATUS: &str = "\
 Name:\tsystemd
@@ -498,4 +498,25 @@ fn a_process_that_left_is_told_from_a_read_that_failed() {
     assert!(proc_processes::departed(&gone));
     assert!(proc_processes::departed(&never_there));
     assert!(!proc_processes::departed(&refused));
+}
+
+#[test]
+fn the_table_renders_in_order_of_name_then_command_line() {
+    // Arrange: alphabetically the command line leads, so a process whose arguments changed
+    // would move away from every other process of its name. Named first, it stays among them.
+    let process = |name: &str, argument: &str| Process {
+        command_line: CommandLine::new([argument.to_owned()]),
+        ..minimal_process(name, 7)
+    };
+    let table = ProcessTable::new([process("zulu", "/a"), process("alpha", "/z")]);
+
+    // Act
+    let rendered = Observation::from(&table);
+
+    // Assert
+    let names: Vec<String> = items_of(&rendered)
+        .iter()
+        .map(|process| text(&field(process, "name")))
+        .collect();
+    assert_eq!(names, ["alpha", "zulu"]);
 }

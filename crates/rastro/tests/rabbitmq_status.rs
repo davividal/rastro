@@ -198,12 +198,16 @@ fn parse_records_every_listener_the_node_bound() {
     let rendered = Observation::from(&RabbitmqctlStatus::parse(MEASURED).expect("well formed"));
 
     // Assert: what the node says it is listening on, which is a different fact from what the
-    // `sockets` facet observed bound, and kept apart so the two can disagree.
+    // `sockets` facet observed bound, and kept apart so the two can disagree. A set, by
+    // interface and then port: the node prints clustering first, and that order means nothing.
     let listeners = items_of(&field(&rendered, "listeners"));
-    assert_eq!(listeners.len(), 2);
+    let protocols: Vec<String> = listeners
+        .iter()
+        .map(|listener| text(&field(listener, "protocol")))
+        .collect();
+    assert_eq!(protocols, ["amqp", "clustering"]);
 
-    let clustering = &listeners[0];
-    assert_eq!(text(&field(clustering, "protocol")), "clustering");
+    let clustering = &listeners[1];
     assert_eq!(integer(&field(clustering, "port")), 25672);
     assert_eq!(text(&field(clustering, "interface")), "[::]");
 }
@@ -305,6 +309,44 @@ fn a_reports_own_bracket_does_not_start_the_document() {
 const ALARMED: &str = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP 27",
   "alarms":[{"node":"rabbit@box","type":"resource_limit","resource":"memory"}],
   "listeners":[{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}]}"#;
+
+/// A node that reports its plugins, tags and alarms in an order that is not sorted.
+const UNORDERED: &str = r#"{"rabbitmq_version":"4.0.5","erlang_version":"Erlang/OTP 27",
+  "active_plugins":["rabbitmq_web_dispatch","rabbitmq_management","amqp_client"],
+  "tags":["zone-b","tier-gold"],
+  "alarms":[{"node":"rabbit@box","type":"resource_limit","resource":"memory"},
+            {"node":"rabbit@box","type":"resource_limit","resource":"disk"}],
+  "listeners":[{"node":"rabbit@box","port":25672,"protocol":"clustering","interface":"[::]"}]}"#;
+
+fn texts_at(rendered: &Observation, key: &str) -> Vec<String> {
+    items_of(&field(rendered, key)).iter().map(text).collect()
+}
+
+#[test]
+fn a_nodes_plugins_tags_and_alarms_are_sets() {
+    // Arrange: the node acts on none of these orders, so the order it printed them in is noise
+    // that would read as a change the day it printed them differently.
+    let status = RabbitmqctlStatus::parse(UNORDERED).expect("well formed");
+
+    // Act
+    let rendered = Observation::from(&status);
+
+    // Assert
+    assert_eq!(
+        texts_at(&rendered, "active_plugins"),
+        [
+            "amqp_client",
+            "rabbitmq_management",
+            "rabbitmq_web_dispatch"
+        ]
+    );
+    assert_eq!(texts_at(&rendered, "tags"), ["tier-gold", "zone-b"]);
+    let resources: Vec<String> = items_of(&field(&rendered, "alarms"))
+        .iter()
+        .map(|alarm| text(&field(alarm, "resource")))
+        .collect();
+    assert_eq!(resources, ["disk", "memory"]);
+}
 
 #[test]
 fn parse_records_an_alarm_the_node_has_raised() {

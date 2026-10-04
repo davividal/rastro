@@ -25,11 +25,11 @@ impl From<&StreamService> for Observation {
         Observation::object([
             (
                 "servers",
-                Observation::list(service.servers.iter().map(Observation::from)),
+                Observation::sequence(service.servers.iter().map(Observation::from)),
             ),
             (
                 "upstreams",
-                Observation::list(service.upstreams.iter().map(Observation::from)),
+                Observation::set(service.upstreams.iter().map(Observation::from)),
             ),
         ])
     }

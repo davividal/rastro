@@ -19,7 +19,8 @@ pub struct CronTable {
     /// command name resolves to and `MAILTO` decides whether anybody hears about a failure,
     /// so neither is decoration.
     pub environment: BTreeMap<EnvironmentVariableName, String>,
-    /// In the file's order, which is not a schedule but is how an operator reads it.
+    /// A multiset: cron forks every job whose schedule matches, so the file's order is not
+    /// state, and a line written twice runs twice.
     pub jobs: Vec<CronJob>,
     /// Sorted. Only a run-parts directory has these.
     pub scripts: Vec<ScriptName>,
@@ -79,11 +80,11 @@ impl From<&CronTable> for Observation {
             ),
             (
                 "jobs",
-                Observation::list(table.jobs.iter().map(Observation::from)),
+                Observation::set(table.jobs.iter().map(Observation::from)),
             ),
             (
                 "scripts",
-                Observation::list(table.scripts.iter().map(Observation::from)),
+                Observation::sequence(table.scripts.iter().map(Observation::from)),
             ),
         ])
     }

@@ -113,9 +113,10 @@ fn every_server_block_becomes_a_host_in_the_order_it_was_written() {
     // Act
     let hosts = hosts_of(&prefix);
 
-    // Assert: order is kept because nginx resolves a default server by it.
+    // Assert: order is kept because nginx resolves a default server by it, and a host's
+    // names keep theirs because the first is its primary name, the one `$server_name` holds.
     assert_eq!(hosts.len(), 2);
-    assert_eq!(names_of(&hosts[0]), ["example.org", "www.example.org"]);
+    assert_eq!(names_of(&hosts[0]), ["www.example.org", "example.org"]);
     assert_eq!(names_of(&hosts[1]), ["example.org"]);
 }
 
@@ -303,7 +304,7 @@ fn a_user_file_that_cannot_be_read_says_so_rather_than_reading_as_empty() {
 }
 
 #[test]
-fn a_pool_sorts_its_members_and_keeps_what_each_was_given() {
+fn a_pool_keeps_its_members_in_the_order_written_and_what_each_was_given() {
     // Arrange
     let prefix = fixture("pool");
 
@@ -317,7 +318,8 @@ fn a_pool_sorts_its_members_and_keeps_what_each_was_given() {
     assert_eq!(pool.settings.get("least_conn"), Some(&String::new()));
     assert_eq!(pool.settings.get("keepalive"), Some(&"32".to_owned()));
 
-    // Sorted: the pool is a set, so which line came first is not state.
+    // In the order written: round-robin walks the members in it, and `hash` and `ip_hash`
+    // map a key to a member by its position, so reordering them moves traffic.
     let members: Vec<Vec<&str>> = pool
         .servers
         .iter()
@@ -332,8 +334,8 @@ fn a_pool_sorts_its_members_and_keeps_what_each_was_given() {
     assert_eq!(
         members,
         [
-            vec!["max_fails=2", "weight=3"],
             vec!["backup"],
+            vec!["max_fails=2", "weight=3"],
             vec!["down"],
         ]
     );

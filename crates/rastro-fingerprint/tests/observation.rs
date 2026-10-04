@@ -1,6 +1,8 @@
 use rastro_fingerprint::View;
+use rastro_fingerprint::observation::redaction;
 use rastro_fingerprint::{
-    Completeness, Content, Observation, Presentation, Scalar, Sensitivity, Volatility,
+    Completeness, Content, FingerprintError, Observation, Presentation, Scalar, Sensitivity,
+    Volatility,
 };
 
 fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, Observation> {
@@ -12,8 +14,8 @@ fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, 
 
 fn items_of(observation: &Observation) -> &[Observation] {
     match observation.content() {
-        Content::List(items) => items,
-        other => panic!("expected a list observation, got {other:?}"),
+        Content::Sequence(items) | Content::Set { items, .. } => items,
+        other => panic!("expected a sequence or a set observation, got {other:?}"),
     }
 }
 
@@ -112,7 +114,7 @@ fn incomplete_items_counts_every_marked_node_however_deep() {
                 ("/c", Observation::null()),
             ]),
         ),
-        ("unreadable", Observation::list([refused()]).volatile()),
+        ("unreadable", Observation::sequence([refused()]).volatile()),
     ]);
 
     // Act & Assert: the volatile list still counts, because a refusal this run is a refusal
@@ -250,7 +252,7 @@ fn the_diffable_view_drops_a_whole_volatile_subtree() {
 #[test]
 fn the_diffable_view_drops_volatile_list_items() {
     // Arrange
-    let observation = Observation::list([
+    let observation = Observation::sequence([
         Observation::text("0.0.0.0:22"),
         Observation::text("127.0.0.1:41233").volatile(),
     ]);
@@ -315,4 +317,327 @@ fn a_raw_view_carries_a_sensitive_value_as_it_stands() {
     // Assert
     assert_eq!(text_of(&visible), "password=hunter2");
     assert_eq!(visible.sensitivity(), Sensitivity::Sensitive);
+}
+
+fn texts_of(observation: &Observation) -> Vec<&str> {
+    items_of(observation).iter().map(text_of).collect()
+}
+
+#[test]
+fn a_sequence_keeps_the_order_its_items_were_given_in() {
+    // Act
+    let sequence = Observation::sequence([Observation::text("b"), Observation::text("a")]);
+
+    // Assert
+    assert_eq!(texts_of(&sequence), ["b", "a"]);
+}
+
+#[test]
+fn a_set_is_equal_whatever_order_its_items_were_given_in() {
+    // Act
+    let given = Observation::set([Observation::text("b"), Observation::text("a")]);
+    let reversed = Observation::set([Observation::text("a"), Observation::text("b")]);
+
+    // Assert
+    assert_eq!(given, reversed);
+    assert_eq!(texts_of(&given), ["a", "b"]);
+}
+
+#[test]
+fn a_set_keeps_an_item_the_host_holds_twice() {
+    // Arrange: two identical crontab lines run the job twice, so a set is a multiset and
+    // collapsing the pair would report half of what the box does.
+    let line = || Observation::text("0 3 * * * /usr/local/bin/backup");
+
+    // Act
+    let set = Observation::set([line(), line()]);
+
+    // Assert
+    assert_eq!(items_of(&set).len(), 2);
+}
+
+#[test]
+fn a_set_orders_integers_by_value_not_by_how_they_are_spelled() {
+    // Act
+    let set = Observation::set([Observation::integer(10), Observation::integer(9)]);
+
+    // Assert
+    assert_eq!(
+        items_of(&set),
+        [Observation::integer(9), Observation::integer(10)]
+    );
+}
+
+#[test]
+fn a_set_in_a_view_is_sorted_over_what_that_view_keeps() {
+    // Arrange: the volatile `id` orders the items one way and the `name` the view keeps
+    // orders them the other, so sorting over the whole item would order the diffable view by
+    // a pid that moves between runs.
+    let item = |id, name| {
+        Observation::object([
+            ("id", Observation::integer(id).volatile()),
+            ("name", Observation::text(name)),
+        ])
+    };
+    let set = Observation::set([item(1, "b"), item(2, "a")]);
+
+    // Act
+    let visible = set.in_view(View::Diffable).expect("a stable set survives");
+
+    // Assert
+    let names: Vec<&str> = items_of(&visible)
+        .iter()
+        .map(|item| text_of(&entries_of(item)["name"]))
+        .collect();
+    assert_eq!(names, ["a", "b"]);
+}
+
+#[test]
+fn a_set_in_a_redacted_view_is_sorted_over_the_digests_that_stand_in() {
+    // Arrange: two secrets whose digests sort the other way round from the values, checked
+    // here so the test cannot pass because the two orders happen to agree.
+    let digest_of = |value: &str| {
+        redaction::redacted(&Scalar::Text(value.to_owned())).expect("text is redactable")
+    };
+    let (first, second) = ("alpha", "bravo");
+    let digests = [digest_of(first), digest_of(second)];
+    let (low, high) = match digests[0] < digests[1] {
+        true => (second, first),
+        false => (first, second),
+    };
+    assert!(low < high && digest_of(low) > digest_of(high));
+    let set = Observation::set([
+        Observation::text(low).sensitive(),
+        Observation::text(high).sensitive(),
+    ]);
+
+    // Act
+    let visible = set
+        .in_view(View::Diffable)
+        .expect("a sensitive set survives as digests");
+
+    // Assert
+    assert_eq!(texts_of(&visible), [digest_of(high), digest_of(low)]);
+}
+
+#[test]
+fn keyed_builds_an_object_from_keys_that_are_unique() {
+    // Act
+    let keyed = Observation::keyed([
+        ("eth1", Observation::integer(2)),
+        ("eth0", Observation::integer(1)),
+    ]);
+
+    // Assert
+    assert_eq!(
+        keyed,
+        Ok(Observation::object([
+            ("eth0", Observation::integer(1)),
+            ("eth1", Observation::integer(2)),
+        ]))
+    );
+}
+
+#[test]
+fn keyed_refuses_a_key_that_repeats_rather_than_keeping_the_last() {
+    // Act
+    let keyed = Observation::keyed([
+        ("eth0", Observation::integer(1)),
+        ("eth0", Observation::integer(2)),
+    ]);
+
+    // Assert
+    assert_eq!(
+        keyed,
+        Err(FingerprintError::RepeatedKey {
+            key: "eth0".to_owned()
+        })
+    );
+}
+
+fn names_of(observation: &Observation) -> Vec<&str> {
+    items_of(observation)
+        .iter()
+        .map(|item| text_of(&entries_of(item)["name"]))
+        .collect()
+}
+
+#[test]
+fn a_set_by_sorts_on_the_fields_the_collector_names_first() {
+    // Arrange: alphabetically `address` leads, so the default would order these by it; the
+    // collector names `name` as what identifies an item, so a change to the address keeps
+    // the item where it was.
+    let item = |name, address| {
+        Observation::object([
+            ("address", Observation::text(address)),
+            ("name", Observation::text(name)),
+        ])
+    };
+
+    // Act
+    let by_default = Observation::set([item("b", "10.0.0.1"), item("a", "10.0.0.2")]);
+    let by_name = Observation::set_by(["name"], [item("b", "10.0.0.1"), item("a", "10.0.0.2")]);
+
+    // Assert
+    assert_eq!(names_of(&by_default), ["b", "a"]);
+    assert_eq!(names_of(&by_name), ["a", "b"]);
+}
+
+#[test]
+fn a_set_by_falls_back_to_the_whole_item_where_the_named_fields_tie() {
+    // Arrange
+    let item = |name, port| {
+        Observation::object([
+            ("name", Observation::text(name)),
+            ("port", Observation::integer(port)),
+        ])
+    };
+
+    // Act
+    let set = Observation::set_by(["name"], [item("a", 443), item("a", 80)]);
+
+    // Assert
+    let ports: Vec<&Observation> = items_of(&set)
+        .iter()
+        .map(|item| &entries_of(item)["port"])
+        .collect();
+    assert_eq!(
+        ports,
+        [&Observation::integer(80), &Observation::integer(443)]
+    );
+}
+
+#[test]
+fn a_set_by_sorts_on_what_the_view_shows_of_a_named_field() {
+    // Arrange: the named field is volatile, so the diffable view does not show it and cannot
+    // be ordered by it; the items then fall back to what it does show.
+    let item = |name, id| {
+        Observation::object([
+            ("id", Observation::integer(id).volatile()),
+            ("name", Observation::text(name)),
+        ])
+    };
+    let set = Observation::set_by(["id"], [item("b", 1), item("a", 2)]);
+
+    // Act
+    let visible = set.in_view(View::Diffable).expect("a stable set survives");
+
+    // Assert
+    assert_eq!(names_of(&set), ["b", "a"]);
+    assert_eq!(names_of(&visible), ["a", "b"]);
+}
+
+#[test]
+fn a_set_orders_scalars_null_then_boolean_then_integer_then_text() {
+    // Act
+    let set = Observation::set([
+        Observation::text("1"),
+        Observation::integer(1),
+        Observation::boolean(true),
+        Observation::null(),
+    ]);
+
+    // Assert
+    assert_eq!(
+        items_of(&set),
+        [
+            Observation::null(),
+            Observation::boolean(true),
+            Observation::integer(1),
+            Observation::text("1"),
+        ]
+    );
+}
+
+#[test]
+fn a_set_orders_shapes_scalar_then_object_then_sequence_then_set() {
+    // Arrange
+    let object = Observation::object([("a", Observation::null())]);
+    let sequence = Observation::sequence([Observation::null()]);
+    let set = Observation::set([Observation::null()]);
+
+    // Act
+    let mixed = Observation::set([
+        set.clone(),
+        sequence.clone(),
+        object.clone(),
+        Observation::text("a"),
+    ]);
+
+    // Assert
+    assert_eq!(
+        items_of(&mixed),
+        [Observation::text("a"), object, sequence, set]
+    );
+}
+
+#[test]
+fn a_set_of_sets_orders_them_by_their_own_sorted_items() {
+    // Arrange: given unsorted, each inner set still compares by its sorted items.
+    let inner = |first: &str, second: &str| {
+        Observation::set([Observation::text(first), Observation::text(second)])
+    };
+
+    // Act
+    let outer = Observation::set([inner("d", "b"), inner("c", "a")]);
+
+    // Assert
+    assert_eq!(items_of(&outer), [inner("a", "c"), inner("b", "d")]);
+}
+
+#[test]
+fn a_set_orders_an_item_before_a_longer_one_it_is_a_prefix_of() {
+    // Arrange
+    let short = Observation::sequence([Observation::text("a")]);
+    let long = Observation::sequence([Observation::text("a"), Observation::text("b")]);
+
+    // Act
+    let set = Observation::set([long.clone(), short.clone()]);
+
+    // Assert
+    assert_eq!(items_of(&set), [short, long]);
+}
+
+#[test]
+fn a_set_by_orders_an_item_missing_a_named_field_first() {
+    // Arrange: a field a collector names may be absent from an item, and absent is a value
+    // the order has to place rather than a tie it has to guess about.
+    let with_name = Observation::object([("name", Observation::text("a"))]);
+    let without = Observation::object([("other", Observation::text("z"))]);
+
+    // Act
+    let set = Observation::set_by(["name"], [with_name.clone(), without.clone()]);
+
+    // Assert
+    assert_eq!(items_of(&set), [without, with_name]);
+}
+
+#[test]
+fn a_set_is_equal_whatever_order_when_items_differ_only_in_a_nested_annotation() {
+    // Arrange: the same content, told apart only by an annotation below the item's root,
+    // so a tie-break on the root alone would leave them in the order they were given.
+    let with_volatile_child = Observation::object([("a", Observation::integer(1).volatile())]);
+    let plain = Observation::object([("a", Observation::integer(1))]);
+
+    // Act
+    let given = Observation::set([with_volatile_child.clone(), plain.clone()]);
+    let reversed = Observation::set([plain, with_volatile_child]);
+
+    // Assert
+    assert_eq!(given, reversed);
+}
+
+#[test]
+fn a_set_is_equal_whatever_order_when_nested_sets_differ_only_in_their_named_fields() {
+    // Arrange: two empty sets that tie on content and on every annotation, told apart only by
+    // the fields their collectors named.
+    let by_a = Observation::set_by(["a"], Vec::new());
+    let by_b = Observation::set_by(["b"], Vec::new());
+
+    // Act
+    let given = Observation::set([by_a.clone(), by_b.clone()]);
+    let reversed = Observation::set([by_b, by_a]);
+
+    // Assert
+    assert_eq!(given, reversed);
 }

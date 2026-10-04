@@ -80,7 +80,7 @@ impl From<&BlockDevice> for Observation {
             ),
             (
                 "mount_points",
-                Observation::list(device.mount_points.iter().map(Observation::from)),
+                Observation::set(device.mount_points.iter().map(Observation::from)),
             ),
             (
                 "parent",

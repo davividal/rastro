@@ -32,7 +32,7 @@ impl MountOptions {
 
 impl From<&MountOptions> for Observation {
     fn from(options: &MountOptions) -> Self {
-        Observation::list(
+        Observation::set(
             options
                 .iter()
                 .map(|option| Observation::text(option.as_str())),

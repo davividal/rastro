@@ -29,6 +29,6 @@ impl MountTable {
 
 impl From<&MountTable> for Observation {
     fn from(table: &MountTable) -> Self {
-        Observation::list(table.mounts().iter().map(Observation::from))
+        Observation::sequence(table.mounts().iter().map(Observation::from))
     }
 }

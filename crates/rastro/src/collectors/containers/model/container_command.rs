@@ -21,7 +21,7 @@ impl From<&ContainerCommand> for Observation {
         Observation::object([
             (
                 "arguments",
-                Observation::list(command.arguments.iter().map(Observation::text)),
+                Observation::sequence(command.arguments.iter().map(Observation::text)),
             ),
             ("path", Observation::text(command.path.as_str())),
         ])

@@ -10,7 +10,8 @@ mod support;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 use rastro::collectors::sockets::{
-    InetHost, ListeningSocket, ProcNet, SocketAddress, SocketTable, SocketsCollector,
+    InetHost, ListeningSocket, PortNumber, ProcNet, SocketAddress, SocketKind, SocketState,
+    SocketTable, SocketsCollector,
 };
 use rastro_collector::{Collector, Presence};
 use rastro_fingerprint::{Content, Observation, Scalar, View};
@@ -548,4 +549,38 @@ fn a_process_whose_descriptors_cannot_be_listed_leaves_unattributed_sockets_unkn
         .find(|socket| !socket.holders.is_empty())
         .expect("the fixture attributes some sockets");
     assert!(!attributed.holders_unknown);
+}
+
+fn listening(kind: &str, host: &str, port: &str) -> ListeningSocket {
+    ListeningSocket {
+        kind: SocketKind::new(kind).expect("a kind"),
+        state: SocketState::new("LISTEN").expect("a state"),
+        address: SocketAddress::Inet {
+            host: InetHost::new(host).expect("a host"),
+            port: PortNumber::parse(port).expect("a port"),
+        },
+        holders: Default::default(),
+        holders_unknown: false,
+    }
+}
+
+#[test]
+fn the_table_renders_grouped_by_kind_then_by_address() {
+    // Arrange: by address alone the UDP socket would sit between the two TCP ones, which is
+    // not how anybody reads a socket table, `ss` included.
+    let table = SocketTable::new([
+        listening("tcp", "127.0.0.1", "5432"),
+        listening("udp", "0.0.0.0", "53"),
+        listening("tcp", "0.0.0.0", "22"),
+    ]);
+
+    // Act
+    let rendered = Observation::from(&table);
+
+    // Assert
+    let kinds: Vec<String> = items_of(&rendered)
+        .iter()
+        .map(|socket| text(&field(socket, "kind")))
+        .collect();
+    assert_eq!(kinds, ["tcp", "tcp", "udp"]);
 }

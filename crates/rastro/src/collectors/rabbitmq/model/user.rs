@@ -48,7 +48,7 @@ impl From<&User> for Observation {
         Observation::object([
             (
                 "tags",
-                Observation::list(user.tags.iter().map(|tag| Observation::text(tag.as_str()))),
+                Observation::set(user.tags.iter().map(|tag| Observation::text(tag.as_str()))),
             ),
             (
                 "password_hashing",

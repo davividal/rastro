@@ -93,7 +93,7 @@ fn integer(observation: &Observation) -> i64 {
 
 fn list(observation: &Observation) -> Vec<String> {
     match observation.content() {
-        Content::List(items) => items.iter().map(text).collect(),
+        Content::Sequence(items) | Content::Set { items, .. } => items.iter().map(text).collect(),
         other => panic!("expected a list, got {other:?}"),
     }
 }

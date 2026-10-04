@@ -43,7 +43,7 @@ impl GroupMembers {
 
 impl From<&GroupMembers> for Observation {
     fn from(members: &GroupMembers) -> Self {
-        Observation::list(
+        Observation::set(
             members
                 .iter()
                 .map(|member| Observation::text(member.as_str())),

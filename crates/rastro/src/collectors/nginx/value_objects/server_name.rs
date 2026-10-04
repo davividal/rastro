@@ -7,7 +7,7 @@ use rastro_collector::{CollectionError, NonEmptyText, Observation};
 /// Kept as nginx spells it, wildcards and regular expressions included: `*.example.org`,
 /// `~^www\d+\.example\.org$` and the catch-all `_` are all legal here, and each is a
 /// different rule about which requests this host answers.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerName(NonEmptyText);
 
 impl ServerName {

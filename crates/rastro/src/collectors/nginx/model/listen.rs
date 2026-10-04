@@ -22,7 +22,7 @@ impl From<&Listen> for Observation {
             ("endpoint", Observation::from(&listen.endpoint)),
             (
                 "options",
-                Observation::list(listen.options.iter().map(Observation::from)),
+                Observation::set(listen.options.iter().map(Observation::from)),
             ),
         ])
     }

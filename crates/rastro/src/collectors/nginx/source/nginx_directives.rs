@@ -12,11 +12,11 @@
 //! document where an observation belongs. What the model does not name, the file digests
 //! still cover.
 //!
-//! **Order is kept where nginx reads it and sorted where it does not.** Access rules are
-//! applied first-match, so their order is state; locations are matched in order, so theirs
-//! is too. A host's `server_name` entries, its listen addresses and a pool's members are all
-//! sets to nginx, so they are sorted and an operator rearranging them reads as no change at
-//! all.
+//! **Order is kept where nginx acts on it and sorted where it does not.** Access rules are
+//! applied first-match and locations are matched in order. A host's first `server_name` is
+//! its primary name, and a pool's members are walked in order by round-robin and indexed by
+//! position by `hash`, so those keep theirs too. Listen addresses and options are sets to
+//! nginx, so they are sorted and an operator rearranging them reads as no change at all.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -287,7 +287,6 @@ fn virtual_host(
     host.authentication = authentication(realm, user_file)?;
     host.listens.sort();
     host.logs.sort();
-    host.server_names.sort();
     host.trusted_proxies.sort();
     host.resolvers.sort();
 
@@ -382,8 +381,6 @@ fn upstream(directive: &Directive, block: &[Directive]) -> Result<Upstream, Coll
             .join(" ");
         settings.insert(inside.name.as_str().to_owned(), arguments);
     }
-
-    servers.sort();
 
     Ok(Upstream {
         name: UpstreamName::new(first(directive, "a name")?.as_str())?,

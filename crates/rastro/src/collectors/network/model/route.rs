@@ -14,7 +14,7 @@ use crate::collectors::network::value_objects::{
 /// router advertisement has a preference and an expiry and no scope; a route installed by
 /// hand may have neither metric nor preferred source. Filling any of them in with a
 /// default would put a value in the fingerprint the kernel never reported.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     pub destination: RouteDestination,
     /// Absent for a route to a directly attached network, which needs no next hop.

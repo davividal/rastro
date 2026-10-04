@@ -480,10 +480,17 @@ fn read_names_the_file_a_failure_came_from() {
 }
 
 #[test]
-fn read_keeps_the_jobs_in_the_files_order() {
-    // Arrange: not a schedule, but it is how an operator reads the file.
-    let root = tree("order");
-    write(&root, "etc/crontab", SYSTEM_CRONTAB);
+fn read_renders_the_jobs_as_a_multiset_whatever_the_files_order() {
+    // Arrange: cron forks every job whose schedule matches, so the order of the lines is not
+    // something it acts on, and two identical lines run the job twice, so both are kept.
+    let root = tree("multiset");
+    write(
+        &root,
+        "etc/crontab",
+        "0 4 * * * root /usr/bin/zebra\n\
+         0 3 * * * root /usr/bin/alpha\n\
+         0 3 * * * root /usr/bin/alpha\n",
+    );
 
     // Act
     let observation = Observation::from(&CronFiles::under(&root).read().expect("well formed"));
@@ -494,11 +501,14 @@ fn read_keeps_the_jobs_in_the_files_order() {
         .expect("the system crontab");
 
     // Assert
-    let schedules: Vec<String> = items_of(&field(&crontab, "jobs"))
+    let commands: Vec<String> = items_of(&field(&crontab, "jobs"))
         .iter()
-        .map(|job| text(&field(job, "schedule")))
+        .map(|job| text(&field(job, "command")))
         .collect();
-    assert_eq!(schedules, ["17 * * * *", "25 6 * * *"]);
+    assert_eq!(
+        commands,
+        ["/usr/bin/alpha", "/usr/bin/alpha", "/usr/bin/zebra"]
+    );
 }
 
 #[test]

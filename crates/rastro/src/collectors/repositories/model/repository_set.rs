@@ -13,6 +13,9 @@ use super::repository::Repository;
 /// and these are listed because there is no key and sorted because the order carries
 /// nothing.
 ///
+/// Ordered by URI, then suite, then archive type, because that is what identifies a source:
+/// a repository whose components or settings change keeps its place.
+///
 /// Sorting is what stops the facet churning. apt reads `sources.list` and then every
 /// file in `sources.list.d` in an order that depends on the directory, and a deb822
 /// paragraph expands into several entries; none of that is state. Two identical
@@ -44,6 +47,9 @@ impl RepositorySet {
 
 impl From<&RepositorySet> for Observation {
     fn from(set: &RepositorySet) -> Self {
-        Observation::list(set.repositories().iter().map(Observation::from))
+        Observation::set_by(
+            ["uri", "suite", "archive_type"],
+            set.repositories().iter().map(Observation::from),
+        )
     }
 }

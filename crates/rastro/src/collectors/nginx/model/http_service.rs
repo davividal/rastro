@@ -16,11 +16,11 @@ impl From<&HttpService> for Observation {
         Observation::object([
             (
                 "hosts",
-                Observation::list(service.hosts.iter().map(Observation::from)),
+                Observation::sequence(service.hosts.iter().map(Observation::from)),
             ),
             (
                 "upstreams",
-                Observation::list(service.upstreams.iter().map(Observation::from)),
+                Observation::set(service.upstreams.iter().map(Observation::from)),
             ),
         ])
     }

@@ -30,20 +30,17 @@ impl From<&StreamServer> for Observation {
         Observation::object([
             (
                 "access",
-                Observation::list(server.access.iter().map(Observation::from)),
+                Observation::sequence(server.access.iter().map(Observation::from)),
             ),
             (
                 "certificates",
-                Observation::list(server.certificates.iter().map(Observation::from)),
+                Observation::sequence(server.certificates.iter().map(Observation::from)),
             ),
             (
                 "listens",
-                Observation::list(server.listens.iter().map(Observation::from)),
+                Observation::set(server.listens.iter().map(Observation::from)),
             ),
-            (
-                "logs",
-                Observation::list(server.logs.iter().map(Observation::from)),
-            ),
+            ("logs", LogDestination::set_of(server.logs.iter())),
             (
                 "pass",
                 server

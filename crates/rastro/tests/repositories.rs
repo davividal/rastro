@@ -17,7 +17,7 @@ use rastro::collectors::repositories::{
 use rastro_collector::{ClaimedReading, Collector, Presence};
 use rastro_fingerprint::{Content, Observation};
 use support::fs_tree::{scratch_tree, write};
-use support::observation::{field, object_of};
+use support::observation::{field, items_of, object_of, text};
 
 /// The deb822 shape Debian 12 ships, which expands to more than one repository.
 const DEB822: &str = "\
@@ -672,7 +672,7 @@ fn collect_reads_the_system_it_was_given() {
     // Assert
     let apt = field(&collected, "apt");
     match apt.content() {
-        Content::List(items) => assert_eq!(items.len(), 1),
+        Content::Sequence(items) | Content::Set { items, .. } => assert_eq!(items.len(), 1),
         other => panic!("expected a list of repositories, got {other:?}"),
     }
 }
@@ -709,4 +709,25 @@ fn the_collector_claims_nothing_for_apk() {
     // Assert: apk's index cache is under `/var/cache`, which the shipped table already
     // covers, and a second rule for a tree inside it would be noise in the effective table.
     assert!(claims.is_empty());
+}
+
+#[test]
+fn a_repository_set_renders_in_order_of_uri_and_suite() {
+    // Arrange: the archive type sorts these the other way round, and it is not what an
+    // operator scans for. Ordered by what identifies a source, a repository whose type or
+    // components change stays where it was, and the diff reads as that repository changing.
+    let set = RepositorySet::new([
+        one_line("deb http://b.example/debian trixie main"),
+        one_line("deb-src http://a.example/debian trixie main"),
+    ]);
+
+    // Act
+    let rendered = Observation::from(&set);
+
+    // Assert
+    let uris: Vec<String> = items_of(&rendered)
+        .iter()
+        .map(|repository| text(&field(repository, "uri")))
+        .collect();
+    assert_eq!(uris, ["http://a.example/debian", "http://b.example/debian"]);
 }

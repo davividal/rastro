@@ -124,7 +124,7 @@ impl FilesystemInventory {
             true => Observation::object(named),
             false => Observation::object(named.chain([(
                 "unspellable",
-                Observation::list(self.unspellable.iter().map(Observation::from)),
+                Observation::set(self.unspellable.iter().map(Observation::from)),
             )])),
         }
     }

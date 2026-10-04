@@ -36,7 +36,7 @@ impl From<&ContainerSecurity> for Observation {
             ("namespaces", Observation::from(&security.namespaces)),
             (
                 "options",
-                Observation::list(
+                Observation::set(
                     security
                         .options
                         .iter()

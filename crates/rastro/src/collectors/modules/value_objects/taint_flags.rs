@@ -30,6 +30,6 @@ impl TaintFlags {
 
 impl From<&TaintFlags> for Observation {
     fn from(flags: &TaintFlags) -> Self {
-        Observation::list(flags.iter().map(|flag| Observation::text(flag.to_name())))
+        Observation::set(flags.iter().map(|flag| Observation::text(flag.to_name())))
     }
 }

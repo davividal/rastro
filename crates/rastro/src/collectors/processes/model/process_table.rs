@@ -19,7 +19,8 @@ use super::process::Process;
 /// new entry.
 ///
 /// Sorted rather than left in the kernel's order, because that order is by pid: a daemon
-/// that restarts jumps to the end of the table and every entry after it shifts.
+/// that restarts jumps to the end of the table and every entry after it shifts. Sorted by
+/// name, then command line, so a process whose arguments changed stays among its namesakes.
 ///
 /// # What still churns, honestly stated
 ///
@@ -54,6 +55,9 @@ impl ProcessTable {
 
 impl From<&ProcessTable> for Observation {
     fn from(table: &ProcessTable) -> Self {
-        Observation::list(table.processes().iter().map(Observation::from))
+        Observation::set_by(
+            ["name", "command_line"],
+            table.processes().iter().map(Observation::from),
+        )
     }
 }

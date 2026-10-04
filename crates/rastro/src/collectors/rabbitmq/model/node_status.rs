@@ -74,6 +74,7 @@ pub struct NodeStatus {
     /// The plugins the node is actually running, which is the effective half of that file.
     pub active_plugins: Vec<String>,
 
+    /// A set by interface, port and protocol: the node prints them in no order it acts on.
     pub listeners: Vec<Listener>,
 
     /// The resource limits the node has hit, if any.
@@ -126,22 +127,28 @@ impl From<&NodeStatus> for Observation {
                 "raft_data_directory",
                 optional_text(&status.raft_data_directory),
             ),
-            ("configuration_files", texts(&status.configuration_files)),
-            ("log_destinations", texts(&status.log_destinations)),
+            (
+                "configuration_files",
+                text_sequence(&status.configuration_files),
+            ),
+            ("log_destinations", text_sequence(&status.log_destinations)),
             (
                 "enabled_plugins_file",
                 optional_text(&status.enabled_plugins_file),
             ),
-            ("active_plugins", texts(&status.active_plugins)),
+            ("active_plugins", text_set(&status.active_plugins)),
             (
                 "listeners",
-                Observation::list(status.listeners.iter().map(Observation::from)),
+                Observation::set_by(
+                    ["interface", "port", "protocol"],
+                    status.listeners.iter().map(Observation::from),
+                ),
             ),
             (
                 "alarms",
-                Observation::list(status.alarms.iter().map(Observation::from)).volatile(),
+                Observation::set(status.alarms.iter().map(Observation::from)).volatile(),
             ),
-            ("tags", texts(&status.tags)),
+            ("tags", text_set(&status.tags)),
             (
                 "under_maintenance",
                 Observation::boolean(status.under_maintenance),
@@ -173,11 +180,13 @@ fn optional_integer(value: Option<i64>) -> Observation {
     }
 }
 
-/// A list of text, which is how every one of this type's collections renders.
-///
-/// Order is the node's own everywhere it is used: the configuration files are in the order
-/// they were read, and the log destinations in the order they are written to. Sorting either
-/// would destroy the one thing they say beyond their contents.
-fn texts(values: &[String]) -> Observation {
-    Observation::list(values.iter().map(|value| Observation::text(value.as_str())))
+/// Text in the node's own order: the configuration files in the order they were read, where a
+/// later one overrides an earlier, and the log destinations in the order they are written to.
+fn text_sequence(values: &[String]) -> Observation {
+    Observation::sequence(values.iter().map(|value| Observation::text(value.as_str())))
+}
+
+/// Text the node holds as a set, such as its plugins and its tags, whose printed order is noise.
+fn text_set(values: &[String]) -> Observation {
+    Observation::set(values.iter().map(|value| Observation::text(value.as_str())))
 }

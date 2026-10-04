@@ -28,7 +28,7 @@ impl From<&Location> for Observation {
         Observation::object([
             (
                 "access",
-                Observation::list(location.access.iter().map(Observation::from)),
+                Observation::sequence(location.access.iter().map(Observation::from)),
             ),
             (
                 "authentication",
@@ -39,12 +39,9 @@ impl From<&Location> for Observation {
             ),
             (
                 "locations",
-                Observation::list(location.locations.iter().map(Observation::from)),
+                Observation::sequence(location.locations.iter().map(Observation::from)),
             ),
-            (
-                "logs",
-                Observation::list(location.logs.iter().map(Observation::from)),
-            ),
+            ("logs", LogDestination::set_of(location.logs.iter())),
             (
                 "pass",
                 location

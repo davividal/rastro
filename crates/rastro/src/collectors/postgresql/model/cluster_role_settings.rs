@@ -48,6 +48,9 @@ impl ClusterRoleSettings {
 
 impl From<&ClusterRoleSettings> for Observation {
     fn from(settings: &ClusterRoleSettings) -> Self {
-        Observation::list(settings.settings().iter().map(Observation::from))
+        Observation::set_by(
+            ["database", "role", "name"],
+            settings.settings().iter().map(Observation::from),
+        )
     }
 }

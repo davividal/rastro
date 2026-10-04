@@ -56,7 +56,7 @@ impl From<&Authentication> for Observation {
             ),
             (
                 "users",
-                Observation::list(authentication.users.iter().map(Observation::from)),
+                Observation::sequence(authentication.users.iter().map(Observation::from)),
             ),
         ])
         .incomplete_when(authentication.refusal.is_some())

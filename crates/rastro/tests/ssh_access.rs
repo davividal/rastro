@@ -308,10 +308,16 @@ fn read_accounts_finds_keys_across_every_pattern() {
         .read_accounts(&server())
         .expect("this tree is well formed");
 
-    // Assert
+    // Assert: in the order sshd searches them, because the first line that matches a key
+    // is the one whose options apply.
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].0, "operator");
-    assert_eq!(accounts[0].1.len(), 2);
+    let comments: Vec<&str> = accounts[0]
+        .1
+        .iter()
+        .map(|key| key.comment.as_str())
+        .collect();
+    assert_eq!(comments, ["first", "second"]);
 }
 
 #[test]
@@ -622,8 +628,9 @@ fn the_facet_holds_the_server_settings_beside_the_accounts() {
 }
 
 #[test]
-fn keys_from_two_files_are_gathered_under_one_account_and_sorted() {
-    // Arrange: which file a key came from is not part of the grant.
+fn keys_from_two_files_are_gathered_under_one_account_in_the_order_given() {
+    // Arrange: sshd tries the files in `AuthorizedKeysFile` order and the lines in file order,
+    // and the first line that matches a key decides its options, so the order is state.
     let first = authorized_keys::parse(&format!("ssh-rsa {ED25519} zulu\n")).expect("legal");
     let second = authorized_keys::parse(&format!("ssh-ed25519 {ED25519} alpha\n")).expect("legal");
     let access = rastro::collectors::ssh_access::SshAccess::new(
@@ -641,7 +648,8 @@ fn keys_from_two_files_are_gathered_under_one_account_and_sorted() {
 
     // Assert
     assert_eq!(keys.len(), 2);
-    assert_eq!(text(&field(&keys[0], "key_type")), "ssh-ed25519");
+    assert_eq!(text(&field(&keys[0], "key_type")), "ssh-rsa");
+    assert_eq!(text(&field(&keys[1], "key_type")), "ssh-ed25519");
 }
 
 #[test]

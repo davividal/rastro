@@ -27,17 +27,24 @@ pub struct InterfaceAddress {
     pub preferred_lifetime: AddressLifetime,
 }
 
+impl InterfaceAddress {
+    /// The address and its prefix in `ip`'s own spelling, which is what identifies it: the
+    /// kernel refuses a second identical pair on one interface.
+    pub fn identity(&self) -> String {
+        format!("{}/{}", self.local.as_str(), self.prefix_length.as_u8())
+    }
+}
+
+/// The address and prefix are not fields here, because they are the key this is filed under.
 impl From<&InterfaceAddress> for Observation {
     fn from(address: &InterfaceAddress) -> Self {
         Observation::object([
             ("dynamic", Observation::boolean(address.dynamic)),
             ("family", Observation::from(&address.family)),
-            ("local", Observation::from(&address.local)),
             (
                 "preferred_lifetime",
                 Observation::from(&address.preferred_lifetime),
             ),
-            ("prefix_length", Observation::from(&address.prefix_length)),
             (
                 "scope",
                 address

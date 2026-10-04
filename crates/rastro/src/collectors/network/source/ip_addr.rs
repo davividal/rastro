@@ -1,5 +1,7 @@
 //! One object of `ip -j addr show`.
 
+use std::collections::BTreeSet;
+
 use serde::Deserialize;
 
 use rastro_collector::CollectionError;
@@ -63,6 +65,16 @@ impl InterfaceObject {
             .map(AddressObject::to_address)
             .collect::<Result<Vec<InterfaceAddress>, CollectionError>>()?;
         addresses.sort();
+        let mut identities = BTreeSet::new();
+        for address in &addresses {
+            if !identities.insert(address.identity()) {
+                return Err(CollectionError::new(format!(
+                    "the address {} was reported twice on {:?}, so the output was misread",
+                    address.identity(),
+                    self.ifname
+                )));
+            }
+        }
 
         let interface = NetworkInterface {
             index: self.ifindex,

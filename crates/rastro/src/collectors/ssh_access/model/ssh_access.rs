@@ -11,7 +11,8 @@ use super::ssh_server::SshServer;
 ///
 /// Accounts are keyed by name, and an account with a readable key file but nothing in it is
 /// present with an empty list — which is not the same as an account with no key file at all,
-/// and the latter is simply not a key here.
+/// and the latter is simply not a key here. An account's keys keep sshd's search order: the
+/// files in `AuthorizedKeysFile` order, then the lines in file order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshAccess {
     server: SshServer,
@@ -26,13 +27,9 @@ impl SshAccess {
         let mut filed: BTreeMap<String, Vec<AuthorizedKey>> = BTreeMap::new();
 
         for (account, keys) in accounts {
-            // An account may have keys in more than one file — sshd searches every pattern —
-            // so they accumulate rather than replacing each other. Sorted afterwards, because
-            // which file a key came from is not part of the grant.
+            // sshd searches every pattern, so keys from several files accumulate, in the order
+            // given: the first line that matches a key decides its options.
             filed.entry(account).or_default().extend(keys);
-        }
-        for keys in filed.values_mut() {
-            keys.sort();
         }
 
         Ok(Self {
@@ -58,7 +55,7 @@ impl From<&SshAccess> for Observation {
                 Observation::object(access.accounts().iter().map(|(account, keys)| {
                     (
                         account.as_str(),
-                        Observation::list(keys.iter().map(Observation::from)),
+                        Observation::sequence(keys.iter().map(Observation::from)),
                     )
                 })),
             ),

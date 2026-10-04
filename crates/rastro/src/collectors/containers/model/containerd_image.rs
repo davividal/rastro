@@ -33,7 +33,7 @@ impl From<&ContainerdImage> for Observation {
             ("media_type", Observation::text(image.media_type.as_str())),
             (
                 "platforms",
-                Observation::list(
+                Observation::set(
                     image
                         .platforms
                         .iter()

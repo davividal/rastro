@@ -111,7 +111,7 @@ impl From<&PolicyRule> for Observation {
         Observation::object([
             (
                 "claimed_by",
-                Observation::list(
+                Observation::set(
                     rule.claimants
                         .iter()
                         .map(|claimant| Observation::text(claimant.to_string())),

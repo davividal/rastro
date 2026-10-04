@@ -287,6 +287,42 @@ fn parse_keys_the_users_by_name_and_records_their_tags() {
 }
 
 #[test]
+fn a_users_tags_and_a_vhosts_tags_are_sets() {
+    // Arrange: the measured definitions with two tags each, written out of order. RabbitMQ
+    // checks a tag by membership, so the order an operator typed them in is not state.
+    let user_tags = "\"tags\": [\n        \"monitoring\"\n      ]";
+    let vhost_tags = "\"description\": \"\",\n        \"tags\": []";
+    assert_eq!(MEASURED.matches(user_tags).count(), 1);
+    assert_eq!(MEASURED.matches(vhost_tags).count(), 1);
+    let unordered = MEASURED
+        .replace(user_tags, "\"tags\": [\"monitoring\", \"management\"]")
+        .replace(
+            vhost_tags,
+            "\"description\": \"\", \"tags\": [\"zeta\", \"alpha\"]",
+        );
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(&unordered).expect("well formed");
+    let rendered = Observation::from(&definitions);
+
+    // Assert
+    let tags_of = |observation: &Observation| -> Vec<String> {
+        items_of(&field(observation, "tags"))
+            .iter()
+            .map(text)
+            .collect()
+    };
+    assert_eq!(
+        tags_of(&field(&field(&rendered, "users"), "spikeuser")),
+        ["management", "monitoring"]
+    );
+    assert_eq!(
+        tags_of(&field(&field(&rendered, "vhosts"), "spike")),
+        ["alpha", "zeta"]
+    );
+}
+
+#[test]
 fn parse_marks_the_stored_verifier_sensitive() {
     // Act
     let definitions = RabbitmqctlDefinitions::parse(MEASURED).expect("well formed");
@@ -756,4 +792,40 @@ fn parse_refuses_anything_after_the_document() {
     // Act & Assert
     assert!(RabbitmqctlDefinitions::parse(&second_document).is_err());
     assert!(RabbitmqctlDefinitions::parse(&trailing_report).is_err());
+}
+
+#[test]
+fn a_vhosts_bindings_render_in_order_of_their_source_exchange() {
+    // Arrange: alphabetically `destination` leads, so a binding re-pointed at another queue
+    // would move. Grouped by the exchange that routes them, which is how RabbitMQ lists them.
+    let binding = r#"{
+      "arguments": {},
+      "destination": "work",
+      "destination_type": "queue",
+      "routing_key": "k",
+      "source": "spike.direct",
+      "vhost": "spike"
+    }"#;
+    assert_eq!(MEASURED.matches(binding).count(), 1);
+    let two = MEASURED.replace(
+        binding,
+        r#"{"arguments": {}, "destination": "z.queue", "destination_type": "queue",
+            "routing_key": "k", "source": "a.exchange", "vhost": "spike"},
+           {"arguments": {}, "destination": "a.queue", "destination_type": "queue",
+            "routing_key": "k", "source": "z.exchange", "vhost": "spike"}"#,
+    );
+
+    // Act
+    let definitions = RabbitmqctlDefinitions::parse(&two).expect("well formed");
+    let bindings = items_of(&field(
+        &field(&Observation::from(&definitions), "bindings"),
+        "spike",
+    ));
+
+    // Assert
+    let sources: Vec<String> = bindings
+        .iter()
+        .map(|binding| text(&field(binding, "source")))
+        .collect();
+    assert_eq!(sources, ["a.exchange", "z.exchange"]);
 }
