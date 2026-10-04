@@ -227,7 +227,7 @@ fn the_observation_of_a_mount_carries_the_contracted_keys() {
         entries["device"].content(),
         &Content::Scalar(Scalar::Text("/dev/sda1".to_owned()))
     );
-    let Content::List(options) = entries["options"].content() else {
+    let (Content::Sequence(options) | Content::Set(options)) = entries["options"].content() else {
         panic!("options render as a list");
     };
     assert_eq!(options.len(), 2);

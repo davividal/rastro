@@ -1,6 +1,8 @@
 use rastro_fingerprint::View;
+use rastro_fingerprint::observation::redaction;
 use rastro_fingerprint::{
-    Completeness, Content, Observation, Presentation, Scalar, Sensitivity, Volatility,
+    Completeness, Content, FingerprintError, Observation, Presentation, Scalar, Sensitivity,
+    Volatility,
 };
 
 fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, Observation> {
@@ -12,8 +14,8 @@ fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, 
 
 fn items_of(observation: &Observation) -> &[Observation] {
     match observation.content() {
-        Content::List(items) => items,
-        other => panic!("expected a list observation, got {other:?}"),
+        Content::Sequence(items) | Content::Set(items) => items,
+        other => panic!("expected a sequence or a set observation, got {other:?}"),
     }
 }
 
@@ -112,7 +114,7 @@ fn incomplete_items_counts_every_marked_node_however_deep() {
                 ("/c", Observation::null()),
             ]),
         ),
-        ("unreadable", Observation::list([refused()]).volatile()),
+        ("unreadable", Observation::sequence([refused()]).volatile()),
     ]);
 
     // Act & Assert: the volatile list still counts, because a refusal this run is a refusal
@@ -250,7 +252,7 @@ fn the_diffable_view_drops_a_whole_volatile_subtree() {
 #[test]
 fn the_diffable_view_drops_volatile_list_items() {
     // Arrange
-    let observation = Observation::list([
+    let observation = Observation::sequence([
         Observation::text("0.0.0.0:22"),
         Observation::text("127.0.0.1:41233").volatile(),
     ]);
@@ -315,4 +317,140 @@ fn a_raw_view_carries_a_sensitive_value_as_it_stands() {
     // Assert
     assert_eq!(text_of(&visible), "password=hunter2");
     assert_eq!(visible.sensitivity(), Sensitivity::Sensitive);
+}
+
+fn texts_of(observation: &Observation) -> Vec<&str> {
+    items_of(observation).iter().map(text_of).collect()
+}
+
+#[test]
+fn a_sequence_keeps_the_order_its_items_were_given_in() {
+    // Act
+    let sequence = Observation::sequence([Observation::text("b"), Observation::text("a")]);
+
+    // Assert
+    assert_eq!(texts_of(&sequence), ["b", "a"]);
+}
+
+#[test]
+fn a_set_is_equal_whatever_order_its_items_were_given_in() {
+    // Act
+    let given = Observation::set([Observation::text("b"), Observation::text("a")]);
+    let reversed = Observation::set([Observation::text("a"), Observation::text("b")]);
+
+    // Assert
+    assert_eq!(given, reversed);
+    assert_eq!(texts_of(&given), ["a", "b"]);
+}
+
+#[test]
+fn a_set_keeps_an_item_the_host_holds_twice() {
+    // Arrange: two identical crontab lines run the job twice, so a set is a multiset and
+    // collapsing the pair would report half of what the box does.
+    let line = || Observation::text("0 3 * * * /usr/local/bin/backup");
+
+    // Act
+    let set = Observation::set([line(), line()]);
+
+    // Assert
+    assert_eq!(items_of(&set).len(), 2);
+}
+
+#[test]
+fn a_set_orders_integers_by_value_not_by_how_they_are_spelled() {
+    // Act
+    let set = Observation::set([Observation::integer(10), Observation::integer(9)]);
+
+    // Assert
+    assert_eq!(
+        items_of(&set),
+        [Observation::integer(9), Observation::integer(10)]
+    );
+}
+
+#[test]
+fn a_set_in_a_view_is_sorted_over_what_that_view_keeps() {
+    // Arrange: the volatile `id` orders the items one way and the `name` the view keeps
+    // orders them the other, so sorting over the whole item would order the diffable view by
+    // a pid that moves between runs.
+    let item = |id, name| {
+        Observation::object([
+            ("id", Observation::integer(id).volatile()),
+            ("name", Observation::text(name)),
+        ])
+    };
+    let set = Observation::set([item(1, "b"), item(2, "a")]);
+
+    // Act
+    let visible = set.in_view(View::Diffable).expect("a stable set survives");
+
+    // Assert
+    let names: Vec<&str> = items_of(&visible)
+        .iter()
+        .map(|item| text_of(&entries_of(item)["name"]))
+        .collect();
+    assert_eq!(names, ["a", "b"]);
+}
+
+#[test]
+fn a_set_in_a_redacted_view_is_sorted_over_the_digests_that_stand_in() {
+    // Arrange: two secrets whose digests sort the other way round from the values, checked
+    // here so the test cannot pass because the two orders happen to agree.
+    let digest_of = |value: &str| {
+        redaction::redacted(&Scalar::Text(value.to_owned())).expect("text is redactable")
+    };
+    let (first, second) = ("alpha", "bravo");
+    let digests = [digest_of(first), digest_of(second)];
+    let (low, high) = match digests[0] < digests[1] {
+        true => (second, first),
+        false => (first, second),
+    };
+    assert!(low < high && digest_of(low) > digest_of(high));
+    let set = Observation::set([
+        Observation::text(low).sensitive(),
+        Observation::text(high).sensitive(),
+    ]);
+
+    // Act
+    let visible = set
+        .in_view(View::Diffable)
+        .expect("a sensitive set survives as digests");
+
+    // Assert
+    assert_eq!(texts_of(&visible), [digest_of(high), digest_of(low)]);
+}
+
+#[test]
+fn keyed_builds_an_object_from_keys_that_are_unique() {
+    // Act
+    let keyed = Observation::keyed([
+        ("eth1", Observation::integer(2)),
+        ("eth0", Observation::integer(1)),
+    ]);
+
+    // Assert
+    assert_eq!(
+        keyed,
+        Ok(Observation::object([
+            ("eth0", Observation::integer(1)),
+            ("eth1", Observation::integer(2)),
+        ]))
+    );
+}
+
+#[test]
+fn keyed_refuses_a_key_that_repeats_rather_than_keeping_the_last() {
+    // Act
+    let keyed = Observation::keyed([
+        ("eth0", Observation::integer(1)),
+        ("eth0", Observation::integer(2)),
+    ]);
+
+    // Assert
+    assert_eq!(
+        keyed,
+        Err(FingerprintError::RepeatedKey {
+            key: "eth0".to_owned()
+        })
+    );
 }

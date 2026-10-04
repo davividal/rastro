@@ -9,7 +9,7 @@
 ///
 /// PIDs, counters, uptimes and timestamps are `Volatile`. They are the noise
 /// floor that makes a naive diff useless.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Volatility {
     #[default]
     Stable,
@@ -20,7 +20,7 @@ pub enum Volatility {
 ///
 /// Honoured by the redaction layer, which is not built yet. Recording the
 /// judgement now costs nothing and cannot be recovered later.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Sensitivity {
     #[default]
     Public,
@@ -35,7 +35,7 @@ pub enum Sensitivity {
 /// fault the box reports about itself, which is state rather than a gap, so a broken
 /// `pg_hba.conf` line is never marked. The document is unchanged by it; what reads it is the
 /// operator's summary of what the run could not see.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Completeness {
     #[default]
     Complete,

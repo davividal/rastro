@@ -172,7 +172,14 @@ impl Serialize for WireObservation<'_> {
                 }
                 object.end()
             }
-            VisibleContent::List(items) => {
+            VisibleContent::Sequence(items) => {
+                let mut list = serializer.serialize_seq(None)?;
+                for item in items.iter() {
+                    list.serialize_element(&WireObservation(item))?;
+                }
+                list.end()
+            }
+            VisibleContent::Set(items) => {
                 let mut list = serializer.serialize_seq(None)?;
                 for item in items.iter() {
                     list.serialize_element(&WireObservation(item))?;

@@ -21,6 +21,9 @@ pub enum FingerprintError {
         "two facets share the name {name:?}, so one state surface would silently shadow another"
     )]
     DuplicateFacetName { name: String },
+
+    #[error("two entries share the key {key:?}, so one would silently overwrite the other")]
+    RepeatedKey { key: String },
 }
 
 /// The character set shared by every identifier that keys a document.

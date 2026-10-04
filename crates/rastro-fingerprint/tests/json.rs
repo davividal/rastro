@@ -66,8 +66,12 @@ fn every_shape() -> Observation {
             ]),
         ),
         (
+            "members",
+            Observation::set([Observation::text("zeta"), Observation::text("alpha")]),
+        ),
+        (
             "items",
-            Observation::list([
+            Observation::sequence([
                 Observation::integer(1),
                 Observation::text("two"),
                 Observation::null(),
@@ -207,6 +211,37 @@ fn the_diffable_view_is_byte_identical_across_differing_volatile_values() {
 }
 
 #[test]
+fn the_diffable_view_is_byte_identical_when_a_volatile_value_would_reorder_a_set() {
+    // Arrange: each run's ids order the two workers differently, and the name the view
+    // keeps is the same in both, so the rendered set must not follow the ids. The volatile
+    // key sorts before `name`, so it is what would decide an order taken over everything.
+    let workers = |first_id, second_id| {
+        let worker = |id, name| {
+            Observation::object([
+                ("id", Observation::integer(id).volatile()),
+                ("name", Observation::text(name)),
+            ])
+        };
+        facet(
+            "workers",
+            CollectorCategory::State,
+            FacetOutcome::ok(Observation::set([
+                worker(first_id, "cache"),
+                worker(second_id, "api"),
+            ])),
+        )
+    };
+
+    // Act
+    let first = to_canonical_json(&fingerprint_of([workers(1, 2)]), View::Diffable);
+    let second = to_canonical_json(&fingerprint_of([workers(2, 1)]), View::Diffable);
+
+    // Assert
+    assert_eq!(first, second);
+    assert!(first.find("\"api\"") < first.find("\"cache\""));
+}
+
+#[test]
 fn to_canonical_json_records_an_absent_facet_without_a_data_payload() {
     // Act
     let document = parse(&to_canonical_json(
@@ -276,8 +311,8 @@ fn to_canonical_json_ends_with_a_newline() {
 
 #[test]
 fn to_canonical_json_renders_this_exact_document() {
-    // Arrange: every `Content` and `Scalar` variant, a nested object, a list, a volatile leaf
-    // and a wholly volatile subtree. Pinned to the byte because the format *is* the contract
+    // Arrange: every `Content` and `Scalar` variant, a nested object, a sequence, a set, a
+    // volatile leaf and a wholly volatile subtree. Pinned to the byte because the format *is* the contract
     // and the determinism harness compares raw bytes — so any later change to how the tree is
     // serialised has to prove itself here rather than be argued about.
     let document = fingerprint_of([facet(
@@ -313,6 +348,10 @@ fn to_canonical_json_renders_this_exact_document() {
           1,
           "two",
           null
+        ],
+        "members": [
+          "alpha",
+          "zeta"
         ],
         "name": "keep \"me\"\n",
         "nested": {
@@ -368,6 +407,10 @@ fn to_canonical_json_renders_this_exact_document_in_the_complete_view() {
           1,
           "two",
           null
+        ],
+        "members": [
+          "alpha",
+          "zeta"
         ],
         "name": "keep \"me\"\n",
         "nested": {

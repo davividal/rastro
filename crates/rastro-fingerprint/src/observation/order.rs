@@ -1,0 +1,98 @@
+//! The order the port gives a set, over what a view shows of it.
+//!
+//! Structural and independent of any format: a set rendered as JSON and the same set
+//! rendered any other way list their items alike, because nothing here reads bytes a
+//! renderer produced. Integers compare by value, so `9` sorts before `10`.
+
+use std::cmp::Ordering;
+
+use super::{Completeness, Observation, Scalar, Sensitivity, Visible, VisibleContent, Volatility};
+use crate::presentation::Presentation;
+
+/// Orders two items as a view shows them.
+pub(super) fn compare(left: &Visible<'_>, right: &Visible<'_>) -> Ordering {
+    match (left.content(), right.content()) {
+        (VisibleContent::Scalar(left), VisibleContent::Scalar(right)) => {
+            compare_scalars(&left, &right)
+        }
+        (VisibleContent::Object(left), VisibleContent::Object(right)) => {
+            lexicographic(left.iter(), right.iter(), |left, right| {
+                left.0.cmp(right.0).then_with(|| compare(&left.1, &right.1))
+            })
+        }
+        (VisibleContent::Sequence(left), VisibleContent::Sequence(right)) => {
+            lexicographic(left.iter(), right.iter(), compare)
+        }
+        (VisibleContent::Set(left), VisibleContent::Set(right)) => {
+            lexicographic(left.iter(), right.iter(), compare)
+        }
+        (left, right) => shape_rank(&left).cmp(&shape_rank(&right)),
+    }
+}
+
+/// Sorts items as the complete, undisclosed view shows them, with the annotations
+/// breaking a tie, so that two sets of the same items are equal however they were given.
+pub(super) fn sort_observations(items: &mut [Observation]) {
+    let everything = Presentation::complete().raw();
+    items.sort_by(|left, right| {
+        let shown = match (left.visible_in(everything), right.visible_in(everything)) {
+            (Some(left), Some(right)) => compare(&left, &right),
+            _ => unreachable!("the complete view drops nothing"),
+        };
+        shown.then_with(|| annotations_of(left).cmp(&annotations_of(right)))
+    });
+}
+
+fn annotations_of(observation: &Observation) -> (Volatility, Sensitivity, Completeness) {
+    (
+        observation.volatility,
+        observation.sensitivity,
+        observation.completeness,
+    )
+}
+
+fn compare_scalars(left: &Scalar, right: &Scalar) -> Ordering {
+    match (left, right) {
+        (Scalar::Boolean(left), Scalar::Boolean(right)) => left.cmp(right),
+        (Scalar::Integer(left), Scalar::Integer(right)) => left.cmp(right),
+        (Scalar::Text(left), Scalar::Text(right)) => left.cmp(right),
+        (left, right) => scalar_rank(left).cmp(&scalar_rank(right)),
+    }
+}
+
+fn scalar_rank(scalar: &Scalar) -> u8 {
+    match scalar {
+        Scalar::Null => 0,
+        Scalar::Boolean(_) => 1,
+        Scalar::Integer(_) => 2,
+        Scalar::Text(_) => 3,
+    }
+}
+
+fn shape_rank(content: &VisibleContent<'_>) -> u8 {
+    match content {
+        VisibleContent::Scalar(_) => 0,
+        VisibleContent::Object(_) => 1,
+        VisibleContent::Sequence(_) => 2,
+        VisibleContent::Set(_) => 3,
+    }
+}
+
+/// Compares two runs of items pairwise, the shorter first where one is a prefix of the other.
+fn lexicographic<T>(
+    mut left: impl Iterator<Item = T>,
+    mut right: impl Iterator<Item = T>,
+    compare_items: impl Fn(&T, &T) -> Ordering,
+) -> Ordering {
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(left), Some(right)) => match compare_items(&left, &right) {
+                Ordering::Equal => continue,
+                unequal => return unequal,
+            },
+        }
+    }
+}
