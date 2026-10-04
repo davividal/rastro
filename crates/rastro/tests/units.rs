@@ -401,7 +401,7 @@ fn what_a_unit_starts_survives_into_the_diffable_view() {
     // pid and exit status systemd prints beside it, which this facet never reads.
     let ssh = field(&diffable, "ssh.service");
     let started = match field(&ssh, "exec_start").content() {
-        Content::Sequence(items) | Content::Set(items) => items.clone(),
+        Content::Sequence(items) | Content::Set { items, .. } => items.clone(),
         other => panic!("expected a list, got {other:?}"),
     };
     assert_eq!(text(&field(&started[0], "executable")), "/usr/sbin/sshd");

@@ -14,7 +14,7 @@ fn entries_of(observation: &Observation) -> &std::collections::BTreeMap<String, 
 
 fn items_of(observation: &Observation) -> &[Observation] {
     match observation.content() {
-        Content::Sequence(items) | Content::Set(items) => items,
+        Content::Sequence(items) | Content::Set { items, .. } => items,
         other => panic!("expected a sequence or a set observation, got {other:?}"),
     }
 }
@@ -453,4 +453,76 @@ fn keyed_refuses_a_key_that_repeats_rather_than_keeping_the_last() {
             key: "eth0".to_owned()
         })
     );
+}
+
+fn names_of(observation: &Observation) -> Vec<&str> {
+    items_of(observation)
+        .iter()
+        .map(|item| text_of(&entries_of(item)["name"]))
+        .collect()
+}
+
+#[test]
+fn a_set_by_sorts_on_the_fields_the_collector_names_first() {
+    // Arrange: alphabetically `address` leads, so the default would order these by it; the
+    // collector names `name` as what identifies an item, so a change to the address keeps
+    // the item where it was.
+    let item = |name, address| {
+        Observation::object([
+            ("address", Observation::text(address)),
+            ("name", Observation::text(name)),
+        ])
+    };
+
+    // Act
+    let by_default = Observation::set([item("b", "10.0.0.1"), item("a", "10.0.0.2")]);
+    let by_name = Observation::set_by(["name"], [item("b", "10.0.0.1"), item("a", "10.0.0.2")]);
+
+    // Assert
+    assert_eq!(names_of(&by_default), ["b", "a"]);
+    assert_eq!(names_of(&by_name), ["a", "b"]);
+}
+
+#[test]
+fn a_set_by_falls_back_to_the_whole_item_where_the_named_fields_tie() {
+    // Arrange
+    let item = |name, port| {
+        Observation::object([
+            ("name", Observation::text(name)),
+            ("port", Observation::integer(port)),
+        ])
+    };
+
+    // Act
+    let set = Observation::set_by(["name"], [item("a", 443), item("a", 80)]);
+
+    // Assert
+    let ports: Vec<&Observation> = items_of(&set)
+        .iter()
+        .map(|item| &entries_of(item)["port"])
+        .collect();
+    assert_eq!(
+        ports,
+        [&Observation::integer(80), &Observation::integer(443)]
+    );
+}
+
+#[test]
+fn a_set_by_sorts_on_what_the_view_shows_of_a_named_field() {
+    // Arrange: the named field is volatile, so the diffable view does not show it and cannot
+    // be ordered by it; the items then fall back to what it does show.
+    let item = |name, id| {
+        Observation::object([
+            ("id", Observation::integer(id).volatile()),
+            ("name", Observation::text(name)),
+        ])
+    };
+    let set = Observation::set_by(["id"], [item("b", 1), item("a", 2)]);
+
+    // Act
+    let visible = set.in_view(View::Diffable).expect("a stable set survives");
+
+    // Assert
+    assert_eq!(names_of(&set), ["b", "a"]);
+    assert_eq!(names_of(&visible), ["a", "b"]);
 }

@@ -22,7 +22,7 @@ pub fn field(observation: &Observation, name: &str) -> Observation {
 
 pub fn items_of(observation: &Observation) -> Vec<Observation> {
     match observation.content() {
-        Content::Sequence(items) | Content::Set(items) => items.clone(),
+        Content::Sequence(items) | Content::Set { items, .. } => items.clone(),
         other => panic!("expected a sequence or a set, got {other:?}"),
     }
 }

@@ -43,7 +43,8 @@ pub struct Observation {
 /// A collection says which kind it is, because the host decides whether its order means
 /// anything and nothing downstream can tell: an object is a set keyed by identity, a
 /// [`Content::Sequence`] keeps the order the host acts on, and a [`Content::Set`] has no
-/// order the host acts on, so the port gives it one.
+/// order the host acts on, so the port gives it one: by the fields the collector named
+/// first, where it named any, and by the whole item after them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Content {
     Scalar(Scalar),
@@ -51,7 +52,11 @@ pub enum Content {
     /// Items in the order the host keeps them, because it acts on that order.
     Sequence(Vec<Observation>),
     /// Items the host holds in no order it acts on, repeats included, sorted by the port.
-    Set(Vec<Observation>),
+    Set {
+        items: Vec<Observation>,
+        /// The fields of an object item that order the set before the rest of it does.
+        leading: Vec<String>,
+    },
 }
 
 impl Observation {
@@ -94,9 +99,23 @@ impl Observation {
     /// of the same items are equal, and again by each view over what it keeps, so that a
     /// volatile value the view drops cannot order what it shows.
     pub fn set(items: impl IntoIterator<Item = Observation>) -> Self {
+        Self::set_by(Vec::<String>::new(), items)
+    }
+
+    /// A set of objects ordered first by the fields the collector names, then by the rest.
+    ///
+    /// The collector knows which fields identify an item, and ordering by them keeps an item
+    /// where it was when anything else about it changes, so a diff reads as that item
+    /// changing. Without them the order is the whole item's, which is safe and can move an
+    /// item whose alphabetically first field happens to be the one that changed.
+    pub fn set_by<K: Into<String>>(
+        leading: impl IntoIterator<Item = K>,
+        items: impl IntoIterator<Item = Observation>,
+    ) -> Self {
+        let leading: Vec<String> = leading.into_iter().map(Into::into).collect();
         let mut items: Vec<Observation> = items.into_iter().collect();
-        order::sort_observations(&mut items);
-        Self::unannotated(Content::Set(items))
+        order::sort_observations(&mut items, &leading);
+        Self::unannotated(Content::Set { items, leading })
     }
 
     /// An object keyed by an identity the caller asserts is unique, refusing a repeat.
@@ -213,13 +232,16 @@ impl Observation {
                     .filter_map(|item| item.materialised(presentation, withheld))
                     .collect(),
             ),
-            Content::Set(items) => {
+            Content::Set { items, leading } => {
                 let mut kept: Vec<Observation> = items
                     .iter()
                     .filter_map(|item| item.materialised(presentation, withheld))
                     .collect();
-                order::sort_observations(&mut kept);
-                Content::Set(kept)
+                order::sort_observations(&mut kept, leading);
+                Content::Set {
+                    items: kept,
+                    leading: leading.clone(),
+                }
             }
         };
 
@@ -267,7 +289,7 @@ impl Observation {
         let below = match &self.content {
             Content::Scalar(_) => 0,
             Content::Object(entries) => entries.values().map(Observation::incomplete_items).sum(),
-            Content::Sequence(items) | Content::Set(items) => {
+            Content::Sequence(items) | Content::Set { items, .. } => {
                 items.iter().map(Observation::incomplete_items).sum()
             }
         };
@@ -353,6 +375,7 @@ pub struct VisibleSequence<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct VisibleSet<'a> {
     items: &'a [Observation],
+    leading: &'a [String],
     presentation: Presentation,
     withheld: bool,
 }
@@ -371,8 +394,9 @@ impl<'a> Visible<'a> {
                 presentation: self.presentation,
                 withheld: self.withheld,
             }),
-            Content::Set(items) => VisibleContent::Set(VisibleSet {
+            Content::Set { items, leading } => VisibleContent::Set(VisibleSet {
                 items,
+                leading,
                 presentation: self.presentation,
                 withheld: self.withheld,
             }),
@@ -395,6 +419,13 @@ impl<'a> VisibleObject<'a> {
                 .map(|visible| (key.as_str(), visible))
         })
     }
+
+    /// One entry as this view shows it, or nothing where the view drops it or it is absent.
+    pub fn get(&self, key: &str) -> Option<Visible<'a>> {
+        self.entries
+            .get(key)
+            .and_then(|child| child.visible_under(self.presentation, self.withheld))
+    }
 }
 
 impl<'a> VisibleSequence<'a> {
@@ -412,7 +443,7 @@ impl<'a> VisibleSet<'a> {
     pub fn iter(&self) -> impl Iterator<Item = Visible<'a>> + use<'a> {
         let mut kept: Vec<Visible<'a>> =
             visible_items(self.items, self.presentation, self.withheld).collect();
-        kept.sort_by(order::compare);
+        kept.sort_by(|left, right| order::compare_led_by(self.leading, left, right));
         kept.into_iter()
     }
 }

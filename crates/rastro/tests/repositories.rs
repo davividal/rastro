@@ -672,7 +672,7 @@ fn collect_reads_the_system_it_was_given() {
     // Assert
     let apt = field(&collected, "apt");
     match apt.content() {
-        Content::Sequence(items) | Content::Set(items) => assert_eq!(items.len(), 1),
+        Content::Sequence(items) | Content::Set { items, .. } => assert_eq!(items.len(), 1),
         other => panic!("expected a list of repositories, got {other:?}"),
     }
 }

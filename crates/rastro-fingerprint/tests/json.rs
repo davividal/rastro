@@ -242,6 +242,34 @@ fn the_diffable_view_is_byte_identical_when_a_volatile_value_would_reorder_a_set
 }
 
 #[test]
+fn a_set_by_renders_in_the_order_of_the_fields_the_collector_named() {
+    // Arrange
+    let repository = |uri, archive_type| {
+        Observation::object([
+            ("archive_type", Observation::text(archive_type)),
+            ("uri", Observation::text(uri)),
+        ])
+    };
+    let document = fingerprint_of([facet(
+        "repositories",
+        CollectorCategory::State,
+        FacetOutcome::ok(Observation::set_by(
+            ["uri"],
+            [
+                repository("http://b.example", "deb"),
+                repository("http://a.example", "deb-src"),
+            ],
+        )),
+    )]);
+
+    // Act
+    let rendered = to_canonical_json(&document, View::Diffable);
+
+    // Assert
+    assert!(rendered.find("http://a.example") < rendered.find("http://b.example"));
+}
+
+#[test]
 fn to_canonical_json_records_an_absent_facet_without_a_data_payload() {
     // Act
     let document = parse(&to_canonical_json(

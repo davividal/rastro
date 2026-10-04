@@ -30,13 +30,39 @@ pub(super) fn compare(left: &Visible<'_>, right: &Visible<'_>) -> Ordering {
     }
 }
 
+/// Orders two items of a set by the fields its collector named, then as a whole.
+///
+/// A named field the view does not show sorts before one it does, so an item is never
+/// ordered by a value the reader cannot see. The leading fields only apply to objects.
+pub(super) fn compare_led_by(
+    leading: &[String],
+    left: &Visible<'_>,
+    right: &Visible<'_>,
+) -> Ordering {
+    let by_leading = match (left.content(), right.content()) {
+        (VisibleContent::Object(left), VisibleContent::Object(right)) => leading
+            .iter()
+            .map(|key| match (left.get(key), right.get(key)) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Less,
+                (Some(_), None) => Ordering::Greater,
+                (Some(left), Some(right)) => compare(&left, &right),
+            })
+            .find(|ordering| ordering.is_ne())
+            .unwrap_or(Ordering::Equal),
+        _ => Ordering::Equal,
+    };
+
+    by_leading.then_with(|| compare(left, right))
+}
+
 /// Sorts items as the complete, undisclosed view shows them, with the annotations
 /// breaking a tie, so that two sets of the same items are equal however they were given.
-pub(super) fn sort_observations(items: &mut [Observation]) {
+pub(super) fn sort_observations(items: &mut [Observation], leading: &[String]) {
     let everything = Presentation::complete().raw();
     items.sort_by(|left, right| {
         let shown = match (left.visible_in(everything), right.visible_in(everything)) {
-            (Some(left), Some(right)) => compare(&left, &right),
+            (Some(left), Some(right)) => compare_led_by(leading, &left, &right),
             _ => unreachable!("the complete view drops nothing"),
         };
         shown.then_with(|| annotations_of(left).cmp(&annotations_of(right)))
