@@ -129,12 +129,6 @@ pub struct ResidentNode {
 
     /// Whether a `java` argument file among the launch argv's options could not be read.
     launched_with_an_argument_file: bool,
-
-    /// When the server process started, in seconds since the epoch.
-    started_at: Option<u64>,
-
-    /// Whether this is an 8.x or 9.x server whose parent is not its launcher.
-    launcher_gone: bool,
 }
 
 /// The servers on a process table, and whether any process could not be inspected.
@@ -238,23 +232,6 @@ impl ResidentNode {
         self.distribution.as_deref()
     }
 
-    /// Whether this is an 8.x or 9.x server whose launcher is no longer its parent.
-    ///
-    /// Found by the second domain review, measured on 8.15.3: `bin/elasticsearch -d` returns once
-    /// the node is up and its launcher exits, so the server is reparented, and the paths and
-    /// settings the launcher passed it over a pipe are nowhere on the box.
-    pub fn launcher_gone(&self) -> bool {
-        self.launcher_gone
-    }
-
-    /// When the server process started, in seconds since the epoch, where `/proc` says.
-    ///
-    /// What the node's file is compared against, since the file the node read is the one it
-    /// had at start: see [`NodeSettings`](super::NodeSettings).
-    pub fn started_at(&self) -> Option<u64> {
-        self.started_at
-    }
-
     /// Whether the node was launched with a `java` argument file, `@file`, that could not be read.
     ///
     /// The launcher expands one in place, and a readable one is expanded here the same way. One
@@ -307,12 +284,9 @@ impl ResidentNode {
 
         // A launcher that exited, or a parent that is not one, lends nothing: taking any
         // parent's argv would read another program's flags as the node's settings.
-        let (launch, launcher_gone) = match module_server {
-            true => match launcher_arguments(proc, path) {
-                Some(launcher) => (launcher, false),
-                None => (own, true),
-            },
-            false => (own, false),
+        let launch = match module_server {
+            true => launcher_arguments(proc, path).unwrap_or(own),
+            false => own,
         };
         let launched: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
 
@@ -322,8 +296,6 @@ impl ResidentNode {
             config,
             release,
             distribution,
-            started_at: started_at(proc, path),
-            launcher_gone,
             launched_with_an_argument_file: launch.unread_argument_file,
             launch_arguments_are_exact: launch.exact,
             application_arguments: application_start(&launched)
@@ -430,9 +402,7 @@ fn argument_file_text(process: &Path, file: &str) -> Option<String> {
         false => fs::read_link(process.join("cwd")).ok()?.join(named),
     };
     let relative = absolute.strip_prefix("/").ok()?;
-    read_inside(&process.join("root"), relative)
-        .ok()
-        .map(|file| file.text)
+    read_inside(&process.join("root"), relative).ok()
 }
 
 /// Where the launcher's option scan is, fed one argument at a time.
@@ -476,40 +446,6 @@ impl OptionScan {
             self.done = true;
         }
     }
-}
-
-/// When a process started: the boot time from `/proc/stat` plus field 22 of its own `stat`, which
-/// counts clock ticks since boot. Counted after the last `)`, as the parent is, because the name
-/// before it may hold spaces.
-fn started_at(proc: &Path, process: &Path) -> Option<u64> {
-    let stat = fs::read_to_string(process.join("stat")).ok()?;
-    let ticks: u64 = stat
-        .rsplit_once(')')?
-        .1
-        .split_whitespace()
-        .nth(19)?
-        .parse()
-        .ok()?;
-    let boot: u64 = fs::read_to_string(proc.join("stat"))
-        .ok()?
-        .lines()
-        .find_map(|line| line.strip_prefix("btime "))?
-        .trim()
-        .parse()
-        .ok()?;
-
-    Some(boot + ticks / clock_ticks_per_second())
-}
-
-#[cfg(target_os = "linux")]
-fn clock_ticks_per_second() -> u64 {
-    rustix::param::clock_ticks_per_second()
-}
-
-/// The Linux default, for a workstation build that reads no real node.
-#[cfg(not(target_os = "linux"))]
-fn clock_ticks_per_second() -> u64 {
-    100
 }
 
 /// Where a launch argv's own arguments begin: after the entry point of a JVM, after the name of

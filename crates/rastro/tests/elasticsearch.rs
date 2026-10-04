@@ -273,10 +273,10 @@ fn collect_reports_a_node_in_a_namespace_it_cannot_join_on_the_node() {
 }
 
 #[test]
-fn collect_does_not_dial_a_node_whose_settings_switch_security_on() {
-    // Arrange: found by review. A 7.x node with security on and HTTP TLS off serves plaintext,
-    // so it passed the TLS gate and was sent a request it could only refuse with a 401, which an
-    // audit log records. The 401 was already this node's error, so asking bought nothing.
+fn collect_asks_a_node_whose_settings_switch_security_on() {
+    // Arrange: measured on cell 05, a daemonised 9.4 node switched open with `-E` has nothing in
+    // its file, and 9.4's default reads as security on. Whether a node wants credentials is the
+    // node's to say, in its answer, so the file no longer decides it.
     let node = FakeNode::serving(&[("/", ROOT)]);
     let proc = node.proc_with(
         "elasticsearch-facet-security-on",
@@ -289,13 +289,14 @@ fn collect_does_not_dial_a_node_whose_settings_switch_security_on() {
 
     // Assert
     let reported = &items_of(&field(&facet, "nodes"))[0];
-    assert!(text(&field(reported, "error")).contains("credentials"));
-    assert!(node.requests().is_empty(), "{:?}", node.requests());
+    assert_eq!(node.requests().first().map(String::as_str), Some("/"));
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
 }
 
 #[test]
-fn collect_does_not_dial_a_node_that_audits_requests() {
-    // Arrange: with audit logging on, any request the node receives is recorded.
+fn collect_asks_a_node_that_audits_requests() {
+    // Arrange: the audit gate is gone with the credentials it guarded against. A read made with
+    // the operator's own credential is the operator's to have audited.
     let node = FakeNode::serving(&[("/", ROOT)]);
     let proc = node.proc_with(
         "elasticsearch-facet-audit-on",
@@ -308,8 +309,8 @@ fn collect_does_not_dial_a_node_that_audits_requests() {
 
     // Assert
     let reported = &items_of(&field(&facet, "nodes"))[0];
-    assert!(text(&field(reported, "error")).contains("audit"));
-    assert!(node.requests().is_empty(), "{:?}", node.requests());
+    assert!(!node.requests().is_empty());
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
 }
 
 #[test]
@@ -328,29 +329,6 @@ fn collect_reads_a_node_whose_settings_switch_security_off() {
     // Assert
     let reported = &items_of(&field(&facet, "nodes"))[0];
     assert!(is_null(&field(reported, "error")), "{reported:?}");
-}
-
-#[test]
-fn collect_does_not_dial_a_node_that_audits_through_an_encoded_setting() {
-    // Arrange: found by review. The encoded spelling was ignored, so audit logging switched on
-    // this way read as absent and the node was sent a request it records.
-    let node = FakeNode::serving(&[("/", ROOT)]);
-    let proc = node.proc_with(
-        "elasticsearch-facet-audit-encoded",
-        &format!(
-            "http.port={}\0ES_SETTING_XPACK_SECURITY_AUDIT_ENABLED=true\0",
-            node.port
-        ),
-        None,
-    );
-
-    // Act
-    let facet = collector(&proc, false).collect().expect("a facet");
-
-    // Assert
-    let reported = &items_of(&field(&facet, "nodes"))[0];
-    assert!(text(&field(reported, "error")).contains("audit"));
-    assert!(node.requests().is_empty(), "{:?}", node.requests());
 }
 
 #[test]

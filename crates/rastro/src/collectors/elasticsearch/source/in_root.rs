@@ -22,49 +22,12 @@ struct FileIdentity {
     inode: u64,
 }
 
-/// A file read inside a node's root: its text, and when it, or the way to it, last changed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReadFile {
-    pub text: String,
-
-    /// The latest ctime, in seconds since the epoch, of the file reached, of the name it was
-    /// reached by, and of the directory holding that name. ctime rather than mtime, which a copy
-    /// or a tool can set to anything.
-    ///
-    /// **All three, found by review**: the file's own ctime alone let a file swapped after start
-    /// for a symlink to an older one pass, since following the link reads the target's. Any
-    /// change to the entry, a new file, a swapped link, or a Kubernetes ConfigMap swapping its
-    /// `..data` link, changes the directory holding it.
-    pub changed_at: i64,
-}
-
-/// A file's text and change time, every component of `relative` resolved inside `root`.
-pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<ReadFile> {
+/// A file's text, every component of `relative` resolved inside `root`.
+pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
     let mut file = open_inside(root, relative, Opening::Read)?;
-    let mut changed_at = file.metadata()?.ctime();
     let mut text = String::new();
     file.read_to_string(&mut text)?;
-
-    let entry = open_inside(root, relative, Opening::Entry)?
-        .metadata()?
-        .ctime();
-    changed_at = changed_at.max(entry);
-    if let Some(parent) = relative.parent() {
-        let directory = open_inside(root, parent, Opening::Directory)?
-            .metadata()?
-            .ctime();
-        changed_at = changed_at.max(directory);
-    }
-
-    Ok(ReadFile { text, changed_at })
-}
-
-/// When the directory at `relative` inside `root` last changed: its ctime, in seconds since the
-/// epoch, which any entry created, removed or renamed in it moves.
-pub fn changed_at_inside(root: &Path, relative: &Path) -> std::io::Result<i64> {
-    Ok(open_inside(root, relative, Opening::Directory)?
-        .metadata()?
-        .ctime())
+    Ok(text)
 }
 
 /// The host's own directory at `path`, canonical, where `path` inside the process's root is that
@@ -153,9 +116,6 @@ enum Opening {
 
     /// Only which directory it is, which reads nothing in it.
     Directory,
-
-    /// The name itself, a symlink as the link rather than what it leads to.
-    Entry,
 }
 
 #[cfg(target_os = "linux")]
@@ -172,7 +132,6 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
         Opening::Read => OFlags::RDONLY | OFlags::CLOEXEC,
         Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Opening::Entry => OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
     };
     let file = openat2(&root, relative, flags, Mode::empty(), ResolveFlags::IN_ROOT).map_err(
         |errno| match errno {

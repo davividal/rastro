@@ -257,34 +257,6 @@ fn read_in_reads_a_node_that_started_with_no_file() {
     assert_eq!(settings.get("http.port"), Some("9300"));
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn read_in_refuses_a_node_whose_file_was_removed_after_it_started() {
-    // Arrange: a file removed since start changes its directory, and what the node read then
-    // cannot be told now.
-    let proc = scratch_tree("elasticsearch-settings-file-removed", &["600/root"]);
-    write(&proc, "600/cmdline", SERVER_ARGV);
-    write(&proc, "600/environ", "");
-    write(
-        &proc,
-        CONFIG_FILE,
-        "xpack.security.http.ssl.enabled: true\n",
-    );
-    support::process::started(&proc, "600", "1", 59);
-    std::thread::sleep(std::time::Duration::from_millis(2500));
-    std::fs::remove_file(proc.join(CONFIG_FILE)).expect("the fixture's file");
-
-    // Act
-    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a removed file");
-
-    // Assert
-    assert!(
-        unread.reason().contains("after the node started"),
-        "{}",
-        unread.reason()
-    );
-}
-
 #[test]
 fn read_in_refuses_a_node_whose_config_directory_is_not_in_its_argv() {
     // Arrange: a server started by hand, whose file rastro cannot locate without guessing.
@@ -615,43 +587,20 @@ fn read_in_takes_a_command_line_setting_given_as_two_arguments() {
 
     // Assert
     assert_eq!(settings.get("http.port"), Some("9400"));
-    assert!(settings.asks_for_credentials());
+    assert_eq!(settings.get("xpack.security.enabled"), Some("true"));
 }
 
 #[test]
-fn read_in_refuses_a_file_changed_after_the_node_started() {
-    // Arrange: found by review. A change staged for the next restart, TLS switched off say, is not
-    // what the running node read, and reading it would send plaintext to a listener still on TLS.
+fn read_in_reads_a_file_changed_after_the_node_started() {
+    // Arrange: the file is what the node would start with now, staged changes and all. Nothing on
+    // the box says what it read then, and only TLS on HTTP is decided from it before asking: a
+    // file staging TLS off over a listener still on TLS is one more way into the blind spot
+    // `docs/decisions.md` accepts, where the node answers in the wrong protocol and is an error.
     let proc = scratch_tree("elasticsearch-settings-staged", &["600/root"]);
     write(&proc, "600/cmdline", SERVER_ARGV);
     write(&proc, "600/environ", "");
-    write(
-        &proc,
-        CONFIG_FILE,
-        "xpack.security.http.ssl.enabled: false\n",
-    );
-    support::process::started(&proc, "600", "1", 3600);
-
-    // Act
-    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a staged file");
-
-    // Assert
-    assert!(
-        unread.reason().contains("after the node started"),
-        "{}",
-        unread.reason()
-    );
-}
-
-#[test]
-fn read_in_reads_a_file_written_as_the_node_started() {
-    // Arrange: measured on 8.15.3, security auto-configuration writes the file 0.67 s after the
-    // server process starts, and the node runs with what it wrote.
-    let proc = scratch_tree("elasticsearch-settings-start-up-write", &["600/root"]);
-    write(&proc, "600/cmdline", SERVER_ARGV);
-    write(&proc, "600/environ", "");
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
-    support::process::started(&proc, "600", "1", 2);
+    support::process::started(&proc, "600", "1", 3600);
 
     // Act
     let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
@@ -661,8 +610,8 @@ fn read_in_reads_a_file_written_as_the_node_started() {
 }
 
 #[test]
-fn read_in_refuses_a_node_whose_start_cannot_be_read() {
-    // Arrange: without it, whether the file changed since cannot be told.
+fn read_in_reads_a_node_whose_start_cannot_be_read() {
+    // Arrange: when the node started no longer decides anything.
     let proc = scratch_tree("elasticsearch-settings-no-start", &["600/root"]);
     write(&proc, "600/cmdline", SERVER_ARGV);
     write(&proc, "600/environ", "");
@@ -670,49 +619,10 @@ fn read_in_refuses_a_node_whose_start_cannot_be_read() {
     write(&proc, "600/stat", "600 (java) S\n");
 
     // Act
-    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("no start time");
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
 
     // Assert
-    assert!(unread.reason().contains("started"), "{}", unread.reason());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn read_in_refuses_a_file_swapped_for_a_symlink_after_the_node_started() {
-    // Arrange: found by review. Following the link reads the target's ctime, which can be old,
-    // so a file swapped after start for a link to an older one passed. Any change to the entry,
-    // a new file, a swapped link or a ConfigMap's `..data` swap, changes its directory's ctime.
-    let proc = scratch_tree(
-        "elasticsearch-settings-swapped-link",
-        &["600/root/etc/elasticsearch", "600/root/srv"],
-    );
-    write(&proc, "600/cmdline", SERVER_ARGV);
-    write(&proc, "600/environ", "");
-    write(
-        &proc,
-        CONFIG_FILE,
-        "xpack.security.http.ssl.enabled: true\n",
-    );
-    write(
-        &proc,
-        "600/root/srv/older.yml",
-        "xpack.security.http.ssl.enabled: false\n",
-    );
-    // A start 59 s ago puts the window's end 1 s from now; the swap comes after it.
-    support::process::started(&proc, "600", "1", 59);
-    std::thread::sleep(std::time::Duration::from_millis(2500));
-    std::fs::remove_file(proc.join(CONFIG_FILE)).expect("the fixture's file");
-    std::os::unix::fs::symlink("/srv/older.yml", proc.join(CONFIG_FILE)).expect("a fixture");
-
-    // Act
-    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a swapped file");
-
-    // Assert
-    assert!(
-        unread.reason().contains("after the node started"),
-        "{}",
-        unread.reason()
-    );
+    assert_eq!(settings.get("http.port"), Some("9201"));
 }
 
 #[test]
@@ -776,28 +686,29 @@ fn read_in_refuses_a_command_line_argument_it_cannot_place() {
 }
 
 #[test]
-fn read_in_names_a_launcher_that_has_exited_as_the_reason() {
-    // Arrange: measured by the second domain review on 8.15.3, `bin/elasticsearch -d` returns
-    // once the node is up and its launcher exits, so the server is reparented and the paths and
-    // settings the launcher passed over a pipe are nowhere on the box. Refusing is right; saying
-    // the argv names no `es.path.conf` sent the operator looking for something never there.
+fn read_in_reads_a_node_whose_launcher_has_exited_from_its_file_and_environment() {
+    // Arrange: measured on 8.19, 9.4 and 9.5 (cells 05 and 06), `bin/elasticsearch -d` returns
+    // once the node is up and its launcher exits, taking the `-E` settings with it. The node is
+    // still read: its file and its environment are on the box, and what only `-E` set is the
+    // blind spot `docs/decisions.md` accepts.
     let proc = scratch_tree("elasticsearch-settings-daemonised", &["600/root", "1"]);
     write(&proc, "1/cmdline", "/sbin/init\0");
     write(
         &proc,
         "600/cmdline",
-        "/usr/share/elasticsearch/jdk/bin/java\0--module-path\0/usr/share/elasticsearch/lib\0\
+        "/usr/share/elasticsearch/jdk/bin/java\0-Des.distribution.type=tar\0\
+         --module-path\0/usr/share/elasticsearch/lib\0\
          -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
     );
-    write(&proc, "600/environ", "");
+    write(&proc, "600/environ", "ES_PATH_CONF=/etc/elasticsearch\0");
+    write(&proc, CONFIG_FILE, "http.port: 9201\n");
     support::process::started(&proc, "600", "1", 5);
 
     // Act
-    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a gone launcher");
+    let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
 
     // Assert
-    assert!(unread.reason().contains("-d"), "{}", unread.reason());
-    assert!(unread.reason().contains("launcher"), "{}", unread.reason());
+    assert_eq!(settings.get("http.port"), Some("9201"));
 }
 
 #[test]

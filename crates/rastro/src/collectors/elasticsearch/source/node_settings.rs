@@ -1,25 +1,25 @@
-//! The settings a node was given at start: its argv, its environment and its own file.
+//! The settings a node was given at start, as far as the box still shows them: its file, its
+//! environment and the `-E` flags on whichever argv still holds them.
 //!
-//! **Read only to decide whether and where the node may be asked**, which is the one reason
-//! this collector parses a configuration file. The node's answer over its API is the
-//! authoritative one, and the dispatch cannot have it yet: which port serves HTTP, and whether
-//! that port wants TLS, have to be known before the first request, or the first request is a
-//! guess. See `docs/decisions.md`.
+//! **Read only to decide how the node may be asked, and what to seal**: whether its HTTP
+//! listener wants TLS, which port serves HTTP, and where it keeps its data and logs. What the
+//! node runs with is its own answer, `_nodes/_local`, which the facet reports; nothing here is.
+//! See `docs/decisions.md`.
 //!
 //! Three sources, in the precedence the node applies, **which depends on how it was installed**,
 //! measured rather than read from the documentation:
 //!
 //! - **the docker distribution**: an environment variable named after the setting, dots and all,
 //!   over a `-E` flag, over `elasticsearch.yml`. The domain review measured the variable winning
-//!   on the 7.17.24, 8.15.3 and 9.2.0 images with all three set, and from 8.x the image's
-//!   settings appear nowhere in the argv;
+//!   on the 7.17.24, 8.15.3 and 9.2.0 images with all three set;
 //! - **every other distribution**: a `-E` flag over the file, and **the environment holds no
 //!   settings at all**. Measured on the 7.17.24 and 8.15.3 tarballs: with a dotted variable set,
 //!   the node ran on its file's value.
 //!
-//! Which one a node is comes from `es.distribution.type` on its launch argv, and a node that names
-//! none is refused, since the two readings can disagree on the very port or protocol it is asked
-//! on. The flags are on the argv the node was launched with, which on 8.x is its launcher's.
+//! **What the box no longer shows is not read**, and the reading is not refused for it: the `-E`
+//! flags of a node started with `-d` on 8.x and 9.x left with its launcher, and a file changed
+//! since start says what the node would start with now. Both are the blind spot
+//! `docs/decisions.md` accepts: a node that answers in the wrong protocol is an error.
 //!
 //! Everything is read through `/proc/<pid>`, the file included, as `root/<es.path.conf>`: a
 //! node in a container reads the file in its own image, and the host's `/etc/elasticsearch`,
@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
-use crate::collectors::elasticsearch::source::in_root::{changed_at_inside, read_inside};
+use crate::collectors::elasticsearch::source::in_root::read_inside;
 use crate::collectors::elasticsearch::value_objects::{Transport, Unread};
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
@@ -69,10 +69,6 @@ const VALUE_OPTIONS: [&str; 3] = ["-p", "--pidfile", "--enrollment-token"];
 /// The same options with their value joined: `-p/run/es.pid`, `-p=…`, `--pidfile=…`.
 const JOINED_VALUE_OPTIONS: [&str; 3] = ["-p", "--pidfile=", "--enrollment-token="];
 
-/// How long after the node's start a change to its file is still the node's own start-up write,
-/// in seconds. Auto-configuration measured at 0.67 s; the rest is room for a slow box.
-const START_UP_WRITE_WINDOW: i64 = 60;
-
 /// The prefix of a setting's encoded name, for environments that cannot put dots in a name.
 const ENCODED_SETTING_PREFIX: &str = "ES_SETTING_";
 
@@ -90,12 +86,6 @@ const DEFAULT_LOGS_DIRECTORY: &str = "logs";
 
 /// The setting that puts the HTTP listener behind TLS.
 const TLS_SETTING: &str = "xpack.security.http.ssl.enabled";
-
-/// The setting that makes the node ask every request for credentials.
-const SECURITY_SETTING: &str = "xpack.security.enabled";
-
-/// The setting that makes the node record every request it receives.
-const AUDIT_SETTING: &str = "xpack.security.audit.enabled";
 
 /// A node's start-up settings, flattened to dotted keys.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -126,12 +116,6 @@ impl NodeSettings {
                  can set its paths and settings where /proc does not show them",
             ));
         }
-        if node.launcher_gone() {
-            return Err(Unread::new(
-                "the node's launcher is no longer its parent, as after a start with -d, so the \
-                 paths and settings it passed the server over a pipe are not on the box",
-            ));
-        }
         let config = node.config().ok_or_else(|| {
             Unread::new(
                 "the node's argv names no es.path.conf, so its elasticsearch.yml cannot be \
@@ -149,13 +133,7 @@ impl NodeSettings {
         // Read on every distribution: `${NAME}` in the file is resolved from it wherever the
         // node was installed, even where the variables are not settings themselves.
         let environment = read_pairs(&process.join("environ"), "environ")?;
-        let started_at = node.started_at().ok_or_else(|| {
-            Unread::new(
-                "when the node started cannot be read, so whether its elasticsearch.yml changed \
-                 since cannot be told",
-            )
-        })?;
-        let file = read_config_file(&process.join("root"), config, started_at)?;
+        let file = read_config_file(&process.join("root"), config)?;
         let command_line = command_line_settings(node.application_arguments())?;
 
         let mut values = file;
@@ -207,24 +185,6 @@ impl NodeSettings {
             Some(_) => Transport::TlsRequired,
         }
     }
-
-    /// Whether the settings switch security on, so a request without credentials is refused.
-    ///
-    /// Read the way the TLS setting is, anything but absent or exactly `false` counting as on.
-    /// Absent is dialled: it is off on 7.x, and where an 8.x default leaves it on the node answers
-    /// 401 and records nothing unless audit logging, which is never on by default, says so.
-    pub fn asks_for_credentials(&self) -> bool {
-        switched_on(self.get(SECURITY_SETTING))
-    }
-
-    /// Whether the settings switch audit logging on, so any request received is recorded.
-    pub fn audits_requests(&self) -> bool {
-        switched_on(self.get(AUDIT_SETTING))
-    }
-}
-
-fn switched_on(value: Option<&str>) -> bool {
-    !matches!(value, None | Some("false"))
 }
 
 /// The `-E` settings among the server's arguments, every argument placed or the node refused.
@@ -395,27 +355,15 @@ fn read_pairs(path: &Path, what: &str) -> Result<BTreeMap<String, String>, Unrea
 
 /// The file's settings, or none where the directory holds no file.
 ///
-/// A missing file is a node on its defaults and the other two sources, which is how it
-/// started; a file that is there and cannot be read is a refusal.
-fn read_config_file(
-    root: &Path,
-    config: &Path,
-    started_at: u64,
-) -> Result<BTreeMap<String, String>, Unread> {
+/// A missing file is a node on its defaults and the other two sources: measured on 8.15.3, a
+/// node starts and serves without one. A file that is there and cannot be read is a refusal.
+fn read_config_file(root: &Path, config: &Path) -> Result<BTreeMap<String, String>, Unread> {
     let named = config.join(CONFIG_FILE);
     let relative = named.strip_prefix("/").unwrap_or(&named);
 
-    // Measured on 8.15.3: security auto-configuration writes the file 0.67 s after the server
-    // starts, and the node runs with that write, so a change soon after start is the node's own.
-    let started = i64::try_from(started_at).unwrap_or(i64::MAX);
-    let changed_since_start =
-        |changed_at: i64| changed_at > started.saturating_add(START_UP_WRITE_WINDOW);
-
-    let file = match read_inside(root, relative) {
-        Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return no_file_since_start(root, relative, &named, changed_since_start);
-        }
+    let text = match read_inside(root, relative) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
             return Err(Unread::new(format!(
                 "{} could not be read: {error}",
@@ -423,15 +371,6 @@ fn read_config_file(
             )));
         }
     };
-
-    if changed_since_start(file.changed_at) {
-        return Err(Unread::new(format!(
-            "{} changed after the node started, so it may be staged for the next restart rather \
-             than what the node runs with",
-            named.display()
-        )));
-    }
-    let text = file.text;
 
     let documents = YamlLoader::load_from_str(&text)
         .map_err(|error| Unread::new(format!("{} is not YAML: {error}", named.display())))?;
@@ -443,36 +382,6 @@ fn read_config_file(
     }
 
     Ok(values)
-}
-
-/// The settings a node with no file has from it: none, where its config directory is as it was
-/// when the node started.
-///
-/// Found by the second domain review, measured on 8.15.3: a node starts and serves without the
-/// file, configured by `-E` and its environment alone. What is suspect is a file gone since start,
-/// and removing one changes the directory that held it, so that is what decides.
-fn no_file_since_start(
-    root: &Path,
-    relative: &Path,
-    named: &Path,
-    changed_since_start: impl Fn(i64) -> bool,
-) -> Result<BTreeMap<String, String>, Unread> {
-    let directory = relative.parent().unwrap_or(Path::new(""));
-    let changed_at = changed_at_inside(root, directory).map_err(|error| {
-        Unread::new(format!(
-            "{} is not there, and its directory could not be read: {error}",
-            named.display()
-        ))
-    })?;
-
-    match changed_since_start(changed_at) {
-        true => Err(Unread::new(format!(
-            "{} is not there, and its directory changed after the node started, so the file \
-             may have been removed since and what the node read cannot be told",
-            named.display()
-        ))),
-        false => Ok(BTreeMap::new()),
-    }
 }
 
 /// Folds nested maps into dotted keys, the two spellings the node itself treats as one.
