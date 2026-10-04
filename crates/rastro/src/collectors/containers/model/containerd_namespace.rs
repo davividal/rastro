@@ -93,7 +93,7 @@ impl From<&ContainerdNamespace> for Observation {
                 // Volatile for the reason docker's list is: a container that came and went
                 // between the id list and the read of it is the host changing on its own.
                 "unreadable_containers",
-                Observation::list(namespace.unreadable().iter().map(Observation::from)).volatile(),
+                Observation::set(namespace.unreadable().iter().map(Observation::from)).volatile(),
             ),
         ])
     }

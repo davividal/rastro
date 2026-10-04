@@ -191,7 +191,7 @@ impl From<&Definitions> for Observation {
                 Observation::object(definitions.bindings.iter().map(|(vhost, bindings)| {
                     (
                         vhost.as_str(),
-                        Observation::list(bindings.iter().map(Observation::from)),
+                        Observation::set(bindings.iter().map(Observation::from)),
                     )
                 })),
             ),

@@ -94,15 +94,15 @@ impl From<&Unit> for Observation {
             ),
             (
                 "environment_files",
-                Observation::list(unit.environment_files.iter().map(Observation::from)),
+                Observation::sequence(unit.environment_files.iter().map(Observation::from)),
             ),
             (
                 "exec_start",
-                Observation::list(unit.exec_start.iter().map(Observation::from)),
+                Observation::sequence(unit.exec_start.iter().map(Observation::from)),
             ),
             (
                 "unset_environment",
-                Observation::list(
+                Observation::set(
                     unit.unset_environment
                         .iter()
                         .map(|name| Observation::text(name.as_str())),

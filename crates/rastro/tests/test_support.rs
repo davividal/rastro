@@ -22,9 +22,9 @@ fn field_reads_the_named_entry_from_an_object() {
 }
 
 #[test]
-fn items_of_reads_a_list_observation() {
+fn items_of_reads_a_sequence_observation() {
     // Arrange
-    let observation = Observation::list([Observation::text("a"), Observation::text("b")]);
+    let observation = Observation::sequence([Observation::text("a"), Observation::text("b")]);
 
     // Act
     let items = items_of(&observation);

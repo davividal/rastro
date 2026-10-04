@@ -135,11 +135,11 @@ impl From<&NodeStatus> for Observation {
             ("active_plugins", texts(&status.active_plugins)),
             (
                 "listeners",
-                Observation::list(status.listeners.iter().map(Observation::from)),
+                Observation::sequence(status.listeners.iter().map(Observation::from)),
             ),
             (
                 "alarms",
-                Observation::list(status.alarms.iter().map(Observation::from)).volatile(),
+                Observation::sequence(status.alarms.iter().map(Observation::from)).volatile(),
             ),
             ("tags", texts(&status.tags)),
             (
@@ -179,5 +179,5 @@ fn optional_integer(value: Option<i64>) -> Observation {
 /// they were read, and the log destinations in the order they are written to. Sorting either
 /// would destroy the one thing they say beyond their contents.
 fn texts(values: &[String]) -> Observation {
-    Observation::list(values.iter().map(|value| Observation::text(value.as_str())))
+    Observation::sequence(values.iter().map(|value| Observation::text(value.as_str())))
 }

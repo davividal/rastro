@@ -77,7 +77,7 @@ impl From<&NetworkState> for Observation {
             ),
             (
                 "routes",
-                Observation::list(state.routes().iter().map(Observation::from)),
+                Observation::set(state.routes().iter().map(Observation::from)),
             ),
         ])
     }

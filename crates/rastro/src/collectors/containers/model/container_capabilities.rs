@@ -25,11 +25,11 @@ impl From<&ContainerCapabilities> for Observation {
         Observation::object([
             (
                 "added",
-                Observation::list(capabilities.added.iter().map(Observation::from)),
+                Observation::set(capabilities.added.iter().map(Observation::from)),
             ),
             (
                 "dropped",
-                Observation::list(capabilities.dropped.iter().map(Observation::from)),
+                Observation::set(capabilities.dropped.iter().map(Observation::from)),
             ),
         ])
     }

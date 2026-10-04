@@ -36,7 +36,7 @@ impl From<&NetworkInterface> for Observation {
         Observation::object([
             (
                 "addresses",
-                Observation::list(interface.addresses.iter().map(Observation::from)),
+                Observation::set(interface.addresses.iter().map(Observation::from)),
             ),
             ("flags", Observation::from(&interface.flags)),
             (

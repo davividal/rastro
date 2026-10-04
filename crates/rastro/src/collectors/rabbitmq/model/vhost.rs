@@ -36,7 +36,7 @@ impl From<&Vhost> for Observation {
             ),
             (
                 "tags",
-                Observation::list(vhost.tags.iter().map(|tag| Observation::text(tag.as_str()))),
+                Observation::sequence(vhost.tags.iter().map(|tag| Observation::text(tag.as_str()))),
             ),
         ])
     }

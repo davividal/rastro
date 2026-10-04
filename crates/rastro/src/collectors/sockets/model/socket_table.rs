@@ -40,6 +40,6 @@ impl SocketTable {
 
 impl From<&SocketTable> for Observation {
     fn from(table: &SocketTable) -> Self {
-        Observation::list(table.sockets().iter().map(Observation::from))
+        Observation::set(table.sockets().iter().map(Observation::from))
     }
 }

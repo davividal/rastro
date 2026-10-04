@@ -44,6 +44,6 @@ impl RepositorySet {
 
 impl From<&RepositorySet> for Observation {
     fn from(set: &RepositorySet) -> Self {
-        Observation::list(set.repositories().iter().map(Observation::from))
+        Observation::set(set.repositories().iter().map(Observation::from))
     }
 }

@@ -116,7 +116,7 @@ impl From<&DockerServer> for Observation {
             ),
             (
                 "security_options",
-                Observation::list(
+                Observation::set(
                     server
                         .security_options
                         .iter()
@@ -128,25 +128,25 @@ impl From<&DockerServer> for Observation {
             ("networks", Observation::from(&server.networks)),
             (
                 "unreadable_networks",
-                Observation::list(server.networks.unreadable().iter().map(Observation::from))
+                Observation::set(server.networks.unreadable().iter().map(Observation::from))
                     .volatile(),
             ),
             (
                 "unreadable_volumes",
-                Observation::list(server.volumes.unreadable().iter().map(Observation::from))
+                Observation::set(server.volumes.unreadable().iter().map(Observation::from))
                     .volatile(),
             ),
             ("volumes", Observation::from(&server.volumes)),
             (
                 "unreadable_images",
-                Observation::list(server.images.unreadable().iter().map(Observation::from))
+                Observation::set(server.images.unreadable().iter().map(Observation::from))
                     .volatile(),
             ),
             (
                 // Volatile, because a container that came and went between the id list and
                 // the read of it is the host changing on its own. See `UnreadableObject`.
                 "unreadable_containers",
-                Observation::list(server.containers.unreadable().iter().map(Observation::from))
+                Observation::set(server.containers.unreadable().iter().map(Observation::from))
                     .volatile(),
             ),
             ("version", Observation::from(&server.version)),

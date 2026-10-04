@@ -28,7 +28,7 @@ impl From<&AuthorizedKey> for Observation {
             ("key_type", Observation::from(&key.key_type)),
             (
                 "options",
-                Observation::list(key.options.iter().map(Observation::from)),
+                Observation::set(key.options.iter().map(Observation::from)),
             ),
             (
                 // Not derived at render time for convenience: whether a key is restricted at

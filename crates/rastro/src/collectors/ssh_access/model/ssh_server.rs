@@ -33,7 +33,7 @@ impl From<&SshServer> for Observation {
             ),
             (
                 "authorized_keys_files",
-                Observation::list(
+                Observation::sequence(
                     server
                         .authorized_keys_files
                         .iter()

@@ -58,7 +58,7 @@ impl From<&SshAccess> for Observation {
                 Observation::object(access.accounts().iter().map(|(account, keys)| {
                     (
                         account.as_str(),
-                        Observation::list(keys.iter().map(Observation::from)),
+                        Observation::set(keys.iter().map(Observation::from)),
                     )
                 })),
             ),

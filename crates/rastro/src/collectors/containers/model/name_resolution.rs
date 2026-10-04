@@ -39,7 +39,7 @@ impl From<&NameResolution> for Observation {
             ),
             (
                 "options",
-                Observation::list(
+                Observation::sequence(
                     resolution
                         .options
                         .iter()
@@ -48,7 +48,7 @@ impl From<&NameResolution> for Observation {
             ),
             (
                 "searches",
-                Observation::list(
+                Observation::sequence(
                     resolution
                         .searches
                         .iter()
@@ -57,7 +57,7 @@ impl From<&NameResolution> for Observation {
             ),
             (
                 "servers",
-                Observation::list(resolution.servers.iter().map(Observation::from)),
+                Observation::sequence(resolution.servers.iter().map(Observation::from)),
             ),
         ])
     }

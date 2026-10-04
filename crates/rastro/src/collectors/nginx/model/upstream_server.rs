@@ -17,7 +17,7 @@ impl From<&UpstreamServer> for Observation {
             ("endpoint", Observation::from(&server.endpoint)),
             (
                 "parameters",
-                Observation::list(server.parameters.iter().map(Observation::from)),
+                Observation::set(server.parameters.iter().map(Observation::from)),
             ),
         ])
     }

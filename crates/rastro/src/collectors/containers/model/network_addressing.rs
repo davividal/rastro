@@ -24,7 +24,7 @@ impl From<&NetworkAddressing> for Observation {
         Observation::object([
             (
                 "configured",
-                Observation::list(addressing.configured.iter().map(Observation::from)),
+                Observation::sequence(addressing.configured.iter().map(Observation::from)),
             ),
             ("driver", Observation::text(addressing.driver.as_str())),
             (

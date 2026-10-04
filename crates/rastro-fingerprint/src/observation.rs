@@ -83,10 +83,6 @@ impl Observation {
         Self::unannotated(Content::Object(entries))
     }
 
-    pub fn list(items: impl IntoIterator<Item = Observation>) -> Self {
-        Self::sequence(items)
-    }
-
     /// Items whose order the host acts on, kept as given.
     pub fn sequence(items: impl IntoIterator<Item = Observation>) -> Self {
         Self::unannotated(Content::Sequence(items.into_iter().collect()))

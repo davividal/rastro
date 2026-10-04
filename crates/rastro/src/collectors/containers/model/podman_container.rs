@@ -76,7 +76,7 @@ impl From<&PodmanContainer> for Observation {
             ),
             (
                 "networks",
-                Observation::list(
+                Observation::set(
                     container
                         .networks
                         .iter()
@@ -95,7 +95,7 @@ impl From<&PodmanContainer> for Observation {
                 Observation::object(container.ports.iter().map(|(port, bindings)| {
                     (
                         port.as_key(),
-                        Observation::list(bindings.iter().map(Observation::from)),
+                        Observation::set(bindings.iter().map(Observation::from)),
                     )
                 })),
             ),

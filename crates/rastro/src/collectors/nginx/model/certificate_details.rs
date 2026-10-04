@@ -50,7 +50,7 @@ impl From<&CertificateDetails> for Observation {
             ("subject", Observation::text(details.subject.as_str())),
             (
                 "subject_alternative_names",
-                Observation::list(
+                Observation::set(
                     details
                         .subject_alternative_names
                         .iter()

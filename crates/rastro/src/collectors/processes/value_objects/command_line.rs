@@ -35,7 +35,7 @@ impl CommandLine {
 
 impl From<&CommandLine> for Observation {
     fn from(command_line: &CommandLine) -> Self {
-        Observation::list(
+        Observation::sequence(
             command_line
                 .arguments()
                 .iter()

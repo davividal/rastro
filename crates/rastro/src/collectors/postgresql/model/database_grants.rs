@@ -57,9 +57,9 @@ impl From<&DatabaseGrants> for Observation {
         }
 
         Observation::object(
-            grouped.into_iter().map(|(grantee, by_grantor)| {
-                (grantee, Observation::list(by_grantor.into_values()))
-            }),
+            grouped
+                .into_iter()
+                .map(|(grantee, by_grantor)| (grantee, Observation::set(by_grantor.into_values()))),
         )
     }
 }

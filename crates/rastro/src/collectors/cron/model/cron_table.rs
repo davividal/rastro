@@ -79,11 +79,11 @@ impl From<&CronTable> for Observation {
             ),
             (
                 "jobs",
-                Observation::list(table.jobs.iter().map(Observation::from)),
+                Observation::sequence(table.jobs.iter().map(Observation::from)),
             ),
             (
                 "scripts",
-                Observation::list(table.scripts.iter().map(Observation::from)),
+                Observation::sequence(table.scripts.iter().map(Observation::from)),
             ),
         ])
     }

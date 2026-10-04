@@ -81,7 +81,9 @@ impl From<&RulesFile> for Observation {
             (
                 "rules",
                 match file.status {
-                    FileStatus::Ok => Observation::list(file.rules.iter().map(Observation::from)),
+                    FileStatus::Ok => {
+                        Observation::sequence(file.rules.iter().map(Observation::from))
+                    }
                     _ => Observation::null(),
                 },
             ),

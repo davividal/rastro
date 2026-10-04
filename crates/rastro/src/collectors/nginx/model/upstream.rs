@@ -30,7 +30,7 @@ impl From<&Upstream> for Observation {
             ("name", Observation::from(&upstream.name)),
             (
                 "servers",
-                Observation::list(upstream.servers.iter().map(Observation::from)),
+                Observation::set(upstream.servers.iter().map(Observation::from)),
             ),
             (
                 "settings",

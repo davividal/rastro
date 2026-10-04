@@ -45,7 +45,7 @@ impl From<&ListeningSocket> for Observation {
                 match socket.holders_unknown {
                     true => Observation::object([("error", Observation::text(HOLDERS_UNKNOWN))])
                         .incomplete(),
-                    false => Observation::list(socket.holders.iter().map(Observation::from)),
+                    false => Observation::set(socket.holders.iter().map(Observation::from)),
                 },
             ),
             ("kind", Observation::from(&socket.kind)),

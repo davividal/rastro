@@ -54,6 +54,6 @@ impl ProcessTable {
 
 impl From<&ProcessTable> for Observation {
     fn from(table: &ProcessTable) -> Self {
-        Observation::list(table.processes().iter().map(Observation::from))
+        Observation::set(table.processes().iter().map(Observation::from))
     }
 }

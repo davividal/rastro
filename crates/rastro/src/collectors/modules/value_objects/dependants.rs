@@ -26,7 +26,7 @@ impl Dependants {
 
 impl From<&Dependants> for Observation {
     fn from(dependants: &Dependants) -> Self {
-        Observation::list(
+        Observation::set(
             dependants
                 .iter()
                 .map(|dependant| Observation::text(dependant.as_str())),

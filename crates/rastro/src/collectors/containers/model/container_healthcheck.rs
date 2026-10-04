@@ -37,7 +37,7 @@ impl From<&ContainerHealthcheck> for Observation {
             ),
             (
                 "test",
-                Observation::list(healthcheck.test.iter().map(Observation::text)),
+                Observation::sequence(healthcheck.test.iter().map(Observation::text)),
             ),
             (
                 "timeout_nanoseconds",

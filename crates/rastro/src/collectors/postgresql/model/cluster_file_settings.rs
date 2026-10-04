@@ -45,6 +45,6 @@ impl ClusterFileSettings {
 
 impl From<&ClusterFileSettings> for Observation {
     fn from(settings: &ClusterFileSettings) -> Self {
-        Observation::list(settings.settings().iter().map(Observation::from))
+        Observation::sequence(settings.settings().iter().map(Observation::from))
     }
 }

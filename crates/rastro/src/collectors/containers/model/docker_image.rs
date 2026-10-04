@@ -57,12 +57,12 @@ impl From<&DockerImage> for Observation {
             ("platform", Observation::from(&image.platform)),
             (
                 "registry_digests",
-                Observation::list(image.registry_digests.iter().map(Observation::from)),
+                Observation::set(image.registry_digests.iter().map(Observation::from)),
             ),
             ("size_bytes", Observation::integer(image.size.bytes())),
             (
                 "tags",
-                Observation::list(image.tags.iter().map(Observation::from)),
+                Observation::set(image.tags.iter().map(Observation::from)),
             ),
         ])
     }

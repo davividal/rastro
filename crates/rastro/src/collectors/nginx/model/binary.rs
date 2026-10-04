@@ -127,7 +127,7 @@ impl From<&Binary> for Observation {
             ),
             (
                 "configure_arguments",
-                Observation::list(binary.configure_arguments.iter().map(Observation::from)),
+                Observation::sequence(binary.configure_arguments.iter().map(Observation::from)),
             ),
             ("path", Observation::text(binary.path.as_str())),
             ("product", Observation::text(binary.product.as_str())),
