@@ -9,6 +9,11 @@ use rastro::collectors::postgresql::{
     ClusterRoleSettings, DatabaseName, PsqlRoleSettings, RoleName, RoleSetting, SettingName,
     SettingValue,
 };
+use rastro_collector::Observation;
+
+mod support;
+
+use support::observation::{field, items_of, text};
 
 /// The three columns the collector's query asks for: an `ALTER ROLE`, an `ALTER DATABASE`,
 /// and an `ALTER ROLE ... IN DATABASE`, deliberately given out of sorted order.
@@ -137,4 +142,31 @@ fn parse_orders_overrides_by_scope_then_name() {
         .map(|setting| setting.name.as_str())
         .collect();
     assert_eq!(order, vec!["work_mem", "statement_timeout", "search_path"]);
+}
+
+#[test]
+fn the_overrides_render_in_order_of_scope_then_name() {
+    // Arrange: alphabetically the setting's name comes before its role, so a reader would
+    // find one role's overrides scattered among another's. By scope first, they stay together.
+    let setting = |role: &str, name: &str| RoleSetting {
+        database: Some(DatabaseName::new("orders").expect("legal")),
+        role: Some(RoleName::new(role).expect("legal")),
+        name: SettingName::new(name).expect("legal"),
+        value: SettingValue::new("1"),
+    };
+    let settings = ClusterRoleSettings::new(vec![
+        setting("zulu", "a_setting"),
+        setting("alpha", "z_setting"),
+    ])
+    .expect("two scopes");
+
+    // Act
+    let rendered = Observation::from(&settings);
+
+    // Assert
+    let roles: Vec<String> = items_of(&rendered)
+        .iter()
+        .map(|setting| text(&field(setting, "role")))
+        .collect();
+    assert_eq!(roles, ["alpha", "zulu"]);
 }
