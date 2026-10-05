@@ -25,8 +25,8 @@ pub use source::{
     host_directory_of, http_endpoint, read_node,
 };
 pub use value_objects::{
-    ApiCredential, ApiValue, HttpEndpoint, NetworkNamespace, Release, ReleaseSupport,
-    SupportedRelease, Transport, Unread,
+    ApiCredential, ApiValue, HttpEndpoint, NetworkNamespace, NodeCredential, Release,
+    ReleaseSupport, SupportedRelease, Transport, Unread,
 };
 
 // One import, because `rastro-collector` re-exports what an author needs.
