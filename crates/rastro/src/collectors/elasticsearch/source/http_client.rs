@@ -38,7 +38,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest body read, which a mapping-heavy cluster's templates stay well inside.
 const DEFAULT_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
-/// The wider budget of the reads that grow with every index, `_settings` and `_mapping`.
+/// The wider budget of the reads that grow with every index: `_alias`, `_settings` and `_mapping`.
 const LARGE_TIMEOUT: Duration = Duration::from_secs(60);
 const LARGE_BODY_LIMIT: usize = 64 * 1024 * 1024;
 

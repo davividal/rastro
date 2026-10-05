@@ -6296,7 +6296,7 @@ transport port, which the node logs.
 - **A `::` listener** is dialled on `::1` and, where that cannot be reached, on `127.0.0.1`: measured on
   8.19.22, `::1` can be unavailable with IPv6 off on `lo` alone while the JVM's dual-stack socket is
   bound.
-- **The index reads' budget**: `_settings` and `_mapping` grow with every index, so they are bounded
+- **The index reads' budget**: `_alias`, `_settings` and `_mapping` grow with every index, so they are bounded
   at 60 s and 64 MB, the other reads at 10 s and 16 MB.
 - **No setting value in a refusal**: a reason is written into the document, and a placeholder, an
   unplaced argument or two disagreeing environment spellings can hold a secret. The reason names the

@@ -398,3 +398,29 @@ fn collect_reads_a_mapping_answer_larger_than_the_common_bound() {
     // Assert
     assert_eq!(keys_of(&indices), ["myapp-tenant1", "unaliased"]);
 }
+
+#[test]
+fn collect_reads_an_alias_answer_larger_than_the_common_bound() {
+    // Arrange: found by review. The alias answer grows with every index and every filter, and
+    // 17 MB is past the bound every other read keeps.
+    let value = "p".repeat(17 * 1024 * 1024);
+    let aliases = format!(
+        r#"{{"orders-7":{{"aliases":{{"paid":{{"filter":{{"term":{{"status":"{value}"}}}}}}}}}}}}"#
+    );
+    let settings = settings_of(&[settings_answer("orders-7", "cccccccccccccccccccccc", "3")]);
+    let mappings = r#"{"orders-7":{"mappings":{}}}"#;
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, &aliases),
+            (SETTINGS, &settings),
+            (MAPPINGS, mappings),
+        ],
+        "elasticsearch-indices-large-alias",
+    );
+
+    // Assert
+    assert_eq!(keys_of(&indices), ["paid"]);
+}
