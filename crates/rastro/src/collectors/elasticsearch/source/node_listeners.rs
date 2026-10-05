@@ -57,13 +57,22 @@ pub struct HeldSocket {
 }
 
 impl HeldSocket {
-    /// The socket the node listens on `port` by, found once, when the node is.
-    pub fn on_port_in(proc: &Path, process_id: u32, port: u16) -> Result<Self, Unread> {
-        listening_in(proc, process_id)?
+    /// Every socket the node listens on `port` by, found once, when the node is.
+    ///
+    /// **Every one**, found by review: a node bound on two addresses holds two sockets on one
+    /// port, and watching whichever came first let the one dialled close unnoticed.
+    pub fn all_on_port_in(proc: &Path, process_id: u32, port: u16) -> Result<Vec<Self>, Unread> {
+        let sockets: Vec<Self> = listening_in(proc, process_id)?
             .into_iter()
-            .find(|held| held.listener.port.as_u16() == port)
+            .filter(|held| held.listener.port.as_u16() == port)
             .map(|held| held.socket)
-            .ok_or_else(|| Unread::new(format!("the node holds no listener on port {port}")))
+            .collect();
+        match sockets.is_empty() {
+            true => Err(Unread::new(format!(
+                "the node holds no listener on port {port}"
+            ))),
+            false => Ok(sockets),
+        }
     }
 
     /// Whether the node's descriptor still names the same socket: closed, or reused for another

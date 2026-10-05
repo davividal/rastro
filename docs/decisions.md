@@ -6479,7 +6479,9 @@ before each request walked every descriptor of the node and parsed the whole of 
 `net/tcp6`, outside the request's deadline, found by review, and on a busy namespace the tables
 hold every socket on it. The descriptor that holds the listening socket, and the socket's inode,
 are found once, with the node; before each request the check is that descriptor still naming that
-socket, and the process its start time.
+socket, and the process its start time. **Every** socket the node holds on that port, found by
+review: a node bound on two addresses holds two, and watching whichever came first let the one
+dialled close unnoticed.
 
 ## A store is sealed at every host path that shows it
 

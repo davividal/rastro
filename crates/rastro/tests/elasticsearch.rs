@@ -672,6 +672,48 @@ fn collect_checks_the_node_still_holds_its_listener_without_reading_the_socket_t
 }
 
 #[test]
+fn collect_asks_nothing_more_where_the_node_lets_go_of_the_listener_it_was_dialled_on() {
+    // Arrange: found by review. A node bound on two addresses holds two sockets on one port, and
+    // the check watched whichever its table listed first. Here that is the interface address, and
+    // the node lets go of the loopback socket rastro dialled once `/` is answered, which another
+    // process could then bind and be sent the next request.
+    let name = "elasticsearch-facet-listener-one-of-two";
+    let process = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(name)
+        .join("600");
+    let dialled = process.join("fd/3");
+    let node = FakeNode::serving_then(&[("/", ROOT)], move |path| {
+        if path == "/" {
+            let _ = std::fs::remove_file(&dialled);
+        }
+    });
+    let proc = node.proc(name);
+    let table = std::fs::read_to_string(proc.join("600/net/tcp")).expect("the fixture's table");
+    let (header, rows) = table.split_once('\n').expect("a header");
+    let interface = format!(
+        "   1: 0500000A:{:04X} 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4343 1 0000000000000000 100 0 0 10 0\n",
+        node.port
+    );
+    std::fs::write(
+        proc.join("600/net/tcp"),
+        format!("{header}\n{interface}{rows}"),
+    )
+    .expect("a writable fixture");
+    std::os::unix::fs::symlink("socket:[4343]", proc.join("600/fd/4")).expect("a fixture");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert_eq!(node.requests(), ["/"]);
+    assert!(
+        text(&field(&field(reported, "cluster_settings"), "error")).contains("no longer"),
+        "{reported:?}"
+    );
+}
+
+#[test]
 fn collect_asks_nothing_more_of_a_process_id_another_process_has_taken() {
     // Arrange: found by review. The node exits and its process id is reused by a program that
     // binds the same port, which a check of the listener alone accepts. A process is its id and

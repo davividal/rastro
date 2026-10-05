@@ -121,7 +121,7 @@ fn read_into(
         process_id: resident.process_id(),
         start: resident.start(),
         port,
-        socket: HeldSocket::on_port_in(proc, resident.process_id(), port)?,
+        sockets: HeldSocket::all_on_port_in(proc, resident.process_id(), port)?,
     };
     let client = client
         .clone()
@@ -163,8 +163,8 @@ struct HeldListener {
     start: Option<u64>,
     port: u16,
 
-    /// The socket the node listens on that port by.
-    socket: HeldSocket,
+    /// Every socket the node listens on that port by.
+    sockets: Vec<HeldSocket>,
 }
 
 impl HeldListener {
@@ -176,7 +176,11 @@ impl HeldListener {
                  is sent to it",
             ));
         }
-        match self.socket.still_held_in(&self.proc, self.process_id) {
+        match self
+            .sockets
+            .iter()
+            .all(|socket| socket.still_held_in(&self.proc, self.process_id))
+        {
             true => Ok(()),
             false => Err(Unread::new(format!(
                 "the node no longer holds its listener on port {}, so nothing more is sent there",
