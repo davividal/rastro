@@ -136,6 +136,9 @@ pub struct ResidentNode {
     /// and no later one given the same id.
     start: Option<u64>,
 
+    /// The first of the process's files a read needs that the kernel refused, where one was.
+    refused: Option<&'static str>,
+
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
     distribution: Option<String>,
 
@@ -249,6 +252,15 @@ impl ResidentNode {
         self.release
     }
 
+    /// The first of `environ`, `fd` and `root` under the node's `/proc` entry that was refused.
+    ///
+    /// Found by the third domain review, measured as `nobody`: another account's are refused to
+    /// an unprivileged run, and the node read as an error blaming a missing jar. A file that is
+    /// not there is not refused: it is a process that has nothing there.
+    pub fn refused(&self) -> Option<&'static str> {
+        self.refused
+    }
+
     /// Which release the node's install holds, as its `lib/` names it.
     pub fn installed_release(&self) -> Option<Release> {
         self.installed_release
@@ -345,6 +357,7 @@ impl ResidentNode {
         Some(Self {
             process_id,
             start,
+            refused: refused_in(path),
             home,
             config,
             release,
@@ -500,6 +513,24 @@ impl OptionScan {
             self.done = true;
         }
     }
+}
+
+/// The first of the process's files a read needs that the kernel refused.
+fn refused_in(process: &Path) -> Option<&'static str> {
+    let refused = |outcome: std::io::Result<()>| {
+        outcome.is_err_and(|error| error.kind() != std::io::ErrorKind::NotFound)
+    };
+
+    if refused(fs::read(process.join("environ")).map(drop)) {
+        return Some("environ");
+    }
+    if refused(fs::read_dir(process.join("fd")).map(drop)) {
+        return Some("fd");
+    }
+    if refused(fs::read_dir(process.join("root")).map(drop)) {
+        return Some("root");
+    }
+    None
 }
 
 /// Where a launch argv's own arguments begin: after the entry point of a JVM, after the name of

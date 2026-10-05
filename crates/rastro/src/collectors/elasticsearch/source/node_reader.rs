@@ -57,6 +57,13 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
         error: None,
     };
 
+    if let Some(file) = resident.refused() {
+        node.not_read = Some(Unread::not_read(format!(
+            "rastro may not read /proc/{}/{file}, which takes root or the node's own account",
+            resident.process_id()
+        )));
+        return node;
+    }
     let Some(release) = resident.release() else {
         node.error = Some(Unread::new(
             "the node's release could not be read: its install's lib/ holds no single \

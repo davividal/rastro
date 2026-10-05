@@ -720,3 +720,26 @@ fn collect_asks_a_9_node_for_its_blocks_without_the_parameter_9_deprecates() {
         "{asked:?}"
     );
 }
+
+#[test]
+fn collect_reports_a_node_whose_process_files_are_refused_as_not_read_naming_why() {
+    // Arrange: found by the third domain review, measured as `nobody`. Another account's
+    // `environ`, `fd` and `root` are refused to an unprivileged run, and the node was an error
+    // blaming a missing jar. A refusal stands in here as an `environ` that is a directory, which
+    // is refused to root as well, so the test holds for both runs of the suite.
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-process-files-refused");
+    std::fs::remove_file(proc.join("600/environ")).expect("the fixture's environ");
+    std::fs::create_dir(proc.join("600/environ")).expect("a writable fixture");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(node.requests().is_empty(), "{:?}", node.requests());
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    let reason = text(&field(reported, "not_read"));
+    assert!(reason.contains("/proc/600/environ"), "{reason}");
+    assert!(reason.contains("root"), "{reason}");
+}
