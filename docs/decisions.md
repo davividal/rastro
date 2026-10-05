@@ -6506,3 +6506,13 @@ Found by review: one mount point anywhere on the box whose name was not UTF-8 fa
 table read as text, and the seals that depend on it found nothing, so a node's live store was
 walked. The tables are read as the kernel's bytes, as the argv already is, and an escaped byte is
 that byte rather than a character.
+
+## Every setting value is withheld, wherever an answer carries one
+
+**Completes "Each cluster setting is withheld, its name kept", and narrows "Templates and ILM
+policies are not [withheld], being structure an operator diffs".** The reason the cluster
+settings were withheld, a plugin's credential that Elasticsearch does not filter, holds for every
+surface that carries settings, found by review one surface at a time: an index's own settings, and
+the `settings` of an index template or a component template. So every value under a `settings`
+object, in any answer, is withheld on its own, and every key stays readable; a template's
+patterns, priority and composition, and an ILM policy, are still structure and still read.

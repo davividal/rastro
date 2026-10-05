@@ -7,7 +7,7 @@
 
 use rastro::collectors::elasticsearch::{ElasticsearchCollector, HttpClient};
 use rastro_collector::Collector;
-use rastro_fingerprint::{Observation, Volatility};
+use rastro_fingerprint::{Observation, Sensitivity, Volatility};
 
 mod support;
 
@@ -116,6 +116,32 @@ fn collect_records_the_stable_settings_and_marks_the_per_index_ones_volatile() {
     assert_eq!(
         field(&aliased, "creation_date").volatility(),
         Volatility::Volatile
+    );
+}
+
+#[test]
+fn collect_withholds_each_index_setting_and_keeps_its_name() {
+    // Arrange: found by review. `_settings` leaves out a `Filtered` index setting, and a plugin can
+    // register a credential without that property, as with the cluster settings.
+    let settings = settings_of(&[settings_answer("unaliased", "DqUoBesrSJGb7PgJWKGoaA", "1")]);
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, r#"{"unaliased":{"aliases":{}}}"#),
+            (SETTINGS, &settings),
+            (MAPPINGS, r#"{"unaliased":{"mappings":{}}}"#),
+        ],
+        "elasticsearch-indices-settings-withheld",
+    );
+
+    // Assert
+    let settings = field(&field(&indices, "unaliased"), "settings");
+    assert_eq!(settings.sensitivity(), Sensitivity::Public);
+    assert_eq!(
+        field(&settings, "index.number_of_shards").sensitivity(),
+        Sensitivity::Sensitive
     );
 }
 

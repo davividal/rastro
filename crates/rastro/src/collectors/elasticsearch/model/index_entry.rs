@@ -98,7 +98,9 @@ impl From<&IndexEntry> for Observation {
                     entry
                         .settings
                         .iter()
-                        .map(|(name, value)| (name.as_str(), Observation::from(value))),
+                        // Each withheld, found by review: a plugin's unfiltered credential can be
+                        // an index setting, as it can a cluster one.
+                        .map(|(name, value)| (name.as_str(), Observation::from(value).sensitive())),
                 ),
             ),
             (

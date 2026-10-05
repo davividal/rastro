@@ -5,7 +5,7 @@
 
 use rastro::collectors::elasticsearch::{ElasticsearchCollector, HttpClient};
 use rastro_collector::Collector;
-use rastro_fingerprint::Observation;
+use rastro_fingerprint::{Observation, Sensitivity};
 
 mod support;
 
@@ -120,3 +120,41 @@ fn collect_reports_a_node_with_no_templates_as_none() {
     assert!(keys_of(&field(&reported, "index_templates")).is_empty());
     assert!(keys_of(&field(&reported, "component_templates")).is_empty());
 }
+
+#[test]
+fn collect_withholds_each_value_a_template_sets_and_keeps_its_structure() {
+    // Arrange: found by review. A template's `settings` are index settings, which a plugin's
+    // unfiltered credential can be among; its patterns, priority and composition are structure an
+    // operator diffs.
+    let node = FakeNode::serving(&[
+        ("/", ROOT),
+        (INDEX_TEMPLATES, INDEX_TEMPLATE_ANSWER),
+        (COMPONENT_TEMPLATES, COMPONENT_TEMPLATE_WITH_SETTINGS),
+    ]);
+
+    // Act
+    let reported = node_reported(&node, "elasticsearch-templates-settings-withheld");
+
+    // Assert
+    let app = field(&field(&reported, "index_templates"), "app");
+    let shards = field(
+        &field(&field(&field(&app, "template"), "settings"), "index"),
+        "number_of_shards",
+    );
+    assert_eq!(shards.sensitivity(), Sensitivity::Sensitive);
+    assert_eq!(field(&app, "priority").sensitivity(), Sensitivity::Public);
+    assert_eq!(
+        items_of(&field(&app, "index_patterns"))[0].sensitivity(),
+        Sensitivity::Public
+    );
+    let component = field(&field(&reported, "component_templates"), "app-settings");
+    let refresh = field(
+        &field(&field(&component, "template"), "settings"),
+        "index.refresh_interval",
+    );
+    assert_eq!(refresh.sensitivity(), Sensitivity::Sensitive);
+}
+
+const COMPONENT_TEMPLATE_WITH_SETTINGS: &str = r#"{"component_templates":[
+  {"name":"app-settings","component_template":{"template":{"settings":{"index.refresh_interval":"30s"}}}}
+]}"#;

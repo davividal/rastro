@@ -22,7 +22,30 @@ pub enum ApiValue {
     Object(BTreeMap<String, ApiValue>),
 }
 
+/// The key a definition's index settings sit under, in a template's `template.settings`.
+const SETTINGS: &str = "settings";
+
 impl ApiValue {
+    /// The tree as an observation, its values withheld where `withholding`.
+    fn observed(&self, withholding: bool) -> Observation {
+        let leaf = |observation: Observation| match withholding {
+            true => observation.sensitive(),
+            false => observation,
+        };
+        match self {
+            Self::Null => leaf(Observation::null()),
+            Self::Boolean(flag) => leaf(Observation::boolean(*flag)),
+            Self::Integer(number) => leaf(Observation::integer(*number)),
+            Self::Text(text) => leaf(Observation::text(text)),
+            Self::List(items) => {
+                Observation::sequence(items.iter().map(|item| item.observed(withholding)))
+            }
+            Self::Object(entries) => Observation::object(entries.iter().map(|(key, value)| {
+                (key.as_str(), value.observed(withholding || key == SETTINGS))
+            })),
+        }
+    }
+
     /// One digest for the whole tree, taken over an encoding in which no two trees coincide.
     ///
     /// Every value is tagged with its kind and every text and collection with its length, so
@@ -71,21 +94,15 @@ impl ApiValue {
     }
 }
 
+/// The tree, **every value under a `settings` object withheld on its own and every key kept**.
+///
+/// Found by review: Elasticsearch leaves a `Filtered` setting out of its answers, and a plugin can
+/// register a credential without that property, so a value a template sets may be one. The rest of
+/// a definition, its patterns, priority and composition, is structure an operator diffs, and stays
+/// readable. A list is a sequence: an answer's array may be an order the node acts on, a
+/// pipeline's processors say, and nothing in the answer tells which arrays are.
 impl From<&ApiValue> for Observation {
     fn from(value: &ApiValue) -> Self {
-        match value {
-            ApiValue::Null => Observation::null(),
-            ApiValue::Boolean(flag) => Observation::boolean(*flag),
-            ApiValue::Integer(number) => Observation::integer(*number),
-            ApiValue::Text(text) => Observation::text(text),
-            // A sequence: an answer's array may be an order the node acts on, a pipeline's
-            // processors say, and nothing in the answer tells which arrays are.
-            ApiValue::List(items) => Observation::sequence(items.iter().map(Observation::from)),
-            ApiValue::Object(entries) => Observation::object(
-                entries
-                    .iter()
-                    .map(|(key, value)| (key.as_str(), Observation::from(value))),
-            ),
-        }
+        value.observed(false)
     }
 }
