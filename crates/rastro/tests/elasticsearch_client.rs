@@ -623,6 +623,25 @@ fn get_over_tls_gives_up_on_a_listener_that_trickles_its_handshake_past_the_dead
 }
 
 #[test]
+fn get_over_tls_refuses_a_peer_that_does_not_hold_the_key_its_certificate_names() {
+    // Arrange: found by review. The chain is not checked, by design, and nothing showed that the
+    // handshake's signature still is: a verifier that accepted every signature passed the suite.
+    let port = tls_listener::presenting_a_certificate_it_holds_no_key_for();
+
+    // Act
+    let unread = HttpClient::new()
+        .get(&loopback(port).over(Transport::Tls), "/")
+        .expect_err("a forged handshake");
+
+    // Assert
+    assert!(
+        unread.reason().contains("could not be sent"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
 fn get_over_tls_says_what_closed_without_blaming_the_settings() {
     // Arrange: found by review. A TLS listener that closes after its handshake was reported as
     // one the settings said served plain HTTP, which on this path they did not.

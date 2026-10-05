@@ -5,7 +5,8 @@
 //!
 //! `fixtures/tls/node.crt` is self-signed, names `elasticsearch.invalid`, and was made once with
 //! `openssl ecparam -name prime256v1 -genkey -param_enc named_curve`, as PKCS#8, and `openssl req -x509`. Neither the name nor the
-//! issuer can satisfy a verifier that checks them, which is the point.
+//! issuer can satisfy a verifier that checks them, which is the point. `fixtures/tls/other.key` is
+//! a second key made the same way, which the certificate does not name.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -114,6 +115,51 @@ pub fn requiring_a_client_certificate() -> u16 {
             let Ok(connection) =
                 ServerConnection::new(server_config_requiring_a_client_certificate())
             else {
+                continue;
+            };
+            let mut tls = StreamOwned::new(connection, stream);
+            let mut byte = [0_u8; 1];
+            let _ = tls.read(&mut byte);
+        }
+    });
+    port
+}
+
+/// Presents the fixture's certificate and signs with a key it does not name, as a peer that
+/// copied a node's certificate and does not hold its key would.
+#[derive(Debug)]
+struct NotTheCertificatesKey(Arc<rustls::sign::CertifiedKey>);
+
+impl rustls::server::ResolvesServerCert for NotTheCertificatesKey {
+    fn resolve(
+        &self,
+        _hello: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        Some(Arc::clone(&self.0))
+    }
+}
+
+/// A listener presenting the node's certificate without holding its key.
+pub fn presenting_a_certificate_it_holds_no_key_for() -> u16 {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let other = PrivateKeyDer::from_pem_file(fixture("other.key")).expect("the other key");
+    let signing = provider
+        .key_provider
+        .load_private_key(other)
+        .expect("a usable key");
+    let key = rustls::sign::CertifiedKey::new(certificates(), signing);
+    let config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("TLS versions ring supports")
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(NotTheCertificatesKey(Arc::new(key))));
+    let config = Arc::new(config);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let Ok(connection) = ServerConnection::new(Arc::clone(&config)) else {
                 continue;
             };
             let mut tls = StreamOwned::new(connection, stream);
