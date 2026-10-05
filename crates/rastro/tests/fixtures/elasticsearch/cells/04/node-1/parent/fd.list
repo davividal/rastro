@@ -1,0 +1,7 @@
+  
+0 -> /dev/null
+1 -> socket:[33176]
+2 -> socket:[33176]
+4 -> /usr/share/elasticsearch/lib/tools/server-launcher/server-launcher
+5 -> pipe:[32538]
+6 -> pipe:[32539]

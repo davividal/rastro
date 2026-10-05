@@ -25,6 +25,7 @@ fn run(effective_config: Observation) -> collectors::Run {
         output: None,
         progress: None,
         narrowed: collectors::Narrowed::default(),
+        credentials: None,
     }
 }
 

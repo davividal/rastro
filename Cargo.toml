@@ -56,6 +56,20 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # still links; MIT/Apache-2.0, both already allowed. What it buys over hand-rolled DER is
 # the part nobody should hand-roll in a binary that runs as root: the ASN.1.
 x509-parser = "0.18"
+# `elasticsearch.yml`, read for the few settings that decide whether and where a node may be
+# asked anything. Pure Rust; without default features it drops `encoding_rs`, which the file
+# does not need, since Elasticsearch reads it as UTF-8 and nothing else.
+yaml-rust2 = { version = "0.13", default-features = false }
+# The `Basic` authorization a username and password are sent as.
+base64 = { version = "0.22", default-features = false, features = ["std"] }
+# TLS to an Elasticsearch node whose HTTP listener wants it. `ring` rather than the default
+# `aws-lc-rs`, whose build needs cmake on top of the C compiler both need; no `logging`, which
+# would route the handshake through `log`. See `docs/decisions.md`.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# `setns`, to read an Elasticsearch node in a container from inside its network namespace, and
+# `openat2`, to read its files inside its own root. Safe and pure Rust on Linux, which keeps
+# `unsafe_code = "forbid"` true of the workspace's own code.
+rustix = { version = "1", default-features = false, features = ["fs", "std", "thread"] }
 
 [profile.release]
 strip = true

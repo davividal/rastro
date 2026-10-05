@@ -202,3 +202,41 @@ fn the_effective_config_still_names_the_view_beside_the_disclosure() {
     assert_eq!(text(&field(&complete, "view")), "complete");
     assert_eq!(text(&field(&complete, "disclosure")), "redacted");
 }
+
+#[test]
+fn the_invocation_facet_names_the_credentials_given_and_no_value() {
+    // Arrange: names are all the collector is handed, so no value can reach the facet.
+    let collector =
+        InvocationCollector::new(Observation::null(), Observation::null(), None, Ok(0), None)
+            .given(Some(vec!["ELASTICSEARCH_API_KEY".to_owned()]));
+
+    // Act
+    let reported = collector
+        .collect()
+        .expect("the clock on a test host is after 1970");
+
+    // Assert
+    let names = field(&reported, "credentials");
+    assert_eq!(
+        support::observation::items_of(&names)
+            .iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["ELASTICSEARCH_API_KEY"]
+    );
+}
+
+#[test]
+fn the_invocation_facet_reports_null_where_no_credentials_were_given() {
+    // Arrange
+    let collector =
+        InvocationCollector::new(Observation::null(), Observation::null(), None, Ok(0), None);
+
+    // Act
+    let reported = collector
+        .collect()
+        .expect("the clock on a test host is after 1970");
+
+    // Assert
+    assert!(is_null(&field(&reported, "credentials")));
+}

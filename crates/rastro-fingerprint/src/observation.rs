@@ -10,7 +10,7 @@ mod order;
 pub mod redaction;
 mod scalar;
 
-pub use annotation::{Completeness, Sensitivity, Volatility};
+pub use annotation::{Completeness, Fidelity, Sensitivity, Volatility};
 pub use scalar::Scalar;
 
 use std::borrow::Cow;
@@ -31,6 +31,7 @@ pub struct Observation {
     volatility: Volatility,
     sensitivity: Sensitivity,
     completeness: Completeness,
+    fidelity: Fidelity,
     content: Content,
 }
 
@@ -160,6 +161,12 @@ impl Observation {
         self
     }
 
+    /// Marks this node as an item read with rules other than its own.
+    pub fn approximate(mut self) -> Self {
+        self.fidelity = Fidelity::Approximate;
+        self
+    }
+
     /// The same, where whether the item failed is only known at render time.
     pub fn incomplete_when(self, failed: bool) -> Self {
         match failed {
@@ -249,6 +256,7 @@ impl Observation {
             volatility: self.volatility,
             sensitivity: self.sensitivity,
             completeness: self.completeness,
+            fidelity: self.fidelity,
             content,
         })
     }
@@ -280,6 +288,24 @@ impl Observation {
         self.completeness
     }
 
+    pub fn fidelity(&self) -> Fidelity {
+        self.fidelity
+    }
+
+    /// How many nodes in this tree are marked [`Fidelity::Approximate`], each counted once.
+    pub fn approximate_items(&self) -> usize {
+        let own = usize::from(self.fidelity == Fidelity::Approximate);
+        let below = match &self.content {
+            Content::Scalar(_) => 0,
+            Content::Object(entries) => entries.values().map(Observation::approximate_items).sum(),
+            Content::Sequence(items) | Content::Set { items, .. } => {
+                items.iter().map(Observation::approximate_items).sum()
+            }
+        };
+
+        own + below
+    }
+
     /// How many nodes in this tree are marked [`Completeness::Incomplete`], each counted once.
     ///
     /// Over the whole tree whatever a view would drop, because an item refused this run is
@@ -306,6 +332,7 @@ impl Observation {
             volatility: Volatility::default(),
             sensitivity: Sensitivity::default(),
             completeness: Completeness::default(),
+            fidelity: Fidelity::default(),
             content,
         }
     }

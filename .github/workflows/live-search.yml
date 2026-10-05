@@ -1,0 +1,204 @@
+name: live search
+
+# rastro's account of a box's Elasticsearch nodes against the nodes' own. One tenant of the
+# `extended-verification` tier, which every deep workflow enters through that one label.
+# When to apply it: CONTRIBUTING.md.
+#
+# **On the runner, not in a container**, because the nodes are in containers and rastro has to
+# reach them the way it would on a server: from the host, as root, by joining each node's
+# network namespace. None of them publishes a port, so a read that went anywhere but through
+# that join would find nothing to connect to.
+#
+# **Six nodes, one per supported release and one per path through the read**
+# (`docs/elasticsearch-matrix.md` holds the wider matrix the fixtures come from). 7.17 open,
+# the field host; 8.19 open; 9.5 open with its data on a named volume, whose host directory is
+# found through the mount tables and sealed; 9.4 started with `-d` and switched open by an `-E`
+# that left with its launcher, read from the node itself; 8.19 at its secured default, asked over
+# TLS, not read without a credential and read with one, and never sent plaintext, which its own
+# log would show as a WARN; and 8.19 whose file is an absolute symlink in its image, read only
+# if the file is resolved inside the node's own root. Each is named by its container's
+# hostname, which is also its default `node.name`.
+#
+# What this catches that the fixture tests cannot: a fixture captured wrong, and the namespace
+# join itself, which needs `CAP_SYS_ADMIN` that no ordinary container grants.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    # Nightly, at a minute of its own, so an Elasticsearch release changing an answer is found by
+    # a run naming the day it broke.
+    - cron: "29 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  conformance:
+    name: elasticsearch against live nodes
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'extended-verification')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Start six nodes with no published port
+        run: |
+          heap='ES_JAVA_OPTS=-Xms512m -Xmx512m'
+          image=docker.elastic.co/elasticsearch/elasticsearch
+          open=(-e discovery.type=single-node -e xpack.security.enabled=false -e path.repo=/tmp/snapshots)
+          docker run -d --name conformance-7 --hostname conformance-7 \
+            -e discovery.type=single-node -e path.repo=/tmp/snapshots -e "$heap" "$image:7.17.29"
+          docker run -d --name conformance-8 --hostname conformance-8 "${open[@]}" -e "$heap" \
+            "$image:8.19.22"
+          # 9.5, open, with its data on a named volume: the path the node uses is not a host path,
+          # and the mount tables are how rastro finds the host directory to seal.
+          docker run -d --name conformance-9 --hostname conformance-9 "${open[@]}" -e "$heap" \
+            -v conformance-data:/usr/share/elasticsearch/data "$image:9.5.4"
+          # 9.4, daemonised: the launcher exits once the node is up, and its `-E` settings with it,
+          # so nothing on the box says security is off. The node says so itself when asked.
+          docker run -d --name conformance-94 --hostname conformance-94 -e "$heap" \
+            --entrypoint sh "$image:9.4.7" -c \
+            'bin/elasticsearch -d -p /tmp/es.pid -E discovery.type=single-node \
+               -E xpack.security.enabled=false -E path.repo=/tmp/snapshots \
+             && exec sleep infinity'
+          docker run -d --name conformance-secured --hostname conformance-secured \
+            -e discovery.type=single-node -e ELASTIC_PASSWORD=conformance-password -e "$heap" \
+            "$image:8.19.22"
+
+          # A node whose file is an absolute symlink inside its image, pinning a port outside the
+          # default range. Read past its root, the file is missing and the node is an error,
+          # which is how an absolute link under `/proc/<pid>/root` resolves, measured.
+          docker build -q -t conformance-symlinked - <<IMAGE
+          FROM $image:8.19.22
+          USER root
+          RUN mkdir -p /srv/es-config \
+           && printf 'network.host: 0.0.0.0\nhttp.port: 9350\ndiscovery.type: single-node\nxpack.security.enabled: false\n' \
+                > /srv/es-config/elasticsearch.yml \
+           && rm /usr/share/elasticsearch/config/elasticsearch.yml \
+           && chown -R 1000:0 /srv/es-config \
+           && ln -s /srv/es-config/elasticsearch.yml /usr/share/elasticsearch/config/elasticsearch.yml
+          USER 1000:0
+          IMAGE
+          docker run -d --name conformance-symlinked --hostname conformance-symlinked \
+            -e "$heap" conformance-symlinked
+
+          # Polled, since a cold runner takes a minute to start a JVM. Each node is asked only in
+          # the protocol it serves: a plaintext probe of the secured node is itself the WARN the
+          # log check below looks for, which a local replay of an earlier version found.
+          probe() {
+              case "$1" in
+                  conformance-secured) echo 'curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:9200/ | grep -q 401' ;;
+                  conformance-symlinked) echo 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9350/ | grep -q 200' ;;
+                  *) echo 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9200/ | grep -q 200' ;;
+              esac
+          }
+          for node in conformance-7 conformance-8 conformance-9 conformance-94 conformance-secured conformance-symlinked; do
+              waited=0
+              until docker exec "$node" sh -c "$(probe "$node")"; do
+                  waited=$((waited + 3))
+                  if [ "$waited" -ge 180 ]; then
+                      echo "--- $node never came up. It wrote:"
+                      docker logs "$node" 2>&1 | tail -50
+                      exit 1
+                  fi
+                  sleep 3
+              done
+              echo "$node answered after about ${waited}s"
+          done
+
+      - name: Give the open nodes one of everything the facet reports
+        run: |
+          for node in conformance-7 conformance-8 conformance-9 conformance-94; do
+              docker exec -i "$node" sh <<'SEED'
+          put() { curl -sf -XPUT -H 'Content-Type: application/json' "http://127.0.0.1:9200$1" -d "$2" > /dev/null; }
+          put /_component_template/app-mappings '{"template":{"mappings":{"properties":{"title":{"type":"text"},"score":{"type":"float"}}}}}'
+          put /_index_template/app '{"index_patterns":["myapp-*"],"composed_of":["app-mappings"],"template":{"settings":{"number_of_shards":1,"number_of_replicas":0}},"priority":100}'
+          put /myapp-tenant1_1790000000 '{"aliases":{"myapp-tenant1":{}}}'
+          put /unaliased '{"settings":{"number_of_replicas":0}}'
+          put /_ilm/policy/app-policy '{"policy":{"phases":{"delete":{"min_age":"30d","actions":{"delete":{}}}}}}'
+          put /_ingest/pipeline/app-pipeline '{"processors":[{"set":{"field":"env","value":"prod"}}]}'
+          put /_snapshot/backups '{"type":"fs","settings":{"location":"/tmp/snapshots"}}'
+          put /_cluster/settings '{"persistent":{"cluster.routing.allocation.enable":"all"}}'
+          SEED
+          done
+
+          # On 7.17 system indices are not hidden, and a wildcard that reaches one makes the node
+          # log and index a deprecation warning. `.tasks` alone is near universal: any reindex
+          # creates it. 8.x and later create these hidden, so only the 7.17 node gets them.
+          docker exec conformance-7 sh -c '
+            curl -sf -XPUT http://127.0.0.1:9200/.kibana_1 > /dev/null &&
+            curl -sf -XPUT http://127.0.0.1:9200/.tasks > /dev/null'
+          sleep 12
+          docker logs conformance-7 2>&1 | grep -c '"type": "deprecation' > /tmp/deprecations-before || true
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Compare rastro's answer with the nodes'
+        run: |
+          sudo -E env "CARGO_TARGET_DIR=/tmp/conformance-target" \
+            "$(command -v cargo)" test --locked --test elasticsearch_conformance
+
+      - name: Check the 7.17 node logged no deprecation for the reads
+        run: |
+          sleep 12
+          after=$(docker logs conformance-7 2>&1 | grep -c '"type": "deprecation' || true)
+          before=$(cat /tmp/deprecations-before)
+          if [ "$after" != "$before" ]; then
+              echo "the reads made the 7.17 node log a deprecation: $before lines before, $after after"
+              docker logs conformance-7 2>&1 | grep '"type": "deprecation' | tail -5
+              exit 1
+          fi
+          echo "deprecation lines unchanged: $after"
+
+      - name: Check the secured node was never sent plaintext
+        run: |
+          if docker logs conformance-secured 2>&1 | grep -q 'plaintext http traffic'; then
+              echo 'rastro sent plaintext to a TLS listener:'
+              docker logs conformance-secured 2>&1 | grep 'plaintext http traffic'
+              exit 1
+          fi
+          echo 'no plaintext request in its log'
+
+      # The facet through the shipped binary: two runs of a box nobody touched render the same
+      # bytes, and an unprivileged run says on each node what it could not read rather than
+      # reporting nodes of nulls.
+      - name: Run the binary as root twice and once unprivileged
+        run: |
+          cargo build --locked --quiet
+          sudo ./target/debug/rastro -o /tmp/first.json
+          sudo ./target/debug/rastro -o /tmp/second.json
+          ./target/debug/rastro -o /tmp/unprivileged.json 2> /tmp/unprivileged.stderr || true
+          sudo chmod 644 /tmp/first.json /tmp/second.json
+          python3 - <<'PY'
+          import json, sys
+          def facet(path):
+              with open(path) as document:
+                  return next(f for f in json.load(document)['facets'] if f['name'] == 'elasticsearch')
+          first, second = facet('/tmp/first.json'), facet('/tmp/second.json')
+          if first != second:
+              print('the elasticsearch facet differs between two runs of an unchanged box')
+              print(json.dumps(first, indent=1, sort_keys=True))
+              print(json.dumps(second, indent=1, sort_keys=True))
+              sys.exit(1)
+          print('identical')
+          unprivileged = facet('/tmp/unprivileged.json')
+          nodes = unprivileged['data']['nodes']
+          silent = [node for node in nodes if node['error'] is None and node['not_read'] is None]
+          if len(nodes) != 6 or silent:
+              print('an unprivileged run should report six nodes, each saying why it was not read')
+              print(json.dumps(unprivileged, indent=1, sort_keys=True))
+              sys.exit(1)
+          print('unprivileged: every node says why it was not read')
+          PY
+          cat /tmp/unprivileged.stderr

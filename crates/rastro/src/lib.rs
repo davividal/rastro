@@ -23,6 +23,7 @@ pub const VERSION: &str = match option_env!("RASTRO_BUILD_VERSION") {
 pub mod cli;
 pub mod collectors;
 pub mod config;
+pub mod credentials;
 pub mod output;
 pub mod preflight;
 pub mod privilege;

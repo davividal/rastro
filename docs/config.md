@@ -8,6 +8,25 @@ rastro --config /etc/rastro.toml
 
 The path is always given; there is no auto-discovery.
 
+## Credentials
+
+Never in the config, which the document records. A collector that cannot read a service
+without one takes it from `--credentials`:
+
+```sh
+rastro --credentials /run/secrets/rastro      # a file, one NAME=value per line
+op inject -i rastro.tpl | rastro --credentials -   # or stdin
+```
+
+| name | for |
+| --- | --- |
+| `ELASTICSEARCH_API_KEY` | every Elasticsearch node, as `Authorization: ApiKey`; the encoded form Elasticsearch hands out |
+| `ELASTICSEARCH_USERNAME`, `ELASTICSEARCH_PASSWORD` | the same, as basic authentication |
+
+The `invocation` facet records which names were given and no value. **One Elasticsearch credential
+serves every node on the box**: with two secured clusters, the cluster it does not belong to
+rejects it, logs a failed authentication, and is reported `not_read`. See `docs/decisions.md`.
+
 ## Format
 
 ```toml
@@ -15,34 +34,35 @@ The path is always given; there is no auto-discovery.
 exclude = ["mounts"]
 ```
 
-| collector      | category | excludable |
-| -------------- | -------- | ---------- |
-| `host`         | metadata | no         |
-| `invocation`   | metadata | no         |
-| `accounts`     | state    | yes        |
-| `block_devices`| state    | yes        |
-| `containers`   | state    | yes        |
-| `cron`         | state    | yes        |
-| `exporters`    | state    | yes        |
-| `filesystem`   | state    | yes        |
-| `firewall`     | state    | yes        |
-| `locale`       | state    | yes        |
-| `modules`      | state    | yes        |
-| `mounts`       | state    | yes        |
-| `network`      | state    | yes        |
-| `nginx`        | state    | yes        |
-| `packages`     | state    | yes        |
-| `pam`          | state    | yes        |
-| `postgresql`   | state    | yes        |
-| `processes`    | state    | yes        |
-| `rabbitmq`     | state    | yes        |
-| `repositories` | state    | yes        |
-| `sockets`      | state    | yes        |
-| `ssh_access`   | state    | yes        |
-| `sysctl`       | state    | yes        |
-| `time`         | state    | yes        |
-| `timers`       | state    | yes        |
-| `units`        | state    | yes        |
+| collector       | category | excludable |
+| --------------- | -------- | ---------- |
+| `host`          | metadata | no         |
+| `invocation`    | metadata | no         |
+| `accounts`      | state    | yes        |
+| `block_devices` | state    | yes        |
+| `containers`    | state    | yes        |
+| `cron`          | state    | yes        |
+| `elasticsearch` | state    | yes        |
+| `exporters`     | state    | yes        |
+| `filesystem`    | state    | yes        |
+| `firewall`      | state    | yes        |
+| `locale`        | state    | yes        |
+| `modules`       | state    | yes        |
+| `mounts`        | state    | yes        |
+| `network`       | state    | yes        |
+| `nginx`         | state    | yes        |
+| `packages`      | state    | yes        |
+| `pam`           | state    | yes        |
+| `postgresql`    | state    | yes        |
+| `processes`     | state    | yes        |
+| `rabbitmq`      | state    | yes        |
+| `repositories`  | state    | yes        |
+| `sockets`       | state    | yes        |
+| `ssh_access`    | state    | yes        |
+| `sysctl`        | state    | yes        |
+| `time`          | state    | yes        |
+| `timers`        | state    | yes        |
+| `units`         | state    | yes        |
 
 Metadata collectors cannot be excluded: without them one fingerprint cannot be
 told apart from another.
@@ -104,7 +124,7 @@ unknown key is an error, so an attempt at one fails rather than quietly doing no
 
 **The operator's rule beats a collector's claim.** A collector that owns a tree claims it from
 the host — `postgresql` seals each cluster's data directory, `rabbitmq` seals each node's
-message store, `nginx` seals the caches and
+message store, `elasticsearch` seals each host node's data directories, `nginx` seals the caches and
 temp trees it writes into, `packages` churns the package database, `containers` seals every
 tree a container engine keeps under its own root except the one holding your volumes. That is rastro's reckoning about a tree from the outside; the operator knows their
 box, so naming the same tree in a config replaces the claim rather than conflicting with it.

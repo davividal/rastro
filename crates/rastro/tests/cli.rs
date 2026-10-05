@@ -1054,3 +1054,155 @@ fn a_run_not_made_as_root_is_told_so_before_it_starts() {
         ),
     }
 }
+
+/// A credentials file with `text`, created with `mode`.
+fn credentials_file(name: &str, text: &str, mode: u32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Removed first: the suite runs as root and then unprivileged, and the second run cannot
+    // rewrite or re-mode a file the first one left behind.
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_file(&path);
+    std::fs::write(&path, text).expect("a writable scratch file");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+        .expect("a scratch file's mode");
+    path
+}
+
+/// A value nothing else on a box could hold, so finding it anywhere means it leaked.
+const SECRET: &str = "a2V5OnVubWlzdGFrYWJseS1hLXNlY3JldA==";
+
+#[test]
+fn a_credentials_file_is_named_in_the_invocation_and_its_values_appear_nowhere() {
+    // Arrange
+    let path = credentials_file(
+        "credentials-named",
+        &format!("ELASTICSEARCH_API_KEY={SECRET}\n"),
+        0o600,
+    );
+
+    // Act
+    let output = run(&[
+        "--config",
+        without_walking(),
+        "--raw",
+        "--credentials",
+        path.to_str().expect("a UTF-8 path"),
+    ]);
+
+    // Assert: `--raw` too, since a value withheld only by redaction would still be a leak.
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains(SECRET),
+        "the credential reached the document"
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(SECRET));
+    let document: Value = serde_json::from_str(&stdout).expect("a JSON document");
+    let invocation = facet(&document, "metadata", "invocation");
+    assert_eq!(
+        invocation["data"]["credentials"],
+        json!(["ELASTICSEARCH_API_KEY"])
+    );
+}
+
+#[test]
+fn a_run_without_credentials_says_none_were_given() {
+    // Act
+    let document = document(&["--config", without_walking()]);
+
+    // Assert
+    let invocation = facet(&document, "metadata", "invocation");
+    assert_eq!(invocation["data"]["credentials"], Value::Null);
+}
+
+#[test]
+fn credentials_can_come_from_stdin() {
+    // Arrange
+    use std::io::Write;
+    let mut child = Command::new(BINARY)
+        .args([
+            "-o",
+            "-",
+            "--config",
+            without_walking(),
+            "--credentials",
+            "-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the binary under test should be executable");
+    child
+        .stdin
+        .take()
+        .expect("a stdin")
+        .write_all(format!("ELASTICSEARCH_API_KEY={SECRET}\n").as_bytes())
+        .expect("credentials written");
+
+    // Act
+    let output = child.wait_with_output().expect("a finished run");
+
+    // Assert
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).expect("a JSON document");
+    let invocation = facet(&document, "metadata", "invocation");
+    assert_eq!(
+        invocation["data"]["credentials"],
+        json!(["ELASTICSEARCH_API_KEY"])
+    );
+}
+
+#[test]
+fn a_credentials_file_that_cannot_be_read_fails_the_run_before_it_starts() {
+    // Arrange: going on would read every secured node as having no credential, which is not
+    // what the operator asked for.
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("credentials-missing");
+    let _ = std::fs::remove_file(&missing);
+
+    // Act
+    let output = run(&[
+        "--config",
+        without_walking(),
+        "--credentials",
+        missing.to_str().expect("a UTF-8 path"),
+    ]);
+
+    // Assert
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("credentials"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_credentials_file_others_can_read_is_warned_about() {
+    // Arrange: the secret has already leaked to every account on the box; refusing it now would
+    // not take that back, so the run goes on and says so.
+    let path = credentials_file("credentials-loose", "ELASTICSEARCH_API_KEY=k\n", 0o644);
+
+    // Act
+    let output = run(&[
+        "--config",
+        without_walking(),
+        "--credentials",
+        path.to_str().expect("a UTF-8 path"),
+    ]);
+
+    // Assert
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("readable by other accounts"), "{stderr}");
+}

@@ -9,7 +9,9 @@
 //!
 //! Two kinds, because a status alone misses the second: a facet that failed outright, named
 //! with its reason; and an `ok` facet holding items its collector marked
-//! [`Completeness::Incomplete`](rastro_fingerprint::Completeness), counted. Counted rather
+//! [`Completeness::Incomplete`](rastro_fingerprint::Completeness), counted. Beside them, not a
+//! loss but a caveat: items marked [`Fidelity::Approximate`](rastro_fingerprint::Fidelity), read
+//! with the rules of a version rastro supports rather than their own. Counted rather
 //! than listed, because a walk refused under someone else's home directory is refused
 //! thousands of times, and the document holds every one of them.
 
@@ -20,6 +22,7 @@ use rastro_fingerprint::{FacetName, FacetOutcome, Fingerprint};
 pub struct Shortfall {
     failed: Vec<FailedFacet>,
     incomplete: Vec<IncompleteFacet>,
+    approximate: Vec<ApproximateFacet>,
 }
 
 /// A facet whose collector failed, and why.
@@ -27,6 +30,13 @@ pub struct Shortfall {
 pub struct FailedFacet {
     pub name: FacetName,
     pub reason: String,
+}
+
+/// A facet holding items read with another version's rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApproximateFacet {
+    pub name: FacetName,
+    pub items: usize,
 }
 
 /// A facet that was read, holding items its collector could not read.
@@ -41,6 +51,7 @@ impl Shortfall {
     pub fn of(fingerprint: &Fingerprint) -> Self {
         let mut failed = Vec::new();
         let mut incomplete = Vec::new();
+        let mut approximate = Vec::new();
 
         for facet in fingerprint.facets() {
             match &facet.outcome {
@@ -56,6 +67,13 @@ impl Shortfall {
                             items,
                         });
                     }
+                    let items = observation.approximate_items();
+                    if items > 0 {
+                        approximate.push(ApproximateFacet {
+                            name: facet.name.clone(),
+                            items,
+                        });
+                    }
                 }
                 FacetOutcome::Absent => {}
             }
@@ -63,12 +81,17 @@ impl Shortfall {
 
         failed.sort_by(|left, right| left.name.cmp(&right.name));
         incomplete.sort_by(|left, right| left.name.cmp(&right.name));
+        approximate.sort_by(|left, right| left.name.cmp(&right.name));
 
-        Self { failed, incomplete }
+        Self {
+            failed,
+            incomplete,
+            approximate,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.failed.is_empty() && self.incomplete.is_empty()
+        self.failed.is_empty() && self.incomplete.is_empty() && self.approximate.is_empty()
     }
 
     /// One message per kind of loss, failed facets first since they are the larger one.
@@ -103,6 +126,24 @@ impl Shortfall {
                 match self.incomplete.len() {
                     1 => "1 facet is".to_owned(),
                     many => format!("{many} facets are"),
+                },
+                lines.collect::<String>()
+            ));
+        }
+
+        if !self.approximate.is_empty() {
+            let lines = self.approximate.iter().map(|facet| {
+                format!(
+                    "\n  {}: {}",
+                    facet.name.as_str(),
+                    counted(facet.items, "item", "items")
+                )
+            });
+            messages.push(format!(
+                "{} read with another version's rules:{}",
+                match self.approximate.len() {
+                    1 => "1 facet was".to_owned(),
+                    many => format!("{many} facets were"),
                 },
                 lines.collect::<String>()
             ));

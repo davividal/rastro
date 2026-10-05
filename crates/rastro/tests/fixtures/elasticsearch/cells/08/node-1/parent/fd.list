@@ -1,0 +1,7 @@
+  
+0 -> /dev/null
+1 -> socket:[46321]
+2 -> socket:[46321]
+4 -> /opt/es-08/lib/tools/server-launcher/server-launcher
+5 -> pipe:[46325]
+6 -> pipe:[46326]

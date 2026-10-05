@@ -1,0 +1,24 @@
+  
+0 -> /dev/null
+1 -> /dev/null
+10 -> socket:[80354]
+11 -> socket:[78460]
+12 -> pipe:[78462]
+13 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stdout
+14 -> pipe:[78463]
+15 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stdout
+16 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stdout
+17 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stdout
+18 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stderr
+19 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stderr
+2 -> /run/containerd/io.containerd.runtime.v2.task/moby/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/log
+20 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stderr
+21 -> /run/docker/containerd/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/init-stderr
+22 -> socket:[79521]
+23 -> anon_inode:inotify
+4 -> anon_inode:[eventpoll]
+5 -> pipe:[78459]
+6 -> pipe:[78459]
+7 -> /run/containerd/io.containerd.runtime.v2.task/moby/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/log
+8 -> /run/containerd/io.containerd.runtime.v2.task/moby/8ede49629a282c9e2c5f768e649ec4443f2b1d2fddb76280fa166cbbf5e417e6/log
+9 -> anon_inode:[eventpoll]

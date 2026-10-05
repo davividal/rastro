@@ -152,6 +152,34 @@ one holding the distribution port epmd named for it. Addressing another
 application's node would make it log an authentication failure, which is a write
 to a box rastro was asked to read.
 
+**Layer 3, Elasticsearch.** One `elasticsearch` facet listing every node running on the box,
+whether a package installed it or a container runs it. A stopped node is seen only where the
+deb or rpm layout is installed: an archive is extracted wherever its operator chose, and a
+stopped one reads `absent`, a limit rather than a fact about the box. **7.17, 8.19, 9.4 and
+9.5 are supported**, and every other release from 7 is read as the closest of them and marked
+`unsupported`; below 7 a node is listed and not asked. The envelope and the 32-cell matrix it
+was measured on are [`elasticsearch-matrix.md`](elasticsearch-matrix.md). It is the one collector that makes a request over the network, and the boundary is
+narrow: a `GET`, to a listener held by a process `/proc` names as an Elasticsearch server,
+from a thread that has joined that process's network namespace, so a node with no published
+port is read the same way as one on the host. **Nothing is asked blind**: which listener
+serves HTTP is inferred from the node's own listeners and how it binds, because a request to
+the transport port is something the node logs, and whether it wants TLS is asked of the
+listener with a handshake and nothing after it, which no node logs, measured, where a request
+in the wrong protocol is a WARN. A node on TLS is asked over TLS,
+trusting the socket rastro matched to it rather than a certificate chain. Whether it wants
+credentials is its own answer: without `--credentials`, a secured node is `not_read`, which is
+the box's state and not an error. Every request was measured before it was written, and
+none writes; the one family that does, deprecated parameters and legacy routes, is not sent.
+A node with no master, one that never formed or one that lost it, is read for what it holds
+itself, and its cluster-wide surfaces are `not_read` without being asked. The release reported is
+the one the node runs, and an install upgraded under it shows as `installed_release`. For a second or two after a first start or an
+upgrade, while its built-in templates, policies and pipelines are still being installed, a read
+is complete-looking and partial, and no request can tell, so a fingerprint taken then is a partial
+one; measured on 8.15.3, it settled within two seconds. An index is keyed by its alias where the
+alias is its identity, so a rotation that changed
+nothing reads as volatile fields moving; the mappings are a digest. Snapshot repository
+settings are sensitive whole.
+
 A node's name is **read, never composed**: the broker writes it into the Ra
 directories it holds open, so a node under long names is keyed and addressed by the
 name it actually runs under. The same directories give the store, which is sealed:
@@ -316,7 +344,7 @@ path with `-o`, to a tmpfs, or off the box.
 
 ## Security posture
 
-Of the following, the `unsafe`-free build, the absence of network I/O, the output
+Of the following, the `unsafe`-free build, the network boundary, the output
 file's mode, redaction and `--raw` are all true today. The root requirement arrives
 with Layer 1.
 
@@ -334,8 +362,11 @@ with Layer 1.
   the two a document was rendered under is in the `invocation` facet as
   `config.disclosure`, beside the view, because both axes rewrite the document and a
   diff across either would otherwise report changes nothing accounts for.
-- **No network I/O in v1.** A simplification, not policy — a firewall collector
-  verifying rules from outside the ruleset dump would be legitimate.
+- **No network I/O beyond a GET to a service already running on the box.** A request
+  goes only to a listener held by a process rastro found in `/proc`, on the address it
+  bound, from inside its network namespace: no name resolution, no remote address, no
+  probing. Elasticsearch is the reason; see
+  [decisions.md](decisions.md#rastro-may-send-a-get-to-a-service-already-running-on-the-box).
 
 ## Verification
 
@@ -366,6 +397,12 @@ unannotated volatile fields at CI time instead of on a production box.
   attribution rather than one of the two undetermined ones. It cannot run in the
   container suite, because attributing a node means reading the broker process's
   descriptors and a default container refuses that even to root.
+- The `elasticsearch` facet against live nodes, behind the same label: one node of each
+  supported release, 9.4 started with `-d`, 8.19 at its secured default read with and without a
+  credential, and 8.19 with a symlinked file, in containers with no published port, read as
+  root through the namespace join; each node's own answer to compare against, no index changed
+  by a read, two reads identical, the secured node never sent plaintext according to its own
+  log, and an unprivileged run naming on each node what it could not read (`live-search.yml`).
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.

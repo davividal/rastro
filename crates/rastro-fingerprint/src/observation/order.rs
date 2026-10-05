@@ -7,7 +7,8 @@
 use std::cmp::Ordering;
 
 use super::{
-    Completeness, Content, Observation, Scalar, Sensitivity, Visible, VisibleContent, Volatility,
+    Completeness, Content, Fidelity, Observation, Scalar, Sensitivity, Visible, VisibleContent,
+    Volatility,
 };
 use crate::presentation::Presentation;
 
@@ -106,11 +107,12 @@ fn compare_annotations(left: &Observation, right: &Observation) -> Ordering {
         })
 }
 
-fn annotations_of(observation: &Observation) -> (Volatility, Sensitivity, Completeness) {
+fn annotations_of(observation: &Observation) -> (Volatility, Sensitivity, Completeness, Fidelity) {
     (
         observation.volatility,
         observation.sensitivity,
         observation.completeness,
+        observation.fidelity,
     )
 }
 

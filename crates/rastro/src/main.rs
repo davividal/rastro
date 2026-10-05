@@ -7,8 +7,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use rastro::collectors::elasticsearch::ApiCredential;
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
+use rastro::credentials::{self, Credentials};
 use rastro::output::{self, Destination, Written};
 use rastro::preflight;
 use rastro::privilege;
@@ -47,6 +49,7 @@ struct Resolved {
 fn run() -> Result<Written, Box<dyn Error>> {
     let invocation = cli::parse();
     let resolved = resolve(&invocation)?;
+    let credentials = read_credentials(&resolved, invocation.credentials_path())?;
 
     warn_if_not_running_as_root(&resolved);
     warn_if_the_document_may_crowd_the_disk(&resolved);
@@ -64,6 +67,7 @@ fn run() -> Result<Written, Box<dyn Error>> {
         started_at: resolved.started_at.clone(),
         hostname: resolved.hostname.clone(),
         output: walked_output(&resolved.destination),
+        credentials,
         narrowed: collectors::Narrowed {
             metadata_only: resolved.config.walk_metadata_only().to_vec(),
             churns: resolved.config.walk_churns().to_vec(),
@@ -113,6 +117,31 @@ fn run() -> Result<Written, Box<dyn Error>> {
     report(&resolved, &written)?;
 
     Ok(written)
+}
+
+/// The operator's credentials, refused before anything runs where they cannot be read or mean
+/// two things: a run that went on would read every secured node as given nothing.
+fn read_credentials(
+    resolved: &Resolved,
+    path: Option<&std::path::Path>,
+) -> Result<Option<Credentials>, Box<dyn Error>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let credentials = Credentials::read(path)?;
+    ApiCredential::from_credentials(&credentials)?;
+
+    if path != std::path::Path::new("-") && credentials::readable_by_other_accounts(path) {
+        say(
+            resolved,
+            &format!(
+                "{} is readable by other accounts, so the credentials in it are too",
+                path.display()
+            ),
+        );
+    }
+
+    Ok(Some(credentials))
 }
 
 /// Everything the run decides for itself, before it reads anything but the clock.

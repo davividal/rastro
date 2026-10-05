@@ -5723,3 +5723,798 @@ them now.
 `pg_hba.conf` moves every rule after it, and a line diff shows that as many lines. It is a
 true report of a real change, and the remedy would be a diff that understands the document,
 which [there is deliberately not](#no-diff-verb-in-v1).
+
+# Elasticsearch: reading a node over its own HTTP API
+
+_2026-09-26._ The `elasticsearch` collector is not built. These entries are what shapes it,
+measured before a line of it was written, as the RabbitMQ ones were. Elasticsearch offers no
+command that reads a live node: `elasticsearch-keystore list` is a read and names only TLS
+plumbing, `elasticsearch-node` is an offline repair tool, and `elasticsearch-reset-password`
+changes the thing it touches. The node's effective state is on its HTTP API and nowhere else.
+
+Measured on the official images `7.17.24`, `8.15.3` and `9.0.3`, single node, aarch64, under
+podman. The raw report is kept outside the public tree; what it established that the design
+turns on is below.
+
+## rastro may send a GET to a service already running on the box
+
+"No network I/O in v1" was written as a simplification, not policy, and this is the first
+collector it stops. It is narrowed rather than dropped: **rastro may send an HTTP `GET` to a
+listener held by a process it has already found in `/proc`, on the address that process
+bound, from inside that process's network namespace. Nothing else touches the network.** No
+name is resolved, no remote address is dialled, no port is probed to see whether anything
+answers, and no request goes to a listener whose holder has not been identified as the
+service the request is for.
+
+**The RabbitMQ collector is not a precedent for this**, although it looks like one.
+`rabbitmqctl` joins the broker's distribution cluster over TCP, but it is a subprocess;
+rastro itself has never opened a socket. This is the first time it does, which is why the
+boundary is restated here rather than inferred from a neighbour.
+
+**Why the alternative is worse.** Without the API the facet would be `elasticsearch.yml` and
+the process environment, which is what the node was told at start, not what it runs with.
+Transient and persistent cluster settings, the ones an operator changes with an API call and
+never writes down, are exactly the change a before-and-after pair exists to catch, and no
+file holds them.
+
+**Cost:** a request is an action the node sees. What that costs is measured below, one
+entry per way it could write, and a request that could write is not made.
+
+## A GET is not automatically a read
+
+A deprecation warning on 7.16 and later is **indexed**, into a hidden data stream,
+`.logs-deprecation.elasticsearch-default` through 8.x and `.logs-elasticsearch.deprecation-default`
+on 9.0. The first warning a cluster ever emits creates the data stream, its ILM policy and
+its backing index. Measured: `GET /<index>/_mapping?include_type_name=true` on 7.17 writes one,
+and so does the legacy `PUT /_template`. The write lands one to five seconds after the
+response, on the `cluster.deprecation_indexing.flush_interval` of 5 s, so a check made at
+once calls a mutating read clean; the first attempt at this measurement did.
+
+Plain GETs on current endpoints wrote nothing, each checked with a 6 s settle: `/`,
+`_cluster/settings`, `_index_template`, `_component_template`, `_alias`, `<index>/_settings`,
+`<index>/_mapping`, `_ilm/policy`, `_ingest/pipeline`, `_snapshot`, `_nodes/_local/plugins`,
+and the legacy `GET _template` itself.
+
+**So the collector sends only those, with no deprecated parameter**, and does not read legacy
+templates at all. Reading them is not what writes, but they are the corner of the API where
+a deprecated parameter is most likely to be one release away, and composable templates have
+superseded them.
+
+## A node writes at idle, so a zero means nothing without a control
+
+Ninety seconds of a 7.17 node with no request at all: `.ds-ilm-history-5-*` gained three
+documents, `gc.log` grew, and every index's translog checkpoint and retention-lease file
+moved. The RabbitMQ lesson again: every mutation check around a node is measured against an
+idle window of the same length, and the data directory is sealed from the walk rather than
+walked.
+
+## Plain HTTP only; a node that wants TLS or credentials is an error
+
+8.x and 9.x turn on TLS and authentication by default, and a node started without a terminal,
+which is how a service starts, prints no password at all. Measured: plain HTTP to a default
+8.15 node gets no HTTP response, and HTTPS without credentials gets 401. The CA the node
+generates is readable by root, and it lets a client check the server, not the reverse. An
+8.x node with `xpack.security.enabled=false` serves plain HTTP exactly as 7.17 does, so the
+node's settings decide this, not its version.
+
+**v1 speaks plain HTTP and nothing else.** A node whose settings say
+`xpack.security.http.ssl.enabled: true` is an `error` and is not dialled. One whose port turns
+out to speak TLS, or that answers 401 or 403, is the same `error`. None of them is `absent`:
+the service is there and rastro could not read it.
+
+**TLS was considered and left out, the same day it was first chosen.** Both production
+crypto providers for rustls build C, which the workspace refuses so that the musl binary
+cross-builds from a macOS workstation, and the pure-Rust one is pre-1.0 and unaudited in a
+binary that runs as root. What it would buy is small: HTTP TLS requires security on, so
+without credentials a TLS node answers 401, which v1 reports as an `error` either way. The
+one case it would read is a node that grants anonymous access. TLS arrives together with
+credentials, since only credentials make it pay off.
+
+## A node in a container is read from inside its own network namespace
+
+A node running in a container runs on the server, and rastro collects it. Its listener
+exists in its own network namespace; with no published port the host's loopback has no route
+to it at all. So the request is made from a thread that has joined the holder's namespace
+through `/proc/<pid>/ns/net`, and a node on the host goes through the same code path with
+the join skipped. The listener table the port is read from is the holder's own,
+`/proc/<pid>/net/tcp`, so the port and the namespace it is dialled in cannot disagree.
+
+Joining another namespace needs `CAP_SYS_ADMIN`, so an unprivileged run records an `error`
+for such a node rather than guessing. The call goes through `rustix`, whose `setns` is safe
+and pure Rust on Linux, so `unsafe_code = "forbid"` still holds for the workspace's own code,
+as it does beside `libc` and `subprocess`.
+
+## The node's own file is read, for the dispatch and nothing else
+
+Which port serves HTTP and whether it wants TLS have to be known before the first request, so
+they cannot come from the API. They come from what the node was given at start, in the order
+it applies them: a `-E` flag, then an environment variable named after the setting, then
+`elasticsearch.yml`. The environment is not optional: from 8.x the docker image's settings
+appear nowhere in the argv. The file is read through `/proc/<pid>/root`, because a node in a
+container reads the one in its image. `${NAME}` is resolved from the node's own environment,
+as the node resolved it, and a name the environment does not hold is a refusal rather than a
+literal port.
+
+This is the one configuration file the collector parses, and it does not make it into the
+facet. What the node runs with is reported from its API.
+
+**The parser is `yaml-rust2`**, pure Rust, without its default `encoding` feature, which only
+decodes files Elasticsearch would not read. It brings `foldhash` through `hashbrown`, under
+Zlib, which is now allowed beside BSL-1.0 on the same argument: permissive, no copyleft, and
+its one condition concerns source rather than a binary. Hand-rolling a subset of YAML was
+rejected for the reason `x509-parser` is used rather than hand-rolled DER.
+
+## The HTTP port is inferred from how the node binds, because asking would be a guess
+
+`http.port` defaults to the range `9200-9300` and `transport.port` to `9300-9400`, so on a
+default node both of its listeners are in the HTTP range. Asking each one is not an option:
+HTTP sent to the transport port is an error the node logs. Measured on 7.17.24 and 8.15.3, a
+node binds transport first and HTTP second, each the lowest free port in its range: a default
+node holds 9300 and 9200, and a second node in the same namespace holds 9301 and 9201.
+
+So the transport port is set aside first, as the lowest of the node's own listeners in its
+range, and exactly one listener must remain in the HTTP range; two is a refusal rather than a
+pick. A pinned `http.port` narrows the range to itself. The listeners are the node's own: its
+descriptors joined against `/proc/<pid>/net/tcp{,6}`, the table of its own namespace.
+
+A wildcard is dialled on its family's loopback, `::` on `::1`, which it accepts whether or not
+it is dual-stack, a socket option `/proc` does not publish. An address that is neither is
+dialled as bound: a node given one interface listens on nothing else, and that address is on
+this box.
+
+## A plaintext request to a TLS listener is a write, measured
+
+On 8.15.3 with default security, one plaintext `GET /` to the TLS-only HTTP port got no answer:
+the node closed the connection and logged a WARN, `received plaintext http traffic on an https
+channel, closing connection`. An idle control of 30 s before it logged nothing. This is what
+the settings gate exists for: the auto-configuration writes `xpack.security.http.ssl.enabled:
+true` into the node's own `elasticsearch.yml`, nested, and that file is the one read, so a
+default 8.x node is never sent plaintext at all. Where the settings failed to say so, a closed
+connection or an answer that is not HTTP is reported as a listener wanting TLS, and a 401 or
+403 as a node wanting credentials. All three are the facet's `error`, never `absent`.
+
+## Every request the facet sends, measured before it was written
+
+On 7.17.24 and 8.15.3 with security off, set up with a composable template over a component
+template, an aliased index named like a rotation (`myapp-tenant1_1790000000`), an unaliased
+index, an ILM policy, a pipeline, a snapshot repository and one persistent and one transient
+setting. Each request was sent twice and the bodies compared; the node's index list, hidden and
+system indices and their document counts included, was taken before the reads, after a 20 s
+idle control, and 12 s after the last read.
+
+| request | 7.17 | 8.15 |
+| --- | --- | --- |
+| `/` | 547 B | 541 B |
+| `/_cluster/settings?flat_settings=true` | 116 B | 116 B |
+| `/_index_template` | 19 KB | 137 KB |
+| `/_component_template` | 3.8 KB | 38 KB |
+| `/*/_alias?expand_wildcards=open,closed` | 88 B | 88 B |
+| `/*/_settings?flat_settings=true&expand_wildcards=open,closed` | 627 B | 627 B |
+| `/*/_mapping?expand_wildcards=open,closed` | 135 B | 135 B |
+| `/_ilm/policy` | 7.0 KB | 15 KB |
+| `/_ingest/pipeline` | 716 B | 19 KB |
+| `/_snapshot` | 66 B | 66 B |
+| `/_nodes/_local/plugins` | 21 KB | 27 KB |
+
+Every body was byte-identical across the two reads, none carried a deprecation warning the node
+logged, and the
+index list did not change, before or after. The idle control did not change either, over a
+window shorter than the one in which the node was earlier seen writing its ILM history, which is
+why the comparison is of the index list rather than of the disk.
+
+**The size is the node's own content.** An 8.x node ships about 45 index templates, 64
+component templates, 28 ILM policies and 21 pipelines, and all of them are reported: they are
+state, they change when the node is upgraded, and an upgrade is a change a before-and-after
+pair should show.
+
+## An index is keyed by its alias, where the alias is its identity, and never by a guess
+
+The field host rebuilds `<app>-<tenant>_<epoch>` indices under new names behind a stable alias.
+Keyed by name, every rebuild reads as an index removed and another added, whatever it changed.
+So an index that is the only one behind exactly one alias is keyed by that alias, and its own
+name becomes a volatile field beside it. An alias over several indices names none of them
+alone, and an index with several aliases has no one alias that is its identity, so both keep
+their names; so does an unaliased index. Normalising a name by stripping what looks like an
+epoch was rejected: it would be a guess, and it would mangle a numbered index that has
+nothing to do with rotation.
+
+`index.uuid`, `index.creation_date` and `index.provided_name` differ for every index made, so
+the first two are recorded as volatile and the third is dropped, being the name again.
+`index.version.created` stays, as the release that made the index.
+
+**The mappings are a digest**, XXH3-64 over an encoding that tags every value's kind and
+length and takes object keys sorted, so a rebuild with the same schema digests alike whatever
+order the node printed its fields in. The mappings themselves run to thousands of lines on a
+real index and would bury every other change; the component template they came from is
+reported whole, and says how a changed digest changed.
+
+Hidden and system indices are left out by `expand_wildcards=open,closed`: they are the node's
+own, and `.ds-ilm-history-*` gains documents while the node is idle.
+
+## An 8.x server is read through its launcher, and a JVM only by its main class
+
+**Corrects the research this collector was planned from**, which reported `-Des.path.home` and
+`-Des.path.conf` on the server's argv in all three versions. The conformance run against live
+nodes found otherwise on 8.15.3: the server's own argv carries neither, and no `-E` flag
+either. The `CliToolLauncher` parent holds them and hands the server its arguments over a
+pipe, which is why the parent exists. So an 8.x server, recognised by starting its main class
+as a module, is read through its parent's argv, found from the fourth field of `stat`, and only
+where that parent is itself the launcher. A server whose parent is anything else lends nothing:
+reading another program's flags as the node's settings would be worse than having none.
+
+The same run found the second fault by being one: its own `pgrep -f
+org.elasticsearch.bootstrap.Elasticsearch` carries the class as a whole argument and was read
+as a node. Matching whole arguments stopped a `grep` and did not stop that. A server is now a
+program named `java` whose main class is the server's, which is what follows `-m` or a `-cp`
+value, and nothing else.
+
+Both were in slice-one code that its fixtures passed, because the fixtures were written from the
+research. That is the case the conformance job exists for.
+
+## A hidden index is left out by its own setting, because the query does not leave out all of them
+
+**Corrects the entry that keyed indices by alias**, which said `expand_wildcards=open,closed`
+leaves hidden indices out. The domain review measured otherwise on 8.15.3 and 9.2.0 for a data
+stream that is not itself hidden: the filter is applied to the stream, and the stream then
+expands to its backing indices, which are. A plain hidden index was the control, and the same
+query does leave that out. The backing indices then reached the facet keyed by their own names,
+`.ds-<stream>-<date>-<generation>`, so every rollover read as one index removed and another
+added. An index whose flat settings carry `index.hidden: "true"` is now skipped whichever route
+brought it in. Reporting data streams themselves is a separate gap, recorded in the review.
+
+## Whether the environment holds settings depends on how the node was installed
+
+**Corrects the entry on reading the node's own file**, which gave one precedence for every node:
+`-E`, then an environment variable named after the setting, then `elasticsearch.yml`. Two
+measurements say there are two orders, and neither is that one:
+
+| install | yml only | yml + env | yml + `-E` | yml + env + `-E` |
+| --- | --- | --- | --- | --- |
+| 7.17.24 and 8.15.3 tarball | yml | **yml** | `-E` | `-E` |
+| 7.17.24, 8.15.3 and 9.2.0 docker image | yml | env | `-E` | **env** |
+
+The tarball rows are this entry's, with `cluster.name` set in each source and read back from
+`GET /`; the docker rows are the domain review's, the same way. Outside the docker distribution a
+dotted variable is not a setting at all. Inside it, the variable wins even over an explicit `-E`:
+on 7.17 the entrypoint appends the variables as `-E` flags after the command's own and the last
+flag wins, and from 8.x the image reads them directly.
+
+The node names which one it is: `es.distribution.type` is on the 7.x server's argv and on the 8.x
+launcher's, `docker` for the image and `tar`, `deb` or `rpm` otherwise. A node naming none is
+refused, because the two readings can disagree on the very port or protocol it is asked on.
+`${NAME}` in the file is still resolved from the environment on every distribution, since that is
+the file's own syntax rather than the environment acting as settings.
+
+## A node's file is resolved inside its own root, or not read
+
+Found by the code review, measured in the podman VM: under `/proc/<pid>/root` a relative
+symlink resolves inside the container and an absolute one resolves against the reader's root.
+A container whose `elasticsearch.yml` was an absolute link read as not found, or read the
+host's file at that path when one existed. Not found puts the node on its defaults, and the
+default transport is plaintext, so a symlink defeated the gate that keeps rastro from sending
+plaintext to a TLS listener; the host's file was worse, another node's settings taken as this
+one's.
+
+The file is now opened with `openat2` and `RESOLVE_IN_ROOT`, from the directory
+`/proc/<pid>/root`, so the kernel treats that directory as `/` for the whole walk, `..` at the
+top included. Measured on a live 8.15.3 node whose file is an absolute link pinning port 9350:
+before, the node was an error because no listener was in the default range; after, it is read
+on 9350. `live-search.yml` now runs that node. A kernel without `openat2`, before 5.6, refuses
+the read rather than approximating it, since approximating it is the defect.
+
+## A node whose settings switch security or audit on is not asked
+
+Found by review. The TLS gate let through a node that serves plaintext and requires
+credentials, 7.x with `xpack.security.enabled: true` and HTTP TLS off: it was sent `GET /` and
+answered 401, which was already that node's `error`, so the request bought nothing. What it could
+cost is a write: with `xpack.security.audit.enabled: true` the node records every request it
+receives. So both settings are read like the TLS one, anything but absent or exactly `false`
+counting as on, and either stops the read before a connection. Absent is still dialled: security
+is off by default on 7.x, and where an 8.x default leaves it on without saying so the node
+answers 401 and records nothing, because audit logging is never on unless switched on. 8.x's
+auto-configuration writes `xpack.security.enabled: true` into the file, so in practice a
+secured node is caught by its setting.
+
+## The docker image's encoded setting names are settings too
+
+Found by review, measured on the 7.17.24 and 8.15.3 images: for environments that cannot put
+dots in a variable's name, the image takes `ES_SETTING_` followed by the setting's name in
+capitals, a dot as an underscore and an underscore doubled. `ES_SETTING_NODE_NAME=from-encoded`
+named the node and `ES_SETTING_NODE_ATTR_RACK__ID=r1` became `node.attr.rack_id`. They had been
+ignored, so audit logging switched on this way read as off and the node was asked. They are now
+decoded on the docker distribution, where the dotted spelling is read, and nowhere else. Nothing
+measured says which spelling wins where both name one setting, so two that disagree are a
+refusal rather than a guess.
+
+## A data directory is sealed where it is the host's directory, whatever namespace holds it
+
+**Reverses the rule that sealed a node's data directory only where the node shares rastro's
+mount namespace.** Found by review, confirmed in Elastic's own systemd unit: `PrivateTmp=true`,
+on 7.17 and 8.15 alike, so every packaged node started by systemd has a mount namespace of its
+own. The rule sealed none of them, and the walk descended into a data directory the node writes
+while idle, on the most common install there is.
+
+What decides a claim now is the question the namespace stood in for: whether the node's data
+path, resolved inside its own root, is the same directory as that path on the host, by device
+and inode. A packaged node's is, in its private namespace or not. A node in a container names a
+directory in its own image, which is not. A path either side cannot resolve makes no claim, the
+safe direction, as before.
+
+## A stopped archive install is not seen, and the facet says what it does see
+
+Found by review. Presence was a node running or a launcher at `/usr/share/elasticsearch`, which
+the deb and rpm packages install and the archive does not: Elastic's archive instructions
+extract a versioned directory wherever the operator is working. So a stopped archive install
+reads `absent`. It is left that way, as a limit of rastro in the manner of
+[podman](#podman-does-not-come-through-the-gate-and-its-cli-never-will): finding an archive that
+is not running would mean searching the disk for it, which is a guess. A running one is found
+from `/proc` wherever it lives.
+
+What changed is what the document claims. The field that said `installed` said more than was
+observed, and reads `package_installed` now, the launcher at the package path. The comment that
+said the tarball installs it there was wrong and is gone.
+
+## The file is trusted only as the node read it: present, and unchanged since start
+
+Found by review. `elasticsearch.yml` was read as it is now, which is not necessarily what the
+running node read: a change staged for the next restart, TLS switched off say, would have sent
+plaintext to a listener still on TLS, and a missing file read as a node on its defaults. Now a
+missing file is a refusal, and so is one whose ctime is later than the node's start by more than
+60 seconds. ctime rather than mtime, because a copy or a tool can set an mtime to anything.
+
+The window is measured rather than chosen: on 8.15.3, security auto-configuration writes the
+file 0.67 s after the server process starts, and the node runs with what it wrote, so a rule of
+"changed after start" would have refused every default 8.x node for the wrong reason. The start
+is the server's own, from field 22 of its `stat` and `btime`. A node whose start cannot be read
+is refused, since whether its file changed cannot be told. Every refusal here costs an unread
+node and never a request.
+
+## A `java` argument file is expanded as the launcher expands it
+
+**Reverses refusing every node launched with an `@file`.** Found by review: `java @args` may carry
+the whole launch, main class included, and read only as the argv the server silently stopped being
+a node, its data directory unsealed. So argument files among the launcher's options are expanded in
+place, read inside the node's root from its working directory, with the launcher's syntax measured
+on the JDK bundled with 8.15.3: whitespace separates and quotes group, `#` comments to the end of
+the line, a backslash is itself outside quotes and an escape inside them, a quoted backslash before
+a line break continues the line, files do not nest, `@@name` is the argument `@name`,
+`--disable-@files` stops the expansion, and nothing after the entry point is expanded.
+
+An argument file that cannot be read is still a refusal of the node's settings, since it may hold
+a path the argv does not show. Its token is dropped from the argv rather than kept, because kept it
+reads as the main class and the server stops being a node, the defect itself. A `java` that then
+starts no server is counted as a process rastro could not inspect, not as no node: the unread file
+may hold the server's main class, and the facet cannot call the box empty.
+
+## Dot-prefixed indices are left out of the request, not filtered from the answer
+
+Found by the second domain review, measured on 7.17.24: system indices there are not hidden, so
+`/*/_settings` and its two siblings matched `.tasks`, `.kibana_*`, `.security-7` and the like, and
+the node answered with `Warning: 299 … this request accesses system indices`, which it logged and
+indexed into `.logs-deprecation`: a request the node recorded. `.tasks` alone makes that near
+universal, since any reindex creates it. 8.15.3 and 9.2.0 create these hidden and were clean.
+
+The three requests now name `*,-.*`, every index whose name does not start with a dot, which
+resolves no system index on any version. Measured on 7.17.24 with `.kibana_1` present, no warning;
+on 9.2.0 the same answer shape. It also leaves out data-stream backing indices, which are `.ds-`
+named, at the source; the `index.hidden` check stays as a second guard. **Cost:** an operator's
+own dot-prefixed index leaves the facet on every version. Dot-prefixed is the stack's own
+namespace by convention, and one rule across versions avoids an upgrade showing such an index
+appear. The live job seeds `.kibana_1` and `.tasks` on its 7.17 node and checks the node's
+deprecation lines are unchanged across the reads.
+
+**Corrects** the request table's entry, which said no answer carried a `Warning` header: a 7.17
+node with security off puts a built-in-security notice on every response. It is a header only,
+not logged; what the table meant, and now says, is that none carried a deprecation the node logged.
+
+## A node may run without its file; one removed since start is what is refused
+
+**Corrects the entry that made a missing `elasticsearch.yml` a refusal.** The second domain review
+measured an 8.15.3 node starting and serving with no file, configured by `-E` and its environment
+alone, the usual shape in orchestrators; the refusal cost a read of every such node, with a
+reason that was false for it. What the refusal was for is a file removed after start, and removing
+one changes the directory that held it. So a missing file now reads as no settings from it where
+its config directory is unchanged since the start window, and is refused where the directory
+changed later. The directory's ctime moves for any entry, a keystore's temporary file say, which
+errs only towards refusing.
+
+## A volume's host directory is found through the mount tables, and logs are sealed too
+
+Found by the second domain review, measured both. A node in a container with its data on a named
+volume or a bind mount was read fine and left its live store to the walk, 41 entries of it, since
+the path it uses exists only in its own mount namespace. The node's `mountinfo` says which device
+that path is mounted from and where inside the device; the host's says where that device is
+mounted on the host; together they name the host directory, without asking the engine. Only a path
+on a mount of its own is mapped: one on the container's root filesystem is the image, which the
+`containers` facet accounts for. The directory reached is still checked to exist and is claimed by
+its canonical path.
+
+`path.logs` is claimed the same way as `path.data`, `logs` under the home by default: `gc.log` under
+an archive node's `logs` moved between two runs of an idle box. Each claim is qualified by the
+node's config directory, the field that leads to it in `nodes`, so a directory two nodes point at
+says which two. A node whose settings cannot be read still makes no claim, and the `invocation`
+facet's claim table beside that node's own `error` is where that shows.
+
+# Elasticsearch: the supported envelope, measured on a matrix of real nodes
+
+_2026-10-04._ Two rounds of domain review and five of code review each found the reading wrong
+somewhere new, and each fix was right for the case it named. The cause was upstream of the code:
+the fixtures were written from a report of what Elasticsearch does, so the tests pinned rastro's
+model of a node rather than a node, and every live run found the model wrong again. What replaced
+it is a written envelope and a matrix of real setups,
+[`elasticsearch-matrix.md`](elasticsearch-matrix.md): 26 cells, captured on real nodes by
+`scripts/elasticsearch-matrix/`, whose `/proc` side is the fixture set the tests read
+(`crates/rastro/tests/fixtures/elasticsearch/cells`). The entries below reverse several of the
+group above; each says which.
+
+## Four releases are supported, and every other one from 7 is read as the closest
+
+7.17, 8.19, 9.4 and 9.5. Any other release from 7 up is read with the rules of the closest one
+by its own major, 7.x as 7.17, 8.x as 8.19, 9.0 to 9.4 as 9.4, and 9.5 and anything newer as
+9.5, the rule the postgresql collector reads a newer major by. Such a node is read and marked
+`unsupported`, and the observation carries `Fidelity::Approximate`, which the run's summary on
+stderr reports. A release below 7 is listed with what the box shows and is not asked:
+`not_read`. Nothing about an unsupported release is an error, since nothing on the box is wrong.
+
+**The release is read before any request**, from the server jar in the node's install,
+`<home>/lib/elasticsearch-<version>.jar`, listed inside its root, because it decides whether and
+how the node is asked. `GET /` must name the same release, or the listener asked may not be the
+node's, and the node is an error.
+
+## A node's paths come from the server process alone
+
+**Corrects "An 8.x server is read through its launcher".** Measured on 8.19.22, 9.4.7 and 9.5.4:
+the server carries `-Des.path.home` itself, and its config directory in `ES_PATH_CONF`, or under
+the install where that is unset. 8.15 is the exception, with no home property, and its install
+is the directory above its `--module-path …/lib`. The launcher is no longer read for paths, for
+two reasons the matrix found: from 9.4 it is a native binary, `lib/tools/server-launcher/`, that
+the Java-launcher match missed, so every 9.4 and 9.5 node lost its config directory; and a node
+started with `-d` outlives its launcher. Its command-line settings are still read from the
+launcher while it is there, the native one included; once it is gone they are on no argv at all.
+
+## Only TLS on HTTP is decided before asking
+
+**Reverses "A node whose settings switch security or audit on is not asked", "The file is trusted
+only as the node read it", and the missing-file refusal that corrected it.** Cell 05 settled it:
+a 9.4 node started with `-d` and `-E xpack.security.enabled=false` has nothing in its file, the
+`-E` left with its launcher, and 9.4's default reads as security on, so the gate called an open
+node secured. Whether a node wants credentials is the node's to say, and a `GET /` without one
+answers 401 at once. So the file decides one thing, TLS on HTTP, whose wrong answer is a request
+the node logs; security, audit and the start-time window are gone.
+
+**The blind spot this accepts:** a node started with `-d` on 8.x or 9.x that switches TLS on
+through `-E` alone, against its file (cell 06), or a file changed since start to say otherwise.
+rastro then asks in the wrong protocol once; the node logs a WARN, measured, and the node is an
+error. A `java` argument file is still expanded: without it a server whose main class is in the
+file would not be found at all, and no launcher in the matrix uses one.
+
+## Not read is not an error
+
+What the box's own state keeps rastro from reading is reported as `not_read`, beside `error`
+rather than in it: no credential, a credential the node rejects, a release below 7, a node with
+no master. Each is still marked incomplete, so the run's summary counts it. `error` is left for
+a node rastro supports and failed to read.
+
+**A node with no master is read**, reversing the refusal of one that reports no cluster. Measured
+on cell 15: `GET /` answers at once with `cluster_uuid` `_na_`, and each cluster-wide read waits
+out the 30 s master timeout and answers 503. So `_na_` decides: the node-local reads are made,
+`/`, `_nodes/_local` and its plugins, and each cluster-wide surface is `not_read` without being
+asked.
+
+## TLS is spoken, and the socket is trusted rather than a certificate chain
+
+**Reverses "Plain HTTP only".** That entry left TLS out because both rustls providers build C and
+the workspace kept to Rust so the musl binary cross-built from a workstation. The static builds
+are native CI runners with `musl-tools`, which compile `ring`'s C and assembly, and the Alpine leg
+of the container suite builds it against musl on every run. The 8.x and 9.x default is TLS, so
+without it the supported releases' default install was unreadable. `ring`, not the default
+`aws-lc-rs`, which wants cmake as well. Two licences arrive with it, ISC and BSD-3-Clause, both
+permissive with no copyleft, and `deny.toml` says which crate brought each.
+
+**No CA is checked.** By the time a node is dialled rastro has matched the listener's inode to the
+node's process and joined its network namespace, so the peer is the node. Its certificate is the
+auto-configured one or the operator's, signed by a CA this box need not hold. The handshake's
+signatures are still verified, so the peer holds the key it presents.
+
+## Credentials come from a file or stdin, one for the box
+
+`--credentials FILE`, `-` for stdin, one `NAME=value` per line: `ELASTICSEARCH_API_KEY`, the
+encoded form Elasticsearch hands out, or `ELASTICSEARCH_USERNAME` with `ELASTICSEARCH_PASSWORD`.
+Not the config, which the `invocation` facet echoes, and not the argv, which any account reads in
+`/proc`. The `invocation` facet records which names were given, never a value, and no value
+reaches any other observation, `--raw` included. A file others can read is warned about, since
+refusing it would not undo the leak. A file that cannot be read, or half a credential, fails the
+run before it starts: going on would read every secured node as given nothing.
+
+"Config can only narrow" is not broken by this. It is about which collectors run, which is never
+the operator's to widen; a credential widens nothing, it lets a collector that runs anyway read.
+
+**One credential for every node, in v1.** Telling two clusters' credentials apart needs the
+cluster's name, which is behind the credential. **What that costs:** with two secured clusters on
+one box, the credential is sent to both, and the one it does not belong to logs a failed
+authentication, in its audit trail too where audit is on. That node is `not_read`, "the credential
+given was rejected". Left for an issue to ask for; the candidate then is a key per label tried on
+every node, which only works if a rejected key leaves no trace with audit off, and that is not
+measured.
+
+# Elasticsearch: the third domain review, measured on six more cells
+
+_2026-10-05._ The third review (`rastro-research/collectors/elasticsearch-expert/review-3.md`) found
+every one of the 26 cells read as the envelope says, and supported shapes outside the matrix read
+wrongly. Each became a cell, 27 to 32 in [`elasticsearch-matrix.md`](elasticsearch-matrix.md), captured
+like the others, before the code changed.
+
+## Security switched off is plain HTTP, whatever the TLS setting beside it says
+
+Cell 27, measured on 8.19.22 and 9.5.4: the documented switch-off flips `xpack.security.enabled` alone,
+and the auto-configured `xpack.security.http.ssl.enabled: true` beside it no longer applies; the node
+serves plain HTTP. On 7.17.29 the same TLS setting with security left unset serves TLS, so it is an
+explicit `false` that decides, on every release.
+
+## A lost master is read from the node's own blocks, and that is one more request
+
+Cell 28: a node that lost its master keeps its cluster's UUID, so `GET /` cannot tell, and each
+cluster-wide read waited out the 30 s master timeout. The node's local cluster blocks name the missing
+master at once, block `2`, `no master`. So `GET /_cluster/state/blocks` joins the request list, asked
+after `GET /` where it reported a cluster: with `?local=true` below 9, measured on 7.17.29 and 8.19.22
+with no warning; and without it from 9, because on 9.4.7 and 9.5.4 `?local` is deprecated, a warning
+the node indexes, and has no effect. A blocks read that fails is no evidence either way, and the
+cluster-wide reads are then asked as before.
+
+## The release is the one the node runs, and an upgrade under it is a pending restart
+
+**Corrects "Four releases are supported", which made a node whose `GET /` and installed jar disagree an
+error.** Cell 31, measured on 8.15.3 with 8.19.22 installed over it by `dpkg -i`: the node keeps
+running, `GET /` still says 8.15.3, and it holds its old server jar open, marked ` (deleted)`. So the
+release is read from the jar the process holds open, and the `lib/` listing is the installed release,
+reported beside it as `installed_release`; the two differ exactly while a restart is pending. `GET /` is
+still checked against the running release. The listing is the fallback where the descriptors cannot be
+read.
+
+## What the box keeps rastro out of, measured three more ways
+
+- **Mutual TLS** (cell 30): a node with `client_authentication: required` refuses the handshake for want
+  of a client certificate. rastro has none to present, so the node is `not_read`. Presenting one is for
+  a later version.
+- **An unprivileged run**: another account's `environ`, `fd` and `/proc/<pid>/root` are refused, on
+  every cell. The node is `not_read`, naming the file refused and that it takes root, where it was an
+  `error` blaming a missing jar.
+- **Nothing installed and nothing running** (cell 32) is `absent`. A stopped package (cell 20) is `ok`
+  with no nodes, which is what `design.md` has always said; the matrix row was wrong.
+
+## Accepted: a daemonised node's `-E` ports outside the default ranges
+
+Cell 29: an 8.x or 9.x node started with `-d -E http.port=8200 -E transport.port=8300` takes both
+settings away with its launcher, the file names neither, and neither port is in the default ranges, so
+rastro cannot tell which listener serves HTTP and does not guess. The node is an `error` saying which
+listeners it found. The same blind spot as TLS switched on by `-E` alone, and accepted for the same
+reason: the settings exist only in the node's memory, and asking each listener would send HTTP to the
+transport port, which the node logs.
+
+## Smaller corrections
+
+- **Sealing an 8.x data path under `nodes`**: the step from a held `node.lock` up past
+  `nodes/<ordinal>` applies only below 8, and only to a numeric ordinal, which is all 7.x writes.
+- **A `::` listener** is dialled on `::1` and, where that cannot be reached, on `127.0.0.1`: measured on
+  8.19.22, `::1` can be unavailable with IPv6 off on `lo` alone while the JVM's dual-stack socket is
+  bound.
+- **The index reads' budget**: `_alias`, `_settings` and `_mapping` grow with every index, so they are bounded
+  at 60 s and 64 MB, the other reads at 10 s and 16 MB.
+- **Indices that change mid-read** are read once more, and are an `error` where they changed again.
+  Measured on 7.17.29, 8.19.22 and 9.5.4, all three answers hold every index, a closed one included,
+  so an index the settings answer holds and another lacks was made between the requests. Read as it
+  stood, a rollover's new index lost its alias and its key.
+- **No setting value in a refusal**: a reason is written into the document, and a placeholder, an
+  unplaced argument or two disagreeing environment spellings can hold a secret. The reason names the
+  setting or the option, never its value.
+- **Ingest pipelines are withheld**, each on its own, digested by default: a processor can carry a
+  token. Templates and ILM policies are not, being structure an operator diffs.
+- **TLS rastro cannot speak**: rustls on `ring` offers no static-RSA key exchange and no P-521, so a node
+  restricted to those cipher suites or keys is an `error`. Not measured; listed so a report of it is
+  recognised.
+
+# Elasticsearch: the security review
+
+_2026-10-05._ A security review of the branch, and a Rust and a domain review beside it, applied a
+threat model the collector had not been held to: rastro runs as root, and every process on the box,
+every file in a container's root and every listener in a namespace belongs to an account that may
+not be the operator's. Each finding below was reproduced from the source, the YAML one measured, and
+each fix has a test that failed first.
+
+## Every file a process names is read bounded, and a regular file only
+
+**Narrows "A `java` argument file is expanded as the launcher expands it"** to processes whose
+program is `java`. The census inspects every process, as root, and expanded any `@` it found:
+`curl -d @fifo` blocked the run on the FIFO, and `sleep 1 @/dev/zero` grew rastro's memory until
+the kernel killed something.
+
+Every file read inside a node's root, an argument file or `elasticsearch.yml`, is opened without
+blocking, refused unless it is a regular file, and refused past 1 MiB, against a largest file in the
+matrix under 5 KiB. **A settings file that uses a YAML alias is refused**: measured on yaml-rust2
+0.13.0, the loader copies what an alias names, so aliases of aliases grow tenfold a level, and a
+339-byte file took 1.98 GB. Nothing in the matrix uses one. Placeholder defaults nest at most 16
+deep, since each level was a recursion and a stack overflow aborts rather than fails a node.
+
+## One deadline bounds a request, its TLS handshake and its fallback included
+
+The client documented "a deadline over the whole exchange, connecting included", and kept it only
+for reading the answer. The handshake's reads, and each socket read inside one TLS read, had a bound
+of their own, so a peer that sent a byte of a large record faster than that bound held the run
+indefinitely. Every read and write on the socket now gets only what is left of one deadline, set
+before the first connection is tried.
+
+## A process is found by its argv, and trusted by its account
+
+**Reverses "the peer is the node"** in "TLS is spoken, and the socket is trusted rather than a
+certificate chain", and **narrows** "Credentials come from a file or stdin, one for the box". Matching
+the listener to the process proves the process holds it, not who started the process. Any account
+can start a `java` whose argv names the server, the installed binaries with a config of its own
+included, hold a port, and be sent the operator's credential; or name `/etc` its data path, and have
+`/etc` sealed from the walk.
+
+- **The credential is bound to an account.** `ELASTICSEARCH_NODE_UID` is required with a credential,
+  and a credential goes only to a node whose process runs as that user id, which the kernel says in
+  `/proc/<pid>/status`. Any other node is not sent it and, where it asks, is `not_read`, naming both
+  ids. **What that costs:** the official image runs as user id 1000, which on a box with no user
+  namespace remapping is also the first login account's, so there the binding is only as strong as
+  that account. Remapping gives the container an id of its own.
+- **Over plain HTTP the credential is sent once the node asks for it**, with a 401, and to every
+  request of that node's read after. Over TLS it is sent at once.
+- **A directory is sealed only where the node's account can write it**, by the owner's or the group's
+  bits as the kernel picks them, never by the world's: a node writes its store, and `/tmp` is writable
+  by everyone. A volume's host path must also stay under the host directory of its mount once the host
+  has resolved it, since a `..` or a symlink in the volume led out of it.
+
+A node whose account cannot be read is sent no credential and makes no claim.
+
+## A held store is the node's by the kernel's grant, not by the mode bits
+
+**Narrows "A directory is sealed only where the node's account can write it"** to directories the
+settings name. Found by review: a root-owned store that a POSIX ACL lets the node's account write
+failed the mode-bit check, and the live store was walked. The bits are a model of the kernel's
+access check, and a model has edges; a file the node holds open for writing is the check's own
+result. Measured on 8.19.22, `node.lock` and `gc.log` are both held `O_WRONLY`, so a directory is
+taken from the descriptors only where `fdinfo` says the file is open for writing, and then sealed
+without the bits. A directory the world can write is never sealed, on either route, since any
+account can hold a file open for writing in `/tmp`.
+
+## A `java` argument file is not read; a process launched with one is uninspected
+
+**Reverses "A `java` argument file is expanded as the launcher expands it"**, and the part of
+"Every file a process names is read bounded" that read argument files. No launch in the matrix
+uses one: none of the 60 argvs captured from real nodes holds an `@file`, and Elastic's own
+launchers spell their options out. The expansion was written for a launch shape nobody was seen
+using, and it brought a parser of the launcher's syntax, reads of files a process names, as root,
+and their bounds, each found wanting by a later review.
+
+So nothing a process's argv names is opened. A `java` whose options hold an `@file` and do not
+start the server is a process rastro could not inspect, so the facet never calls the box empty
+for it; one whose argv does show the server is a node whose settings are refused, since the file
+may override them.
+
+## The listener says whether it speaks TLS, asked with a handshake first
+
+**Reverses "Only TLS on HTTP is decided before asking"**, and with it "Security switched off is
+plain HTTP, whatever the TLS setting beside it says", and the blind spot both accepted. The settings
+were a model of what the node chose, and the model had an edge the matrix named, cell 06: a node
+started with `-d` and TLS switched on by an `-E` its launcher took away has a file that says
+plain, and rastro sent it plaintext, which the node logs as a WARN.
+
+Measured on 7.17.29, 8.19.22 and 9.5.4: a plain node sent a TLS ClientHello answers five bytes of
+an HTTP status line and logs nothing, and a secured node logs nothing for a handshake with no
+request after it. So before anything is asked, a handshake is made and closed: completed, the
+listener is TLS; answered in something other than TLS, it is plain HTTP; anything else is the
+node's `error`, or `not_read` where it wants a client certificate. Nothing the node can log is sent
+on a guess. The settings now decide only which port and which directories.
+
+## Measured: `-.*` leaves a data stream's backing indices out, and hidden aliases are listed
+
+The domain review read the module comment that `-.*` excludes `.ds-` backing indices as unmeasured.
+Measured on 7.17.29, 8.19.22 and 9.5.4, with a data stream holding one backing index and an index
+with one visible and one hidden alias: none of the three index reads names the backing index, and
+`_alias` lists both aliases. Data streams themselves are not read: issue #64.
+
+## Accepted, each with its reason
+
+- **A node whose settings cannot be read leaves its data directory to the walk.** The claim API has
+  no way to say "unsealed"; the node's own `error` in `nodes` says why, and the walk's churn under it
+  is the visible cost.
+- **UUID-valued index settings stay in `settings`**, `index.resize.source.uuid` and the searchable
+  snapshot ids among them: they are stable for an unchanged index, so byte-identity holds, and a
+  reindex behind an alias shows its new `uuid` anyway.
+- **An alias moved between the alias read and the settings read is not detected.** The torn-read
+  check compares index sets, which an alias swap leaves alone; catching it would mean reading the
+  largest answer twice.
+- **Legacy templates are still not read**, reconsidered in issue #63.
+- **An index answer costs memory several times its size**, held as bytes, text, parsed JSON and the
+  collector's own tree at once. Measured on a debug build, a 17 MB alias answer peaked at 126 MB, so
+  the 64 MB bound is about half a gigabyte for one node, and nodes are read one at a time.
+
+## A process that behaves like Elasticsearch is Elasticsearch
+
+**Reverses "A process is found by its argv, and trusted by its account" and "A held store is the
+node's by the kernel's grant, not by the mode bits"**, and the guards they added. Each defended
+against a process pretending to be a node: `ELASTICSEARCH_NODE_UID`, required with a credential so
+a fake node could not be sent it; sending the credential over plain HTTP only after a 401; sealing
+a directory only where the node's account could write it, by an open file's access mode or the
+mode bits; refusing a world-writable one; and keeping a volume path under its mount. rastro detects
+what exists on a box. It does not judge whether a process that behaves like a service really is
+one, and a disguise by someone with access to the server is out of its scope, as `AGENTS.md`
+says. So the credential goes to every node, as "Credentials come from a file or stdin, one for
+the box" decided, and a node's store is sealed where the node holds or names it.
+
+What stays from that review is what protects a run from a real node's files and peers: the bounded
+reads of `elasticsearch.yml`, the YAML alias and nesting refusals, the placeholder depth, the one
+deadline per request, the TLS handshake asked of the listener, and no setting value in a refusal.
+
+## A refused namespace join is not read, not an error
+
+**Reverses the `error` in "Joining another namespace needs `CAP_SYS_ADMIN`"**, found by review: it
+predates "Not read is not an error", which makes the box keeping rastro out `not_read`, as it
+already is for a refused `/proc` file or a node that wants a client certificate. A namespace the
+kernel refuses to open, or to join, for want of privilege is now `not_read`; any other failure of
+the join is still the node's `error`.
+
+## A node that does not ask is sent no credential
+
+**Reverses the part of "A process that behaves like Elasticsearch is Elasticsearch" that sent the
+credential with every request.** Asking first was removed with the guards against a disguised
+node, and it was not one, found by review: on a box holding a secured cluster and a genuine open
+node, the open node was sent the credential too, in the clear over plain HTTP, inside a network
+namespace its container's root can capture, and it had no use for it. So every node is asked
+without the credential first, over TLS as well, since TLS keeps it from the wire and not from the
+node. A 401, or a 403 to the anonymous request, is the node asking; that request is made again
+with the credential, and every later one for that node carries it. Another node's asking says
+nothing about the next: the flag is the node's own.
+
+**Accepted: the peer check before each request lists all of the node's descriptors**, outside the
+request's deadline. The kernel bounds how many a process holds, a real node's few tens of
+thousands cost milliseconds, and keeping the one descriptor that holds the listener instead is
+left for a later change.
+
+## The peer check looks at one descriptor
+
+**Reverses the accepted cost in "A node that does not ask is sent no credential"**: the check
+before each request walked every descriptor of the node and parsed the whole of `net/tcp` and
+`net/tcp6`, outside the request's deadline, found by review, and on a busy namespace the tables
+hold every socket on it. The descriptor that holds the listening socket, and the socket's inode,
+are found once, with the node; before each request the check is that descriptor still naming that
+socket, and the process its start time. **Every** socket the node holds on that port, found by
+review: a node bound on two addresses holds two, and watching whichever came first let the one
+dialled close unnoticed.
+
+## A store is sealed at every host path that shows it
+
+Found by review: the host can bind a node's data directory, or a part of it, at a second path, a
+backup mount say, and only one host path was sealed, so the walk went through the live store at
+the other and two runs of an unchanged box differed. The host's own mount table says where each
+mount of a device shows which part of it, so every host path that shows the store, whole or in
+part, is sealed: through a mount of something holding the store, the store under its point;
+through a mount of something inside the store, the whole of that mount. For a node in a container
+and for one on the host alike.
+
+## Each cluster setting is withheld, its name kept
+
+Found by review: the cluster settings were the one settings surface not withheld. Elasticsearch
+leaves a `Filtered` setting out of `GET _cluster/settings`, measured for the monitoring exporter's
+`auth.password` on 7.17, but a plugin can register a credential without that property, and the
+answer then carries it. So each persistent and transient value is withheld on its own, as the
+node's own settings are: which settings were set stays readable, a change to one is a change to
+one digest, and `--raw` shows the values.
+
+## Mount tables are read as bytes
+
+Found by review: one mount point anywhere on the box whose name was not UTF-8 failed the whole
+table read as text, and the seals that depend on it found nothing, so a node's live store was
+walked. The tables are read as the kernel's bytes, as the argv already is, and an escaped byte is
+that byte rather than a character.
+
+## Every setting value is withheld, wherever an answer carries one
+
+**Completes "Each cluster setting is withheld, its name kept", and narrows "Templates and ILM
+policies are not [withheld], being structure an operator diffs".** The reason the cluster
+settings were withheld, a plugin's credential that Elasticsearch does not filter, holds for every
+surface that carries settings, found by review one surface at a time: an index's own settings, and
+the `settings` of an index template or a component template. So every value under a `settings`
+object, in any answer, is withheld on its own, and every key stays readable; a template's
+patterns, priority and composition, and an ILM policy, are still structure and still read.
