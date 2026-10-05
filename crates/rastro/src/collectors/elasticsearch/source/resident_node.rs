@@ -23,8 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::collectors::elasticsearch::source::ProcessOwner;
-use crate::collectors::elasticsearch::source::in_root::{names_inside, read_inside};
-use crate::collectors::elasticsearch::source::java_argument_file;
+use crate::collectors::elasticsearch::source::in_root::names_inside;
 use crate::collectors::elasticsearch::value_objects::Release;
 
 /// Where the kernel publishes its process table.
@@ -146,7 +145,7 @@ pub struct ResidentNode {
     /// `es.distribution.type`, which decides whether the environment holds settings at all.
     distribution: Option<String>,
 
-    /// Whether a `java` argument file among the launch argv's options could not be read.
+    /// Whether the launch argv's options hold a `java` argument file, which rastro does not read.
     launched_with_an_argument_file: bool,
 }
 
@@ -285,11 +284,11 @@ impl ResidentNode {
         self.distribution.as_deref()
     }
 
-    /// Whether the node was launched with a `java` argument file, `@file`, that could not be read.
+    /// Whether the node was launched with a `java` argument file, `@file`.
     ///
-    /// The launcher expands one in place, and a readable one is expanded here the same way. One
-    /// that cannot be read may hold a property, a later `es.path.conf` say, that overrides what the
-    /// argv shows, so a node launched with one cannot have its paths read as the JVM read them.
+    /// The launcher expands one in place, so it may hold a property, a later `es.path.conf` say,
+    /// that overrides what the argv shows. rastro does not read it: no launch in the matrix uses
+    /// one, and reading files a process names, as root, is a cost for a case not seen.
     pub fn launched_with_an_argument_file(&self) -> bool {
         self.launched_with_an_argument_file
     }
@@ -374,7 +373,7 @@ impl ResidentNode {
             release,
             installed_release,
             distribution,
-            launched_with_an_argument_file: launch.unread_argument_file,
+            launched_with_an_argument_file: launch.holds_an_argument_file,
             launch_arguments_are_exact: launch.exact,
             application_arguments: application_start(&launched)
                 .map(|start| launch.arguments.get(start..).unwrap_or_default().to_vec())
@@ -383,16 +382,16 @@ impl ResidentNode {
     }
 }
 
-/// A process's argv, each argument decoded on its own, its argument files expanded.
+/// A process's argv, each argument decoded on its own.
 struct Argv {
     arguments: Vec<String>,
 
     /// False where any argument was not UTF-8 and was read lossily.
     exact: bool,
 
-    /// Whether an argument file among the launcher's options could not be read, so the argv
-    /// may hold options, a path among them, that `/proc` does not show.
-    unread_argument_file: bool,
+    /// Whether a `java` argv's options hold an argument file, which the launcher expands in place
+    /// and rastro does not read, so the argv may hold options that `/proc` does not show.
+    holds_an_argument_file: bool,
 }
 
 /// Whether a read failed because the process exited, as opposed to being refused.
@@ -416,124 +415,25 @@ fn arguments_of(process: &Path) -> std::io::Result<Argv> {
         .iter()
         .map(|argument| String::from_utf8_lossy(argument).into_owned())
         .collect();
-    let expansion = expanded(process, arguments);
+    let spelled: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    let holds_an_argument_file = holds_an_argument_file(&spelled);
 
     Ok(Argv {
         exact: raw
             .iter()
             .all(|argument| std::str::from_utf8(argument).is_ok()),
-        arguments: expansion.arguments,
-        unread_argument_file: expansion.unread_argument_file,
+        holds_an_argument_file,
+        arguments,
     })
 }
 
-/// An argv with its argument files expanded in place.
-struct Expansion {
-    arguments: Vec<String>,
-    unread_argument_file: bool,
-}
-
-/// The argv as the `java` launcher sees it: each `@file` among the options replaced by the
-/// arguments it holds, read inside the process's own root and relative to its working directory.
-///
-/// Found by review: `java @args` may carry the whole launch in the file, main class included,
-/// and read only as the argv the server silently stopped being a node. As the launcher does,
-/// measured on the bundled JDK: `@@name` is the argument `@name`, `--disable-@files` stops the
-/// expansion, and nothing after the entry point is expanded, being the application's own.
-fn expanded(process: &Path, arguments: Vec<String>) -> Expansion {
-    let mut expansion = Expansion {
-        arguments: Vec::with_capacity(arguments.len()),
-        unread_argument_file: false,
-    };
-    let mut scan = OptionScan::default();
-    let mut rest = arguments.into_iter();
-    expansion.arguments.extend(rest.next());
-    // Found by the security review: every process is inspected, as root, and `curl -d @fifo`
-    // blocked the census on the FIFO. The `@` is only java's to expand.
-    let launched_by_java = is_java(
-        &expansion
-            .arguments
+/// Whether a `java` argv's options, the arguments before its entry point, hold an `@file`.
+fn holds_an_argument_file(arguments: &[&str]) -> bool {
+    let options = launch_of(arguments).map_or(arguments.len(), |launch| launch.entry_index);
+    is_java(arguments)
+        && arguments[..options]
             .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-    );
-
-    for argument in rest {
-        let expanding = launched_by_java && scan.expanding();
-        let from_argument: Vec<String> = match (expanding, argument.strip_prefix('@')) {
-            (true, Some(literal)) if literal.starts_with('@') => vec![literal.to_owned()],
-            (true, Some(file)) => match argument_file_text(process, file) {
-                Some(text) => java_argument_file::arguments_in(&text),
-                // Dropped rather than kept: kept, `@file` reads as the main class and the server
-                // silently stops being a node, the defect this expansion exists to close.
-                None => {
-                    expansion.unread_argument_file = true;
-                    Vec::new()
-                }
-            },
-            _ => vec![argument],
-        };
-        for token in from_argument {
-            scan.feed(&token);
-            expansion.arguments.push(token);
-        }
-    }
-
-    expansion
-}
-
-/// An argument file's text, resolved inside the process's root from its working directory.
-fn argument_file_text(process: &Path, file: &str) -> Option<String> {
-    let named = Path::new(file);
-    let absolute = match named.is_absolute() {
-        true => named.to_path_buf(),
-        false => fs::read_link(process.join("cwd")).ok()?.join(named),
-    };
-    let relative = absolute.strip_prefix("/").ok()?;
-    read_inside(&process.join("root"), relative).ok()
-}
-
-/// Where the launcher's option scan is, fed one argument at a time.
-#[derive(Debug, Default)]
-struct OptionScan {
-    /// The next argument is the value of the option before it.
-    awaiting_value: bool,
-
-    /// The next argument is the entry point, after `-m` or `-jar`.
-    awaiting_entry: bool,
-
-    /// The entry point has been read, so what follows is the application's.
-    done: bool,
-
-    /// `--disable-@files` was seen.
-    disabled: bool,
-}
-
-impl OptionScan {
-    fn expanding(&self) -> bool {
-        !self.done && !self.disabled
-    }
-
-    fn feed(&mut self, argument: &str) {
-        if self.done {
-            return;
-        }
-        if self.awaiting_entry {
-            self.done = true;
-        } else if self.awaiting_value {
-            self.awaiting_value = false;
-        } else if argument == "--disable-@files" {
-            self.disabled = true;
-        } else if MODULE_FLAGS.contains(&argument) || argument == JAR_OPTION {
-            self.awaiting_entry = true;
-        } else if argument.starts_with("--module=") {
-            self.done = true;
-        } else if OPTIONS_WITH_A_VALUE.contains(&argument) {
-            self.awaiting_value = true;
-        } else if !argument.starts_with('-') {
-            self.done = true;
-        }
-    }
+            .any(|argument| argument.starts_with('@'))
 }
 
 /// The first of the process's files a read needs that the kernel refused.
@@ -600,13 +500,14 @@ fn starts_the_server(arguments: &[&str]) -> bool {
     starts_as_a_module(arguments) || is_java_running(arguments, CLASSPATH_MAIN)
 }
 
-/// Whether a `java` that does not start the server could still be one: an argument file it
-/// could not read stood among its options, and may hold the main class.
+/// Whether a `java` that does not start the server could still be one: an argument file stood
+/// among its options, and may hold the main class.
 ///
-/// Found by review: dropped, such a node left the facet and its directories unsealed.
+/// Found by review: dropped, such a node left the facet `absent`, a claim about a box rastro
+/// could not see.
 fn may_hide_the_server(launch: &Argv) -> bool {
     let arguments: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
-    launch.unread_argument_file && is_java(&arguments) && !starts_the_server(&arguments)
+    launch.holds_an_argument_file && !starts_the_server(&arguments)
 }
 
 /// Whether this is the 8.x and 9.x server, started as a module.
@@ -675,7 +576,8 @@ fn launch_of<'argv>(arguments: &[&'argv str]) -> Option<Launch<'argv>> {
             index += 2;
             continue;
         }
-        if !argument.starts_with('-') {
+        // An argument file, which the launcher reads options from: never the entry point.
+        if !argument.starts_with('-') && !argument.starts_with('@') {
             return Some(launch(EntryPoint::Class(argument), index, index + 1));
         }
         index += 1;

@@ -662,7 +662,7 @@ fn read_in_takes_no_encoded_setting_on_a_tarball_install() {
 #[test]
 fn read_in_refuses_a_node_launched_with_an_argument_file() {
     // Arrange: the `java` launcher expands `@file` in place, so a property in it, a later
-    // `es.path.conf` say, overrides what the argv shows, and rastro cannot read what the JVM did.
+    // `es.path.conf` say, overrides what the argv shows, and rastro does not read the file.
     let proc = scratch_tree("elasticsearch-settings-argument-file", &["600/root"]);
     write(
         &proc,

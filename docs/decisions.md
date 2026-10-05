@@ -6378,6 +6378,20 @@ taken from the descriptors only where `fdinfo` says the file is open for writing
 without the bits. A directory the world can write is never sealed, on either route, since any
 account can hold a file open for writing in `/tmp`.
 
+## A `java` argument file is not read; a process launched with one is uninspected
+
+**Reverses "A `java` argument file is expanded as the launcher expands it"**, and the part of
+"Every file a process names is read bounded" that read argument files. No launch in the matrix
+uses one: none of the 60 argvs captured from real nodes holds an `@file`, and Elastic's own
+launchers spell their options out. The expansion was written for a launch shape nobody was seen
+using, and it brought a parser of the launcher's syntax, reads of files a process names, as root,
+and their bounds, each found wanting by a later review.
+
+So nothing a process's argv names is opened. A `java` whose options hold an `@file` and do not
+start the server is a process rastro could not inspect, so the facet never calls the box empty
+for it; one whose argv does show the server is a node whose settings are refused, since the file
+may override them.
+
 ## The listener says whether it speaks TLS, asked with a handshake first
 
 **Reverses "Only TLS on HTTP is decided before asking"**, and with it "Security switched off is

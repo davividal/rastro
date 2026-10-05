@@ -4,7 +4,6 @@
 //! has not identified as an Elasticsearch server, so the identification has to be right in
 //! both directions, across the two argv shapes the supported versions start with.
 
-use std::fs;
 use std::path::Path;
 
 use rastro::collectors::elasticsearch::ResidentNode;
@@ -303,107 +302,6 @@ fn all_in_takes_the_last_of_a_repeated_path_property_as_the_jvm_does() {
     assert_eq!(nodes[0].home(), Some(Path::new("/opt/second")));
 }
 
-/// A process `java @args`, run from `/work` in its own root, with `args` holding `contents`.
-fn launched_from_an_argument_file(name: &str, contents: &str) -> std::path::PathBuf {
-    let proc = scratch_tree(name, &["90/root/work"]);
-    write(
-        &proc,
-        "90/cmdline",
-        "/usr/share/elasticsearch/jdk/bin/java\0@args\0",
-    );
-    write(&proc, "90/root/work/args", contents);
-    std::os::unix::fs::symlink("/work", proc.join("90/cwd")).expect("a writable fixture");
-    proc
-}
-
-#[test]
-fn all_in_finds_a_server_whose_entry_point_is_in_an_argument_file() {
-    // Arrange: found by review. `java @args` may carry the whole launch, main class included, in
-    // the file; read only as the argv, the server silently stopped being a node.
-    let proc = launched_from_an_argument_file(
-        "elasticsearch-residency-argfile-entry",
-        "-Des.path.conf=/etc/es -Des.distribution.type=tar\n\
-         -cp /usr/share/elasticsearch/lib/* org.elasticsearch.bootstrap.Elasticsearch\n",
-    );
-
-    // Act
-    let nodes = ResidentNode::all_in(&proc);
-
-    // Assert
-    assert_eq!(nodes.len(), 1, "{nodes:?}");
-    assert_eq!(nodes[0].config(), Some(Path::new("/etc/es")));
-}
-
-#[test]
-fn census_in_counts_a_java_whose_unread_argument_file_could_start_the_server_as_unseen() {
-    // Arrange: found by review. The file `java @args` was started with is gone or refused, and
-    // it is all of the launch: the main class may be the server's, so the box cannot be called
-    // empty.
-    let proc = scratch_tree("elasticsearch-residency-argfile-unread", &["90/root/work"]);
-    write(
-        &proc,
-        "90/cmdline",
-        "/usr/share/elasticsearch/jdk/bin/java\0@args\0",
-    );
-    std::os::unix::fs::symlink("/work", proc.join("90/cwd")).expect("a writable fixture");
-
-    // Act
-    let census = ResidentNode::census_in(&proc);
-
-    // Assert
-    assert!(census.nodes.is_empty());
-    assert!(census.some_processes_unseen);
-}
-
-#[test]
-fn census_in_counts_a_java_whose_argument_file_is_a_fifo_as_unseen() {
-    // Arrange: found by the security review. The file is in the process's own root, which its
-    // owner controls, and opening a FIFO blocks: **if this test ever hangs, the check is gone.**
-    let proc = launched_from_an_argument_file("elasticsearch-residency-argfile-fifo", "");
-    fs::remove_file(proc.join("90/root/work/args")).expect("a writable fixture");
-    fifo(&proc.join("90/root/work/args"));
-
-    // Act
-    let census = ResidentNode::census_in(&proc);
-
-    // Assert
-    assert!(census.nodes.is_empty());
-    assert!(census.some_processes_unseen);
-}
-
-#[test]
-fn census_in_counts_a_java_whose_argument_file_is_larger_than_any_launch_as_unseen() {
-    // Arrange: found by the security review. Read whole, a file of any size became rastro's
-    // memory, as root, for any process on the box.
-    let proc = launched_from_an_argument_file(
-        "elasticsearch-residency-argfile-huge",
-        &format!("-Dpadding={}\n", "x".repeat(2 * 1024 * 1024)),
-    );
-
-    // Act
-    let census = ResidentNode::census_in(&proc);
-
-    // Assert
-    assert!(census.nodes.is_empty());
-    assert!(census.some_processes_unseen);
-}
-
-#[test]
-fn census_in_sees_past_a_java_whose_argument_files_were_all_read() {
-    // Arrange: every argument file read, and the main class is not the server's.
-    let proc = launched_from_an_argument_file(
-        "elasticsearch-residency-argfile-other",
-        "-cp app.jar org.example.Main\n",
-    );
-
-    // Act
-    let census = ResidentNode::census_in(&proc);
-
-    // Assert
-    assert!(census.nodes.is_empty());
-    assert!(!census.some_processes_unseen);
-}
-
 /// A FIFO at `path`, which blocks whoever opens it for reading until a writer appears.
 fn fifo(path: &Path) {
     let made = std::process::Command::new("mkfifo")
@@ -414,10 +312,51 @@ fn fifo(path: &Path) {
 }
 
 #[test]
+fn census_in_counts_a_java_launched_from_an_argument_file_as_unseen() {
+    // Arrange: `java @args` may hold its main class in the file, and no launch in the matrix uses
+    // one, so the file is not read: the process is one rastro could not inspect, and the box is
+    // not called empty. `args` is a FIFO, so **if this test ever hangs, a read came back.**
+    let proc = scratch_tree("elasticsearch-residency-argfile", &["90/root/work"]);
+    write(
+        &proc,
+        "90/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0@args\0",
+    );
+    fifo(&proc.join("90/root/work/args"));
+    std::os::unix::fs::symlink("/work", proc.join("90/cwd")).expect("a writable fixture");
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(census.some_processes_unseen);
+}
+
+#[test]
+fn all_in_finds_a_server_whose_main_class_is_in_its_argv_beside_an_argument_file() {
+    // Arrange: the argv shows the server, so it is a node; what the file holds is unread, which the
+    // settings read refuses on.
+    let proc = scratch_tree("elasticsearch-residency-argfile-beside", &["90"]);
+    write(
+        &proc,
+        "90/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0@extra\0-cp\0lib/*\0\
+         org.elasticsearch.bootstrap.Elasticsearch\0",
+    );
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes.len(), 1);
+    assert!(nodes[0].launched_with_an_argument_file());
+}
+
+#[test]
 fn census_in_opens_no_argument_file_of_a_program_that_is_not_java() {
-    // Arrange: found by the security review. `curl -d @body` is an ordinary argv, and every
-    // process on the box is inspected, as root; the `@` is only java's to expand. Here `body` is
-    // a FIFO, so opening it blocks: **if this test ever hangs, the check is gone.**
+    // Arrange: found by the security review. `curl -d @body` is an ordinary argv, and the `@` is
+    // only java's. Here `body` is a FIFO: **if this test ever hangs, a read came back.**
     let proc = scratch_tree(
         "elasticsearch-residency-argfile-not-java",
         &["91/root/work"],
@@ -436,40 +375,6 @@ fn census_in_opens_no_argument_file_of_a_program_that_is_not_java() {
     // Assert
     assert!(census.nodes.is_empty());
     assert!(!census.some_processes_unseen);
-}
-
-#[test]
-fn all_in_reads_an_argument_file_as_java_does() {
-    // Arrange: measured on the bundled JDK of 8.15.3. Quotes group and are removed, `#` outside
-    // them comments to the end of the line, and inside them a backslash before a line break
-    // continues onto the next line without its leading spaces.
-    let proc = launched_from_an_argument_file(
-        "elasticsearch-residency-argfile-syntax",
-        "-Des.path.conf=\"/etc/my es\" # -Des.path.conf=/wrong\n\
-         -Des.path.home='/opt/\\\n     es'\n\
-         -cp lib/* org.elasticsearch.bootstrap.Elasticsearch\n",
-    );
-
-    // Act
-    let nodes = ResidentNode::all_in(&proc);
-
-    // Assert
-    assert_eq!(nodes[0].config(), Some(Path::new("/etc/my es")));
-    assert_eq!(nodes[0].home(), Some(Path::new("/opt/es")));
-}
-
-#[test]
-fn all_in_takes_a_doubled_at_sign_as_a_literal_argument() {
-    // Arrange: measured, `@@name` is the argument `@name`, not a file.
-    let proc = scratch_tree("elasticsearch-residency-argfile-literal", &["90"]);
-    write(
-        &proc,
-        "90/cmdline",
-        "/usr/bin/java\0-cp\0x.jar\0@@org.elasticsearch.bootstrap.Elasticsearch\0",
-    );
-
-    // Act & Assert: the main class is `@org…`, which is not the server.
-    assert!(ResidentNode::all_in(&proc).is_empty());
 }
 
 #[test]

@@ -8,7 +8,6 @@ mod http_binding;
 mod http_client;
 mod in_root;
 mod indices_answer;
-mod java_argument_file;
 mod json_answer;
 mod lifecycle_answer;
 mod mount_table;
