@@ -25,9 +25,6 @@ use std::path::{Path, PathBuf};
 use crate::collectors::elasticsearch::source::in_root::names_inside;
 use crate::collectors::elasticsearch::value_objects::Release;
 
-/// Where the kernel publishes its process table.
-const PROC: &str = "/proc";
-
 /// The argument vector's separator, which is how the kernel writes `cmdline`.
 const ARGUMENT_SEPARATOR: u8 = b'\0';
 
@@ -199,11 +196,6 @@ impl ResidentNode {
         // unchanged box is what the document's contract forbids.
         census.nodes.sort_unstable_by_key(|node| node.process_id);
         census
-    }
-
-    /// Reads the box's process table.
-    pub fn all() -> Vec<Self> {
-        Self::all_in(Path::new(PROC))
     }
 
     /// The servers on a process table the caller names, in ascending process id order.

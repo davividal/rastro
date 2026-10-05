@@ -2,10 +2,9 @@
 
 /// The protocol a node's HTTP listener speaks.
 ///
-/// **Decided from the node's settings, never by trying.** A plaintext request to a TLS listener
-/// is a WARN in the node's log, measured, and a handshake to a plain one is a request it could
-/// not parse. The settings decide it rather than the version: an 8.x node with TLS switched off
-/// serves plain HTTP exactly as 7.17 does.
+/// **Asked of the listener with a TLS handshake and nothing after it**, which no node logs,
+/// measured: a plaintext request to a TLS listener is a WARN in the node's log, and the settings
+/// that once decided it could not see TLS switched on by an `-E` that left with its launcher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Transport {
     #[default]

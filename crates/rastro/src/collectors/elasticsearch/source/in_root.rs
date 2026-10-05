@@ -3,8 +3,8 @@
 //! **Measured in the podman VM:** an absolute symlink met under `/proc/<pid>/root` resolves
 //! against the reader's root, so a container whose `elasticsearch.yml` links to
 //! `/srv/config/elasticsearch.yml` read as not found, or read the host's file at that path. Not
-//! found puts the node on its defaults, and a default is plaintext, so the gate that keeps rastro
-//! from sending plaintext to a TLS listener was the thing a symlink defeated. `RESOLVE_IN_ROOT`
+//! found puts the node on its defaults, the wrong port and the wrong store among them, which a
+//! symlink should not decide. `RESOLVE_IN_ROOT`
 //! makes the kernel treat the root as `/` for the whole walk, `..` at the top included.
 
 use std::fs::{self, File};

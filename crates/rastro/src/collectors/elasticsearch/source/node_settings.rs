@@ -18,8 +18,9 @@
 //!
 //! **What the box no longer shows is not read**, and the reading is not refused for it: the `-E`
 //! flags of a node started with `-d` on 8.x and 9.x left with its launcher, and a file changed
-//! since start says what the node would start with now. Both are the blind spot
-//! `docs/decisions.md` accepts: a node that answers in the wrong protocol is an error.
+//! since start says what the node would start with now. Either can name a port or a directory the
+//! node no longer uses, which `docs/decisions.md` accepts; whether it speaks TLS is the listener's
+//! to say, so neither sends it the wrong protocol.
 //!
 //! Everything is read through `/proc/<pid>`, the file included, as `root/<es.path.conf>`: a
 //! node in a container reads the file in its own image, and the host's `/etc/elasticsearch`,
@@ -94,12 +95,7 @@ pub struct NodeSettings {
 }
 
 impl NodeSettings {
-    /// Reads a node's settings through the box's `/proc`.
-    pub fn read(node: &ResidentNode) -> Result<Self, Unread> {
-        Self::read_in(Path::new("/proc"), node)
-    }
-
-    /// The same through a process table the caller names.
+    /// Reads a node's settings through a process table the caller names.
     pub fn read_in(proc: &Path, node: &ResidentNode) -> Result<Self, Unread> {
         let process = proc.join(node.process_id().to_string());
         if !node.launch_arguments_are_exact() {
@@ -188,8 +184,8 @@ impl NodeSettings {
 /// The `-E` settings among the server's arguments, every argument placed or the node refused.
 ///
 /// **A closed set, found by review the third time a spelling was missed.** `-Ename=value`, then
-/// `-E name=value`, then `-E=name=value` each read as no setting at all, and each let a node whose
-/// TLS was switched on that way be sent plaintext. The server's options, from its own `--help` on
+/// `-E name=value`, then `-E=name=value` each read as no setting at all, and each put a node whose
+/// port was set that way on the wrong one. The server's options, from its own `--help` on
 /// 7.17.24, 8.15.3 and 9.2.0, are few, so each is placed in every spelling jopt-simple takes, a
 /// value joined, after `=` or as the next argument, and anything else refuses the node: a
 /// spelling not yet known is a refusal rather than a misreading.
@@ -389,11 +385,11 @@ fn read_config_file(root: &Path, config: &Path) -> Result<BTreeMap<String, Strin
     Ok(values)
 }
 
-/// Folds nested maps into dotted keys, the two spellings the node itself treats as one.
 /// How deep a settings file may nest. Real ones nest a few levels; found by review, each level is
 /// a recursion here, and the file is its owner's to write.
 const MOST_NESTED_KEYS: usize = 32;
 
+/// Folds nested maps into dotted keys, the two spellings the node itself treats as one.
 fn flatten(
     node: &Yaml,
     prefix: Option<&str>,

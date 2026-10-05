@@ -6,9 +6,9 @@
 //! that process's network namespace, and never a request that could write. See
 //! `docs/decisions.md`.
 //!
-//! **Nothing is asked blind.** Which port serves HTTP and whether it wants TLS are settled from
-//! the box before the first request, because a request to the wrong port or in the wrong
-//! protocol is one the node logs.
+//! **Nothing is asked blind.** Which port serves HTTP is settled from the box before the first
+//! request, because a request to the wrong port is one the node logs; whether it wants TLS is
+//! asked of the listener with a handshake that no node logs.
 pub mod model;
 pub mod source;
 pub mod value_objects;
