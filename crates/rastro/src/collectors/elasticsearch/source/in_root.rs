@@ -29,8 +29,9 @@ const MOST_READ: u64 = 1024 * 1024;
 ///
 /// **Bounded, and a regular file only**, found by the security review: the root is the
 /// process's, so its owner chooses what is at the path, and read as root a FIFO blocked the run
-/// and `/dev/zero` grew without end. Opened without blocking, so the type is checked on what was
-/// opened rather than on a path that could change in between.
+/// and `/dev/zero` grew without end. **Nothing else is opened for reading**, found by the next
+/// one: opening some devices acts on the host, a watchdog being armed by it. So the path is
+/// pinned without being opened, its type checked on the pin, and only a regular file reopened.
 pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
     let file = open_inside(root, relative, Opening::Read)?;
     if !file.metadata()?.is_file() {
@@ -161,7 +162,8 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
         Mode::empty(),
     )?;
     let flags = match opening {
-        Opening::Read => OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC,
+        // Pinned, not opened: an `O_PATH` descriptor reads nothing and opens no device.
+        Opening::Read => OFlags::PATH | OFlags::CLOEXEC,
         Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
     };
@@ -182,7 +184,27 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
         other => std::io::Error::from(other),
     })?;
 
-    Ok(File::from(file))
+    match opening {
+        Opening::Read => reopened_if_regular(&file),
+        Opening::List | Opening::Directory => Ok(File::from(file)),
+    }
+}
+
+/// The file `pinned` names, opened for reading through its own descriptor, where it is a regular
+/// file: the inode the type was checked on is the one read, whatever the path now leads to.
+#[cfg(target_os = "linux")]
+fn reopened_if_regular(pinned: &rustix::fd::OwnedFd) -> std::io::Result<File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let kind = rustix::fs::FileType::from_raw_mode(rustix::fs::fstat(pinned)?.st_mode);
+    if kind != rustix::fs::FileType::RegularFile {
+        return Err(std::io::Error::other("it is not a regular file"));
+    }
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC)
+        .open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))
 }
 
 /// The same on a workstation build, which reads no real node: rastro ships for Linux alone.

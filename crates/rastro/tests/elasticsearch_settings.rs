@@ -410,6 +410,46 @@ fn read_in_refuses_a_file_that_is_a_fifo_rather_than_waiting_on_it() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn read_in_opens_nothing_at_the_file_path_that_is_not_a_regular_file() {
+    // Arrange: found by the security review. A container's root can hold a device node where its
+    // file should be, and opening some devices acts on the host, a watchdog being armed by it. So
+    // the type is checked on what the path leads to before anything is opened for reading. A
+    // FIFO stands in for the device, and the kernel says whether it was opened.
+    use rustix::fs::inotify::{CreateFlags, WatchFlags, add_watch, init};
+
+    let proc = scratch_tree(
+        "elasticsearch-settings-file-device",
+        &["600/root/etc/elasticsearch"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    let made = std::process::Command::new("mkfifo")
+        .arg(proc.join(CONFIG_FILE))
+        .status()
+        .expect("mkfifo should be runnable");
+    assert!(made.success(), "the fixture needs a FIFO");
+    let watcher = init(CreateFlags::NONBLOCK | CreateFlags::CLOEXEC).expect("an inotify instance");
+    add_watch(&watcher, proc.join(CONFIG_FILE), WatchFlags::OPEN).expect("a watch");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a FIFO for a file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("not a regular file"),
+        "{}",
+        unread.reason()
+    );
+    let mut event = [0_u8; 256];
+    assert_eq!(
+        rustix::io::read(&watcher, &mut event).err(),
+        Some(rustix::io::Errno::AGAIN),
+        "the FIFO was opened"
+    );
+}
+
 #[test]
 fn read_in_refuses_a_file_larger_than_any_settings_file() {
     // Arrange: found by the security review. Read whole, a file of any size became rastro's
