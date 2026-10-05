@@ -6082,7 +6082,9 @@ a line break continues the line, files do not nest, `@@name` is the argument `@n
 
 An argument file that cannot be read is still a refusal of the node's settings, since it may hold
 a path the argv does not show. Its token is dropped from the argv rather than kept, because kept it
-reads as the main class and the server stops being a node, the defect itself.
+reads as the main class and the server stops being a node, the defect itself. A `java` that then
+starts no server is counted as a process rastro could not inspect, not as no node: the unread file
+may hold the server's main class, and the facet cannot call the box empty.
 
 ## Dot-prefixed indices are left out of the request, not filtered from the answer
 
@@ -6298,6 +6300,10 @@ transport port, which the node logs.
   bound.
 - **The index reads' budget**: `_alias`, `_settings` and `_mapping` grow with every index, so they are bounded
   at 60 s and 64 MB, the other reads at 10 s and 16 MB.
+- **Indices that change mid-read** are read once more, and are an `error` where they changed again.
+  Measured on 7.17.29, 8.19.22 and 9.5.4, all three answers hold every index, a closed one included,
+  so an index the settings answer holds and another lacks was made between the requests. Read as it
+  stood, a rollover's new index lost its alias and its key.
 - **No setting value in a refusal**: a reason is written into the document, and a placeholder, an
   unplaced argument or two disagreeing environment spellings can hold a secret. The reason names the
   setting or the option, never its value.
