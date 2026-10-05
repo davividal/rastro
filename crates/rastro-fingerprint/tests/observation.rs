@@ -643,6 +643,20 @@ fn a_set_is_equal_whatever_order_when_nested_sets_differ_only_in_their_named_fie
 }
 
 #[test]
+fn a_set_is_equal_whatever_order_when_items_differ_only_in_fidelity() {
+    // Arrange: the same value read once exactly and once with another release's rules.
+    let exact = Observation::text("a");
+    let approximate = Observation::text("a").approximate();
+
+    // Act
+    let given = Observation::set([exact.clone(), approximate.clone()]);
+    let reversed = Observation::set([approximate, exact]);
+
+    // Assert
+    assert_eq!(given, reversed);
+}
+
+#[test]
 fn approximate_annotates_the_observation_without_changing_its_content() {
     // Act
     let observation = Observation::text("read as 8.19").approximate();
