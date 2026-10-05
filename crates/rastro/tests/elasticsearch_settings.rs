@@ -316,6 +316,23 @@ fn read_in_refuses_a_file_that_is_not_yaml() {
 }
 
 #[test]
+fn read_in_refuses_a_file_that_uses_a_yaml_alias() {
+    // Arrange: found by the security review, measured on yaml-rust2 0.13.0: each alias is a
+    // copy of what it names, so aliases of aliases grow tenfold a level, and a 339-byte file
+    // took 1.98 GB. The file is the node's owner's to write. This alias is a harmless one.
+    let proc = scratch_tree("elasticsearch-settings-file-alias", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(&proc, CONFIG_FILE, "base: &port 9201\nhttp.port: *port\n");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an aliased file");
+
+    // Assert
+    assert!(unread.reason().contains("alias"), "{}", unread.reason());
+}
+
+#[test]
 fn read_in_refuses_a_file_it_cannot_read() {
     // Arrange: again a directory, so the refusal holds when the suite runs as root.
     let proc = scratch_tree(

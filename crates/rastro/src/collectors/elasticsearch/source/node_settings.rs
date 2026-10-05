@@ -30,7 +30,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use yaml_rust2::{Yaml, YamlLoader};
+use yaml_rust2::parser::{Event, Parser};
+use yaml_rust2::{ScanError, Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
 use crate::collectors::elasticsearch::source::in_root::read_inside;
@@ -385,8 +386,14 @@ fn read_config_file(root: &Path, config: &Path) -> Result<BTreeMap<String, Strin
         }
     };
 
-    let documents = YamlLoader::load_from_str(&text)
-        .map_err(|error| Unread::new(format!("{} is not YAML: {error}", named.display())))?;
+    let not_yaml = |error| Unread::new(format!("{} is not YAML: {error}", named.display()));
+    if holds_an_alias(&text).map_err(not_yaml)? {
+        return Err(Unread::new(format!(
+            "{} uses a YAML alias, which rastro does not expand",
+            named.display()
+        )));
+    }
+    let documents = YamlLoader::load_from_str(&text).map_err(not_yaml)?;
 
     let mut values = BTreeMap::new();
     if let Some(document) = documents.first() {
@@ -441,6 +448,22 @@ fn scalar(node: &Yaml) -> Option<String> {
         Yaml::Integer(number) => Some(number.to_string()),
         Yaml::Boolean(flag) => Some(flag.to_string()),
         _ => None,
+    }
+}
+
+/// Whether `text` holds a YAML alias, found from the parser's events, which copy nothing.
+///
+/// Found by the security review, measured on yaml-rust2 0.13.0: the loader copies what an alias
+/// names, so aliases of aliases grow tenfold a level, and a 339-byte file took 1.98 GB. A node's
+/// file is its owner's to write, and nothing in the matrix uses an alias.
+fn holds_an_alias(text: &str) -> Result<bool, ScanError> {
+    let mut parser = Parser::new_from_str(text);
+    loop {
+        match parser.next_token()?.0 {
+            Event::Alias(_) => return Ok(true),
+            Event::StreamEnd => return Ok(false),
+            _ => {}
+        }
     }
 }
 
