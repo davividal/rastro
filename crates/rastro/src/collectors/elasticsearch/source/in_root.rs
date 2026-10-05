@@ -103,23 +103,40 @@ fn identity_of(metadata: fs::Metadata) -> FileIdentity {
     }
 }
 
-/// The names in a directory inside a node's root, resolved there as [`read_inside`] resolves a file.
+/// The most entries a directory inside a node's root is listed to: an install's `lib/` holds a few
+/// hundred, and the directory is its owner's to fill, found by the sweep.
+const MOST_LISTED: usize = 10_000;
+
+/// The names in a directory inside a node's root, resolved there as [`read_inside`] resolves a file,
+/// and refused past [`MOST_LISTED`].
 #[cfg(target_os = "linux")]
 pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
     let directory = open_inside(root, relative, Opening::List)?;
-    let mut names = Vec::new();
-    for entry in rustix::fs::Dir::read_from(&directory)? {
-        names.push(entry?.file_name().to_string_lossy().into_owned());
-    }
-    Ok(names)
+    bounded(
+        rustix::fs::Dir::read_from(&directory)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned())),
+    )
 }
 
 /// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
 #[cfg(not(target_os = "linux"))]
 pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
-    fs::read_dir(root.join(relative))?
-        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-        .collect()
+    bounded(
+        fs::read_dir(root.join(relative))?
+            .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned())),
+    )
+}
+
+fn bounded(names: impl Iterator<Item = std::io::Result<String>>) -> std::io::Result<Vec<String>> {
+    let names: Vec<String> = names
+        .take(MOST_LISTED + 1)
+        .collect::<std::io::Result<_>>()?;
+    match names.len() > MOST_LISTED {
+        true => Err(std::io::Error::other(format!(
+            "it holds more than {MOST_LISTED} entries"
+        ))),
+        false => Ok(names),
+    }
 }
 
 /// What a file is opened for.

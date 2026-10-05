@@ -117,6 +117,26 @@ fn release_names_none_for_an_install_holding_two_server_jars() {
 }
 
 #[test]
+fn release_names_none_for_a_lib_holding_more_entries_than_any_install() {
+    // Arrange: found by the sweep. `lib/` is inside the node's root, its owner's to fill, and
+    // every entry was listed into memory as root; a real install holds a few hundred jars.
+    let proc = installed_with(
+        "elasticsearch-release-huge-lib",
+        &["elasticsearch-7.17.29.jar"],
+    );
+    let lib = proc.join("812/root/opt/es/lib");
+    for entry in 0..10_001 {
+        std::fs::File::create(lib.join(format!("filler-{entry}"))).expect("a writable fixture");
+    }
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes[0].release(), None);
+}
+
+#[test]
 fn release_names_none_for_an_install_with_no_lib() {
     // Arrange
     let proc = installed_with("elasticsearch-release-no-jar", &[]);
