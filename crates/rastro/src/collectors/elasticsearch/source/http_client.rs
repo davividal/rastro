@@ -11,7 +11,9 @@
 //! matched the listener's inode to the node's own process and joined its network namespace, so
 //! the peer is the node. Its certificate is the auto-configured one or the operator's, signed by
 //! a CA this box need not hold, and checking it against one would refuse the node for nothing.
-//! The handshake's signatures are still verified, so the peer holds the key it presents.
+//! The handshake's signatures are still verified, so the peer holds the key it presents. Which
+//! account started the node is another question, and decides whether it is sent the credential:
+//! see `read_node`.
 //!
 //! Bounded twice: a deadline over the whole exchange, so a node that trickles bytes cannot hold
 //! a run open, and a size, so a node with ten thousand indices cannot fill the box's memory.

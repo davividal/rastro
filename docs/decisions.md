@@ -6312,3 +6312,77 @@ transport port, which the node logs.
 - **TLS rastro cannot speak**: rustls on `ring` offers no static-RSA key exchange and no P-521, so a node
   restricted to those cipher suites or keys is an `error`. Not measured; listed so a report of it is
   recognised.
+
+# Elasticsearch: the security review
+
+_2026-10-05._ A security review of the branch, and a Rust and a domain review beside it, applied a
+threat model the collector had not been held to: rastro runs as root, and every process on the box,
+every file in a container's root and every listener in a namespace belongs to an account that may
+not be the operator's. Each finding below was reproduced from the source, the YAML one measured, and
+each fix has a test that failed first.
+
+## Every file a process names is read bounded, and a regular file only
+
+**Narrows "A `java` argument file is expanded as the launcher expands it"** to processes whose
+program is `java`. The census inspects every process, as root, and expanded any `@` it found:
+`curl -d @fifo` blocked the run on the FIFO, and `sleep 1 @/dev/zero` grew rastro's memory until
+the kernel killed something.
+
+Every file read inside a node's root, an argument file or `elasticsearch.yml`, is opened without
+blocking, refused unless it is a regular file, and refused past 1 MiB, against a largest file in the
+matrix under 5 KiB. **A settings file that uses a YAML alias is refused**: measured on yaml-rust2
+0.13.0, the loader copies what an alias names, so aliases of aliases grow tenfold a level, and a
+339-byte file took 1.98 GB. Nothing in the matrix uses one. Placeholder defaults nest at most 16
+deep, since each level was a recursion and a stack overflow aborts rather than fails a node.
+
+## One deadline bounds a request, its TLS handshake and its fallback included
+
+The client documented "a deadline over the whole exchange, connecting included", and kept it only
+for reading the answer. The handshake's reads, and each socket read inside one TLS read, had a bound
+of their own, so a peer that sent a byte of a large record faster than that bound held the run
+indefinitely. Every read and write on the socket now gets only what is left of one deadline, set
+before the first connection is tried.
+
+## A process is found by its argv, and trusted by its account
+
+**Reverses "the peer is the node"** in "TLS is spoken, and the socket is trusted rather than a
+certificate chain", and **narrows** "Credentials come from a file or stdin, one for the box". Matching
+the listener to the process proves the process holds it, not who started the process. Any account
+can start a `java` whose argv names the server, the installed binaries with a config of its own
+included, hold a port, and be sent the operator's credential; or name `/etc` its data path, and have
+`/etc` sealed from the walk.
+
+- **The credential is bound to an account.** `ELASTICSEARCH_NODE_UID` is required with a credential,
+  and a credential goes only to a node whose process runs as that user id, which the kernel says in
+  `/proc/<pid>/status`. Any other node is not sent it and, where it asks, is `not_read`, naming both
+  ids. **What that costs:** the official image runs as user id 1000, which on a box with no user
+  namespace remapping is also the first login account's, so there the binding is only as strong as
+  that account. Remapping gives the container an id of its own.
+- **Over plain HTTP the credential is sent once the node asks for it**, with a 401, and to every
+  request of that node's read after. Over TLS it is sent at once.
+- **A directory is sealed only where the node's account can write it**, by the owner's or the group's
+  bits as the kernel picks them, never by the world's: a node writes its store, and `/tmp` is writable
+  by everyone. A volume's host path must also stay under the host directory of its mount once the host
+  has resolved it, since a `..` or a symlink in the volume led out of it.
+
+A node whose account cannot be read is sent no credential and makes no claim.
+
+## Measured: `-.*` leaves a data stream's backing indices out, and hidden aliases are listed
+
+The domain review read the module comment that `-.*` excludes `.ds-` backing indices as unmeasured.
+Measured on 7.17.29, 8.19.22 and 9.5.4, with a data stream holding one backing index and an index
+with one visible and one hidden alias: none of the three index reads names the backing index, and
+`_alias` lists both aliases. Data streams themselves are not read: issue #64.
+
+## Accepted, each with its reason
+
+- **A node whose settings cannot be read leaves its data directory to the walk.** The claim API has
+  no way to say "unsealed"; the node's own `error` in `nodes` says why, and the walk's churn under it
+  is the visible cost.
+- **UUID-valued index settings stay in `settings`**, `index.resize.source.uuid` and the searchable
+  snapshot ids among them: they are stable for an unchanged index, so byte-identity holds, and a
+  reindex behind an alias shows its new `uuid` anyway.
+- **An alias moved between the alias read and the settings read is not detected.** The torn-read
+  check compares index sets, which an alias swap leaves alone; catching it would mean reading the
+  largest answer twice.
+- **Legacy templates are still not read**, reconsidered in issue #63.
