@@ -308,6 +308,7 @@ impl ResidentNode {
         // process id reused mid-read cannot lend the old node's identity to the new process.
         let start = Self::start_of_in(proc, process_id);
         let node = match arguments_of(path) {
+            Ok(own) if may_hide_the_server(&own) => return Inspection::Unseen,
             Ok(own) => match Self::from_arguments(proc, path, process_id, start, own) {
                 Some(node) => node,
                 None => return Inspection::NotANode,
@@ -384,8 +385,6 @@ struct Argv {
     unread_argument_file: bool,
 }
 
-/// Read as bytes, because one argument that is not UTF-8, a Latin-1 path say, would otherwise
-/// fail the whole read and the server would silently stop being a node.
 /// Whether a read failed because the process exited, as opposed to being refused.
 fn has_left(error: &std::io::Error) -> bool {
     /// `ESRCH`, which a read of a process that exited mid-read can return.
@@ -394,6 +393,8 @@ fn has_left(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(NO_SUCH_PROCESS)
 }
 
+/// Read as bytes, because one argument that is not UTF-8, a Latin-1 path say, would otherwise
+/// fail the whole read and the server would silently stop being a node.
 fn arguments_of(process: &Path) -> std::io::Result<Argv> {
     let cmdline = fs::read(process.join("cmdline"))?;
     let raw: Vec<&[u8]> = cmdline
@@ -577,6 +578,15 @@ fn launcher_arguments(proc: &Path, process: &Path) -> Option<Argv> {
 /// options and no further, must be the server's.
 fn starts_the_server(arguments: &[&str]) -> bool {
     starts_as_a_module(arguments) || is_java_running(arguments, CLASSPATH_MAIN)
+}
+
+/// Whether a `java` that does not start the server could still be one: an argument file it
+/// could not read stood among its options, and may hold the main class.
+///
+/// Found by review: dropped, such a node left the facet and its directories unsealed.
+fn may_hide_the_server(launch: &Argv) -> bool {
+    let arguments: Vec<&str> = launch.arguments.iter().map(String::as_str).collect();
+    launch.unread_argument_file && is_java(&arguments) && !starts_the_server(&arguments)
 }
 
 /// Whether this is the 8.x and 9.x server, started as a module.

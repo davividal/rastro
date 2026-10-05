@@ -334,6 +334,43 @@ fn all_in_finds_a_server_whose_entry_point_is_in_an_argument_file() {
 }
 
 #[test]
+fn census_in_counts_a_java_whose_unread_argument_file_could_start_the_server_as_unseen() {
+    // Arrange: found by review. The file `java @args` was started with is gone or refused, and
+    // it is all of the launch: the main class may be the server's, so the box cannot be called
+    // empty.
+    let proc = scratch_tree("elasticsearch-residency-argfile-unread", &["90/root/work"]);
+    write(
+        &proc,
+        "90/cmdline",
+        "/usr/share/elasticsearch/jdk/bin/java\0@args\0",
+    );
+    std::os::unix::fs::symlink("/work", proc.join("90/cwd")).expect("a writable fixture");
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(census.some_processes_unseen);
+}
+
+#[test]
+fn census_in_sees_past_a_java_whose_argument_files_were_all_read() {
+    // Arrange: every argument file read, and the main class is not the server's.
+    let proc = launched_from_an_argument_file(
+        "elasticsearch-residency-argfile-other",
+        "-cp app.jar org.example.Main\n",
+    );
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(!census.some_processes_unseen);
+}
+
+#[test]
 fn all_in_reads_an_argument_file_as_java_does() {
     // Arrange: measured on the bundled JDK of 8.15.3. Quotes group and are removed, `#` outside
     // them comments to the end of the line, and inside them a backslash before a line break
