@@ -142,16 +142,21 @@ impl Collector for ElasticsearchCollector {
         ResidentNode::all_in(&self.proc)
             .iter()
             .filter_map(|node| {
-                let directories =
-                    match HeldStore::of_in(&self.proc, node.process_id(), node.release()) {
-                        Some(held) => held.data.into_iter().chain(held.logs).collect(),
-                        None => {
-                            let settings = NodeSettings::read_in(&self.proc, node).ok()?;
-                            let mut directories = settings.data_directories(node.home());
-                            directories.extend(settings.log_directories(node.home()));
-                            directories
-                        }
-                    };
+                let held = HeldStore::of_in(&self.proc, node.process_id(), node.release())
+                    .unwrap_or_default();
+                let settings = || NodeSettings::read_in(&self.proc, node).ok();
+                // Each held independently: a node can hold its data lock and no log, found by review.
+                let data = match held.data.is_empty() {
+                    true => settings()?.data_directories(node.home()),
+                    false => held.data,
+                };
+                let logs = match held.logs.is_empty() {
+                    true => settings()
+                        .map(|settings| settings.log_directories(node.home()))
+                        .unwrap_or_default(),
+                    false => held.logs,
+                };
+                let directories: Vec<PathBuf> = data.into_iter().chain(logs).collect();
                 // Named by the config directory, the field that leads to the node in `nodes`, so
                 // a directory two nodes point at says which two.
                 let qualifier = node

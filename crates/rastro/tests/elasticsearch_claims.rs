@@ -404,6 +404,26 @@ fn filesystem_claims_seal_the_store_the_node_holds_open_over_what_its_settings_s
 }
 
 #[test]
+fn filesystem_claims_take_the_logs_from_the_settings_where_the_node_holds_no_log_open() {
+    // Arrange: found by review. A node whose Log4j appender has another name and whose GC log is
+    // off holds `node.lock` and no log, and its held data alone left the logs directory unsealed.
+    let host = Box_::host_node("elasticsearch-claims-held-no-log", false, "");
+    let logs = host.directory("home/logs");
+    let data = host.directory("srv-es");
+    host.holding(5, &data.join("node.lock"));
+
+    // Act
+    let mut claimed = host.claimed_trees();
+    claimed.sort();
+
+    // Assert
+    assert_eq!(
+        claimed,
+        [logs.display().to_string(), data.display().to_string()]
+    );
+}
+
+#[test]
 fn filesystem_claims_seal_a_7_nodes_store_above_its_nodes_directory() {
     // Arrange: measured on 7.17 and 6.8, the lock is under `<path.data>/nodes/0/`, and one data
     // path each holds one; the JVM's own `gc.log` marks the logs directory where no server log
