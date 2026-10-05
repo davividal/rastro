@@ -6386,3 +6386,6 @@ with one visible and one hidden alias: none of the three index reads names the b
   check compares index sets, which an alias swap leaves alone; catching it would mean reading the
   largest answer twice.
 - **Legacy templates are still not read**, reconsidered in issue #63.
+- **An index answer costs memory several times its size**, held as bytes, text, parsed JSON and the
+  collector's own tree at once. Measured on a debug build, a 17 MB alias answer peaked at 126 MB, so
+  the 64 MB bound is about half a gigabyte for one node, and nodes are read one at a time.
