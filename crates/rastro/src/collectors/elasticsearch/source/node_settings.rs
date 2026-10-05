@@ -146,7 +146,10 @@ impl NodeSettings {
         // a placeholder in an environment setting was resolved, not only one in the file.
         let values = values
             .into_iter()
-            .map(|(name, value)| Ok((name, substitute(&value, &environment)?)))
+            .map(|(name, value)| {
+                let resolved = substitute(&name, &value, &environment)?;
+                Ok((name, resolved))
+            })
             .collect::<Result<_, Unread>>()?;
 
         Ok(Self { values })
@@ -198,9 +201,12 @@ impl NodeSettings {
 fn command_line_settings(arguments: &[String]) -> Result<Vec<(String, String)>, Unread> {
     let mut settings = Vec::new();
     let mut rest = arguments.iter();
+    // The option only, never what follows its `=`: the reason is written into the document, and
+    // a value given on the command line may be a secret.
     let unplaced = |argument: &str| {
+        let option = argument.split('=').next().unwrap_or(argument);
         Unread::new(format!(
-            "the node's command line holds `{argument}`, which rastro cannot place, so its \
+            "the node's command line holds `{option}`, which rastro cannot place, so its \
              settings cannot be read exactly"
         ))
     };
@@ -259,11 +265,9 @@ fn environment_settings(
             None => continue,
         };
 
-        if let Some(earlier) = settings.get(&name)
-            && earlier != value
-        {
+        if settings.get(&name).is_some_and(|earlier| earlier != value) {
             return Err(Unread::new(format!(
-                "the node's environment sets {name} twice, to `{earlier}` and `{value}`, and \
+                "the node's environment sets {name} twice, to two different values, and \
                  which one the node took cannot be told"
             )));
         }
@@ -438,7 +442,14 @@ fn scalar(node: &Yaml) -> Option<String> {
 /// `node.name: ${ES_UNSET_NAME:from-default}` started named `from-default`. A name the environment
 /// does not hold and that gives no default is a refusal rather than the literal text: a port
 /// spelled `${ES_HTTP_PORT}` is not one rastro may dial.
-fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<String, Unread> {
+///
+/// A refusal names the setting and never its value, which the document would carry and which may
+/// be a secret, found by review.
+fn substitute(
+    setting: &str,
+    value: &str,
+    environment: &BTreeMap<String, String>,
+) -> Result<String, Unread> {
     let mut resolved = String::new();
     let mut rest = value;
 
@@ -446,7 +457,7 @@ fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<Str
         resolved.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let end = closing_brace_of(after)
-            .ok_or_else(|| Unread::new(format!("`{value}` opens a variable it never closes")))?;
+            .ok_or_else(|| Unread::new(format!("{setting} opens a variable it never closes")))?;
         let placeholder = &after[..end];
         let (name, default) = match placeholder.split_once(':') {
             Some((name, default)) => (name, Some(default)),
@@ -455,10 +466,10 @@ fn substitute(value: &str, environment: &BTreeMap<String, String>) -> Result<Str
         let found = match (environment.get(name), default) {
             (Some(found), _) => found.clone(),
             // A default may itself hold a placeholder, which resolves the same way.
-            (None, Some(default)) => substitute(default, environment)?,
+            (None, Some(default)) => substitute(setting, default, environment)?,
             (None, None) => {
                 return Err(Unread::new(format!(
-                    "`{value}` names {name}, which the node's environment does not hold"
+                    "{setting} names {name}, which the node's environment does not hold"
                 )));
             }
         };

@@ -528,8 +528,10 @@ fn read_in_refuses_an_encoded_and_a_dotted_setting_that_disagree() {
     // Act
     let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a conflict");
 
-    // Assert
+    // Assert: the setting named, and neither value, either of which may be a secret.
     assert!(unread.reason().contains("http.port"), "{}", unread.reason());
+    assert!(!unread.reason().contains("9300"), "{}", unread.reason());
+    assert!(!unread.reason().contains("9400"), "{}", unread.reason());
 }
 
 #[test]
@@ -679,7 +681,7 @@ fn read_in_refuses_a_command_line_argument_it_cannot_place() {
 
     // Assert
     assert!(
-        unread.reason().contains("--Ehttp.port=9400"),
+        unread.reason().contains("--Ehttp.port") && !unread.reason().contains("9400"),
         "{}",
         unread.reason()
     );
@@ -756,4 +758,46 @@ fn read_in_resolves_a_placeholder_whose_default_is_a_placeholder() {
 
     // Assert
     assert_eq!(settings.get("http.port"), Some("9400"));
+}
+
+#[test]
+fn read_in_names_the_setting_never_the_value_of_a_placeholder_it_cannot_resolve() {
+    // Arrange: found by review. The reason is written into the document, and a value written in
+    // a placeholder may be a secret: here a password that happens to hold `${`.
+    let proc = scratch_tree("elasticsearch-settings-unclosed-secret", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        CONFIG_FILE,
+        "bootstrap.password: \"hunter2${oops\"\n",
+    );
+
+    // Act
+    let unread =
+        NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unclosed placeholder");
+
+    // Assert
+    assert!(
+        unread.reason().contains("bootstrap.password"),
+        "{}",
+        unread.reason()
+    );
+    assert!(!unread.reason().contains("hunter2"), "{}", unread.reason());
+}
+
+#[test]
+fn read_in_names_the_option_never_the_value_of_an_argument_it_cannot_place() {
+    // Arrange: an unknown option whose value is a secret.
+    let proc = scratch_tree("elasticsearch-settings-unplaced-secret", &["600/root"]);
+    let argv = format!("{TAR_SERVER_ARGV}--token=hunter2\0");
+    write(&proc, "600/cmdline", &argv);
+    write(&proc, "600/environ", "");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an unknown option");
+
+    // Assert
+    assert!(unread.reason().contains("--token"), "{}", unread.reason());
+    assert!(!unread.reason().contains("hunter2"), "{}", unread.reason());
 }
