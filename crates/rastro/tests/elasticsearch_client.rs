@@ -598,6 +598,25 @@ fn get_over_plain_http_sends_the_credential_once_the_node_asks_for_one() {
 }
 
 #[test]
+fn get_reports_a_403_without_a_credential_as_refused_to_no_credential() {
+    // Arrange: found by review. A node with anonymous access whose anonymous role lacks a
+    // privilege answers 403 to a request that carried nothing, and the refusal said a credential
+    // had been given.
+    let (endpoint, _) = serve_each(&[b"HTTP/1.1 403 Forbidden\r\ncontent-length: 2\r\n\r\n{}"]);
+
+    // Act
+    let unread = HttpClient::new().get(&endpoint, "/").expect_err("a 403");
+
+    // Assert
+    assert!(unread.is_not_read());
+    assert!(
+        !unread.reason().contains("credential given"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
 fn get_reports_a_rejected_credential_as_not_read() {
     // Arrange
     let (endpoint, _) = serve_each(&[UNAUTHORISED, UNAUTHORISED]);

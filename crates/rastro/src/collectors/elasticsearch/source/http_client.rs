@@ -197,10 +197,16 @@ impl HttpClient {
                 }
             }));
         }
+        // Found by review: a node with anonymous access answers 403 to a request carrying nothing.
         if answer.status == FORBIDDEN {
-            return Err(Unread::not_read(format!(
-                "the node refused GET {path} to the credential given"
-            )));
+            return Err(Unread::not_read(match (&self.credential, &self.withheld) {
+                (Some(_), _) => format!("the node refused GET {path} to the credential given"),
+                (None, Some(why)) => format!("the node refused GET {path}, and {why}"),
+                (None, None) => format!(
+                    "the node refused GET {path} to a request without a credential \
+                     (see --credentials)"
+                ),
+            }));
         }
         if answer.status != 200 {
             return Err(Unread::new(format!(
