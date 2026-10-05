@@ -7,9 +7,9 @@ use base64::engine::general_purpose::STANDARD;
 
 use crate::credentials::Credentials;
 
-const API_KEY: &str = "ELASTICSEARCH_API_KEY";
-const USERNAME: &str = "ELASTICSEARCH_USERNAME";
-const PASSWORD: &str = "ELASTICSEARCH_PASSWORD";
+pub(super) const API_KEY: &str = "ELASTICSEARCH_API_KEY";
+pub(super) const USERNAME: &str = "ELASTICSEARCH_USERNAME";
+pub(super) const PASSWORD: &str = "ELASTICSEARCH_PASSWORD";
 
 /// What a run authenticates to every Elasticsearch node on the box with.
 ///

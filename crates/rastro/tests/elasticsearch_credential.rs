@@ -127,3 +127,16 @@ fn no_elasticsearch_names_are_no_node_credential() {
     // Act & Assert
     assert_eq!(node_credential("RABBITMQ_PASSWORD=x\n"), Ok(None));
 }
+
+#[test]
+fn an_elasticsearch_name_rastro_does_not_know_is_refused() {
+    // Arrange: found by review. `ELASTICSEARCH_APIKEY` read as no credential given, and every
+    // secured node was reported as not read for a typo the run never mentioned.
+    let text = "ELASTICSEARCH_APIKEY=k\n";
+
+    // Act
+    let refusal = node_credential(text).expect_err("a misspelt name");
+
+    // Assert
+    assert!(refusal.contains("ELASTICSEARCH_APIKEY"), "{refusal}");
+}

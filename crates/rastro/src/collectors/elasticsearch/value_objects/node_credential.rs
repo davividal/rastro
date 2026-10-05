@@ -1,9 +1,16 @@
 //! The credential a run sends Elasticsearch, and the account whose nodes may be sent it.
 
 use crate::collectors::elasticsearch::value_objects::ApiCredential;
+use crate::collectors::elasticsearch::value_objects::api_credential::{
+    API_KEY, PASSWORD, USERNAME,
+};
 use crate::credentials::Credentials;
 
 const NODE_UID: &str = "ELASTICSEARCH_NODE_UID";
+
+/// Every name the Elasticsearch credential is given by; any other under the prefix is a typo.
+const PREFIX: &str = "ELASTICSEARCH_";
+const KNOWN: [&str; 4] = [API_KEY, USERNAME, PASSWORD, NODE_UID];
 
 /// A credential, and the one account whose nodes it is sent to.
 ///
@@ -30,6 +37,18 @@ impl NodeCredential {
     /// Either without the other is a refusal: a credential with nowhere it may go, or an account
     /// with nothing to give it.
     pub fn from_credentials(credentials: &Credentials) -> Result<Option<Self>, String> {
+        // Found by review: a misspelt name read as no credential, and every secured node as
+        // not read, for a typo the run never mentioned.
+        if let Some(unknown) = credentials
+            .names()
+            .into_iter()
+            .find(|name| name.starts_with(PREFIX) && !KNOWN.contains(&name.as_str()))
+        {
+            return Err(format!(
+                "the credentials give {unknown}, which is not a name rastro reads; it reads {}",
+                KNOWN.join(", ")
+            ));
+        }
         let credential = ApiCredential::from_credentials(credentials)?;
         let recipient = credentials.get(NODE_UID);
 
