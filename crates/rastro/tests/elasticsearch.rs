@@ -144,6 +144,7 @@ fn collect_asks_the_node_nothing_but_the_reads_it_needs() {
         node.requests(),
         [
             "/",
+            "/_cluster/state/blocks?local=true",
             "/_cluster/settings?flat_settings=true",
             "/_index_template",
             "/_component_template",
@@ -661,4 +662,61 @@ fn collect_reads_a_node_upgraded_under_itself_as_what_it_runs_and_says_a_restart
     assert_eq!(text(&field(reported, "release")), "8.15.3");
     assert_eq!(text(&field(reported, "installed_release")), "8.19.22");
     assert_eq!(text(&field(reported, "node_name")), "search-1");
+}
+
+/// The local cluster blocks of a node whose master is gone, measured on cell 28.
+const NO_MASTER_BLOCKS: &str = r#"{"cluster_name":"cell28","cluster_uuid":"HGZmhCrtQU-O_CgWnC4NlQ","blocks":{"global":{"2":{"description":"no master","retryable":true,"levels":["write","metadata_write"]}}}}"#;
+
+#[test]
+fn collect_asks_nothing_cluster_wide_of_a_node_that_lost_its_master() {
+    // Arrange: found by the third domain review, measured on cell 28. A survivor of a cluster
+    // whose master is gone still answers `GET /` with its cluster's UUID, and each cluster-wide
+    // read waited out the 30 s master timeout. Its local blocks say so at once.
+    let node = FakeNode::serving(&[
+        ("/", ROOT),
+        ("/_cluster/state/blocks?local=true", NO_MASTER_BLOCKS),
+    ]);
+    let proc = node.proc("elasticsearch-facet-lost-master");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    let asked = node.requests();
+    assert!(
+        asked.iter().all(|path| path == "/"
+            || path == "/_cluster/state/blocks?local=true"
+            || path.starts_with("/_nodes/_local")),
+        "{asked:?}"
+    );
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert_eq!(
+        text(&field(&field(reported, "cluster_settings"), "not_read")),
+        "the node has no master, so there is no cluster state to read"
+    );
+}
+
+#[test]
+fn collect_asks_a_9_node_for_its_blocks_without_the_parameter_9_deprecates() {
+    // Arrange: measured on 9.4.7 and 9.5.4, `?local` on this API is deprecated, a warning the
+    // node indexes, and has no effect: the answer is the node's own state either way.
+    let answer = root_of("9.5.4");
+    let node = FakeNode::serving(&[("/", answer.as_str())]);
+    let proc = node.proc("elasticsearch-facet-blocks-9");
+    install(&proc, "9.5.4");
+
+    // Act
+    collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let asked = node.requests();
+    assert!(
+        asked.contains(&"/_cluster/state/blocks".to_owned()),
+        "{asked:?}"
+    );
+    assert!(
+        !asked.iter().any(|path| path.contains("local=true")),
+        "{asked:?}"
+    );
 }

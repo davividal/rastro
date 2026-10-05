@@ -10,6 +10,7 @@ use crate::collectors::elasticsearch::model::{
     ClusterSettings, IlmPolicies, Indices, NamedDefinitions, Node, NodeIdentity, NodeLocal,
     Plugins, SnapshotRepositories, Surface,
 };
+use crate::collectors::elasticsearch::source::blocks_answer::has_no_master;
 use crate::collectors::elasticsearch::source::cluster_settings_answer::read_cluster_settings;
 use crate::collectors::elasticsearch::source::indices_answer::read_indices;
 use crate::collectors::elasticsearch::source::lifecycle_answer::{
@@ -117,7 +118,7 @@ fn read_into(
         .checking_the_peer_with(move || held.still_the_nodes());
     let client = &client;
 
-    let answers = namespace.run(|| read_answers(client, &endpoint))??;
+    let answers = namespace.run(|| read_answers(client, &endpoint, release))??;
     // The answer is this node's only where it names the release the node's install holds.
     if answers.identity.version.number != release.to_string() {
         return Err(Unread::new(format!(
@@ -191,11 +192,18 @@ struct Answers {
 ///
 /// `GET /` first and alone decisive: a node that will not say who it is has refused the read,
 /// and nothing after it is asked. Every later surface fails on its own.
-fn read_answers(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Answers, Unread> {
+fn read_answers(
+    client: &HttpClient,
+    endpoint: &HttpEndpoint,
+    release: Release,
+) -> Result<Answers, Unread> {
     let identity = read_identity(client, endpoint)?;
-    // Measured on cell 15: each cluster-wide read of a node with no master waits out the 30 s
-    // master timeout and answers 503. `GET /` has already said so, so none is asked.
-    let cluster_wide = identity.cluster_uuid.is_some();
+    // Measured on cells 15 and 28: each cluster-wide read of a node with no master waits out the
+    // 30 s master timeout and answers 503. A node that never formed says so in `GET /`, `_na_`;
+    // one that lost its master keeps its UUID, and its blocks say so. A blocks read that fails is
+    // no evidence either way, so the cluster-wide reads are then asked as before.
+    let cluster_wide = identity.cluster_uuid.is_some()
+        && !has_no_master(client, endpoint, release).unwrap_or(false);
 
     Ok(Answers {
         cluster_settings: cluster_read(cluster_wide, || read_cluster_settings(client, endpoint)),

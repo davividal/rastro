@@ -1,6 +1,7 @@
 //! How a node is read: one module per host interface.
 
 mod api_value_of;
+mod blocks_answer;
 mod cluster_settings_answer;
 mod held_store;
 mod http_binding;
