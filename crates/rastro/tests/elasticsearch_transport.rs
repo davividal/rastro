@@ -49,3 +49,27 @@ fn transport_requires_tls_for_a_value_it_does_not_recognise() {
     // Act & Assert
     assert_eq!(settings.transport(), Transport::Tls);
 }
+
+#[test]
+fn transport_is_plain_where_security_is_switched_off_whatever_the_tls_setting_says() {
+    // Arrange: found by the third domain review, measured on 8.19.22 and 9.5.4 (cell 27). The
+    // documented way to switch security off flips `xpack.security.enabled` alone, and the
+    // auto-configured `xpack.security.http.ssl.enabled: true` beside it no longer applies.
+    let settings = settings(&[
+        ("xpack.security.enabled", "false"),
+        ("xpack.security.http.ssl.enabled", "true"),
+    ]);
+
+    // Act & Assert
+    assert_eq!(settings.transport(), Transport::Plain);
+}
+
+#[test]
+fn transport_requires_tls_where_security_is_left_unset_and_tls_on() {
+    // Arrange: measured on 7.17.29, with security unset and TLS switched on the node serves TLS:
+    // only an explicit `false` switches it off.
+    let settings = settings(&[("xpack.security.http.ssl.enabled", "true")]);
+
+    // Act & Assert
+    assert_eq!(settings.transport(), Transport::Tls);
+}

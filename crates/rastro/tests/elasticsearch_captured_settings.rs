@@ -93,6 +93,7 @@ cell!(
     "25"
 );
 cell!(transport_of_cell_26_an_8_19_container_auditing, "26");
+cell!(transport_of_cell_27_security_off_beside_a_tls_block, "27");
 cell!(transport_of_cell_28_a_survivor_of_a_lost_master, "28");
 cell!(transport_of_cell_29_a_daemonised_node_on_custom_ports, "29");
 cell!(transport_of_cell_30_an_8_19_package_on_mutual_tls, "30");

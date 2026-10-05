@@ -87,6 +87,9 @@ const DEFAULT_LOGS_DIRECTORY: &str = "logs";
 /// The setting that puts the HTTP listener behind TLS.
 const TLS_SETTING: &str = "xpack.security.http.ssl.enabled";
 
+/// The setting that switches security, and with it HTTP TLS, off where it is exactly `false`.
+const SECURITY_SETTING: &str = "xpack.security.enabled";
+
 /// A node's start-up settings, flattened to dotted keys.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NodeSettings {
@@ -178,11 +181,17 @@ impl NodeSettings {
         directories_from(self.get(LOGS_PATH), DEFAULT_LOGS_DIRECTORY, home)
     }
 
-    /// Plain only where the TLS setting is absent or exactly `false`.
+    /// Plain where security is switched off, or the TLS setting is absent or exactly `false`.
     ///
     /// A value the node would reject as a boolean is read as TLS, because being wrong that way
     /// costs an unread facet and being wrong the other way costs a request the node refused.
     pub fn transport(&self) -> Transport {
+        // Found by the third domain review, measured on 8.19.22, 9.5.4 and 7.17.29: an explicit
+        // `xpack.security.enabled: false` serves plain HTTP whatever the TLS setting beside it
+        // says, which is how the documented switch-off leaves an auto-configured file.
+        if self.get(SECURITY_SETTING) == Some("false") {
+            return Transport::Plain;
+        }
         match self.get(TLS_SETTING) {
             None | Some("false") => Transport::Plain,
             Some(_) => Transport::Tls,
