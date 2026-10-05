@@ -533,6 +533,49 @@ fn get_over_tls_gives_up_on_a_listener_that_never_completes_the_handshake() {
 }
 
 #[test]
+fn get_over_tls_gives_up_on_a_listener_that_trickles_its_handshake_past_the_deadline() {
+    // Arrange: found by the security review. Each read of the handshake had a bound of its own,
+    // and a listener that sends a byte of a large record faster than that bound never ran one
+    // out. The record header says sixteen kilobytes are coming; they come a byte at a time.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut hello = [0_u8; 512];
+        let _ = stream.read(&mut hello);
+        if stream
+            .write_all(&[0x16, 0x03, 0x03, 0x40, 0x00, 0x02])
+            .is_err()
+        {
+            return;
+        }
+        for _ in 0..200 {
+            thread::sleep(Duration::from_millis(100));
+            if stream.write_all(&[0]).is_err() {
+                return;
+            }
+        }
+    });
+    let (sender, receiver) = mpsc::channel();
+
+    // Act
+    thread::spawn(move || {
+        let outcome = HttpClient::bounded(Duration::from_millis(500), 1024)
+            .get(&loopback(port).over(Transport::Tls), "/");
+        let _ = sender.send(outcome);
+    });
+
+    // Assert
+    let outcome = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the client to give up within its deadline");
+    let unread = outcome.expect_err("no handshake");
+    assert!(unread.reason().contains("timed out"), "{}", unread.reason());
+}
+
+#[test]
 fn get_dials_the_fallback_where_the_first_address_cannot_be_reached() {
     // Arrange: nothing listens on `::1` at this port, the IPv4 loopback does.
     let (served, _) = serve_once(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec());

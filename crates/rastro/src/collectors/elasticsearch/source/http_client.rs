@@ -32,7 +32,7 @@ use crate::collectors::elasticsearch::value_objects::{
 };
 use crate::collectors::inet::InetHost;
 
-/// How long one exchange may take, connecting included.
+/// How long one request may take, connecting and any fallback address included.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The largest body read, which a mapping-heavy cluster's templates stay well inside.
@@ -133,14 +133,20 @@ impl HttpClient {
         if let Some(check) = &self.peer_check {
             check()?;
         }
+        // One deadline for the whole of it, the fallback's dial included, found by the security
+        // review: a bound per read let a peer that trickled its handshake hold the run.
+        let deadline = Instant::now() + self.timeout;
         let mut address = socket_address_of(endpoint.host(), endpoint)?;
-        let raw = match self.exchange(address, endpoint.transport(), path) {
-            Err(Dial::Unreachable(_)) if endpoint.fallback().is_some() => {
-                address = socket_address_of(endpoint.fallback().expect("checked"), endpoint)?;
-                self.exchange(address, endpoint.transport(), path)
+        let raw = match (
+            self.exchange(address, endpoint.transport(), path, deadline),
+            endpoint.fallback(),
+        ) {
+            (Err(Dial::Unreachable(_)), Some(fallback)) => {
+                address = socket_address_of(fallback, endpoint)?;
+                self.exchange(address, endpoint.transport(), path, deadline)
                     .map_err(Dial::into_unread)?
             }
-            other => other.map_err(Dial::into_unread)?,
+            (other, _) => other.map_err(Dial::into_unread)?,
         };
 
         // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
@@ -195,10 +201,15 @@ impl HttpClient {
         address: SocketAddr,
         transport: Transport,
         path: &str,
+        deadline: Instant,
     ) -> Result<Vec<u8>, Dial> {
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Dial::Failed(timed_out()));
+        }
 
-        let socket = TcpStream::connect_timeout(&address, self.timeout).map_err(|error| {
+        let socket = TcpStream::connect_timeout(&address, remaining).map_err(|error| {
             let unread = Unread::new(format!("could not connect to {address}: {error}"));
             match error.kind() {
                 ErrorKind::TimedOut => Dial::Failed(timed_out()),
@@ -209,6 +220,7 @@ impl HttpClient {
                 _ => Dial::Failed(unread),
             }
         })?;
+        let socket = Deadlined { socket, deadline };
 
         match transport {
             Transport::Plain => self.converse(socket, address, path).map_err(Dial::Failed),
@@ -229,11 +241,10 @@ impl HttpClient {
     /// Sends the request on `stream` and reads the answer back, within the deadline and the bound.
     fn converse(
         &self,
-        mut stream: impl Socket,
+        mut stream: impl Read + Write,
         address: SocketAddr,
         path: &str,
     ) -> Result<Vec<u8>, Unread> {
-        let deadline = Instant::now() + self.timeout;
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
 
         let authorization = self
@@ -245,13 +256,9 @@ impl HttpClient {
             "GET {path} HTTP/1.1\r\nHost: {address}\r\nAccept: application/json\r\n\
              {authorization}Connection: close\r\n\r\n"
         );
-        // The read deadline too, before the first write: over TLS that write drives the handshake,
-        // which reads, and a listener that never answers it would otherwise hold the run.
+        // Over TLS this write drives the handshake, which reads, under the same deadline.
         stream
-            .tcp()
-            .set_write_timeout(Some(self.timeout))
-            .and_then(|()| stream.tcp().set_read_timeout(Some(self.timeout)))
-            .and_then(|()| stream.write_all(request.as_bytes()))
+            .write_all(request.as_bytes())
             .and_then(|()| stream.flush())
             .map_err(|error| match error.kind() {
                 ErrorKind::WouldBlock | ErrorKind::TimedOut => timed_out(),
@@ -262,15 +269,6 @@ impl HttpClient {
         let mut raw = Vec::new();
         let mut buffer = [0_u8; 8192];
         loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(timed_out());
-            }
-            stream
-                .tcp()
-                .set_read_timeout(Some(remaining))
-                .map_err(|error| Unread::new(format!("GET {path}: {error}")))?;
-
             match stream.read(&mut buffer) {
                 Ok(0) => return Ok(raw),
                 Ok(read) => raw.extend_from_slice(&buffer[..read]),
@@ -327,19 +325,38 @@ fn client_certificate_demanded() -> Unread {
 }
 
 /// A connection the exchange can bound by time: plain TCP, or TLS over it.
-trait Socket: Read + Write {
-    fn tcp(&self) -> &TcpStream;
+/// A socket that gives each read and write only what is left of one deadline, so no sequence
+/// of them, a TLS handshake's included, outlasts it.
+struct Deadlined {
+    socket: TcpStream,
+    deadline: Instant,
 }
 
-impl Socket for TcpStream {
-    fn tcp(&self) -> &TcpStream {
-        self
+impl Deadlined {
+    fn remaining(&self) -> std::io::Result<Duration> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        match remaining.is_zero() {
+            true => Err(ErrorKind::TimedOut.into()),
+            false => Ok(remaining),
+        }
     }
 }
 
-impl Socket for StreamOwned<ClientConnection, TcpStream> {
-    fn tcp(&self) -> &TcpStream {
-        &self.sock
+impl Read for Deadlined {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.socket.set_read_timeout(Some(self.remaining()?))?;
+        self.socket.read(buffer)
+    }
+}
+
+impl Write for Deadlined {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.socket.set_write_timeout(Some(self.remaining()?))?;
+        self.socket.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.socket.flush()
     }
 }
 
