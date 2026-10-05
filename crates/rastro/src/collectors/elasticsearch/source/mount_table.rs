@@ -22,33 +22,61 @@ struct Mount {
     point: PathBuf,
 }
 
-/// The host path of `path` as the node sees it, where `path` is on a mount of its own, a volume
+/// Every host path of `path` as the node sees it, where `path` is on a mount of its own, a volume
 /// or a bind, and the host mounts the same device somewhere that holds it.
 ///
 /// Nothing where the path is on the node's own root mount, which is a container's image and the
 /// container facet's to account for, or where the host does not mount the device.
-pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<PathBuf> {
-    let node_mount = mounts_in(node_table)
-        .into_iter()
-        .filter(|mount| path.starts_with(&mount.point))
-        .max_by_key(|mount| mount.point.components().count())?;
+pub fn host_paths_of(node_table: &str, host_table: &str, path: &Path) -> Vec<PathBuf> {
+    let Some(node_mount) = containing(&mounts_in(node_table), path) else {
+        return Vec::new();
+    };
     if node_mount.point == Path::new("/") {
-        return None;
+        return Vec::new();
     }
+    match on_device(&node_mount, path) {
+        Some(inside) => seen_at(&mounts_in(host_table), &node_mount.device, &inside),
+        None => Vec::new(),
+    }
+}
 
-    let on_device = node_mount
-        .root
-        .join(path.strip_prefix(&node_mount.point).ok()?);
-    let host_mount = mounts_in(host_table)
-        .into_iter()
-        .filter(|mount| mount.device == node_mount.device && on_device.starts_with(&mount.root))
-        .max_by_key(|mount| mount.root.components().count())?;
+/// Every host path that shows `path`, a host path, or a part of it: the host can bind a directory
+/// at a second path, and found by review, a walk sealed at one went through the live store at the
+/// other. `path` itself among them, where the table holds the mount it is on.
+pub fn host_aliases_of(host_table: &str, path: &Path) -> Vec<PathBuf> {
+    let mounts = mounts_in(host_table);
+    containing(&mounts, path)
+        .and_then(|mount| Some((on_device(&mount, path)?, mount.device)))
+        .map(|(inside, device)| seen_at(&mounts, &device, &inside))
+        .unwrap_or_default()
+}
 
-    Some(
-        host_mount
-            .point
-            .join(on_device.strip_prefix(&host_mount.root).ok()?),
-    )
+/// The mount `path` is on: the one with the longest mount point that holds it.
+fn containing(mounts: &[Mount], path: &Path) -> Option<Mount> {
+    mounts
+        .iter()
+        .filter(|mount| path.starts_with(&mount.point))
+        .max_by_key(|mount| mount.point.components().count())
+        .cloned()
+}
+
+/// Where inside its device `path` is, seen through `mount`.
+fn on_device(mount: &Mount, path: &Path) -> Option<PathBuf> {
+    Some(mount.root.join(path.strip_prefix(&mount.point).ok()?))
+}
+
+/// Where the mounts of `device` show `inside` or a part of it: through a mount of something
+/// holding it, `inside` under that mount's point; through a mount of something inside it, the
+/// whole of that mount.
+fn seen_at(mounts: &[Mount], device: &str, inside: &Path) -> Vec<PathBuf> {
+    mounts
+        .iter()
+        .filter(|mount| mount.device == device)
+        .filter_map(|mount| match inside.strip_prefix(&mount.root) {
+            Ok(below) => Some(mount.point.join(below)),
+            Err(_) => mount.root.starts_with(inside).then(|| mount.point.clone()),
+        })
+        .collect()
 }
 
 fn mounts_in(table: &str) -> Vec<Mount> {

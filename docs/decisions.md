@@ -6480,3 +6480,13 @@ before each request walked every descriptor of the node and parsed the whole of 
 hold every socket on it. The descriptor that holds the listening socket, and the socket's inode,
 are found once, with the node; before each request the check is that descriptor still naming that
 socket, and the process its start time.
+
+## A store is sealed at every host path that shows it
+
+Found by review: the host can bind a node's data directory, or a part of it, at a second path, a
+backup mount say, and only one host path was sealed, so the walk went through the live store at
+the other and two runs of an unchanged box differed. The host's own mount table says where each
+mount of a device shows which part of it, so every host path that shows the store, whole or in
+part, is sealed: through a mount of something holding the store, the store under its point;
+through a mount of something inside the store, the whole of that mount. For a node in a container
+and for one on the host alike.

@@ -303,6 +303,92 @@ fn filesystem_claims_seal_the_host_directory_behind_a_container_nodes_volume() {
 }
 
 #[test]
+fn filesystem_claims_seal_every_host_path_a_container_nodes_volume_is_seen_at() {
+    // Arrange: found by review. The host can bind the volume's directory somewhere else as well,
+    // a backup path say, and only one host path was sealed: the walk went through the live store
+    // at the other.
+    let scratch = Box_::host_node("elasticsearch-claims-volume-alias-scratch", false, "");
+    let volume = scratch.directory("volumes/es-data/_data");
+    let alias = scratch.directory("backup-es");
+    let host = container_node_with_a_volume(
+        "elasticsearch-claims-volume-alias",
+        "/usr/share/elasticsearch/data",
+        &volume,
+    );
+    write(
+        &host.proc,
+        "self/mountinfo",
+        &format!(
+            "1 0 254:1 / / rw - ext4 /dev/vda1 rw\n3 1 254:1 {} {} rw - ext4 /dev/vda1 rw\n",
+            volume.display(),
+            alias.display()
+        ),
+    );
+
+    // Act
+    let mut claimed = host.claimed_trees();
+    claimed.sort();
+
+    // Assert
+    let mut expected = [
+        fs::canonicalize(&volume)
+            .expect("the volume")
+            .display()
+            .to_string(),
+        fs::canonicalize(&alias)
+            .expect("the alias")
+            .display()
+            .to_string(),
+    ];
+    expected.sort();
+    assert_eq!(claimed, expected);
+}
+
+#[test]
+fn filesystem_claims_seal_every_host_path_a_host_nodes_store_or_part_of_it_is_seen_at() {
+    // Arrange: the same for a node on the host, whose store is bound elsewhere whole, and in part.
+    let host = Box_::host_node("elasticsearch-claims-host-alias", false, "");
+    let data = host.directory("var-lib-elasticsearch");
+    host.directory("var-lib-elasticsearch/nodes");
+    let whole = host.directory("backup-es");
+    let part = host.directory("nodes-elsewhere");
+    write(
+        &host.scratch,
+        "conf/elasticsearch.yml",
+        &data_setting(&[&data]),
+    );
+    write(
+        &host.proc,
+        "self/mountinfo",
+        &format!(
+            "1 0 254:1 / / rw - ext4 /dev/vda1 rw\n\
+             3 1 254:1 {data} {whole} rw - ext4 /dev/vda1 rw\n\
+             4 1 254:1 {data}/nodes {part} rw - ext4 /dev/vda1 rw\n",
+            data = data.display(),
+            whole = whole.display(),
+            part = part.display()
+        ),
+    );
+
+    // Act
+    let mut claimed = host.claimed_trees();
+    claimed.sort();
+
+    // Assert
+    let mut expected: Vec<String> = [&data, &whole, &part]
+        .iter()
+        .map(|path| {
+            fs::canonicalize(path)
+                .expect("a directory")
+                .display()
+                .to_string()
+        })
+        .collect();
+    expected.sort();
+    assert_eq!(claimed, expected);
+}
+
+#[test]
 fn filesystem_claims_read_a_mount_point_holding_a_space() {
     // Arrange
     let volume = Box_::host_node("elasticsearch-claims-volume-space-scratch", false, "")

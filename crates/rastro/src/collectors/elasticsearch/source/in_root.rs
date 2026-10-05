@@ -12,7 +12,7 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use crate::collectors::elasticsearch::source::mount_table::host_path_of;
+use crate::collectors::elasticsearch::source::mount_table::{host_aliases_of, host_paths_of};
 
 /// Which file a path leads to: the device and the inode, which two paths share only if they are
 /// one file.
@@ -47,8 +47,8 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
     }
 }
 
-/// The host's own directory at `path`, canonical, where `path` inside the process's root is that
-/// same directory, and nothing otherwise.
+/// The host's own directories that show `path`, canonical, where `path` inside the process's root
+/// is a host directory, and none otherwise.
 ///
 /// What decides whether a node's data and log directories may be sealed. Found by review:
 /// Elastic's own systemd unit sets `PrivateTmp=true`, so a packaged node has a mount namespace of
@@ -63,18 +63,34 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
 /// **Canonical**, found by review: a `path.data` that is a symlink, or spelled with `..`, passed
 /// the comparison while the claim named the spelling, and the walk matches paths as text, so it
 /// would have walked into the directory behind the link, the live store itself.
-pub fn host_directory_of(proc: &Path, process_id: u32, path: &Path) -> Option<PathBuf> {
+///
+/// **Every host path that shows it**, found by review: the host can bind the same directory, or a
+/// part of it, at a second path, and a walk sealed at one went through the live store at the other.
+pub fn host_directories_of(proc: &Path, process_id: u32, path: &Path) -> Vec<PathBuf> {
     let process = proc.join(process_id.to_string());
-    if same_directory(&process.join("root"), path) {
-        fs::metadata(path).ok().filter(fs::Metadata::is_dir)?;
-        return fs::canonicalize(path).ok();
-    }
+    let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok();
+    let seen = match same_directory(&process.join("root"), path) {
+        true => {
+            let mut seen = host_table
+                .map(|table| host_aliases_of(&table, path))
+                .unwrap_or_default();
+            seen.push(path.to_path_buf());
+            seen
+        }
+        false => match (fs::read_to_string(process.join("mountinfo")), host_table) {
+            (Ok(node_table), Some(host_table)) => host_paths_of(&node_table, &host_table, path),
+            _ => Vec::new(),
+        },
+    };
 
-    let node_table = fs::read_to_string(process.join("mountinfo")).ok()?;
-    let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok()?;
-    let host_path = host_path_of(&node_table, &host_table, path)?;
-    fs::metadata(&host_path).ok().filter(fs::Metadata::is_dir)?;
-    fs::canonicalize(host_path).ok()
+    let mut directories: Vec<PathBuf> = seen
+        .iter()
+        .filter(|directory| fs::metadata(directory).is_ok_and(|metadata| metadata.is_dir()))
+        .filter_map(|directory| fs::canonicalize(directory).ok())
+        .collect();
+    directories.sort();
+    directories.dedup();
+    directories
 }
 
 /// Whether `path` inside `root` is the same directory as `path` on rastro's own filesystem.

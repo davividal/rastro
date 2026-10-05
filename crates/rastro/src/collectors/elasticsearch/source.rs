@@ -24,7 +24,7 @@ mod templates_answer;
 pub use held_store::HeldStore;
 pub use http_binding::http_endpoint;
 pub use http_client::{HttpClient, NotFound};
-pub use in_root::host_directory_of;
+pub use in_root::host_directories_of;
 pub use node_listeners::{HeldSocket, NodeListener};
 pub use node_namespace::NodeNamespace;
 pub use node_reader::read_node;

@@ -22,7 +22,7 @@ pub use model::{
 };
 pub use source::{
     HeldStore, HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode,
-    host_directory_of, http_endpoint, read_node,
+    host_directories_of, http_endpoint, read_node,
 };
 pub use value_objects::{
     ApiCredential, ApiValue, HttpEndpoint, NetworkNamespace, Release, ReleaseSupport,
@@ -165,8 +165,8 @@ impl Collector for ElasticsearchCollector {
                 let claims: Vec<FilesystemClaim> = data
                     .iter()
                     .chain(&logs)
-                    .filter_map(|directory| {
-                        host_directory_of(&self.proc, node.process_id(), directory)
+                    .flat_map(|directory| {
+                        host_directories_of(&self.proc, node.process_id(), directory)
                     })
                     .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())
                     .map(FilesystemClaim::sealed)
