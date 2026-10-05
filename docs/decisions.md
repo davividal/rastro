@@ -6367,6 +6367,17 @@ included, hold a port, and be sent the operator's credential; or name `/etc` its
 
 A node whose account cannot be read is sent no credential and makes no claim.
 
+## A held store is the node's by the kernel's grant, not by the mode bits
+
+**Narrows "A directory is sealed only where the node's account can write it"** to directories the
+settings name. Found by review: a root-owned store that a POSIX ACL lets the node's account write
+failed the mode-bit check, and the live store was walked. The bits are a model of the kernel's
+access check, and a model has edges; a file the node holds open for writing is the check's own
+result. Measured on 8.19.22, `node.lock` and `gc.log` are both held `O_WRONLY`, so a directory is
+taken from the descriptors only where `fdinfo` says the file is open for writing, and then sealed
+without the bits. A directory the world can write is never sealed, on either route, since any
+account can hold a file open for writing in `/tmp`.
+
 ## Measured: `-.*` leaves a data stream's backing indices out, and hidden aliases are listed
 
 The domain review read the module comment that `-.*` excludes `.ds-` backing indices as unmeasured.

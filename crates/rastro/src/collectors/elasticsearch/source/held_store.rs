@@ -5,6 +5,11 @@
 //! it logs to stdout, in its logs directory. Its settings can name other directories: an `-E`
 //! that left with the launcher of a node started with `-d`, or a file changed since start. The
 //! files it has open are the ones it uses, so they decide what is sealed where they can be read.
+//!
+//! **Open for writing**, measured on 8.19.22: `node.lock` and `gc.log` are both held `O_WRONLY`.
+//! That is the kernel's own word that the node may write in the directory, ACLs and capabilities
+//! included, where a reading of the mode bits missed a directory an ACL let it write, found by
+//! review; and a file held only for reading proves nothing, since any account can open one.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,11 +42,13 @@ impl HeldStore {
     /// `release` decides the lock's layout: below 8 it is under `nodes/<ordinal>`.
     pub fn of_in(proc: &Path, process_id: u32, release: Option<Release>) -> Option<Self> {
         let nested = release.is_some_and(|release| release.major() < 8);
-        let descriptors = fs::read_dir(proc.join(process_id.to_string()).join("fd")).ok()?;
+        let process = proc.join(process_id.to_string());
+        let descriptors = fs::read_dir(process.join("fd")).ok()?;
         let mut held = Self::default();
 
         for target in descriptors
             .flatten()
+            .filter(|descriptor| is_open_for_writing(&process, &descriptor.file_name()))
             .filter_map(|descriptor| fs::read_link(descriptor.path()).ok())
         {
             if let Some(directory) = data_directory_of(&target, nested) {
@@ -84,6 +91,21 @@ fn data_directory_of(target: &Path, nested: bool) -> Option<PathBuf> {
         true => above_ordinal.parent().map(Path::to_path_buf),
         false => Some(directory.to_path_buf()),
     }
+}
+
+/// Whether descriptor `number` is open for writing, by the access mode in its `fdinfo` flags.
+fn is_open_for_writing(process: &Path, number: &std::ffi::OsStr) -> bool {
+    /// `O_ACCMODE`: `O_RDONLY` is 0, `O_WRONLY` 1, `O_RDWR` 2.
+    const ACCESS_MODE: u32 = 0o3;
+
+    fs::read_to_string(process.join("fdinfo").join(number))
+        .ok()
+        .and_then(|info| {
+            info.lines()
+                .find_map(|line| line.strip_prefix("flags:"))
+                .and_then(|flags| u32::from_str_radix(flags.trim(), 8).ok())
+        })
+        .is_some_and(|flags| flags & ACCESS_MODE != 0)
 }
 
 fn is_a_log(target: &Path) -> bool {

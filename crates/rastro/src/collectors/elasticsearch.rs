@@ -14,6 +14,7 @@ pub mod source;
 pub mod value_objects;
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 pub use model::{
@@ -22,7 +23,7 @@ pub use model::{
     Surface,
 };
 pub use source::{
-    HeldStore, HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode,
+    HeldStore, HttpClient, NodeListener, NodeNamespace, NodeSettings, ProcessOwner, ResidentNode,
     host_directory_of, http_endpoint, read_node,
 };
 pub use value_objects::{
@@ -88,6 +89,31 @@ impl ElasticsearchCollector {
             credential: None,
         }
     }
+}
+
+/// How a directory came to be taken for a node's store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Found {
+    /// The node holds a file open for writing there, which the kernel granted, ACLs and all.
+    Held,
+
+    /// Its settings name it, and any account can write a process's settings.
+    Named,
+}
+
+/// Whether a directory found as `found` may be sealed as the node's store.
+///
+/// **Never one the world can write**: any account can hold a file open for writing in `/tmp`. A
+/// directory only named is the node's where its account may write it by the mode bits, found by
+/// the security review: a process that read as a node named `/etc`, and had it sealed.
+fn may_be_its_store(found: Found, metadata: &fs::Metadata, owner: Option<&ProcessOwner>) -> bool {
+    const WORLD_WRITE: u32 = 0o002;
+
+    metadata.mode() & WORLD_WRITE == 0
+        && match found {
+            Found::Held => true,
+            Found::Named => owner.is_some_and(|owner| owner.can_write(metadata)),
+        }
 }
 
 impl Default for ElasticsearchCollector {
@@ -158,34 +184,40 @@ impl Collector for ElasticsearchCollector {
                 let settings = || NodeSettings::read_in(&self.proc, node).ok();
                 // Each held independently: a node can hold its data lock and no log, found by review.
                 let data = match held.data.is_empty() {
-                    true => settings()?.data_directories(node.home()),
-                    false => held.data,
+                    true => (settings()?.data_directories(node.home()), Found::Named),
+                    false => (held.data, Found::Held),
                 };
                 let logs = match held.logs.is_empty() {
-                    true => settings()
-                        .map(|settings| settings.log_directories(node.home()))
-                        .unwrap_or_default(),
-                    false => held.logs,
+                    true => (
+                        settings()
+                            .map(|settings| settings.log_directories(node.home()))
+                            .unwrap_or_default(),
+                        Found::Named,
+                    ),
+                    false => (held.logs, Found::Held),
                 };
-                let directories: Vec<PathBuf> = data.into_iter().chain(logs).collect();
                 // Named by the config directory, the field that leads to the node in `nodes`, so
                 // a directory two nodes point at says which two.
                 let qualifier = node
                     .config()
                     .and_then(|config| ClaimQualifier::new(config.to_string_lossy()).ok());
 
-                // Found by the security review: any account can start a process that reads as a
-                // node and name any directory, `/etc` say. A node writes its store, so a directory
-                // its account cannot write is not one.
-                let owner = node.owner()?;
-                let claims: Vec<FilesystemClaim> = directories
-                    .iter()
-                    .filter_map(|directory| {
-                        host_directory_of(&self.proc, node.process_id(), directory)
+                let claims: Vec<FilesystemClaim> = [data, logs]
+                    .into_iter()
+                    .flat_map(|(directories, found)| {
+                        directories
+                            .into_iter()
+                            .map(move |directory| (directory, found))
                     })
-                    .filter(|directory| {
-                        fs::metadata(directory).is_ok_and(|metadata| owner.can_write(&metadata))
+                    .filter_map(|(directory, found)| {
+                        host_directory_of(&self.proc, node.process_id(), &directory)
+                            .map(|on_host| (on_host, found))
                     })
+                    .filter(|(directory, found)| {
+                        fs::metadata(directory)
+                            .is_ok_and(|metadata| may_be_its_store(*found, &metadata, node.owner()))
+                    })
+                    .map(|(directory, _)| directory)
                     .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())
                     .map(FilesystemClaim::sealed)
                     .map(|claim| match &qualifier {
