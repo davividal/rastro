@@ -22,10 +22,13 @@ op inject -i rastro.tpl | rastro --credentials -   # or stdin
 | --- | --- |
 | `ELASTICSEARCH_API_KEY` | every Elasticsearch node, as `Authorization: ApiKey`; the encoded form Elasticsearch hands out |
 | `ELASTICSEARCH_USERNAME`, `ELASTICSEARCH_PASSWORD` | the same, as basic authentication |
+| `ELASTICSEARCH_NODE_UID` | required with either: the user id the nodes run as, `id -u elasticsearch` on a package install, `1000` for the official image |
 
 The `invocation` facet records which names were given and no value. **One Elasticsearch credential
 serves every node on the box**: with two secured clusters, the cluster it does not belong to
-rejects it, logs a failed authentication, and is reported `not_read`. See `docs/decisions.md`.
+rejects it, logs a failed authentication, and is reported `not_read`. **It goes only to nodes
+`ELASTICSEARCH_NODE_UID` runs**, since any account can start a process that looks like one. See
+`docs/decisions.md`.
 
 ## Format
 

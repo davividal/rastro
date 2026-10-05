@@ -64,7 +64,7 @@ pub use time::TimeCollector;
 pub use timers::TimersCollector;
 pub use units::UnitsCollector;
 
-use crate::collectors::elasticsearch::ApiCredential;
+use crate::collectors::elasticsearch::NodeCredential;
 use crate::credentials::Credentials;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -195,7 +195,7 @@ pub fn built_in(run: Run) -> BuiltIn {
     let elasticsearch_credential = run
         .credentials
         .as_ref()
-        .and_then(|credentials| ApiCredential::from_credentials(credentials).ok().flatten());
+        .and_then(|credentials| NodeCredential::from_credentials(credentials).ok().flatten());
     let mut collectors = state_collectors(run.hostname, elasticsearch_credential);
     let policy = claimed_policy(&collectors, &run.narrowed);
     let contested = match &policy {
@@ -240,7 +240,7 @@ pub fn built_in(run: Run) -> BuiltIn {
 /// The collectors that observe the host, filesystem aside.
 fn state_collectors(
     hostname: Result<String, String>,
-    elasticsearch_credential: Option<ApiCredential>,
+    elasticsearch_credential: Option<NodeCredential>,
 ) -> Vec<Box<dyn Collector>> {
     vec![
         Box::new(AccountsCollector::new()),

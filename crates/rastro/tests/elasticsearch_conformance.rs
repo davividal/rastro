@@ -18,7 +18,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use rastro::collectors::elasticsearch::{ApiCredential, ElasticsearchCollector};
+use rastro::collectors::elasticsearch::{ApiCredential, ElasticsearchCollector, NodeCredential};
 use rastro_collector::Collector;
 use rastro_fingerprint::{Completeness, Observation};
 
@@ -245,6 +245,9 @@ fn a_secured_node_is_read_with_the_operators_credential() {
         username: "elastic".to_owned(),
         password: SECURED_PASSWORD.to_owned(),
     };
+    // The image runs its node as `elasticsearch`, user id 1000, which is the host's id too where
+    // docker remaps no user namespace, as on the runner.
+    let credential = NodeCredential::new(credential, 1000);
 
     // Act
     let facet = ElasticsearchCollector::authenticating(Some(credential))

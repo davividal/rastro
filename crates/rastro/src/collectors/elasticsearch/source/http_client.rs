@@ -65,6 +65,9 @@ pub struct HttpClient {
     /// What every request authenticates with, where the operator gave one.
     credential: Option<ApiCredential>,
 
+    /// Why no credential is sent where one was given, said where the node asks for one.
+    withheld: Option<String>,
+
     /// Whether the listener is still the node's, asked before each request.
     peer_check: Option<PeerCheck>,
 }
@@ -76,6 +79,7 @@ impl std::fmt::Debug for HttpClient {
             .field("timeout", &self.timeout)
             .field("body_limit", &self.body_limit)
             .field("credential", &self.credential)
+            .field("withheld", &self.withheld)
             .field("peer_check", &self.peer_check.is_some())
             .finish()
     }
@@ -91,6 +95,7 @@ impl HttpClient {
             timeout,
             body_limit,
             credential: None,
+            withheld: None,
             peer_check: None,
         }
     }
@@ -125,7 +130,20 @@ impl HttpClient {
 
     /// The same client, sending `credential` with every request.
     pub fn authenticating(self, credential: Option<ApiCredential>) -> Self {
-        Self { credential, ..self }
+        Self {
+            credential,
+            withheld: None,
+            ..self
+        }
+    }
+
+    /// The same client, sending no credential, and saying `why` where the node asks for one.
+    pub fn withholding(self, why: String) -> Self {
+        Self {
+            credential: None,
+            withheld: Some(why),
+            ..self
+        }
     }
 
     /// The body of a `200` answer to `GET path`; any other outcome is the reason it was not had.
@@ -167,9 +185,12 @@ impl HttpClient {
         let answer = Answer::parse(&raw, path)?;
 
         if answer.status == UNAUTHORISED {
-            return Err(Unread::not_read(match self.credential {
-                Some(_) => "the credential given was rejected",
-                None => "security is on and no credential was given (see --credentials)",
+            return Err(Unread::not_read(match (&self.credential, &self.withheld) {
+                (Some(_), _) => "the credential given was rejected".to_owned(),
+                (None, Some(why)) => format!("security is on and {why}"),
+                (None, None) => {
+                    "security is on and no credential was given (see --credentials)".to_owned()
+                }
             }));
         }
         if answer.status == FORBIDDEN {

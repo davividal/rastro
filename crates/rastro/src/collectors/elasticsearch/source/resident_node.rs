@@ -22,6 +22,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::collectors::elasticsearch::source::ProcessOwner;
 use crate::collectors::elasticsearch::source::in_root::{names_inside, read_inside};
 use crate::collectors::elasticsearch::source::java_argument_file;
 use crate::collectors::elasticsearch::value_objects::Release;
@@ -135,6 +136,9 @@ pub struct ResidentNode {
     /// When the process started, in clock ticks since boot, which with its id names this process
     /// and no later one given the same id.
     start: Option<u64>,
+
+    /// The account the process runs as, which alone may be sent the operator's credential.
+    owner: Option<ProcessOwner>,
 
     /// The first of the process's files a read needs that the kernel refused, where one was.
     refused: Option<&'static str>,
@@ -290,6 +294,11 @@ impl ResidentNode {
         self.launched_with_an_argument_file
     }
 
+    /// The account the process runs as, read between the two looks at its start.
+    pub fn owner(&self) -> Option<&ProcessOwner> {
+        self.owner.as_ref()
+    }
+
     /// The arguments after the launch argv's entry point, which is where the command-line
     /// settings are.
     pub fn application_arguments(&self) -> &[String] {
@@ -358,6 +367,7 @@ impl ResidentNode {
         Some(Self {
             process_id,
             start,
+            owner: ProcessOwner::of_in(proc, process_id),
             refused: refused_in(path),
             home,
             config,

@@ -1,14 +1,15 @@
 #![allow(dead_code)]
 
-//! A process's start time in a fixture `/proc`, which the settings read compares the node's file
-//! against.
+//! A process's start and its account in a fixture `/proc`.
 
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::fs_tree::write;
 
-/// Gives `pid` a start `seconds_ago` before now, and `parent` as its parent.
+/// Gives `pid` a start `seconds_ago` before now, and `parent` as its parent, and runs it as the
+/// account that owns the fixture, as the files a test makes for it are.
 ///
 /// The start is `btime` from `/proc/stat` plus field 22 of the process's own `stat`, in clock
 /// ticks; this puts the whole offset in `btime` and the ticks at zero, so it holds whatever the
@@ -29,5 +30,14 @@ pub fn started(proc: &Path, pid: &str, parent: &str, seconds_ago: u64) {
         proc,
         &format!("{pid}/stat"),
         &format!("{pid} (java) S {parent} {middle} 0 0 0\n"),
+    );
+    let fixture = std::fs::metadata(proc).expect("the fixture's /proc");
+    let (uid, gid) = (fixture.uid(), fixture.gid());
+    write(
+        proc,
+        &format!("{pid}/status"),
+        &format!(
+            "Name:\tjava\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\nGid:\t{gid}\t{gid}\t{gid}\t{gid}\nGroups:\t{gid}\n"
+        ),
     );
 }

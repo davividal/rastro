@@ -48,6 +48,9 @@ pub struct ElasticsearchCollector {
     /// not need and an archive install does not have.
     package_installed: bool,
     client: HttpClient,
+
+    /// The operator's credential, sent only to nodes its account runs.
+    credential: Option<NodeCredential>,
 }
 
 impl ElasticsearchCollector {
@@ -55,13 +58,19 @@ impl ElasticsearchCollector {
         Self::authenticating(None)
     }
 
-    /// The box's collector, sending `credential` to every node it asks.
-    pub fn authenticating(credential: Option<ApiCredential>) -> Self {
+    /// The box's collector, sending `credential` to the nodes its account runs.
+    pub fn authenticating(credential: Option<NodeCredential>) -> Self {
         Self::reading(
             Path::new("/proc"),
             Path::new(PACKAGE_LAUNCHER).exists(),
-            HttpClient::new().authenticating(credential),
+            HttpClient::new(),
         )
+        .with_credential(credential)
+    }
+
+    /// The same collector, sending `credential` to the nodes its account runs.
+    pub fn with_credential(self, credential: Option<NodeCredential>) -> Self {
+        Self { credential, ..self }
     }
 
     /// The same collector over sources the caller chose.
@@ -75,6 +84,7 @@ impl ElasticsearchCollector {
             proc: proc.to_path_buf(),
             package_installed,
             client,
+            credential: None,
         }
     }
 }
@@ -189,7 +199,7 @@ impl Collector for ElasticsearchCollector {
         let mut nodes: Vec<Node> = census
             .nodes
             .iter()
-            .map(|resident| read_node(&self.proc, resident, &self.client))
+            .map(|resident| read_node(&self.proc, resident, &self.client, self.credential.as_ref()))
             .collect();
         nodes.sort_by(Node::ordering);
 

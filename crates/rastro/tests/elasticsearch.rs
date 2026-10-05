@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use rastro::collectors::elasticsearch::{ElasticsearchCollector, HttpClient};
+use rastro::collectors::elasticsearch::{
+    ApiCredential, ElasticsearchCollector, HttpClient, NodeCredential,
+};
 use rastro_collector::{Collector, CollectorCategory, Concurrency, Presence};
 use rastro_fingerprint::{Completeness, Volatility};
 
@@ -560,17 +562,70 @@ fn collect_reads_what_a_node_with_no_master_holds_itself_and_asks_nothing_cluste
     assert!(!keys_of(&field(reported, "plugins")).contains(&"not_read".to_owned()));
 }
 
+/// The fixture's account, which its node runs as.
+fn fixture_account(proc: &std::path::Path) -> u32 {
+    use std::os::unix::fs::MetadataExt;
+
+    std::fs::metadata(proc).expect("the fixture").uid()
+}
+
+fn credential_for(account: u32) -> NodeCredential {
+    NodeCredential::new(ApiCredential::api_key("b3RoZXI6Y2x1c3Rlcg=="), account)
+}
+
+#[test]
+fn collect_sends_the_credential_to_a_node_its_account_runs() {
+    // Arrange
+    let node = FakeNode::serving(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-credential-sent");
+
+    // Act
+    ElasticsearchCollector::reading(&proc, false, HttpClient::new())
+        .with_credential(Some(credential_for(fixture_account(&proc))))
+        .collect()
+        .expect("a facet");
+
+    // Assert
+    let authorizations = node.authorizations();
+    assert!(!authorizations.is_empty());
+    assert!(
+        authorizations
+            .iter()
+            .all(|sent| sent.as_deref() == Some("ApiKey b3RoZXI6Y2x1c3Rlcg==")),
+        "{authorizations:?}"
+    );
+}
+
+#[test]
+fn collect_sends_no_credential_to_a_node_another_account_runs() {
+    // Arrange: found by the security review. Any account can start a process whose argv names
+    // the server, the real binaries with a config of its own included, and hold a listener.
+    let node = FakeNode::answering(&[("/", 401, MISSING_CREDENTIALS)]);
+    let proc = node.proc("elasticsearch-facet-credential-withheld");
+    let elsewhere = fixture_account(&proc) + 1;
+
+    // Act
+    let facet = ElasticsearchCollector::reading(&proc, false, HttpClient::new())
+        .with_credential(Some(credential_for(elsewhere)))
+        .collect()
+        .expect("a facet");
+
+    // Assert
+    assert!(node.authorizations().iter().all(Option::is_none));
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    let reason = text(&field(reported, "not_read"));
+    assert!(reason.contains(&format!("user id {elsewhere}")), "{reason}");
+}
+
 #[test]
 fn collect_reports_a_node_that_rejects_the_credential_given_as_not_read() {
     // Arrange: the v1 limitation's other cluster, which the box's one credential is not for.
     let node = FakeNode::answering(&[("/", 401, MISSING_CREDENTIALS)]);
     let proc = node.proc("elasticsearch-facet-rejected");
-    let client = HttpClient::new().authenticating(Some(
-        rastro::collectors::elasticsearch::ApiCredential::api_key("b3RoZXI6Y2x1c3Rlcg=="),
-    ));
 
     // Act
-    let facet = ElasticsearchCollector::reading(&proc, false, client)
+    let facet = ElasticsearchCollector::reading(&proc, false, HttpClient::new())
+        .with_credential(Some(credential_for(fixture_account(&proc))))
         .collect()
         .expect("a facet");
 

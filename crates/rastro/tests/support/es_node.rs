@@ -76,6 +76,7 @@ fn plain_listener(respond: impl Fn(&str) -> Vec<u8> + Send + 'static) -> u16 {
 pub struct FakeNode {
     pub port: u16,
     requests: Arc<Mutex<Vec<String>>>,
+    authorizations: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 impl FakeNode {
@@ -116,12 +117,18 @@ impl FakeNode {
         after: impl Fn(&str) + Send + 'static,
     ) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let authorizations = Arc::new(Mutex::new(Vec::new()));
         let routes: Vec<(String, u16, String)> = routes
             .iter()
             .map(|(path, status, body)| ((*path).to_owned(), *status, (*body).to_owned()))
             .collect();
         let seen = Arc::clone(&requests);
+        let authorized = Arc::clone(&authorizations);
         let respond = move |request: &str| {
+            authorized
+                .lock()
+                .expect("the authorization log")
+                .push(authorization_in(request));
             let path = request
                 .split_whitespace()
                 .nth(1)
@@ -152,7 +159,19 @@ impl FakeNode {
             true => super::tls_listener::serving(respond),
             false => plain_listener(respond),
         };
-        Self { port, requests }
+        Self {
+            port,
+            requests,
+            authorizations,
+        }
+    }
+
+    /// The `Authorization` header of each request so far, in order, `None` where it had none.
+    pub fn authorizations(&self) -> Vec<Option<String>> {
+        self.authorizations
+            .lock()
+            .expect("the authorization log")
+            .clone()
     }
 
     /// The paths requested so far, in order.
@@ -211,6 +230,14 @@ impl FakeNode {
 
         proc
     }
+}
+
+fn authorization_in(request: &str) -> Option<String> {
+    request.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("authorization")
+            .then(|| value.trim().to_owned())
+    })
 }
 
 /// Puts `release`'s server jar in the fixture server's install, in place of any other.
