@@ -626,6 +626,53 @@ fn read_in_refuses_placeholders_nested_deeper_than_any_setting_needs() {
 }
 
 #[test]
+fn read_in_refuses_a_setting_that_expands_past_any_settings_value() {
+    // Arrange: found by review. Each `${A}` is a copy of what the node's environment holds, so a
+    // file the size cap admits repeated a 128 KiB variable into gigabytes.
+    let proc = scratch_tree("elasticsearch-settings-placeholder-wide", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(
+        &proc,
+        "600/environ",
+        &format!("A={}\0", "x".repeat(128 * 1024)),
+    );
+    write(&proc, CONFIG_FILE, "cluster.name: \"${A}${A}\"\n");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("too wide to expand");
+
+    // Assert
+    assert!(
+        unread.reason().contains("cluster.name expands"),
+        "{}",
+        unread.reason()
+    );
+    assert!(!unread.reason().contains("xxx"), "{}", unread.reason());
+}
+
+#[test]
+fn read_in_refuses_settings_that_expand_past_any_file_together() {
+    // Arrange: each value under its own bound, and many of them.
+    let proc = scratch_tree("elasticsearch-settings-placeholder-many", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(
+        &proc,
+        "600/environ",
+        &format!("A={}\0", "x".repeat(60 * 1024)),
+    );
+    let file: String = (0..20)
+        .map(|n| format!("node.attr.a{n}: \"${{A}}\"\n"))
+        .collect();
+    write(&proc, CONFIG_FILE, &file);
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("too much to expand");
+
+    // Assert
+    assert!(unread.reason().contains("expand"), "{}", unread.reason());
+}
+
+#[test]
 fn read_in_takes_a_placeholders_variable_over_its_default() {
     // Arrange
     let proc = scratch_tree("elasticsearch-settings-placeholder-set", &["600/root"]);

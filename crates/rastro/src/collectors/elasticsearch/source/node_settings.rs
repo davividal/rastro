@@ -142,11 +142,19 @@ impl NodeSettings {
 
         // After the merge, as the node does it: measured by the second domain review on 8.15.3,
         // a placeholder in an environment setting was resolved, not only one in the file.
+        let mut expanded = 0_usize;
         let values = values
             .into_iter()
             .map(|(name, value)| {
                 let resolved = substitute(&name, &value, &environment)?;
-                Ok((name, resolved))
+                expanded += resolved.len();
+                match expanded > MOST_EXPANDED_IN_ALL {
+                    true => Err(expands_past(
+                        "the node's settings together",
+                        MOST_EXPANDED_IN_ALL,
+                    )),
+                    false => Ok((name, resolved)),
+                }
             })
             .collect::<Result<_, Unread>>()?;
 
@@ -474,6 +482,11 @@ fn substitute(
 /// file of its owner's choosing took the stack, which aborts the run rather than failing a node.
 const MOST_NESTED: usize = 16;
 
+/// How long one setting may grow by substitution, and all of them together. Found by review: each
+/// `${A}` is a copy of the variable, so a file the size cap admits expanded into gigabytes.
+const MOST_EXPANDED_VALUE: usize = 64 * 1024;
+const MOST_EXPANDED_IN_ALL: usize = 1024 * 1024;
+
 fn substitute_within(
     setting: &str,
     value: &str,
@@ -509,11 +522,19 @@ fn substitute_within(
             }
         };
         resolved.push_str(&found);
+        if resolved.len() > MOST_EXPANDED_VALUE {
+            return Err(expands_past(setting, MOST_EXPANDED_VALUE));
+        }
         rest = &after[end + 1..];
     }
 
     resolved.push_str(rest);
     Ok(resolved)
+}
+
+/// A refusal naming the setting and the bound, never what it expanded to.
+fn expands_past(setting: &str, bound: usize) -> Unread {
+    Unread::new(format!("{setting} expands past {bound} bytes"))
 }
 
 /// Where the placeholder that `text` is inside of closes, counting the ones it holds: stopping
