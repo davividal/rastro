@@ -32,7 +32,7 @@ is_server() {
 
 # Copies a process's files and links, and notes which an unprivileged account may read.
 copy_proc() {
-  local pid=$1 dir=$2 file link readable
+  local pid=$1 dir=$2 file link readable descriptor
   mkdir -p "$dir"
   for file in "${PROC_FILES[@]}"; do
     mkdir -p "$dir/$(dirname "$file")"
