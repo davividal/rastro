@@ -32,7 +32,7 @@ which is why it is stated once here rather than as a column.
 | 3 | 8.19 | deb + systemd | default, security off | none | LVM `/data` | `0.0.0.0` | off | ok, `/data/...` sealed |
 | 4 | 9.5 | deb + systemd | `ES_PATH_CONF=/srv/es/config` | none | default | custom `http.port` | off | ok |
 | 5 | 9.4 | tar.gz `-d -p` | default under the tarball | invisible | default | default | off | ok, settings from the node |
-| 6 | 8.19 | tar.gz `-d -p` | file says security off | invisible, turns TLS on | default | default | TLS via `-E` | `error` after one plain `GET /` (the blind spot) |
+| 6 | 8.19 | tar.gz `-d -p` | file says security off | invisible, turns TLS on | default | default | TLS via `-E` | asked over TLS, found by a handshake; `not_read` without a credential (the blind spot until the handshake replaced the settings) |
 | 7 | 7.17 | tar.gz `-d -p` | default under the tarball | on the server argv | two data paths | default | off | ok, both paths sealed |
 | 8 | 9.5 | tar.gz foreground, own systemd unit | symlinked file | visible on the launcher | LVM `/data` | default | off | ok |
 | 9 | 9.5 | docker | env only | none | named volume | default | off | ok, volume's host dir sealed |

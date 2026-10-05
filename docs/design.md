@@ -162,9 +162,10 @@ was measured on are [`elasticsearch-matrix.md`](elasticsearch-matrix.md). It is 
 narrow: a `GET`, to a listener held by a process `/proc` names as an Elasticsearch server,
 from a thread that has joined that process's network namespace, so a node with no published
 port is read the same way as one on the host. **Nothing is asked blind**: which listener
-serves HTTP is inferred from the node's own listeners and how it binds, and whether it wants
-TLS from the settings it started with, because a request to the transport port or a
-request in the wrong protocol is something the node logs. A node on TLS is asked over TLS,
+serves HTTP is inferred from the node's own listeners and how it binds, because a request to
+the transport port is something the node logs, and whether it wants TLS is asked of the
+listener with a handshake and nothing after it, which no node logs, measured, where a request
+in the wrong protocol is a WARN. A node on TLS is asked over TLS,
 trusting the socket rastro matched to it rather than a certificate chain. Whether it wants
 credentials is its own answer: without `--credentials`, a secured node is `not_read`, which is
 the box's state and not an error. Every request was measured before it was written, and
