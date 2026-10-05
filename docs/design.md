@@ -169,8 +169,9 @@ trusting the socket rastro matched to it rather than a certificate chain. Whethe
 credentials is its own answer: without `--credentials`, a secured node is `not_read`, which is
 the box's state and not an error. Every request was measured before it was written, and
 none writes; the one family that does, deprecated parameters and legacy routes, is not sent.
-A node with no master is read for what it holds itself, and its cluster-wide surfaces are
-`not_read` without being asked. For a second or two after a first start or an
+A node with no master, one that never formed or one that lost it, is read for what it holds
+itself, and its cluster-wide surfaces are `not_read` without being asked. The release reported is
+the one the node runs, and an install upgraded under it shows as `installed_release`. For a second or two after a first start or an
 upgrade, while its built-in templates, policies and pipelines are still being installed, a read
 is complete-looking and partial, and no request can tell, so a fingerprint taken then is a partial
 one; measured on 8.15.3, it settled within two seconds. An index is keyed by its alias where the

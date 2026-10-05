@@ -6234,3 +6234,75 @@ authentication, in its audit trail too where audit is on. That node is `not_read
 given was rejected". Left for an issue to ask for; the candidate then is a key per label tried on
 every node, which only works if a rejected key leaves no trace with audit off, and that is not
 measured.
+
+# Elasticsearch: the third domain review, measured on six more cells
+
+_2026-10-05._ The third review (`rastro-research/collectors/elasticsearch-expert/review-3.md`) found
+every one of the 26 cells read as the envelope says, and supported shapes outside the matrix read
+wrongly. Each became a cell, 27 to 32 in [`elasticsearch-matrix.md`](elasticsearch-matrix.md), captured
+like the others, before the code changed.
+
+## Security switched off is plain HTTP, whatever the TLS setting beside it says
+
+Cell 27, measured on 8.19.22 and 9.5.4: the documented switch-off flips `xpack.security.enabled` alone,
+and the auto-configured `xpack.security.http.ssl.enabled: true` beside it no longer applies; the node
+serves plain HTTP. On 7.17.29 the same TLS setting with security left unset serves TLS, so it is an
+explicit `false` that decides, on every release.
+
+## A lost master is read from the node's own blocks, and that is one more request
+
+Cell 28: a node that lost its master keeps its cluster's UUID, so `GET /` cannot tell, and each
+cluster-wide read waited out the 30 s master timeout. The node's local cluster blocks name the missing
+master at once, block `2`, `no master`. So `GET /_cluster/state/blocks` joins the request list, asked
+after `GET /` where it reported a cluster: with `?local=true` below 9, measured on 7.17.29 and 8.19.22
+with no warning; and without it from 9, because on 9.4.7 and 9.5.4 `?local` is deprecated, a warning
+the node indexes, and has no effect. A blocks read that fails is no evidence either way, and the
+cluster-wide reads are then asked as before.
+
+## The release is the one the node runs, and an upgrade under it is a pending restart
+
+**Corrects "Four releases are supported", which made a node whose `GET /` and installed jar disagree an
+error.** Cell 31, measured on 8.15.3 with 8.19.22 installed over it by `dpkg -i`: the node keeps
+running, `GET /` still says 8.15.3, and it holds its old server jar open, marked ` (deleted)`. So the
+release is read from the jar the process holds open, and the `lib/` listing is the installed release,
+reported beside it as `installed_release`; the two differ exactly while a restart is pending. `GET /` is
+still checked against the running release. The listing is the fallback where the descriptors cannot be
+read.
+
+## What the box keeps rastro out of, measured three more ways
+
+- **Mutual TLS** (cell 30): a node with `client_authentication: required` refuses the handshake for want
+  of a client certificate. rastro has none to present, so the node is `not_read`. Presenting one is for
+  a later version.
+- **An unprivileged run**: another account's `environ`, `fd` and `/proc/<pid>/root` are refused, on
+  every cell. The node is `not_read`, naming the file refused and that it takes root, where it was an
+  `error` blaming a missing jar.
+- **Nothing installed and nothing running** (cell 32) is `absent`. A stopped package (cell 20) is `ok`
+  with no nodes, which is what `design.md` has always said; the matrix row was wrong.
+
+## Accepted: a daemonised node's `-E` ports outside the default ranges
+
+Cell 29: an 8.x or 9.x node started with `-d -E http.port=8200 -E transport.port=8300` takes both
+settings away with its launcher, the file names neither, and neither port is in the default ranges, so
+rastro cannot tell which listener serves HTTP and does not guess. The node is an `error` saying which
+listeners it found. The same blind spot as TLS switched on by `-E` alone, and accepted for the same
+reason: the settings exist only in the node's memory, and asking each listener would send HTTP to the
+transport port, which the node logs.
+
+## Smaller corrections
+
+- **Sealing an 8.x data path under `nodes`**: the step from a held `node.lock` up past
+  `nodes/<ordinal>` applies only below 8, and only to a numeric ordinal, which is all 7.x writes.
+- **A `::` listener** is dialled on `::1` and, where that cannot be reached, on `127.0.0.1`: measured on
+  8.19.22, `::1` can be unavailable with IPv6 off on `lo` alone while the JVM's dual-stack socket is
+  bound.
+- **The index reads' budget**: `_settings` and `_mapping` grow with every index, so they are bounded
+  at 60 s and 64 MB, the other reads at 10 s and 16 MB.
+- **No setting value in a refusal**: a reason is written into the document, and a placeholder, an
+  unplaced argument or two disagreeing environment spellings can hold a secret. The reason names the
+  setting or the option, never its value.
+- **Ingest pipelines are withheld**, each on its own, digested by default: a processor can carry a
+  token. Templates and ILM policies are not, being structure an operator diffs.
+- **TLS rastro cannot speak**: rustls on `ring` offers no static-RSA key exchange and no P-521, so a node
+  restricted to those cipher suites or keys is an `error`. Not measured; listed so a report of it is
+  recognised.
