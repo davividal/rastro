@@ -10,7 +10,7 @@
 //! The join is on a thread of its own that ends with the work, so the thread that joined is never
 //! one of the collector pool's, and no later work can run in a namespace it did not ask for.
 //!
-//! It needs `CAP_SYS_ADMIN`, so an unprivileged run gets a refusal for a node in a container. The
+//! It needs `CAP_SYS_ADMIN`, so an unprivileged run gets `not_read` for a node in a container. The
 //! call goes through `rustix`, whose `setns` is safe and pure Rust on Linux, so
 //! `unsafe_code = "forbid"` still holds for the workspace's own code. See `docs/decisions.md`.
 
@@ -66,9 +66,11 @@ impl NodeNamespace {
         }
 
         let namespace = File::open(&self.path).map_err(|error| {
-            Unread::new(format!(
-                "the node's network namespace could not be opened: {error}"
-            ))
+            let reason = format!("the node's network namespace could not be opened: {error}");
+            match error.kind() {
+                std::io::ErrorKind::PermissionDenied => Unread::not_read(reason),
+                _ => Unread::new(reason),
+            }
         })?;
 
         thread::scope(|scope| {
@@ -93,11 +95,17 @@ fn join(namespace: &File) -> Result<(), Unread> {
 
     use rustix::thread::{LinkNameSpaceType, move_into_link_name_space};
 
+    use rustix::io::Errno;
+
+    // Refused, it is the box keeping rastro out, which "Not read is not an error" makes
+    // `not_read`: an unprivileged run has no `CAP_SYS_ADMIN`, found by review.
     move_into_link_name_space(namespace.as_fd(), Some(LinkNameSpaceType::Network)).map_err(
         |error| {
-            Unread::new(format!(
-                "joining the node's network namespace failed: {error}"
-            ))
+            let reason = format!("joining the node's network namespace failed: {error}");
+            match error {
+                Errno::PERM | Errno::ACCESS => Unread::not_read(reason),
+                _ => Unread::new(reason),
+            }
         },
     )
 }

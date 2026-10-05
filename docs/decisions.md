@@ -6446,3 +6446,11 @@ the box" decided, and a node's store is sealed where the node holds or names it.
 What stays from that review is what protects a run from a real node's files and peers: the bounded
 reads of `elasticsearch.yml`, the YAML alias and nesting refusals, the placeholder depth, the one
 deadline per request, the TLS handshake asked of the listener, and no setting value in a refusal.
+
+## A refused namespace join is not read, not an error
+
+**Reverses the `error` in "Joining another namespace needs `CAP_SYS_ADMIN`"**, found by review: it
+predates "Not read is not an error", which makes the box keeping rastro out `not_read`, as it
+already is for a refused `/proc` file or a node that wants a client certificate. A namespace the
+kernel refuses to open, or to join, for want of privilege is now `not_read`; any other failure of
+the join is still the node's `error`.
