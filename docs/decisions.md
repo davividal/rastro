@@ -6411,6 +6411,11 @@ with one visible and one hidden alias: none of the three index reads names the b
 - **An alias moved between the alias read and the settings read is not detected.** The torn-read
   check compares index sets, which an alias swap leaves alone; catching it would mean reading the
   largest answer twice.
+- **An account can seal its own directories** by starting a process that reads as a node and
+  holding a store there. Found by review and rejected as a finding: it is an account masquerading
+  inside the server, the same for every collector that seals a store, and it hides only what that
+  account could change anyway. The claim and its claimant are in the `invocation` facet's claim
+  table. Sealing what the account cannot write, `/etc` or another account's files, stays refused.
 - **Legacy templates are still not read**, reconsidered in issue #63.
 - **An index answer costs memory several times its size**, held as bytes, text, parsed JSON and the
   collector's own tree at once. Measured on a debug build, a 17 MB alias answer peaked at 126 MB, so

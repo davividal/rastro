@@ -178,19 +178,27 @@ two questions are reviewed separately, and the first is not bounded by anything 
 and peer rastro reads may belong to an account that is not the operator's, inside a container or
 out. Any of these is a **P1, wherever it occurs and whatever the supported envelope says**:
 
-- rastro writes, creates, deletes or changes anything on the host, or makes a service do so
-  (`nginx -T` creating log files is the measured precedent; a request a node logs as a write is
-  another).
+- rastro writes, creates, deletes or changes anything on the host, or makes a service do so:
+  `nginx -T` creating log files is the measured precedent, and a request a service records as an
+  error or as a change is another. A service that records every access by design, an audit trail
+  or an access log, recording rastro's read is not a finding.
 - rastro hangs, crashes, or grows memory or time without a bound, on input another account controls:
   a FIFO, `/dev/zero`, a huge or nested file, a peer that trickles bytes.
 - A credential or secret reaches anyone it is not meant for: another process, a listener rastro
   did not identify by the kernel's account, plaintext, the document without `--raw`, stderr, a
   refusal message.
 - rastro reads or follows a path outside the root it means to read, as root.
-- Another account can hide state from the fingerprint or put state into it: a seal, an exclusion or
-  an observation that some process chose.
-- A trust decision rests on something another account writes (an argv, a settings file, a mode bit
-  that an ACL overrides) where the kernel can give the answer directly.
+- Another account can hide **state it could not change itself** from the fingerprint, `/etc` or
+  another account's files, through a seal or an exclusion some process chose.
+- A trust decision that leads to one of the harms above rests on something another account writes
+  (an argv, a settings file, a mode bit that an ACL overrides) where the kernel can give the answer
+  directly.
+
+**Out of scope: an account disguising its own processes.** rastro reads what the box says it runs,
+and an account that can start a process that looks like a service can make its own files look
+like that service's store. That is someone with access to the server masquerading inside it, the
+same for every collector, PostgreSQL and RabbitMQ as much as Elasticsearch. It is a finding only
+where it reaches one of the harms above.
 
 **2. Is the reading right?** Correctness is bounded by the envelope each collector declares in
 `docs/decisions.md` (and, for Elasticsearch, `docs/elasticsearch-matrix.md`): its supported releases,
