@@ -24,7 +24,7 @@ use crate::collectors::elasticsearch::source::templates_answer::{
     read_component_templates, read_index_templates,
 };
 use crate::collectors::elasticsearch::source::{
-    HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
+    HeldSocket, HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
 };
 use crate::collectors::elasticsearch::value_objects::{
     HttpEndpoint, NetworkNamespace, Release, ReleaseSupport, Unread,
@@ -115,11 +115,13 @@ fn read_into(
     let listeners = NodeListener::read_in(proc, resident.process_id())?;
     let endpoint = http_endpoint(&listeners, &settings)?;
 
+    let port = endpoint.port().as_u16();
     let held = HeldListener {
         proc: proc.to_path_buf(),
         process_id: resident.process_id(),
         start: resident.start(),
-        port: endpoint.port().as_u16(),
+        port,
+        socket: HeldSocket::on_port_in(proc, resident.process_id(), port)?,
     };
     let client = client
         .clone()
@@ -160,6 +162,9 @@ struct HeldListener {
     /// The process's start as the census found it: an id alone can pass to a later process.
     start: Option<u64>,
     port: u16,
+
+    /// The socket the node listens on that port by.
+    socket: HeldSocket,
 }
 
 impl HeldListener {
@@ -171,11 +176,7 @@ impl HeldListener {
                  is sent to it",
             ));
         }
-        let listeners = NodeListener::read_in(&self.proc, self.process_id)?;
-        match listeners
-            .iter()
-            .any(|listener| listener.port.as_u16() == self.port)
-        {
+        match self.socket.still_held_in(&self.proc, self.process_id) {
             true => Ok(()),
             false => Err(Unread::new(format!(
                 "the node no longer holds its listener on port {}, so nothing more is sent there",

@@ -645,6 +645,33 @@ fn collect_asks_nothing_more_of_a_listener_the_node_no_longer_holds() {
 }
 
 #[test]
+fn collect_checks_the_node_still_holds_its_listener_without_reading_the_socket_tables_again() {
+    // Arrange: found by review. The check before each request walked every descriptor and parsed
+    // the whole of `net/tcp` and `net/tcp6`, outside the request's deadline, on a busy namespace
+    // a table of every socket on it. Here the tables become unreadable once `/` is answered, and
+    // the node, still holding its listener, is read in full.
+    let name = "elasticsearch-facet-listener-held";
+    let tables = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(name)
+        .join("600/net/tcp");
+    let node = FakeNode::serving_then(&[("/", ROOT)], move |path| {
+        if path == "/" {
+            let _ = std::fs::write(&tables, "not a socket table\n");
+        }
+    });
+    let proc = node.proc(name);
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert: every surface was asked for, not only `/`.
+    let asked = node.requests();
+    assert!(asked.len() > 1, "{asked:?}");
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+}
+
+#[test]
 fn collect_asks_nothing_more_of_a_process_id_another_process_has_taken() {
     // Arrange: found by review. The node exits and its process id is reused by a program that
     // binds the same port, which a check of the listener alone accepts. A process is its id and

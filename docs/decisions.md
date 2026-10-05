@@ -6471,3 +6471,12 @@ nothing about the next: the flag is the node's own.
 request's deadline. The kernel bounds how many a process holds, a real node's few tens of
 thousands cost milliseconds, and keeping the one descriptor that holds the listener instead is
 left for a later change.
+
+## The peer check looks at one descriptor
+
+**Reverses the accepted cost in "A node that does not ask is sent no credential"**: the check
+before each request walked every descriptor of the node and parsed the whole of `net/tcp` and
+`net/tcp6`, outside the request's deadline, found by review, and on a busy namespace the tables
+hold every socket on it. The descriptor that holds the listening socket, and the socket's inode,
+are found once, with the node; before each request the check is that descriptor still naming that
+socket, and the process its start time.
