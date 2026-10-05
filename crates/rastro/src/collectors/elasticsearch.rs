@@ -142,15 +142,16 @@ impl Collector for ElasticsearchCollector {
         ResidentNode::all_in(&self.proc)
             .iter()
             .filter_map(|node| {
-                let directories = match HeldStore::of_in(&self.proc, node.process_id()) {
-                    Some(held) => held.data.into_iter().chain(held.logs).collect(),
-                    None => {
-                        let settings = NodeSettings::read_in(&self.proc, node).ok()?;
-                        let mut directories = settings.data_directories(node.home());
-                        directories.extend(settings.log_directories(node.home()));
-                        directories
-                    }
-                };
+                let directories =
+                    match HeldStore::of_in(&self.proc, node.process_id(), node.release()) {
+                        Some(held) => held.data.into_iter().chain(held.logs).collect(),
+                        None => {
+                            let settings = NodeSettings::read_in(&self.proc, node).ok()?;
+                            let mut directories = settings.data_directories(node.home());
+                            directories.extend(settings.log_directories(node.home()));
+                            directories
+                        }
+                    };
                 // Named by the config directory, the field that leads to the node in `nodes`, so
                 // a directory two nodes point at says which two.
                 let qualifier = node

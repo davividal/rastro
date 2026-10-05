@@ -362,6 +362,15 @@ fn filesystem_claims_name_the_node_they_were_made_for() {
 }
 
 impl Box_ {
+    /// The node's install holding `release`'s server jar.
+    fn installed(&self, release: &str) {
+        write(
+            &self.scratch,
+            &format!("home/lib/elasticsearch-{release}.jar"),
+            "",
+        );
+    }
+
     /// The node holding `target` open, as its descriptor `number`.
     fn holding(&self, number: u32, target: &Path) {
         fs::create_dir_all(self.proc.join("600/fd")).expect("a writable fixture");
@@ -400,6 +409,7 @@ fn filesystem_claims_seal_a_7_nodes_store_above_its_nodes_directory() {
     // path each holds one; the JVM's own `gc.log` marks the logs directory where no server log
     // is kept, as in a container that logs to stdout.
     let host = Box_::host_node("elasticsearch-claims-held-7", false, "");
+    host.installed("7.17.29");
     let first = host.directory("data-a");
     let second = host.directory("data-b");
     let logs = host.directory("jvm-logs");
@@ -433,6 +443,38 @@ fn filesystem_claims_take_no_directory_from_an_unrelated_open_log() {
     let elsewhere = host.directory("tmp");
     host.holding(5, &data.join("node.lock"));
     host.holding(1, &elsewhere.join("run.log"));
+
+    // Act
+    let claimed = host.claimed_trees();
+
+    // Assert
+    assert_eq!(claimed, [data.display().to_string()]);
+}
+
+#[test]
+fn filesystem_claims_take_an_8_nodes_lock_directory_as_its_data_whatever_it_is_called() {
+    // Arrange: found by review. On 8.x and 9.x the lock is `<path.data>/node.lock`, so a data path
+    // that happens to be `…/nodes/0` is that directory, and reading it as 7.x's
+    // `<path.data>/nodes/<ordinal>` sealed the tree two levels above it instead.
+    let host = Box_::host_node("elasticsearch-claims-held-8-nodes", false, "");
+    host.installed("9.5.4");
+    let data = host.directory("srv/nodes/0");
+    host.holding(5, &data.join("node.lock"));
+
+    // Act
+    let claimed = host.claimed_trees();
+
+    // Assert
+    assert_eq!(claimed, [data.display().to_string()]);
+}
+
+#[test]
+fn filesystem_claims_climb_a_7_nodes_ordinal_only_where_it_is_a_number() {
+    // Arrange: 7.x names the ordinal directory `0`, `1`, …, and nothing else.
+    let host = Box_::host_node("elasticsearch-claims-held-7-named", false, "");
+    host.installed("7.17.29");
+    let data = host.directory("srv/nodes/current");
+    host.holding(5, &data.join("node.lock"));
 
     // Act
     let claimed = host.claimed_trees();

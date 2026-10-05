@@ -9,10 +9,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::collectors::elasticsearch::value_objects::Release;
+
 /// The file a node locks in each data directory.
 const DATA_LOCK: &str = "node.lock";
 
-/// The directory 7.x keeps the lock in, `<path.data>/nodes/<ordinal>/node.lock`.
+/// The directory 7.x and earlier keep the lock in, `<path.data>/nodes/<ordinal>/node.lock`.
 const NODES_DIRECTORY: &str = "nodes";
 
 /// The server log every packaged and archive node writes, `<cluster>_server.json`.
@@ -31,7 +33,10 @@ pub struct HeldStore {
 impl HeldStore {
     /// What the node holds open, or nothing where its descriptors cannot be listed or show no
     /// data lock, which leaves the decision to its settings.
-    pub fn of_in(proc: &Path, process_id: u32) -> Option<Self> {
+    ///
+    /// `release` decides the lock's layout: below 8 it is under `nodes/<ordinal>`.
+    pub fn of_in(proc: &Path, process_id: u32, release: Option<Release>) -> Option<Self> {
+        let nested = release.is_some_and(|release| release.major() < 8);
         let descriptors = fs::read_dir(proc.join(process_id.to_string()).join("fd")).ok()?;
         let mut held = Self::default();
 
@@ -39,7 +44,7 @@ impl HeldStore {
             .flatten()
             .filter_map(|descriptor| fs::read_link(descriptor.path()).ok())
         {
-            if let Some(directory) = data_directory_of(&target) {
+            if let Some(directory) = data_directory_of(&target, nested) {
                 held.data.push(directory);
             } else if is_a_log(&target)
                 && let Some(directory) = target.parent()
@@ -57,18 +62,25 @@ impl HeldStore {
 }
 
 /// The data directory a held `node.lock` is in: its directory on 8.x and 9.x, and the one above
-/// `nodes/<ordinal>` on 7.x.
-fn data_directory_of(target: &Path) -> Option<PathBuf> {
+/// `nodes/<ordinal>` below 8, where the ordinal is a number, as all 7.x writes.
+///
+/// Found by review: an 8.x data path that is itself `…/nodes/0` read as 7.x's layout and sealed a
+/// tree two levels above the node's own.
+fn data_directory_of(target: &Path, nested: bool) -> Option<PathBuf> {
     if target.file_name()? != DATA_LOCK {
         return None;
     }
     let directory = target.parent()?;
-    let above_ordinal = directory.parent()?;
-
-    match above_ordinal
+    let is_an_ordinal = directory
         .file_name()
-        .is_some_and(|name| name == NODES_DIRECTORY)
-    {
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()));
+    let above_ordinal = directory.parent()?;
+    let under_nodes = above_ordinal
+        .file_name()
+        .is_some_and(|name| name == NODES_DIRECTORY);
+
+    match nested && is_an_ordinal && under_nodes {
         true => above_ordinal.parent().map(Path::to_path_buf),
         false => Some(directory.to_path_buf()),
     }
