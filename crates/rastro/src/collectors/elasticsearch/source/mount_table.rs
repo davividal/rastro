@@ -7,7 +7,14 @@
 //! is mounted on the host. Together they name the host directory, as `docker inspect` would and
 //! without asking the engine.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// A node's path on the host, and the host directory its mount is, which it must stay under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostPath {
+    pub path: PathBuf,
+    pub mount: PathBuf,
+}
 
 /// One line of a `mountinfo` table, the fields this reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +34,12 @@ struct Mount {
 ///
 /// Nothing where the path is on the node's own root mount, which is a container's image and the
 /// container facet's to account for, or where the host does not mount the device.
-pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<PathBuf> {
+///
+/// **Spelled plainly first**, found by the security review: compared as text, `<volume>/../x`
+/// matched the volume's mount, and the host resolved the `..` outside it. `..` here is taken as
+/// the node's kernel takes it at a mount point that is not a symlink, one directory up.
+pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<HostPath> {
+    let path = &plainly(path);
     let node_mount = mounts_in(node_table)
         .into_iter()
         .filter(|mount| path.starts_with(&mount.point))
@@ -44,11 +56,31 @@ pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<P
         .filter(|mount| mount.device == node_mount.device && on_device.starts_with(&mount.root))
         .max_by_key(|mount| mount.root.components().count())?;
 
-    Some(
-        host_mount
-            .point
-            .join(on_device.strip_prefix(&host_mount.root).ok()?),
-    )
+    let on_host = |inside: &Path| {
+        inside
+            .strip_prefix(&host_mount.root)
+            .ok()
+            .map(|relative| host_mount.point.join(relative))
+    };
+    Some(HostPath {
+        path: on_host(&on_device)?,
+        mount: on_host(&node_mount.root)?,
+    })
+}
+
+/// `path` with `.` dropped and each `..` taking the component before it, never above the root.
+fn plainly(path: &Path) -> PathBuf {
+    let mut plain = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                plain.pop();
+            }
+            other => plain.push(other),
+        }
+    }
+    plain
 }
 
 fn mounts_in(table: &str) -> Vec<Mount> {

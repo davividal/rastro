@@ -64,17 +64,19 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
 /// would have walked into the directory behind the link, the live store itself.
 pub fn host_directory_of(proc: &Path, process_id: u32, path: &Path) -> Option<PathBuf> {
     let process = proc.join(process_id.to_string());
-    let host_path = match same_directory(&process.join("root"), path) {
-        true => path.to_path_buf(),
-        false => {
-            let node_table = fs::read_to_string(process.join("mountinfo")).ok()?;
-            let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok()?;
-            host_path_of(&node_table, &host_table, path)?
-        }
-    };
+    if same_directory(&process.join("root"), path) {
+        fs::metadata(path).ok().filter(fs::Metadata::is_dir)?;
+        return fs::canonicalize(path).ok();
+    }
 
-    fs::metadata(&host_path).ok().filter(fs::Metadata::is_dir)?;
-    fs::canonicalize(host_path).ok()
+    let node_table = fs::read_to_string(process.join("mountinfo")).ok()?;
+    let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok()?;
+    let host = host_path_of(&node_table, &host_table, path)?;
+    fs::metadata(&host.path).ok().filter(fs::Metadata::is_dir)?;
+    // Found by the security review: a symlink in the volume can lead out of it on the host.
+    let canonical = fs::canonicalize(&host.path).ok()?;
+    let mount = fs::canonicalize(&host.mount).ok()?;
+    canonical.starts_with(&mount).then_some(canonical)
 }
 
 /// Whether `path` inside `root` is the same directory as `path` on rastro's own filesystem.

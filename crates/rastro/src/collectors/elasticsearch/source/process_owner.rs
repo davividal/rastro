@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 /// A process's effective user id and every group it acts with, mapped into rastro's own user
@@ -38,5 +39,22 @@ impl ProcessOwner {
 
     pub fn uid(&self) -> u32 {
         self.uid
+    }
+
+    /// Whether the process may write in the directory `metadata` describes, by its owner's or
+    /// its group's bits as the kernel picks them. **Never by the world's**: `/tmp` is writable by
+    /// every account, a node's among them, and is no store.
+    pub fn can_write(&self, metadata: &fs::Metadata) -> bool {
+        const OWNER_WRITE: u32 = 0o200;
+        const GROUP_WRITE: u32 = 0o020;
+
+        match (
+            metadata.uid() == self.uid,
+            self.groups.contains(&metadata.gid()),
+        ) {
+            (true, _) => metadata.mode() & OWNER_WRITE != 0,
+            (false, true) => metadata.mode() & GROUP_WRITE != 0,
+            (false, false) => false,
+        }
     }
 }

@@ -13,6 +13,7 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 pub use model::{
@@ -173,10 +174,17 @@ impl Collector for ElasticsearchCollector {
                     .config()
                     .and_then(|config| ClaimQualifier::new(config.to_string_lossy()).ok());
 
+                // Found by the security review: any account can start a process that reads as a
+                // node and name any directory, `/etc` say. A node writes its store, so a directory
+                // its account cannot write is not one.
+                let owner = node.owner()?;
                 let claims: Vec<FilesystemClaim> = directories
                     .iter()
                     .filter_map(|directory| {
                         host_directory_of(&self.proc, node.process_id(), directory)
+                    })
+                    .filter(|directory| {
+                        fs::metadata(directory).is_ok_and(|metadata| owner.can_write(&metadata))
                     })
                     .filter_map(|directory| WalkedTree::new(directory.to_string_lossy()).ok())
                     .map(FilesystemClaim::sealed)
