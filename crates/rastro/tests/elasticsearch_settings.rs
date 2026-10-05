@@ -31,7 +31,7 @@ const CONFIG_FILE: &str = "600/root/etc/elasticsearch/elasticsearch.yml";
 
 fn node_in(proc: &std::path::Path) -> ResidentNode {
     if !proc.join("600/stat").exists() {
-        support::process::started(proc, "600", "1", 5);
+        support::process::started(proc, "600", "1");
     }
     ResidentNode::all_in(proc)
         .into_iter()
@@ -174,7 +174,7 @@ fn read_in_takes_an_8_nodes_command_line_settings_from_its_launcher() {
          --module-path\0/usr/share/elasticsearch/lib\0\
          -m\0org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch\0",
     );
-    support::process::started(&proc, "600", "40", 5);
+    support::process::started(&proc, "600", "40");
     write(
         &proc,
         "600/environ",
@@ -688,7 +688,7 @@ fn read_in_reads_a_file_changed_after_the_node_started() {
     write(&proc, "600/cmdline", SERVER_ARGV);
     write(&proc, "600/environ", "");
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
-    support::process::started(&proc, "600", "1", 3600);
+    support::process::started(&proc, "600", "1");
 
     // Act
     let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
@@ -790,7 +790,7 @@ fn read_in_reads_a_node_whose_launcher_has_exited_from_its_file_and_environment(
     );
     write(&proc, "600/environ", "ES_PATH_CONF=/etc/elasticsearch\0");
     write(&proc, CONFIG_FILE, "http.port: 9201\n");
-    support::process::started(&proc, "600", "1", 5);
+    support::process::started(&proc, "600", "1");
 
     // Act
     let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");

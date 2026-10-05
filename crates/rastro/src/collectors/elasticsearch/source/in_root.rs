@@ -151,16 +151,22 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
         Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
     };
-    let file = openat2(&root, relative, flags, Mode::empty(), ResolveFlags::IN_ROOT).map_err(
-        |errno| match errno {
-            // Before Linux 5.6 there is no safe way to walk another root, and reading past it is
-            // the defect this exists to prevent, so the read is refused rather than approximated.
-            Errno::NOSYS => std::io::Error::other(
-                "this kernel has no openat2, so the path cannot be resolved inside the node's root",
-            ),
-            other => std::io::Error::from(other),
-        },
-    )?;
+    let file = openat2(
+        &root,
+        relative,
+        flags,
+        Mode::empty(),
+        // Explicit, since the man page says `IN_ROOT` disabling magic links may change.
+        ResolveFlags::IN_ROOT | ResolveFlags::NO_MAGICLINKS,
+    )
+    .map_err(|errno| match errno {
+        // Before Linux 5.6 there is no safe way to walk another root, and reading past it is
+        // the defect this exists to prevent, so the read is refused rather than approximated.
+        Errno::NOSYS => std::io::Error::other(
+            "this kernel has no openat2, so the path cannot be resolved inside the node's root",
+        ),
+        other => std::io::Error::from(other),
+    })?;
 
     Ok(File::from(file))
 }

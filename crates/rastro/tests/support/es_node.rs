@@ -225,7 +225,7 @@ impl FakeNode {
             &format!("{PID}/root/etc/elasticsearch/elasticsearch.yml"),
             config_file.unwrap_or(""),
         );
-        super::process::started(&proc, PID, "1", 5);
+        super::process::started(&proc, PID, "1");
         install(&proc, RELEASE);
 
         proc
