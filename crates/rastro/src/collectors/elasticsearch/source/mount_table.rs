@@ -7,6 +7,8 @@
 //! is mounted on the host. Together they name the host directory, as `docker inspect` would and
 //! without asking the engine.
 
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 /// One line of a `mountinfo` table, the fields this reads.
@@ -27,7 +29,7 @@ struct Mount {
 ///
 /// Nothing where the path is on the node's own root mount, which is a container's image and the
 /// container facet's to account for, or where the host does not mount the device.
-pub fn host_paths_of(node_table: &str, host_table: &str, path: &Path) -> Vec<PathBuf> {
+pub fn host_paths_of(node_table: &[u8], host_table: &[u8], path: &Path) -> Vec<PathBuf> {
     let Some(node_mount) = containing(&mounts_in(node_table), path) else {
         return Vec::new();
     };
@@ -43,7 +45,7 @@ pub fn host_paths_of(node_table: &str, host_table: &str, path: &Path) -> Vec<Pat
 /// Every host path that shows `path`, a host path, or a part of it: the host can bind a directory
 /// at a second path, and found by review, a walk sealed at one went through the live store at the
 /// other. `path` itself among them, where the table holds the mount it is on.
-pub fn host_aliases_of(host_table: &str, path: &Path) -> Vec<PathBuf> {
+pub fn host_aliases_of(host_table: &[u8], path: &Path) -> Vec<PathBuf> {
     let mounts = mounts_in(host_table);
     containing(&mounts, path)
         .and_then(|mount| Some((on_device(&mount, path)?, mount.device)))
@@ -79,41 +81,50 @@ fn seen_at(mounts: &[Mount], device: &str, inside: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn mounts_in(table: &str) -> Vec<Mount> {
+/// The table's mounts, read as bytes: a path is the kernel's bytes, and found by review, one mount
+/// point anywhere that was not UTF-8 failed the whole table read as text.
+fn mounts_in(table: &[u8]) -> Vec<Mount> {
     table
-        .lines()
+        .split(|byte| *byte == b'\n')
         .filter_map(|line| {
-            let fields: Vec<&str> = line.split(' ').collect();
+            let fields: Vec<&[u8]> = line.split(|byte| *byte == b' ').collect();
             Some(Mount {
-                device: (*fields.get(2)?).to_owned(),
-                root: PathBuf::from(unescaped(fields.get(3)?)),
-                point: PathBuf::from(unescaped(fields.get(4)?)),
+                device: String::from_utf8_lossy(fields.get(2)?).into_owned(),
+                root: path_of(unescaped(fields.get(3)?)),
+                point: path_of(unescaped(fields.get(4)?)),
             })
         })
         .collect()
 }
 
+fn path_of(bytes: Vec<u8>) -> PathBuf {
+    PathBuf::from(OsString::from_vec(bytes))
+}
+
 /// A `mountinfo` path: the kernel writes a space, a tab, a line break and a backslash as an
 /// octal escape, `\040` for a space.
-fn unescaped(field: &str) -> String {
-    let mut text = String::with_capacity(field.len());
+fn unescaped(field: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(field.len());
     let mut rest = field;
 
-    while let Some(at) = rest.find('\\') {
-        text.push_str(&rest[..at]);
-        let digits = rest.get(at + 1..at + 4);
-        match digits.and_then(|digits| u8::from_str_radix(digits, 8).ok()) {
+    while let Some(at) = rest.iter().position(|byte| *byte == b'\\') {
+        bytes.extend_from_slice(&rest[..at]);
+        let escaped = rest
+            .get(at + 1..at + 4)
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| u8::from_str_radix(digits, 8).ok());
+        match escaped {
             Some(byte) => {
-                text.push(char::from(byte));
+                bytes.push(byte);
                 rest = &rest[at + 4..];
             }
             None => {
-                text.push('\\');
+                bytes.push(b'\\');
                 rest = &rest[at + 1..];
             }
         }
     }
 
-    text.push_str(rest);
-    text
+    bytes.extend_from_slice(rest);
+    bytes
 }

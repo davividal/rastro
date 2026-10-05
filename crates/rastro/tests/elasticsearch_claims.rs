@@ -389,6 +389,26 @@ fn filesystem_claims_seal_every_host_path_a_host_nodes_store_or_part_of_it_is_se
 }
 
 #[test]
+fn filesystem_claims_read_a_mount_table_holding_a_path_that_is_not_utf_8() {
+    // Arrange: found by review. One mount point anywhere on the host whose name is not UTF-8, an
+    // old Latin-1 directory say, failed the whole table as text, and the volume went unsealed.
+    let volume = Box_::host_node("elasticsearch-claims-volume-latin1-scratch", false, "")
+        .directory("volumes/es-data/_data");
+    let host = container_node_with_a_volume(
+        "elasticsearch-claims-volume-latin1",
+        "/usr/share/elasticsearch/data",
+        &volume,
+    );
+    let mut table = fs::read(host.proc.join("self/mountinfo")).expect("the host table");
+    table.extend_from_slice(b"5 1 8:1 / /mnt/caf\xe9 rw - ext4 /dev/sdb rw\n");
+    fs::write(host.proc.join("self/mountinfo"), table).expect("a writable fixture");
+
+    // Act & Assert
+    let canonical = fs::canonicalize(&volume).expect("the volume");
+    assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
+}
+
+#[test]
 fn filesystem_claims_read_a_mount_point_holding_a_space() {
     // Arrange
     let volume = Box_::host_node("elasticsearch-claims-volume-space-scratch", false, "")

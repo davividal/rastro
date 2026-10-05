@@ -68,7 +68,7 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
 /// part of it, at a second path, and a walk sealed at one went through the live store at the other.
 pub fn host_directories_of(proc: &Path, process_id: u32, path: &Path) -> Vec<PathBuf> {
     let process = proc.join(process_id.to_string());
-    let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok();
+    let host_table = fs::read(proc.join("self").join("mountinfo")).ok();
     let seen = match same_directory(&process.join("root"), path) {
         true => {
             let mut seen = host_table
@@ -77,7 +77,7 @@ pub fn host_directories_of(proc: &Path, process_id: u32, path: &Path) -> Vec<Pat
             seen.push(path.to_path_buf());
             seen
         }
-        false => match (fs::read_to_string(process.join("mountinfo")), host_table) {
+        false => match (fs::read(process.join("mountinfo")), host_table) {
             (Ok(node_table), Some(host_table)) => host_paths_of(&node_table, &host_table, path),
             _ => Vec::new(),
         },
