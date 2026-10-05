@@ -194,11 +194,11 @@ out. Any of these is a **P1, wherever it occurs and whatever the supported envel
   (an argv, a settings file, a mode bit that an ACL overrides) where the kernel can give the answer
   directly.
 
-**Out of scope: an account disguising its own processes.** rastro reads what the box says it runs,
-and an account that can start a process that looks like a service can make its own files look
-like that service's store. That is someone with access to the server masquerading inside it, the
-same for every collector, PostgreSQL and RabbitMQ as much as Elasticsearch. It is a finding only
-where it reaches one of the harms above.
+**Out of scope: a process that behaves like a service is that service.** rastro detects what
+exists on a box; it does not judge whether a process that behaves like Elasticsearch, PostgreSQL
+or RabbitMQ really is one. A finding that needs a process disguised as a service, to be sent a
+credential, to have a directory sealed, or to be read many times over, is a false positive,
+whatever it then leads to: it is someone with access to the server masquerading inside it.
 
 **2. Is the reading right?** Correctness is bounded by the envelope each collector declares in
 `docs/decisions.md` (and, for Elasticsearch, `docs/elasticsearch-matrix.md`): its supported releases,
