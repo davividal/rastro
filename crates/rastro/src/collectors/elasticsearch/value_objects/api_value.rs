@@ -7,9 +7,9 @@ use rastro_collector::{Observation, Xxh3Digest};
 /// A value from a node's answer, as a tree.
 ///
 /// **Typed rather than all text**, so `"1"` and `1` stay different states, as the RabbitMQ
-/// facet's definition values do. **A non-integer number becomes text carrying its own
-/// spelling**, because the format admits no floating point and rounding `0.85` would report a
-/// setting the cluster does not have. Object keys are sorted by the map, so two answers that
+/// facet's definition values do. **A non-integer number becomes text**, its shortest decimal
+/// form, because the format admits no floating point: `0.85` stays `0.85`, and `1.50` and `1.5`,
+/// which the node reads alike, render alike. Object keys are sorted by the map, so two answers that
 /// differ only in the order the node printed them render the same bytes; list order is kept,
 /// because in a pipeline's processors or a template's patterns the order is the meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]

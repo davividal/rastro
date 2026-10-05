@@ -5,8 +5,9 @@
 //! hidden, and reaching them made the node log and index a deprecation warning. `expand_wildcards=
 //! open,closed` leaves out hidden indices. **Not the backing indices of a data stream that is not
 //! itself hidden**, measured on 8.15.3 and 9.2.0: the filter is applied to the stream, which then
-//! expands to its hidden backing indices. Those are `.ds-` named, so `-.*` now leaves them out
-//! too, and an index whose own settings say `index.hidden` is still skipped as a second guard.
+//! expands to its hidden backing indices. Those are `.ds-` named, and `-.*` leaves them out,
+//! measured on 7.17.29, 8.19.22 and 9.5.4 with a stream holding one; an index whose own settings
+//! say `index.hidden` is still skipped as a second guard.
 
 use std::collections::{BTreeMap, BTreeSet};
 

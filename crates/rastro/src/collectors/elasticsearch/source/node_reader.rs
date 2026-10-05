@@ -85,7 +85,7 @@ pub fn read_node(
             ));
         }
         ReleaseSupport::BelowSeven => {
-            node.not_read = Some(Unread::new(format!(
+            node.not_read = Some(Unread::not_read(format!(
                 "version {release} is below 7, which rastro does not read"
             )));
             return node;

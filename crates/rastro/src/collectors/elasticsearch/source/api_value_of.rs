@@ -2,7 +2,8 @@
 
 use crate::collectors::elasticsearch::value_objects::ApiValue;
 
-/// `value` as an [`ApiValue`]: an integer stays one, any other number becomes its spelling.
+/// `value` as an [`ApiValue`]: an integer stays one, any other number becomes its shortest
+/// decimal text.
 pub fn api_value_of(value: &serde_json::Value) -> ApiValue {
     match value {
         serde_json::Value::Null => ApiValue::Null,
