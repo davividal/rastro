@@ -9,13 +9,6 @@
 
 use std::path::{Path, PathBuf};
 
-/// A node's path on the host, and the host directory its mount is, which it must stay under.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostPath {
-    pub path: PathBuf,
-    pub mount: PathBuf,
-}
-
 /// One line of a `mountinfo` table, the fields this reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Mount {
@@ -34,11 +27,7 @@ struct Mount {
 ///
 /// Nothing where the path is on the node's own root mount, which is a container's image and the
 /// container facet's to account for, or where the host does not mount the device.
-///
-/// With the host directory of the mount itself, which the path must still be under once the host
-/// has resolved it, found by the security review: compared as text, `<volume>/../x` matched the
-/// volume's mount, and a `..` or a symlink in the volume led out of it on the host.
-pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<HostPath> {
+pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<PathBuf> {
     let node_mount = mounts_in(node_table)
         .into_iter()
         .filter(|mount| path.starts_with(&mount.point))
@@ -55,16 +44,11 @@ pub fn host_path_of(node_table: &str, host_table: &str, path: &Path) -> Option<H
         .filter(|mount| mount.device == node_mount.device && on_device.starts_with(&mount.root))
         .max_by_key(|mount| mount.root.components().count())?;
 
-    let on_host = |inside: &Path| {
-        inside
-            .strip_prefix(&host_mount.root)
-            .ok()
-            .map(|relative| host_mount.point.join(relative))
-    };
-    Some(HostPath {
-        path: on_host(&on_device)?,
-        mount: on_host(&node_mount.root)?,
-    })
+    Some(
+        host_mount
+            .point
+            .join(on_device.strip_prefix(&host_mount.root).ok()?),
+    )
 }
 
 fn mounts_in(table: &str) -> Vec<Mount> {

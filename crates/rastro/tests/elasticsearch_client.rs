@@ -561,43 +561,6 @@ fn api_key() -> rastro::collectors::elasticsearch::ApiCredential {
 }
 
 #[test]
-fn get_over_plain_http_sends_no_credential_to_a_node_that_does_not_ask_for_one() {
-    // Arrange: found by the security review. Plain HTTP carries the credential in the clear to
-    // whatever holds the listener, so it goes only where the node asks for it.
-    let (endpoint, requests) = serve_each(&[OK]);
-
-    // Act
-    HttpClient::new()
-        .authenticating(Some(api_key()))
-        .get(&endpoint, "/")
-        .expect("an answer");
-
-    // Assert
-    let request = requests.recv().expect("the request");
-    assert!(!request.contains("Authorization"), "{request}");
-}
-
-#[test]
-fn get_over_plain_http_sends_the_credential_once_the_node_asks_for_one() {
-    // Arrange: a secured node answers 401, then the same request with the credential, then the
-    // next request, which needs no second asking.
-    let (endpoint, requests) = serve_each(&[UNAUTHORISED, OK, OK]);
-    let client = HttpClient::new().authenticating(Some(api_key()));
-
-    // Act
-    client.get(&endpoint, "/").expect("an answer");
-    client
-        .get(&endpoint, "/_cluster/settings")
-        .expect("an answer");
-
-    // Assert
-    let sent: Vec<String> = requests.iter().take(3).collect();
-    assert!(!sent[0].contains("Authorization"), "{}", sent[0]);
-    assert!(sent[1].contains(API_KEY_HEADER), "{}", sent[1]);
-    assert!(sent[2].contains(API_KEY_HEADER), "{}", sent[2]);
-}
-
-#[test]
 fn get_reports_a_403_without_a_credential_as_refused_to_no_credential() {
     // Arrange: found by review. A node with anonymous access whose anonymous role lacks a
     // privilege answers 403 to a request that carried nothing, and the refusal said a credential
@@ -617,9 +580,25 @@ fn get_reports_a_403_without_a_credential_as_refused_to_no_credential() {
 }
 
 #[test]
+fn get_sends_the_credential_it_was_given() {
+    // Arrange
+    let (endpoint, requests) = serve_each(&[OK]);
+
+    // Act
+    HttpClient::new()
+        .authenticating(Some(api_key()))
+        .get(&endpoint, "/")
+        .expect("an answer");
+
+    // Assert
+    let request = requests.recv().expect("the request");
+    assert!(request.contains(API_KEY_HEADER), "{request}");
+}
+
+#[test]
 fn get_reports_a_rejected_credential_as_not_read() {
     // Arrange
-    let (endpoint, _) = serve_each(&[UNAUTHORISED, UNAUTHORISED]);
+    let (endpoint, _) = serve_each(&[UNAUTHORISED]);
 
     // Act
     let unread = HttpClient::new()

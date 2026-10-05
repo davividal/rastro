@@ -11,9 +11,7 @@
 //! matched the listener's inode to the node's own process and joined its network namespace, so
 //! the peer is the node. Its certificate is the auto-configured one or the operator's, signed by
 //! a CA this box need not hold, and checking it against one would refuse the node for nothing.
-//! The handshake's signatures are still verified, so the peer holds the key it presents. Which
-//! account started the node is another question, and decides whether it is sent the credential:
-//! see `read_node`.
+//! The handshake's signatures are still verified, so the peer holds the key it presents.
 //!
 //! Bounded twice: a deadline over the whole exchange, so a node that trickles bytes cannot hold
 //! a run open, and a size, so a node with ten thousand indices cannot fill the box's memory.
@@ -21,7 +19,6 @@
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -68,13 +65,6 @@ pub struct HttpClient {
     /// What every request authenticates with, where the operator gave one.
     credential: Option<ApiCredential>,
 
-    /// Why no credential is sent where one was given, said where the node asks for one.
-    withheld: Option<String>,
-
-    /// Whether the node answered a request without the credential with a 401, after which every
-    /// request carries it. Shared by the clones one node's read makes.
-    node_asked_for_the_credential: Arc<AtomicBool>,
-
     /// Whether the listener is still the node's, asked before each request.
     peer_check: Option<PeerCheck>,
 }
@@ -86,7 +76,6 @@ impl std::fmt::Debug for HttpClient {
             .field("timeout", &self.timeout)
             .field("body_limit", &self.body_limit)
             .field("credential", &self.credential)
-            .field("withheld", &self.withheld)
             .field("peer_check", &self.peer_check.is_some())
             .finish()
     }
@@ -102,8 +91,6 @@ impl HttpClient {
             timeout,
             body_limit,
             credential: None,
-            withheld: None,
-            node_asked_for_the_credential: Arc::new(AtomicBool::new(false)),
             peer_check: None,
         }
     }
@@ -136,24 +123,9 @@ impl HttpClient {
         }
     }
 
-    /// The same client, sending `credential` over TLS, and over plain HTTP once a node asks.
+    /// The same client, sending `credential` with every request.
     pub fn authenticating(self, credential: Option<ApiCredential>) -> Self {
-        Self {
-            credential,
-            withheld: None,
-            // A node of its own: one node's asking is no evidence about another's.
-            node_asked_for_the_credential: Arc::new(AtomicBool::new(false)),
-            ..self
-        }
-    }
-
-    /// The same client, sending no credential, and saying `why` where the node asks for one.
-    pub fn withholding(self, why: String) -> Self {
-        Self {
-            credential: None,
-            withheld: Some(why),
-            ..self
-        }
+        Self { credential, ..self }
     }
 
     /// The body of a `200` answer to `GET path`; any other outcome is the reason it was not had.
@@ -164,45 +136,20 @@ impl HttpClient {
         // One deadline for the whole of it, the fallback's dial included, found by the security
         // review: a bound per read let a peer that trickled its handshake hold the run.
         let deadline = Instant::now() + self.timeout;
-
-        // Over plain HTTP the credential is in the clear to whatever holds the listener, so it is
-        // sent only once the node has asked for it, found by the security review.
-        let at_once = endpoint.transport() == Transport::Tls
-            || self.node_asked_for_the_credential.load(Ordering::Relaxed);
-        let mut raw = self.ask(
-            endpoint,
-            path,
-            deadline,
-            self.credential.as_ref().filter(|_| at_once),
-        )?;
-        if let Some(credential) = self.credential.as_ref().filter(|_| !at_once)
-            && Answer::parse(&raw, path)?.status == UNAUTHORISED
-        {
-            self.node_asked_for_the_credential
-                .store(true, Ordering::Relaxed);
-            if let Some(check) = &self.peer_check {
-                check()?;
-            }
-            raw = self.ask(endpoint, path, deadline, Some(credential))?;
-        }
-
+        let raw = self.ask(endpoint, path, deadline, self.credential.as_ref())?;
         let answer = Answer::parse(&raw, path)?;
 
         if answer.status == UNAUTHORISED {
-            return Err(Unread::not_read(match (&self.credential, &self.withheld) {
-                (Some(_), _) => "the credential given was rejected".to_owned(),
-                (None, Some(why)) => format!("security is on and {why}"),
-                (None, None) => {
-                    "security is on and no credential was given (see --credentials)".to_owned()
-                }
+            return Err(Unread::not_read(match self.credential {
+                Some(_) => "the credential given was rejected",
+                None => "security is on and no credential was given (see --credentials)",
             }));
         }
         // Found by review: a node with anonymous access answers 403 to a request carrying nothing.
         if answer.status == FORBIDDEN {
-            return Err(Unread::not_read(match (&self.credential, &self.withheld) {
-                (Some(_), _) => format!("the node refused GET {path} to the credential given"),
-                (None, Some(why)) => format!("the node refused GET {path}, and {why}"),
-                (None, None) => format!(
+            return Err(Unread::not_read(match self.credential {
+                Some(_) => format!("the node refused GET {path} to the credential given"),
+                None => format!(
                     "the node refused GET {path} to a request without a credential \
                      (see --credentials)"
                 ),

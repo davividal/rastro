@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use rastro::collectors::elasticsearch::NodeCredential;
+use rastro::collectors::elasticsearch::ApiCredential;
 use rastro::collectors::filesystem::Detail;
 use rastro::config::Config;
 use rastro::credentials::{self, Credentials};
@@ -129,7 +129,7 @@ fn read_credentials(
         return Ok(None);
     };
     let credentials = Credentials::read(path)?;
-    NodeCredential::from_credentials(&credentials)?;
+    ApiCredential::from_credentials(&credentials)?;
 
     if path != std::path::Path::new("-") && credentials::readable_by_other_accounts(path) {
         say(

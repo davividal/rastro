@@ -7,9 +7,13 @@ use base64::engine::general_purpose::STANDARD;
 
 use crate::credentials::Credentials;
 
-pub(super) const API_KEY: &str = "ELASTICSEARCH_API_KEY";
-pub(super) const USERNAME: &str = "ELASTICSEARCH_USERNAME";
-pub(super) const PASSWORD: &str = "ELASTICSEARCH_PASSWORD";
+const API_KEY: &str = "ELASTICSEARCH_API_KEY";
+const USERNAME: &str = "ELASTICSEARCH_USERNAME";
+const PASSWORD: &str = "ELASTICSEARCH_PASSWORD";
+
+/// Every name the Elasticsearch credential is given by; any other under the prefix is a typo.
+const PREFIX: &str = "ELASTICSEARCH_";
+const KNOWN: [&str; 3] = [API_KEY, USERNAME, PASSWORD];
 
 /// What a run authenticates to every Elasticsearch node on the box with.
 ///
@@ -36,6 +40,18 @@ impl ApiCredential {
     /// An API key, or a username with its password. Half a credential, or both kinds, is a
     /// refusal rather than a pick: which one the operator meant cannot be told.
     pub fn from_credentials(credentials: &Credentials) -> Result<Option<Self>, String> {
+        // Found by review: a misspelt name read as no credential, and every secured node as
+        // not read, for a typo the run never mentioned.
+        if let Some(unknown) = credentials
+            .names()
+            .into_iter()
+            .find(|name| name.starts_with(PREFIX) && !KNOWN.contains(&name.as_str()))
+        {
+            return Err(format!(
+                "the credentials give {unknown}, which is not a name rastro reads; it reads {}",
+                KNOWN.join(", ")
+            ));
+        }
         let api_key = credentials.get(API_KEY);
         let username = credentials.get(USERNAME);
         let password = credentials.get(PASSWORD);

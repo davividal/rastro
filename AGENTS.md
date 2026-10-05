@@ -188,11 +188,6 @@ out. Any of these is a **P1, wherever it occurs and whatever the supported envel
   did not identify by the kernel's account, plaintext, the document without `--raw`, stderr, a
   refusal message.
 - rastro reads or follows a path outside the root it means to read, as root.
-- Another account can hide **state it could not change itself** from the fingerprint, `/etc` or
-  another account's files, through a seal or an exclusion some process chose.
-- A trust decision that leads to one of the harms above rests on something another account writes
-  (an argv, a settings file, a mode bit that an ACL overrides) where the kernel can give the answer
-  directly.
 
 **Out of scope: a process that behaves like a service is that service.** rastro detects what
 exists on a box; it does not judge whether a process that behaves like Elasticsearch, PostgreSQL

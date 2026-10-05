@@ -71,12 +71,9 @@ pub fn host_directory_of(proc: &Path, process_id: u32, path: &Path) -> Option<Pa
 
     let node_table = fs::read_to_string(process.join("mountinfo")).ok()?;
     let host_table = fs::read_to_string(proc.join("self").join("mountinfo")).ok()?;
-    let host = host_path_of(&node_table, &host_table, path)?;
-    fs::metadata(&host.path).ok().filter(fs::Metadata::is_dir)?;
-    // Found by the security review: a symlink in the volume can lead out of it on the host.
-    let canonical = fs::canonicalize(&host.path).ok()?;
-    let mount = fs::canonicalize(&host.mount).ok()?;
-    canonical.starts_with(&mount).then_some(canonical)
+    let host_path = host_path_of(&node_table, &host_table, path)?;
+    fs::metadata(&host_path).ok().filter(fs::Metadata::is_dir)?;
+    fs::canonicalize(host_path).ok()
 }
 
 /// Whether `path` inside `root` is the same directory as `path` on rastro's own filesystem.

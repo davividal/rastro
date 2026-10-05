@@ -1077,7 +1077,7 @@ fn a_credentials_file_is_named_in_the_invocation_and_its_values_appear_nowhere()
     // Arrange
     let path = credentials_file(
         "credentials-named",
-        &format!("ELASTICSEARCH_API_KEY={SECRET}\nELASTICSEARCH_NODE_UID=105\n"),
+        &format!("ELASTICSEARCH_API_KEY={SECRET}\n"),
         0o600,
     );
 
@@ -1106,7 +1106,7 @@ fn a_credentials_file_is_named_in_the_invocation_and_its_values_appear_nowhere()
     let invocation = facet(&document, "metadata", "invocation");
     assert_eq!(
         invocation["data"]["credentials"],
-        json!(["ELASTICSEARCH_API_KEY", "ELASTICSEARCH_NODE_UID"])
+        json!(["ELASTICSEARCH_API_KEY"])
     );
 }
 
@@ -1142,9 +1142,7 @@ fn credentials_can_come_from_stdin() {
         .stdin
         .take()
         .expect("a stdin")
-        .write_all(
-            format!("ELASTICSEARCH_API_KEY={SECRET}\nELASTICSEARCH_NODE_UID=105\n").as_bytes(),
-        )
+        .write_all(format!("ELASTICSEARCH_API_KEY={SECRET}\n").as_bytes())
         .expect("credentials written");
 
     // Act
@@ -1160,7 +1158,7 @@ fn credentials_can_come_from_stdin() {
     let invocation = facet(&document, "metadata", "invocation");
     assert_eq!(
         invocation["data"]["credentials"],
-        json!(["ELASTICSEARCH_API_KEY", "ELASTICSEARCH_NODE_UID"])
+        json!(["ELASTICSEARCH_API_KEY"])
     );
 }
 
@@ -1193,11 +1191,7 @@ fn a_credentials_file_that_cannot_be_read_fails_the_run_before_it_starts() {
 fn a_credentials_file_others_can_read_is_warned_about() {
     // Arrange: the secret has already leaked to every account on the box; refusing it now would
     // not take that back, so the run goes on and says so.
-    let path = credentials_file(
-        "credentials-loose",
-        "ELASTICSEARCH_API_KEY=k\nELASTICSEARCH_NODE_UID=105\n",
-        0o644,
-    );
+    let path = credentials_file("credentials-loose", "ELASTICSEARCH_API_KEY=k\n", 0o644);
 
     // Act
     let output = run(&[

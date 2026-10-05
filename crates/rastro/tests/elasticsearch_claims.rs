@@ -11,7 +11,7 @@
 //! in a container names a directory in its own image, which is not the host's.
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use rastro::collectors::elasticsearch::{ElasticsearchCollector, HttpClient};
@@ -246,56 +246,6 @@ fn filesystem_claims_seal_a_data_path_spelled_with_dot_dot_as_the_directory_it_i
     assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
 }
 
-impl Box_ {
-    /// The node's process running as another account than the one that owns the fixture.
-    fn run_by_another_account(&self) {
-        let owner = fs::metadata(&self.scratch).expect("the fixture");
-        let (uid, gid) = (owner.uid() + 1, owner.gid() + 1);
-        write(
-            &self.proc,
-            "600/status",
-            &format!(
-                "Uid:\t{uid}\t{uid}\t{uid}\t{uid}\nGid:\t{gid}\t{gid}\t{gid}\t{gid}\nGroups:\t{gid}\n"
-            ),
-        );
-    }
-}
-
-#[test]
-fn filesystem_claims_make_no_claim_for_a_directory_the_node_cannot_write() {
-    // Arrange: found by the security review. Any account can start a process that reads as a
-    // node and name `/etc` its data path, and a claim on it hid `/etc` from the walk. A node
-    // writes its data and logs, so a directory its account cannot write is not its store.
-    let host = Box_::host_node("elasticsearch-claims-not-writable", false, "");
-    let data = host.directory("var-lib-elasticsearch");
-    write(
-        &host.scratch,
-        "conf/elasticsearch.yml",
-        &data_setting(&[&data]),
-    );
-    host.run_by_another_account();
-
-    // Act & Assert
-    assert!(host.claimed_trees().is_empty());
-}
-
-#[test]
-fn filesystem_claims_make_no_claim_for_a_directory_only_the_world_can_write() {
-    // Arrange: `/tmp` is writable by every account, the node's among them, and is not a store.
-    let host = Box_::host_node("elasticsearch-claims-world-writable", false, "");
-    let data = host.directory("tmp");
-    fs::set_permissions(&data, fs::Permissions::from_mode(0o1777)).expect("a writable fixture");
-    write(
-        &host.scratch,
-        "conf/elasticsearch.yml",
-        &data_setting(&[&data]),
-    );
-    host.run_by_another_account();
-
-    // Act & Assert
-    assert!(host.claimed_trees().is_empty());
-}
-
 /// A container node: a root of its own, its data on a volume whose host directory is `volume`.
 ///
 /// The node's `mountinfo` says the data path is a mount of device 254:1 at `root` inside that
@@ -350,31 +300,6 @@ fn filesystem_claims_seal_the_host_directory_behind_a_container_nodes_volume() {
     // Act & Assert
     let canonical = fs::canonicalize(&volume).expect("the volume");
     assert_eq!(host.claimed_trees(), [canonical.display().to_string()]);
-}
-
-#[test]
-fn filesystem_claims_make_no_claim_for_a_volume_path_that_climbs_out_of_the_volume() {
-    // Arrange: found by the security review. The mount match compared paths as text, so
-    // `<volume>/../secret` matched the volume's mount, and the host resolved the `..` itself.
-    let volume = Box_::host_node("elasticsearch-claims-volume-climb-scratch", false, "")
-        .directory("volumes/es-data/_data");
-    fs::create_dir_all(volume.join("../secret")).expect("a writable fixture");
-    let host = container_node_with_a_volume(
-        "elasticsearch-claims-volume-climb",
-        "/usr/share/elasticsearch/data",
-        &volume,
-    );
-    let config = host
-        .path("image")
-        .join(host.path("conf").strip_prefix("/").expect("absolute"));
-    fs::write(
-        config.join("elasticsearch.yml"),
-        "path.data: /usr/share/elasticsearch/data/../secret\n",
-    )
-    .expect("a fixture");
-
-    // Act & Assert
-    assert!(host.claimed_trees().is_empty());
 }
 
 #[test]
@@ -446,21 +371,10 @@ impl Box_ {
         );
     }
 
-    /// The node holding `target` open for writing, as its descriptor `number`, with the flags a
-    /// node's `node.lock` and `gc.log` carry, measured on 8.19.22: `O_WRONLY`.
+    /// The node holding `target` open, as its descriptor `number`.
     fn holding(&self, number: u32, target: &Path) {
-        self.holding_with(number, target, "0400001");
-    }
-
-    /// The same, with the `flags` its `fdinfo` gives, in octal.
-    fn holding_with(&self, number: u32, target: &Path, flags: &str) {
         fs::create_dir_all(self.proc.join("600/fd")).expect("a writable fixture");
         symlink(target, self.proc.join(format!("600/fd/{number}"))).expect("a writable fixture");
-        write(
-            &self.proc,
-            &format!("600/fdinfo/{number}"),
-            &format!("pos:\t0\nflags:\t{flags}\nmnt_id:\t30\n"),
-        );
     }
 }
 
@@ -587,48 +501,4 @@ fn filesystem_claims_climb_a_7_nodes_ordinal_only_where_it_is_a_number() {
 
     // Assert
     assert_eq!(claimed, [data.display().to_string()]);
-}
-
-#[test]
-fn filesystem_claims_seal_a_store_the_node_holds_open_for_writing_whatever_its_mode_bits_say() {
-    // Arrange: found by review. A root-owned directory that a POSIX ACL lets the node's account
-    // write fails a check of the mode bits, and the live store was walked. A file the node holds
-    // open for writing there is the kernel's own word that it may, ACLs and capabilities included.
-    let host = Box_::host_node("elasticsearch-claims-held-acl", false, "");
-    let data = host.directory("srv-es");
-    host.holding(5, &data.join("node.lock"));
-    host.run_by_another_account();
-
-    // Act & Assert
-    assert_eq!(host.claimed_trees(), [data.display().to_string()]);
-}
-
-#[test]
-fn filesystem_claims_take_no_store_from_a_file_held_open_only_for_reading() {
-    // Arrange: reading a file proves nothing about writing beside it, and any account can open a
-    // file named `node.lock` it can read.
-    let host = Box_::host_node("elasticsearch-claims-held-read-only", false, "");
-    let elsewhere = host.directory("elsewhere");
-    host.holding_with(5, &elsewhere.join("node.lock"), "0400000");
-
-    // Act & Assert
-    assert!(
-        !host
-            .claimed_trees()
-            .contains(&elsewhere.display().to_string())
-    );
-}
-
-#[test]
-fn filesystem_claims_make_no_claim_for_a_world_writable_directory_a_node_holds_a_log_in() {
-    // Arrange: any account can create `x_server.json` in `/tmp` and hold it open for writing.
-    let host = Box_::host_node("elasticsearch-claims-held-world", false, "");
-    let shared = host.directory("tmp");
-    fs::set_permissions(&shared, fs::Permissions::from_mode(0o1777)).expect("a writable fixture");
-    let data = host.directory("srv-es");
-    host.holding(5, &data.join("node.lock"));
-    host.holding(6, &shared.join("x_server.json"));
-
-    // Act & Assert
-    assert_eq!(host.claimed_trees(), [data.display().to_string()]);
 }

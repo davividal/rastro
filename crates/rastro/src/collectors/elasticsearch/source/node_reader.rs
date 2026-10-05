@@ -24,20 +24,14 @@ use crate::collectors::elasticsearch::source::templates_answer::{
     read_component_templates, read_index_templates,
 };
 use crate::collectors::elasticsearch::source::{
-    HttpClient, NodeListener, NodeNamespace, NodeSettings, ProcessOwner, ResidentNode,
-    http_endpoint,
+    HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
 };
 use crate::collectors::elasticsearch::value_objects::{
-    HttpEndpoint, NetworkNamespace, NodeCredential, Release, ReleaseSupport, Unread,
+    HttpEndpoint, NetworkNamespace, Release, ReleaseSupport, Unread,
 };
 
 /// Reads everything this box and this node will say about `resident`.
-pub fn read_node(
-    proc: &Path,
-    resident: &ResidentNode,
-    client: &HttpClient,
-    credential: Option<&NodeCredential>,
-) -> Node {
+pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> Node {
     let mut node = Node {
         process_id: resident.process_id(),
         config_directory: resident
@@ -93,7 +87,6 @@ pub fn read_node(
         }
     }
 
-    let client = &for_the_account_of(resident, client, credential);
     match read_into(&mut node, proc, resident, release, client) {
         Ok(()) => {}
         Err(unread) if unread.is_not_read() => node.not_read = Some(unread),
@@ -156,31 +149,6 @@ fn read_into(
     node.plugins = Some(answers.plugins);
     node.node_local = Some(answers.node_local);
     Ok(())
-}
-
-/// `client`, sending the operator's credential where `resident` runs as its account, and
-/// nothing otherwise.
-fn for_the_account_of(
-    resident: &ResidentNode,
-    client: &HttpClient,
-    credential: Option<&NodeCredential>,
-) -> HttpClient {
-    let Some(credential) = credential else {
-        return client.clone();
-    };
-    match resident.owner().map(ProcessOwner::uid) {
-        Some(uid) if uid == credential.recipient() => client
-            .clone()
-            .authenticating(Some(credential.credential().clone())),
-        owner => client.clone().withholding(format!(
-            "the credential is given only to nodes run by user id {}, and this one runs as {}",
-            credential.recipient(),
-            owner.map_or_else(
-                || "an account that could not be read".to_owned(),
-                |uid| { format!("user id {uid}") }
-            )
-        )),
-    }
 }
 
 /// The listener a node was dialled on, which must still be the node's before each request.

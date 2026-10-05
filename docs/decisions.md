@@ -6425,12 +6425,24 @@ with one visible and one hidden alias: none of the three index reads names the b
 - **An alias moved between the alias read and the settings read is not detected.** The torn-read
   check compares index sets, which an alias swap leaves alone; catching it would mean reading the
   largest answer twice.
-- **An account can seal its own directories** by starting a process that reads as a node and
-  holding a store there. Found by review and rejected as a finding: it is an account masquerading
-  inside the server, the same for every collector that seals a store, and it hides only what that
-  account could change anyway. The claim and its claimant are in the `invocation` facet's claim
-  table. Sealing what the account cannot write, `/etc` or another account's files, stays refused.
 - **Legacy templates are still not read**, reconsidered in issue #63.
 - **An index answer costs memory several times its size**, held as bytes, text, parsed JSON and the
   collector's own tree at once. Measured on a debug build, a 17 MB alias answer peaked at 126 MB, so
   the 64 MB bound is about half a gigabyte for one node, and nodes are read one at a time.
+
+## A process that behaves like Elasticsearch is Elasticsearch
+
+**Reverses "A process is found by its argv, and trusted by its account" and "A held store is the
+node's by the kernel's grant, not by the mode bits"**, and the guards they added. Each defended
+against a process pretending to be a node: `ELASTICSEARCH_NODE_UID`, required with a credential so
+a fake node could not be sent it; sending the credential over plain HTTP only after a 401; sealing
+a directory only where the node's account could write it, by an open file's access mode or the
+mode bits; refusing a world-writable one; and keeping a volume path under its mount. rastro detects
+what exists on a box. It does not judge whether a process that behaves like a service really is
+one, and a disguise by someone with access to the server is out of its scope, as `AGENTS.md`
+says. So the credential goes to every node, as "Credentials come from a file or stdin, one for
+the box" decided, and a node's store is sealed where the node holds or names it.
+
+What stays from that review is what protects a run from a real node's files and peers: the bounded
+reads of `elasticsearch.yml`, the YAML alias and nesting refusals, the placeholder depth, the one
+deadline per request, the TLS handshake asked of the listener, and no setting value in a refusal.
