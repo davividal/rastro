@@ -366,3 +366,35 @@ fn collect_keeps_an_aliases_filter() {
     let term = field(&field(&paid, "filter"), "term");
     assert_eq!(text(&field(&term, "status")), "paid");
 }
+
+#[test]
+fn collect_reads_a_mapping_answer_larger_than_the_common_bound() {
+    // Arrange: found by review. Mappings grow with every index and field, and 17 MB is past the
+    // bound every other read keeps.
+    let settings = settings_of(&[
+        settings_answer(
+            "myapp-tenant1_1790000000",
+            "RmiWDuNDRKO0ODXyykEWaQ",
+            "1790603490253",
+        ),
+        settings_answer("unaliased", "DqUoBesrSJGb7PgJWKGoaA", "1790603490341"),
+    ]);
+    let description = "d".repeat(17 * 1024 * 1024);
+    let mappings = format!(
+        r#"{{"myapp-tenant1_1790000000":{{"mappings":{{"_meta":{{"description":"{description}"}},"properties":{{"title":{{"type":"text"}}}}}}}},"unaliased":{{"mappings":{{}}}}}}"#
+    );
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, ALIAS_ANSWER),
+            (SETTINGS, &settings),
+            (MAPPINGS, &mappings),
+        ],
+        "elasticsearch-indices-large-mapping",
+    );
+
+    // Assert
+    assert_eq!(keys_of(&indices), ["myapp-tenant1", "unaliased"]);
+}

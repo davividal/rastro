@@ -545,3 +545,47 @@ fn get_dials_the_fallback_where_the_first_address_cannot_be_reached() {
     // Assert
     assert_eq!(body, "{}");
 }
+
+/// An answer of `size` bytes of JSON, `{"a":"…"}`.
+fn json_of(size: usize) -> Vec<u8> {
+    let padding = "a".repeat(size - 8);
+    let body = format!("{{\"a\":\"{padding}\"}}");
+    let mut answer =
+        format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len()).into_bytes();
+    answer.extend_from_slice(body.as_bytes());
+    answer
+}
+
+#[test]
+fn get_refuses_an_answer_above_its_bound() {
+    // Arrange: 17 MB, above the 16 MB every read but the index ones is bounded by.
+    let (endpoint, _) = serve_once(json_of(17 * 1024 * 1024));
+
+    // Act
+    let unread = HttpClient::new()
+        .get(&endpoint, "/")
+        .expect_err("too large");
+
+    // Assert
+    assert!(
+        unread.reason().contains("larger than"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn get_for_large_answers_reads_what_a_cluster_with_many_indices_returns() {
+    // Arrange: found by review. `_settings` and `_mapping` grow with every index, and a cluster
+    // with thousands of them, or Fleet-sized mappings, answered past the common bound.
+    let (endpoint, _) = serve_once(json_of(17 * 1024 * 1024));
+
+    // Act
+    let body = HttpClient::new()
+        .for_large_answers()
+        .get(&endpoint, "/")
+        .expect("an answer within the wider bound");
+
+    // Assert
+    assert_eq!(body.len(), 17 * 1024 * 1024);
+}

@@ -52,12 +52,13 @@ struct MappingsOf {
 }
 
 pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indices, Unread> {
+    let large = client.for_large_answers();
     let aliases: BTreeMap<String, AliasesOf> =
         read_answer(&client.get(endpoint, ALIASES)?, ALIASES)?;
     let settings: BTreeMap<String, SettingsOf> =
-        read_answer(&client.get(endpoint, SETTINGS)?, SETTINGS)?;
+        read_answer(&large.get(endpoint, SETTINGS)?, SETTINGS)?;
     let mut mappings: BTreeMap<String, MappingsOf> =
-        read_answer(&client.get(endpoint, MAPPINGS)?, MAPPINGS)?;
+        read_answer(&large.get(endpoint, MAPPINGS)?, MAPPINGS)?;
 
     let aliases_of: BTreeMap<String, BTreeMap<String, ApiValue>> = aliases
         .into_iter()

@@ -38,6 +38,10 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest body read, which a mapping-heavy cluster's templates stay well inside.
 const DEFAULT_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
+/// The wider budget of the reads that grow with every index, `_settings` and `_mapping`.
+const LARGE_TIMEOUT: Duration = Duration::from_secs(60);
+const LARGE_BODY_LIMIT: usize = 64 * 1024 * 1024;
+
 /// Room for the status line and headers on top of the body.
 const HEAD_ALLOWANCE: usize = 64 * 1024;
 
@@ -104,6 +108,18 @@ impl HttpClient {
         Self {
             peer_check: Some(Arc::new(check)),
             ..self
+        }
+    }
+
+    /// The same client with the wider budget of the index reads.
+    ///
+    /// Found by review: a cluster with thousands of indices, or Fleet-sized mappings, answers
+    /// `_settings` and `_mapping` past the common bound, and that is the one read that grows.
+    pub fn for_large_answers(&self) -> Self {
+        Self {
+            timeout: self.timeout.max(LARGE_TIMEOUT),
+            body_limit: self.body_limit.max(LARGE_BODY_LIMIT),
+            ..self.clone()
         }
     }
 
