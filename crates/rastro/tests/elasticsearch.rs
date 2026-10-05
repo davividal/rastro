@@ -763,6 +763,9 @@ fn collect_reports_a_node_whose_process_files_are_refused_as_not_read_naming_why
     assert!(node.requests().is_empty(), "{:?}", node.requests());
     assert!(is_null(&field(reported, "error")), "{reported:?}");
     let reason = text(&field(reported, "not_read"));
-    assert!(reason.contains("/proc/600/environ"), "{reason}");
+    assert!(reason.contains("environ"), "{reason}");
     assert!(reason.contains("root"), "{reason}");
+    // Found by review: the process id moves on every restart, which is why `process_id` is
+    // volatile, and a reason naming it differed between two runs either side of one.
+    assert!(!reason.contains("600"), "{reason}");
 }

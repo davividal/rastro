@@ -59,9 +59,10 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
     };
 
     if let Some(file) = resident.refused() {
+        // The file, not the process id: the id moves on every restart, and the reason is in the
+        // diffable view, found by review.
         node.not_read = Some(Unread::not_read(format!(
-            "rastro may not read /proc/{}/{file}, which takes root or the node's own account",
-            resident.process_id()
+            "rastro may not read the node's /proc {file}, which takes root or the node's own account"
         )));
         return node;
     }
@@ -165,11 +166,10 @@ impl HeldListener {
     fn still_the_nodes(&self) -> Result<(), Unread> {
         let now = ResidentNode::start_of_in(&self.proc, self.process_id);
         if self.start.is_none() || now != self.start {
-            return Err(Unread::new(format!(
-                "process {} was restarted or replaced since it was found, so nothing more is sent \
-                 to it",
-                self.process_id
-            )));
+            return Err(Unread::new(
+                "the node's process was restarted or replaced since it was found, so nothing more \
+                 is sent to it",
+            ));
         }
         let listeners = NodeListener::read_in(&self.proc, self.process_id)?;
         match listeners

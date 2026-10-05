@@ -36,7 +36,7 @@ impl NodeNamespace {
         let path = proc.join(process_id.to_string()).join(NETWORK_NAMESPACE);
         let theirs = fs::read_link(&path).map_err(|error| {
             Unread::new(format!(
-                "{process_id}/{NETWORK_NAMESPACE} could not be read: {error}"
+                "the node's {NETWORK_NAMESPACE} could not be read: {error}"
             ))
         })?;
         let ours = fs::read_link(proc.join("self").join(NETWORK_NAMESPACE)).map_err(|error| {
