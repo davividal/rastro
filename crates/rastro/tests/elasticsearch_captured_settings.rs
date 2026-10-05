@@ -13,7 +13,7 @@ use support::captured_cell::{captured_proc, installs_of};
 /// The transport each node of a cell serves, as set up; cell 06 as its file says.
 fn set_up(cell: &str) -> Vec<Transport> {
     let tls = match cell {
-        "02" | "12" | "21" | "22" | "24" | "26" => Transport::Tls,
+        "02" | "12" | "21" | "22" | "24" | "26" | "30" => Transport::Tls,
         _ => Transport::Plain,
     };
     let mut transports: Vec<Transport> = installs_of(cell).iter().map(|_| tls).collect();
@@ -93,3 +93,7 @@ cell!(
     "25"
 );
 cell!(transport_of_cell_26_an_8_19_container_auditing, "26");
+cell!(transport_of_cell_28_a_survivor_of_a_lost_master, "28");
+cell!(transport_of_cell_29_a_daemonised_node_on_custom_ports, "29");
+cell!(transport_of_cell_30_an_8_19_package_on_mutual_tls, "30");
+cell!(transport_of_cell_31_a_package_upgraded_under_its_node, "31");

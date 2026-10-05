@@ -110,3 +110,12 @@ cell!(
 );
 cell!(all_in_reads_cell_25_a_9_4_package_with_plain_http, "25");
 cell!(all_in_reads_cell_26_an_8_19_container_with_audit_on, "26");
+cell!(
+    all_in_reads_cell_27_an_8_19_package_with_security_off_alone,
+    "27"
+);
+cell!(all_in_reads_cell_28_a_survivor_of_a_lost_master, "28");
+cell!(all_in_reads_cell_29_a_daemonised_node_on_custom_ports, "29");
+cell!(all_in_reads_cell_30_an_8_19_package_on_mutual_tls, "30");
+cell!(all_in_reads_cell_31_a_package_upgraded_under_its_node, "31");
+cell!(all_in_reads_cell_32_nothing_installed, "32");

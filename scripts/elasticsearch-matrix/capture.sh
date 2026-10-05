@@ -20,6 +20,8 @@ readonly REQUESTS=(
   "plugins|/_nodes/_local/plugins"
   "nodes_local|/_nodes/_local?flat_settings=true&filter_path=nodes.*.settings,nodes.*.roles,nodes.*.attributes,nodes.*.jvm.input_arguments,nodes.*.jvm.mem.heap_max_in_bytes"
   "nodes_local_settings|/_nodes/_local/settings?flat_settings=true"
+  "health_local|/_cluster/health?local=true"
+  "blocks_local|/_cluster/state/blocks?local=true"
 )
 
 is_server() {
@@ -40,7 +42,10 @@ copy_proc() {
     mkdir -p "$dir/$(dirname "$link")"
     readlink "/proc/$pid/$link" > "$dir/$link.link" 2>/dev/null || echo unreadable > "$dir/$link.error"
   done
-  ls -l "/proc/$pid/fd" 2>/dev/null | awk '{print $9, $10, $11}' > "$dir/fd.list"
+  # Every target whole, a ` (deleted)` marker included: a jar replaced under a running node.
+  for descriptor in "/proc/$pid/fd"/*; do
+    echo "${descriptor##*/} -> $(readlink "$descriptor")"
+  done > "$dir/fd.list" 2>/dev/null
   : > "$dir/unprivileged.txt"
   for file in "${PROC_FILES[@]}" fd; do
     if runuser -u nobody -- sh -c "ls /proc/$pid/$file >/dev/null 2>&1 && cat /proc/$pid/$file >/dev/null 2>&1"; then

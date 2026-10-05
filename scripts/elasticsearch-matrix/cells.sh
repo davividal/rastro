@@ -139,8 +139,10 @@ with_key() {
 
 deb_install() {
   local version=$1
-  DEBIAN_FRONTEND=noninteractive dpkg -i "$DL/es-$version.deb" > "/root/cells/install-$version.log" 2>&1
-  return $?
+  DEBIAN_FRONTEND=noninteractive dpkg -i "$DL/es-$version.deb" > "/root/cells/install-$version.log" 2>&1 || return 1
+  # After a purge and a reinstall the unit fails to load until systemd rereads it.
+  systemctl daemon-reload
+  return 0
 }
 
 deb_security_off() {
@@ -475,6 +477,91 @@ cell_26() {
   return 0
 }
 
+cell_27() {
+  # Security off the documented way: only `xpack.security.enabled`, the TLS block left as written.
+  deb_install 8.19.22 && deb_heap && systemctl start elasticsearch || return 1
+  wait_url https://127.0.0.1:9200/ || return 1
+  systemctl stop elasticsearch
+  sed -i 's/^xpack.security.enabled: true/xpack.security.enabled: false/' "$PACKAGE_FILE"
+  systemctl start elasticsearch && wait_url http://127.0.0.1:9200/ || return 1
+  env_file 27 <<<"$PLAIN_9200"
+  return 0
+}
+
+cell_28() {
+  # A survivor of a cluster whose master is gone: it keeps the cluster's UUID.
+  local node master
+  for node in a b; do tar_extract 8.19.22 "/opt/es-28$node"; done
+  as_es /opt/es-28a/bin/elasticsearch -d -p /home/es/es28a.pid -E node.name=f1 -E cluster.name=cell28 \
+    -E http.port=9200 -E transport.port=9300 -E xpack.security.enabled=false \
+    -E discovery.seed_hosts=127.0.0.1:9300,127.0.0.1:9301 -E cluster.initial_master_nodes=f1,f2 || return 1
+  as_es /opt/es-28b/bin/elasticsearch -d -p /home/es/es28b.pid -E node.name=f2 -E cluster.name=cell28 \
+    -E http.port=9201 -E transport.port=9301 -E xpack.security.enabled=false \
+    -E discovery.seed_hosts=127.0.0.1:9300,127.0.0.1:9301 -E cluster.initial_master_nodes=f1,f2 || return 1
+  wait_url http://127.0.0.1:9200/ && wait_url http://127.0.0.1:9201/ || return 1
+  for _ in $(seq 1 40); do
+    curl -s 127.0.0.1:9200/_cat/nodes | grep -c f | grep -q 2 && break
+    sleep 3
+  done
+  curl -sf -XPUT -H 'Content-Type: application/json' 127.0.0.1:9200/_index_template/app \
+    -d '{"index_patterns":["myapp-*"],"template":{"settings":{"number_of_replicas":0}}}' >/dev/null
+  master=$(curl -s '127.0.0.1:9200/_cat/master?h=node')
+  if [[ "$master" == f1 ]]; then
+    kill -9 "$(cat /home/es/es28a.pid)"
+    env_file 28 <<<'PORTS="9201=http"
+SEED=0'
+  else
+    kill -9 "$(cat /home/es/es28b.pid)"
+    printf '%s\nSEED=0\n' "$PLAIN_9200" | env_file 28
+  fi
+  sleep 5
+  return 0
+}
+
+cell_29() {
+  # Daemonised with its ports given by `-E` outside the default ranges: the accepted blind spot.
+  tar_extract 8.19.22 /opt/es-29
+  as_es /opt/es-29/bin/elasticsearch -d -p /home/es/es29.pid -E discovery.type=single-node \
+    -E xpack.security.enabled=false -E http.port=8200 -E transport.port=8300 || return 1
+  wait_url http://127.0.0.1:8200/ || return 1
+  env_file 29 <<<'PORTS="8200=http"'
+  return 0
+}
+
+cell_30() {
+  # Mutual TLS: the node demands a client certificate.
+  deb_install 8.19.22 && deb_heap || return 1
+  awk '/^xpack.security.http.ssl:/{print; print "  client_authentication: required"; next} {print}' \
+    "$PACKAGE_FILE" > /tmp/y && cat /tmp/y > "$PACKAGE_FILE"
+  systemctl start elasticsearch || return 1
+  for _ in $(seq 1 60); do
+    ss -ltn | grep -q ':9200 ' && break
+    sleep 3
+  done
+  env_file 30 <<<'PORTS="9200=https"'
+  return 0
+}
+
+cell_31() {
+  # A package upgraded under a running node and not restarted.
+  deb_install 8.15.3 && deb_heap && deb_security_off || return 1
+  echo 'discovery.type: single-node' >> "$PACKAGE_FILE"
+  systemctl start elasticsearch && wait_url http://127.0.0.1:9200/ || return 1
+  # Measured: upgraded seconds after it first answers, the node is still loading classes from the
+  # jars the upgrade deletes, and exits. An upgrade of a node that has settled leaves it running.
+  curl -s -m 60 '127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=50s' >/dev/null
+  sleep 20
+  DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold "$DL/es-8.19.22.deb" > /root/cells/install-upgrade.log 2>&1
+  env_file 31 <<<"$PLAIN_9200"
+  return 0
+}
+
+cell_32() {
+  # Nothing installed and nothing running.
+  env_file 32 <<<"$PLAIN_9200"
+  return 0
+}
+
 # After the capture, so the logs hold what the capture caused.
 collect_logs() {
   local cell=$1 out container file
@@ -506,7 +593,7 @@ run_cell() {
     echo "setup failed" > "/captures/$cell/SETUP_FAILED"
   fi
   collect_logs "$cell"
-  if [[ "$(cat "/captures/$cell/node-count" 2>/dev/null)" == 0 && "$cell" != 20 ]]; then
+  if [[ "$(cat "/captures/$cell/node-count" 2>/dev/null)" == 0 && "$cell" != 20 && "$cell" != 32 ]]; then
     log "cell $cell: NO NODE CAPTURED"
   fi
   return 0

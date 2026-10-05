@@ -1,0 +1,57 @@
+Name:	java
+Umask:	0022
+State:	S (sleeping)
+Tgid:	146327
+Ngid:	0
+Pid:	146327
+PPid:	1
+TracerPid:	0
+Uid:	105	105	105	105
+Gid:	112	112	112	112
+FDSize:	256
+Groups:	112 
+NStgid:	146327
+NSpid:	146327
+NSpgid:	146327
+NSsid:	146327
+VmPeak:	 2694116 kB
+VmSize:	 2628580 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	  104144 kB
+VmRSS:	  104096 kB
+RssAnon:	   81760 kB
+RssFile:	   22336 kB
+RssShmem:	       0 kB
+VmData:	  132908 kB
+VmStk:	     132 kB
+VmExe:	       4 kB
+VmLib:	   21144 kB
+VmPTE:	     440 kB
+VmSwap:	       0 kB
+HugetlbPages:	       0 kB
+CoreDumping:	0
+THP_enabled:	1
+Threads:	15
+SigQ:	0/187430
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000000000000
+SigIgn:	0000000000000000
+SigCgt:	2000000101005ccf
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	000001ffffffffff
+CapAmb:	0000000000000000
+NoNewPrivs:	0
+Seccomp:	0
+Seccomp_filters:	0
+Speculation_Store_Bypass:	vulnerable
+SpeculationIndirectBranch:	unknown
+Cpus_allowed:	f
+Cpus_allowed_list:	0-3
+Mems_allowed:	0001
+Mems_allowed_list:	0
+voluntary_ctxt_switches:	12
+nonvoluntary_ctxt_switches:	5

@@ -98,6 +98,25 @@ fn copy_process(captured: &Path, process: &Path) {
             fs::copy(&source, process.join(file)).expect("a copied process file");
         }
     }
+    descriptors_of(&captured.join("fd.list"), &process.join("fd"));
+}
+
+/// The process's open files as the kernel shows them: each descriptor a link to the text its
+/// `readlink` gave, ` (deleted)` included, which need not name anything that exists.
+fn descriptors_of(list: &Path, directory: &Path) {
+    let Ok(text) = fs::read_to_string(list) else {
+        return;
+    };
+    fs::create_dir_all(directory).expect("a writable scratch directory");
+    for line in text.lines() {
+        if let Some((number, target)) = line.split_once(" -> ")
+            && !number.is_empty()
+            && number.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            std::os::unix::fs::symlink(target, directory.join(number))
+                .expect("a writable scratch directory");
+        }
+    }
 }
 
 fn relative(absolute: &str) -> &str {
@@ -179,6 +198,22 @@ pub fn installs_of(cell: &str) -> &'static [Install] {
             install!("node-2", "/opt/es-23b", "/opt/es-23b/config", "7.17.29"),
         ],
         "25" => &[install!("node-1", IMAGE, PACKAGE_CONFIG, "9.4.7")],
+        "27" | "30" => &[install!("node-1", IMAGE, PACKAGE_CONFIG, "8.19.22")],
+        "28" => &[install!(
+            "node-1",
+            "/opt/es-28a",
+            "/opt/es-28a/config",
+            "8.19.22"
+        )],
+        "29" => &[install!(
+            "node-1",
+            "/opt/es-29",
+            "/opt/es-29/config",
+            "8.19.22"
+        )],
+        // Installed: 8.19.22, over a node still running 8.15.3.
+        "31" => &[install!("node-1", IMAGE, PACKAGE_CONFIG, "8.19.22")],
+        "32" => &[],
         other => panic!("cell {other} is not in the matrix"),
     }
 }

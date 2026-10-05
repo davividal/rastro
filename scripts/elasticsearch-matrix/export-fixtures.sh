@@ -5,7 +5,7 @@
 #   DEST:     crates/rastro/tests/fixtures/elasticsearch/cells
 set -eu
 
-readonly PROCESS_FILES=(cmdline environ stat status)
+readonly PROCESS_FILES=(cmdline environ stat status fd.list)
 readonly NODE_FILES=(version-jar elasticsearch.yml config-dir.ls)
 
 export_node() {

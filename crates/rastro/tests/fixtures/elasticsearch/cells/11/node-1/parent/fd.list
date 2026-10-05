@@ -1,0 +1,7 @@
+  
+0 -> pipe:[53951]
+1 -> pipe:[53923]
+2 -> pipe:[53924]
+4 -> /usr/share/elasticsearch/lib/tools/server-launcher/server-launcher
+5 -> pipe:[55876]
+6 -> pipe:[55877]

@@ -4,7 +4,10 @@ Not the cross product. One cell per shape a box is likely to be in, chosen so ev
 value appears at least once and every envelope outcome (`ok`, `not_read`, `unsupported`,
 `error`, `absent`) is produced by at least one real node.
 
-Every cell is run twice by rastro, as root and unprivileged; that is not a separate axis.
+Every cell is read as root. **Unprivileged, every node is `not_read`**: the capture of every cell
+shows `environ`, `fd` and `/proc/<pid>/root` refused to another account, so neither the node's
+install, its config directory nor its listeners can be read. That outcome is the same for every cell,
+which is why it is stated once here rather than as a column.
 
 ## Axes
 
@@ -43,13 +46,19 @@ Every cell is run twice by rastro, as root and unprivileged; that is not a separ
 | 17 | 7.10 | docker (oss image) | env | none | container fs | default | off | ok + unsupported, read as 7.17 |
 | 18 | 8.15 | deb + systemd | security off | none | default | default | off | ok + unsupported, read as 8.19 |
 | 19 | 9.2 | docker | env | none | container fs | default | off | ok + unsupported, read as 9.4; which launcher 9.2 uses is measured here |
-| 20 | 9.5 | deb, installed, service stopped | default | none | default | default | off | absent |
+| 20 | 9.5 | deb, installed, service stopped | default | none | default | default | off | ok, no nodes, `package_installed` true |
 | 21 | 8.19 + 9.5 | deb + systemd, and docker | default each | none | default each | 9200 on the host, 9200 in the container | on + TLS each, a different API key each | the key's own cluster read, the other `not_read: credential rejected` (v1 limitation) |
 | 22 | 9.5 × 2 | docker, two separate clusters | env, both left at the default `cluster.name` (`docker-cluster`) | none | volume each | own netns each | on + TLS each, a different API key each | the key's own cluster read, the other `not_read: credential rejected` (v1 limitation) |
 | 23 | 7.17 × 2 | tar.gz, two separate clusters on the host | default | visible | separate dirs | 9200 and 9201 in one netns | on, a different credential each | the key's own cluster read, the other `not_read: credential rejected` (v1 limitation) |
 | 24 | 9.5 | docker | env | none | volume | default | on + TLS, a key from another cluster | ok, API side `not_read: credential rejected` |
 | 25 | 9.4 | deb + systemd | security on, HTTP TLS off | none | default | default | on without TLS, username and password from stdin | ok, read over plain HTTP with basic auth |
 | 26 | 8.19 | docker | env, audit on | none | container fs | default | on + TLS + audit, API key from a file | ok; the audit entries the run leaves are recorded in the capture |
+| 27 | 8.19 | deb + systemd | security off by `xpack.security.enabled: false` alone, the TLS block left as auto-configured | none | default | default | off | ok, plain HTTP |
+| 28 | 8.19 × 2 | tar.gz `-d`, one cluster, the master killed | default | invisible | separate dirs | 9200 and 9201 | off | ok for the survivor, cluster surfaces `not_read: no master`, nothing waited out |
+| 29 | 8.19 | tar.gz `-d` | default | invisible, ports 8200 and 8300 | default | outside the default ranges | off | `error`, the accepted blind spot |
+| 30 | 8.19 | deb + systemd | `client_authentication: required` | none | default | default | on + mutual TLS | ok, API side `not_read: client certificate` |
+| 31 | 8.15 → 8.19 | deb upgraded under the running node, not restarted | default | none | default | default | off | ok, read as the running 8.15.3, `unsupported`, restart pending |
+| 32 | none | nothing installed or running | | | | | | absent |
 
 The deb cells cannot share a VM: the package owns `/etc/elasticsearch` and one version at a
 time. They run one after another on the same VM (purge between them), or on one VM each.

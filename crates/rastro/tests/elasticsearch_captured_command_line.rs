@@ -122,6 +122,11 @@ cell!(command_line_of_cell_17_a_7_10_oss_container, "17");
 cell!(command_line_of_cell_18_an_8_15_package, "18");
 cell!(command_line_of_cell_19_a_9_2_container, "19");
 cell!(command_line_of_cell_23_two_7_17_clusters, "23");
+cell!(command_line_of_cell_28_a_daemonised_survivor, "28");
+cell!(
+    command_line_of_cell_29_a_daemonised_node_on_custom_ports,
+    "29"
+);
 
 #[test]
 fn distribution_of_a_9_4_node_is_its_servers_since_the_native_launcher_names_none() {

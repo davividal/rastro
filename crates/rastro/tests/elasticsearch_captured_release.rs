@@ -83,3 +83,11 @@ cell!(release_of_cell_23_two_7_17_clusters, "23");
 cell!(release_of_cell_24_a_9_5_container, "24");
 cell!(release_of_cell_25_a_9_4_package, "25");
 cell!(release_of_cell_26_an_8_19_container_with_audit_on, "26");
+cell!(
+    release_of_cell_27_an_8_19_package_with_security_off_alone,
+    "27"
+);
+cell!(release_of_cell_28_a_survivor_of_a_lost_master, "28");
+cell!(release_of_cell_29_a_daemonised_node_on_custom_ports, "29");
+cell!(release_of_cell_30_an_8_19_package_on_mutual_tls, "30");
+cell!(release_of_cell_32_nothing_installed, "32");
