@@ -255,6 +255,7 @@ impl HttpClient {
             .and_then(|()| stream.flush())
             .map_err(|error| match error.kind() {
                 ErrorKind::WouldBlock | ErrorKind::TimedOut => timed_out(),
+                _ if demands_a_client_certificate(&error) => client_certificate_demanded(),
                 _ => Unread::new(format!("GET {path} could not be sent: {error}")),
             })?;
 
@@ -281,6 +282,9 @@ impl HttpClient {
                 // A TLS peer that closes without `close_notify`: what arrived is checked whole
                 // by the answer's own length, so a cut answer is still caught.
                 Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(raw),
+                Err(error) if demands_a_client_certificate(&error) => {
+                    return Err(client_certificate_demanded());
+                }
                 Err(error) => {
                     return Err(Unread::new(format!(
                         "GET {path} failed while reading: {error}"
@@ -299,6 +303,27 @@ impl HttpClient {
             }
         }
     }
+}
+
+/// Whether the TLS peer refused the handshake for want of a client certificate, as a node with
+/// `client_authentication: required` does, measured on 8.19.22.
+fn demands_a_client_certificate(error: &std::io::Error) -> bool {
+    use rustls::AlertDescription;
+
+    matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::AlertReceived(
+            AlertDescription::CertificateRequired | AlertDescription::BadCertificate
+        ))
+    )
+}
+
+/// Mutual TLS is the node's configuration, and rastro has no certificate to present: the box
+/// keeping it out, not a failure to read, found by the third domain review.
+fn client_certificate_demanded() -> Unread {
+    Unread::not_read("the node demands a client certificate, which rastro cannot present")
 }
 
 /// A connection the exchange can bound by time: plain TCP, or TLS over it.

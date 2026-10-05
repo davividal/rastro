@@ -22,6 +22,37 @@ fn fixture(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
+fn certificates() -> Vec<CertificateDer<'static>> {
+    CertificateDer::pem_file_iter(fixture("node.crt"))
+        .expect("the fixture certificate")
+        .collect::<Result<_, _>>()
+        .expect("a certificate")
+}
+
+/// A listener that demands a client certificate signed by the fixture's own, as a node with
+/// `xpack.security.http.ssl.client_authentication: required` does.
+pub fn server_config_requiring_a_client_certificate() -> Arc<ServerConfig> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in certificates() {
+        roots.add(certificate).expect("a usable root");
+    }
+    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+        Arc::new(roots),
+        Arc::clone(&provider),
+    )
+    .build()
+    .expect("a client verifier");
+    let key = PrivateKeyDer::from_pem_file(fixture("node.key")).expect("the fixture key");
+    let config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("TLS versions ring supports")
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certificates(), key)
+        .expect("a usable certificate");
+    Arc::new(config)
+}
+
 pub fn server_config() -> Arc<ServerConfig> {
     let certificates: Vec<CertificateDer<'static>> =
         CertificateDer::pem_file_iter(fixture("node.crt"))
@@ -69,6 +100,25 @@ pub fn serving(respond: impl Fn(&str) -> Vec<u8> + Send + 'static) -> u16 {
                 let response = respond(&request);
                 answer(tls, &response);
             }
+        }
+    });
+    port
+}
+
+/// A listener that demands a client certificate and answers nobody without one.
+pub fn requiring_a_client_certificate() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let Ok(connection) =
+                ServerConnection::new(server_config_requiring_a_client_certificate())
+            else {
+                continue;
+            };
+            let mut tls = StreamOwned::new(connection, stream);
+            let mut byte = [0_u8; 1];
+            let _ = tls.read(&mut byte);
         }
     });
     port

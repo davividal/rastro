@@ -589,3 +589,24 @@ fn get_for_large_answers_reads_what_a_cluster_with_many_indices_returns() {
     // Assert
     assert_eq!(body.len(), 17 * 1024 * 1024);
 }
+
+#[test]
+fn get_reports_a_node_that_demands_a_client_certificate_as_not_read() {
+    // Arrange: found by the third domain review, measured on 8.19.22 (cell 30) with
+    // `client_authentication: required`. Mutual TLS is the node's configuration: rastro has no
+    // client certificate to present, which is the box keeping it out and not a failure to read.
+    let port = tls_listener::requiring_a_client_certificate();
+
+    // Act
+    let unread = HttpClient::new()
+        .get(&loopback(port).over(Transport::Tls), "/")
+        .expect_err("no client certificate");
+
+    // Assert
+    assert!(unread.is_not_read(), "{}", unread.reason());
+    assert!(
+        unread.reason().contains("client certificate"),
+        "{}",
+        unread.reason()
+    );
+}
