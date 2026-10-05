@@ -374,7 +374,7 @@ fn read_config_file(root: &Path, config: &Path) -> Result<BTreeMap<String, Strin
 
     let mut values = BTreeMap::new();
     if let Some(document) = documents.first() {
-        flatten(document, None, &mut values)
+        flatten(document, None, &mut values, 0)
             .map_err(|reason| Unread::new(format!("{}: {reason}", named.display())))?;
     }
 
@@ -382,11 +382,19 @@ fn read_config_file(root: &Path, config: &Path) -> Result<BTreeMap<String, Strin
 }
 
 /// Folds nested maps into dotted keys, the two spellings the node itself treats as one.
+/// How deep a settings file may nest. Real ones nest a few levels; found by review, each level is
+/// a recursion here, and the file is its owner's to write.
+const MOST_NESTED_KEYS: usize = 32;
+
 fn flatten(
     node: &Yaml,
     prefix: Option<&str>,
     values: &mut BTreeMap<String, String>,
+    depth: usize,
 ) -> Result<(), String> {
+    if depth > MOST_NESTED_KEYS {
+        return Err(format!("it nests deeper than {MOST_NESTED_KEYS} levels"));
+    }
     match node {
         Yaml::Hash(entries) => {
             for (key, value) in entries {
@@ -395,7 +403,7 @@ fn flatten(
                     Some(prefix) => format!("{prefix}.{key}"),
                     None => key,
                 };
-                flatten(value, Some(&name), values)?;
+                flatten(value, Some(&name), values, depth + 1)?;
             }
             Ok(())
         }

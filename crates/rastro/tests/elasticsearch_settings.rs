@@ -333,6 +333,30 @@ fn read_in_refuses_a_file_that_uses_a_yaml_alias() {
 }
 
 #[test]
+fn read_in_refuses_a_file_nested_deeper_than_any_setting() {
+    // Arrange: found by review. Flattening a mapping is a recursion per level, and the file is
+    // its owner's to write; the parser caps flow nesting near 255, measured on yaml-rust2 0.13.0,
+    // and block nesting only by the file's size, about 1400 levels in 1 MiB.
+    let proc = scratch_tree("elasticsearch-settings-file-deep", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    let nested: String = (0..100)
+        .map(|level| format!("{}a{level}:\n", " ".repeat(level)))
+        .collect();
+    write(
+        &proc,
+        CONFIG_FILE,
+        &format!("{nested}{}x\n", " ".repeat(100)),
+    );
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("too deep a file");
+
+    // Assert
+    assert!(unread.reason().contains("nests"), "{}", unread.reason());
+}
+
+#[test]
 fn read_in_refuses_a_file_it_cannot_read() {
     // Arrange: again a directory, so the refusal holds when the suite runs as root.
     let proc = scratch_tree(
