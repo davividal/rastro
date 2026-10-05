@@ -482,6 +482,24 @@ fn substitute(
     value: &str,
     environment: &BTreeMap<String, String>,
 ) -> Result<String, Unread> {
+    substitute_within(setting, value, environment, 0)
+}
+
+/// How deep defaults may nest. Found by the security review: each level was a recursion, and a
+/// file of its owner's choosing took the stack, which aborts the run rather than failing a node.
+const MOST_NESTED: usize = 16;
+
+fn substitute_within(
+    setting: &str,
+    value: &str,
+    environment: &BTreeMap<String, String>,
+    depth: usize,
+) -> Result<String, Unread> {
+    if depth > MOST_NESTED {
+        return Err(Unread::new(format!(
+            "{setting} nests placeholders deeper than {MOST_NESTED}"
+        )));
+    }
     let mut resolved = String::new();
     let mut rest = value;
 
@@ -498,7 +516,7 @@ fn substitute(
         let found = match (environment.get(name), default) {
             (Some(found), _) => found.clone(),
             // A default may itself hold a placeholder, which resolves the same way.
-            (None, Some(default)) => substitute(setting, default, environment)?,
+            (None, Some(default)) => substitute_within(setting, default, environment, depth + 1)?,
             (None, None) => {
                 return Err(Unread::new(format!(
                     "{setting} names {name}, which the node's environment does not hold"

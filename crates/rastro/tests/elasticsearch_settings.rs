@@ -545,6 +545,23 @@ fn read_in_takes_a_placeholders_default_where_its_variable_is_unset() {
 }
 
 #[test]
+fn read_in_refuses_placeholders_nested_deeper_than_any_setting_needs() {
+    // Arrange: found by the security review. Each default nested in another was a recursion, so
+    // a file of its owner's choosing could take the stack, which aborts rather than fails.
+    let proc = scratch_tree("elasticsearch-settings-placeholder-deep", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    let nested = format!("{}9250{}", "${UNSET:".repeat(64), "}".repeat(64));
+    write(&proc, CONFIG_FILE, &format!("http.port: \"{nested}\"\n"));
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("too deep to resolve");
+
+    // Assert
+    assert!(unread.reason().contains("nests"), "{}", unread.reason());
+}
+
+#[test]
 fn read_in_takes_a_placeholders_variable_over_its_default() {
     // Arrange
     let proc = scratch_tree("elasticsearch-settings-placeholder-set", &["600/root"]);
