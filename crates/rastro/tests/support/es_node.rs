@@ -20,6 +20,9 @@ pub const PID: &str = "600";
 
 const SOCKET_INODE: u64 = 4242;
 
+/// The first byte of a TLS handshake record, which a ClientHello opens with.
+const TLS_HANDSHAKE: u8 = 0x16;
+
 /// A 7.x-shaped server from the docker image, which carries its own paths and whose environment
 /// holds settings; the 8.x launcher split is the residency read's to test.
 const SERVER_ARGV: &str = "/usr/share/elasticsearch/jdk/bin/java\0\
@@ -58,6 +61,13 @@ fn plain_listener(respond: impl Fn(&str) -> Vec<u8> + Send + 'static) -> u16 {
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
+            // A TLS record where HTTP was expected: measured on 8.19.22, the node answers five
+            // bytes that are not TLS, an HTTP status line, and closes, logging nothing.
+            let mut first = [0_u8; 1];
+            if stream.peek(&mut first).is_ok_and(|read| read == 1) && first[0] == TLS_HANDSHAKE {
+                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
+                continue;
+            }
             let mut request = Vec::new();
             let mut byte = [0_u8; 1];
             while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {

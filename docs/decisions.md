@@ -6378,6 +6378,21 @@ taken from the descriptors only where `fdinfo` says the file is open for writing
 without the bits. A directory the world can write is never sealed, on either route, since any
 account can hold a file open for writing in `/tmp`.
 
+## The listener says whether it speaks TLS, asked with a handshake first
+
+**Reverses "Only TLS on HTTP is decided before asking"**, and with it "Security switched off is
+plain HTTP, whatever the TLS setting beside it says", and the blind spot both accepted. The settings
+were a model of what the node chose, and the model had an edge the matrix named, cell 06: a node
+started with `-d` and TLS switched on by an `-E` its launcher took away has a file that says
+plain, and rastro sent it plaintext, which the node logs as a WARN.
+
+Measured on 7.17.29, 8.19.22 and 9.5.4: a plain node sent a TLS ClientHello answers five bytes of
+an HTTP status line and logs nothing, and a secured node logs nothing for a handshake with no
+request after it. So before anything is asked, a handshake is made and closed: completed, the
+listener is TLS; answered in something other than TLS, it is plain HTTP; anything else is the
+node's `error`, or `not_read` where it wants a client certificate. Nothing the node can log is sent
+on a guess. The settings now decide only which port and which directories.
+
 ## Measured: `-.*` leaves a data stream's backing indices out, and hidden aliases are listed
 
 The domain review read the module comment that `-.*` excludes `.ds-` backing indices as unmeasured.

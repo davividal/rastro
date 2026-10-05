@@ -716,9 +716,9 @@ fn read_in_reads_a_node_whose_start_cannot_be_read() {
 #[test]
 fn read_in_takes_a_command_line_setting_spelled_with_an_equals_sign() {
     // Arrange: found by the second domain review, measured on 8.15.3: jopt-simple also takes
-    // `-E=name=value`, which was read as a setting named `""` and let a TLS node be sent plaintext.
+    // `-E=name=value`, which was read as a setting named `""` and put the node on the wrong port.
     let proc = scratch_tree("elasticsearch-settings-e-equals", &["600/root"]);
-    let argv = format!("{TAR_SERVER_ARGV}-E=xpack.security.http.ssl.enabled=true\0");
+    let argv = format!("{TAR_SERVER_ARGV}-E=http.port=9250\0");
     write(&proc, "600/cmdline", &argv);
     write(&proc, "600/environ", "");
     write(&proc, CONFIG_FILE, "");
@@ -727,10 +727,7 @@ fn read_in_takes_a_command_line_setting_spelled_with_an_equals_sign() {
     let settings = NodeSettings::read_in(&proc, &node_in(&proc)).expect("readable settings");
 
     // Assert
-    assert_eq!(
-        settings.transport(),
-        rastro::collectors::elasticsearch::Transport::Tls
-    );
+    assert_eq!(settings.get("http.port"), Some("9250"));
 }
 
 #[test]

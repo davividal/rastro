@@ -242,23 +242,15 @@ impl HttpClient {
             (other, _) => other.map_err(Dial::into_unread)?,
         };
 
-        // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
-        // settings said plain, so this is the blind spot `docs/decisions.md` accepts.
+        // Plain only where the listener answered a handshake in HTTP, so a listener that now does
+        // not answer in HTTP has changed under the read.
         let plainly = match endpoint.transport() {
-            Transport::Plain => {
-                ", most likely TLS, although the node's settings say it serves plain HTTP"
-            }
+            Transport::Plain => ", although it answered a TLS handshake in HTTP",
             Transport::Tls => "",
         };
         if raw.is_empty() {
             return Err(Unread::new(format!(
-                "{address} closed the connection without an HTTP answer{}",
-                match endpoint.transport() {
-                    Transport::Plain =>
-                        ", as a listener that wants TLS does, although the \
-                                         node's settings say it serves plain HTTP",
-                    Transport::Tls => "",
-                }
+                "{address} closed the connection without an HTTP answer{plainly}"
             )));
         }
         if !raw.starts_with(HTTP_VERSION_PREFIX) {
@@ -278,23 +270,7 @@ impl HttpClient {
         credential: Option<&ApiCredential>,
     ) -> Result<Vec<u8>, Dial> {
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(Dial::Failed(timed_out()));
-        }
-
-        let socket = TcpStream::connect_timeout(&address, remaining).map_err(|error| {
-            let unread = Unread::new(format!("could not connect to {address}: {error}"));
-            match error.kind() {
-                ErrorKind::TimedOut => Dial::Failed(timed_out()),
-                ErrorKind::ConnectionRefused
-                | ErrorKind::AddrNotAvailable
-                | ErrorKind::NetworkUnreachable
-                | ErrorKind::HostUnreachable => Dial::Unreachable(unread),
-                _ => Dial::Failed(unread),
-            }
-        })?;
-        let socket = Deadlined { socket, deadline };
+        let socket = self.connect(address, deadline, timed_out)?;
 
         match transport {
             Transport::Plain => self
@@ -317,6 +293,88 @@ impl HttpClient {
                 .map_err(Dial::Failed)
             }
         }
+    }
+
+    /// Which protocol the node's listener speaks, asked of the listener itself: a TLS handshake
+    /// and nothing after it.
+    ///
+    /// **TLS first**, measured on 7.17.29, 8.19.22 and 9.5.4: a plain node sent a ClientHello
+    /// answers in HTTP and logs nothing, and a secured node logs nothing for a handshake with no
+    /// request after it, where plaintext sent to a TLS node is a WARN in its log. So the node says
+    /// which it serves, where its settings could not: a node started with `-d` and TLS switched
+    /// on by an `-E` its launcher took away has a file that says plain.
+    pub fn transport_of(&self, endpoint: &HttpEndpoint) -> Result<Transport, Unread> {
+        if let Some(check) = &self.peer_check {
+            check()?;
+        }
+        let deadline = Instant::now() + self.timeout;
+        let address = socket_address_of(endpoint.host(), endpoint)?;
+        match (self.handshake(address, deadline), endpoint.fallback()) {
+            (Err(Dial::Unreachable(_)), Some(fallback)) => self
+                .handshake(socket_address_of(fallback, endpoint)?, deadline)
+                .map_err(Dial::into_unread),
+            (other, _) => other.map_err(Dial::into_unread),
+        }
+    }
+
+    fn handshake(&self, address: SocketAddr, deadline: Instant) -> Result<Transport, Dial> {
+        let timed_out = || {
+            Unread::new(format!(
+                "a TLS handshake with {address} timed out after {:?}",
+                self.timeout
+            ))
+        };
+        let mut socket = self.connect(address, deadline, timed_out)?;
+        let peer = ServerName::IpAddress(address.ip().into());
+        let mut connection = ClientConnection::new(tls_configuration(), peer).map_err(|error| {
+            Dial::Failed(Unread::new(format!(
+                "TLS to {address} could not start: {error}"
+            )))
+        })?;
+
+        while connection.is_handshaking() {
+            if let Err(error) = connection.complete_io(&mut socket) {
+                return match error.kind() {
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut => Err(Dial::Failed(timed_out())),
+                    _ if answered_in_something_else(&error) => Ok(Transport::Plain),
+                    _ if demands_a_client_certificate(&error) => {
+                        Err(Dial::Failed(client_certificate_demanded()))
+                    }
+                    _ => Err(Dial::Failed(Unread::new(format!(
+                        "a TLS handshake with {address} failed: {error}"
+                    )))),
+                };
+            }
+        }
+        connection.send_close_notify();
+        let _ = connection.complete_io(&mut socket);
+        Ok(Transport::Tls)
+    }
+
+    /// A connection to `address` whose every read and write is bounded by `deadline`.
+    fn connect(
+        &self,
+        address: SocketAddr,
+        deadline: Instant,
+        timed_out: impl Fn() -> Unread,
+    ) -> Result<Deadlined, Dial> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Dial::Failed(timed_out()));
+        }
+
+        let socket = TcpStream::connect_timeout(&address, remaining).map_err(|error| {
+            let unread = Unread::new(format!("could not connect to {address}: {error}"));
+            match error.kind() {
+                ErrorKind::TimedOut => Dial::Failed(timed_out()),
+                ErrorKind::ConnectionRefused
+                | ErrorKind::AddrNotAvailable
+                | ErrorKind::NetworkUnreachable
+                | ErrorKind::HostUnreachable => Dial::Unreachable(unread),
+                _ => Dial::Failed(unread),
+            }
+        })?;
+        Ok(Deadlined { socket, deadline })
     }
 
     /// Sends the request on `stream` and reads the answer back, within the deadline and the bound.
@@ -398,13 +456,23 @@ fn demands_a_client_certificate(error: &std::io::Error) -> bool {
     )
 }
 
+/// Whether the peer answered the handshake in bytes that are not TLS, which a plain HTTP node
+/// does: measured on 8.19.22, five bytes, `HTTP/`, of a status line.
+fn answered_in_something_else(error: &std::io::Error) -> bool {
+    matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::InvalidMessage(_))
+    )
+}
+
 /// Mutual TLS is the node's configuration, and rastro has no certificate to present: the box
 /// keeping it out, not a failure to read, found by the third domain review.
 fn client_certificate_demanded() -> Unread {
     Unread::not_read("the node demands a client certificate, which rastro cannot present")
 }
 
-/// A connection the exchange can bound by time: plain TCP, or TLS over it.
 /// A socket that gives each read and write only what is left of one deadline, so no sequence
 /// of them, a TLS handshake's included, outlasts it.
 struct Deadlined {

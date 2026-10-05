@@ -400,6 +400,68 @@ fn loopback(port: u16) -> HttpEndpoint {
     )
 }
 
+/// A plain HTTP listener as a node's is, answering a ClientHello with a status line.
+fn plain_http_listener() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut hello = [0_u8; 512];
+            let _ = stream.read(&mut hello);
+            let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
+        }
+    });
+    port
+}
+
+#[test]
+fn transport_of_a_listener_that_completes_a_handshake_is_tls() {
+    // Arrange: measured on 8.19.22 and 9.5.4 with security on, a handshake and nothing after it
+    // leaves no line in the node's log.
+    let port = tls_listener::serving(|_| Vec::new());
+
+    // Act
+    let transport = HttpClient::new().transport_of(&loopback(port));
+
+    // Assert
+    assert_eq!(transport, Ok(Transport::Tls));
+}
+
+#[test]
+fn transport_of_a_listener_that_answers_a_handshake_in_http_is_plain() {
+    // Arrange: measured on 7.17.29, 8.19.22 and 9.5.4, a plain node sent a ClientHello answers
+    // in HTTP and logs nothing, where plaintext sent to a TLS node is a WARN in its log.
+    let port = plain_http_listener();
+
+    // Act
+    let transport = HttpClient::new().transport_of(&loopback(port));
+
+    // Assert
+    assert_eq!(transport, Ok(Transport::Plain));
+}
+
+#[test]
+fn transport_of_a_listener_that_never_answers_gives_up_within_the_deadline() {
+    // Arrange
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    thread::spawn(move || {
+        let held = listener.accept();
+        thread::sleep(Duration::from_secs(30));
+        drop(held);
+    });
+    let started = Instant::now();
+
+    // Act
+    let unread = HttpClient::bounded(Duration::from_millis(300), 1024)
+        .transport_of(&loopback(port))
+        .expect_err("no answer");
+
+    // Assert
+    assert!(unread.reason().contains("timed out"), "{}", unread.reason());
+    assert!(started.elapsed() < Duration::from_secs(3));
+}
+
 #[test]
 fn get_reads_a_node_on_tls_whatever_certificate_it_presents() {
     // Arrange: a self-signed certificate for another name, which a CA check would refuse. The

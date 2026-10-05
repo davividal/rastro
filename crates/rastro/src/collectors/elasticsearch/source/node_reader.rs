@@ -1,8 +1,9 @@
 //! One node, read in the only order that asks nothing blind.
 //!
-//! Settings, then whether they allow plain HTTP, then the namespace, then the listeners, then
-//! which of them serves HTTP, and only then a request, made inside the node's namespace. Each
-//! step's refusal stops the read there, and what the earlier steps established is kept.
+//! Settings, then the namespace, then the listeners, then which of them serves HTTP, then, inside
+//! the node's namespace, which protocol that listener speaks, asked with a handshake that the node
+//! logs nothing for, and only then a request. Each step's refusal stops the read there, and what
+//! the earlier steps established is kept.
 
 use std::path::Path;
 
@@ -118,8 +119,7 @@ fn read_into(
     });
 
     let listeners = NodeListener::read_in(proc, resident.process_id())?;
-    let endpoint = http_endpoint(&listeners, &settings)?.over(settings.transport());
-    node.http = Some(endpoint.clone());
+    let endpoint = http_endpoint(&listeners, &settings)?;
 
     let held = HeldListener {
         proc: proc.to_path_buf(),
@@ -131,6 +131,10 @@ fn read_into(
         .clone()
         .checking_the_peer_with(move || held.still_the_nodes());
     let client = &client;
+
+    let transport = namespace.run(|| client.transport_of(&endpoint))??;
+    let endpoint = endpoint.over(transport);
+    node.http = Some(endpoint.clone());
 
     let answers = namespace.run(|| read_answers(client, &endpoint, release))??;
     // The answer is this node's only where it names the release the node's install holds.

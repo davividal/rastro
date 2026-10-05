@@ -182,6 +182,23 @@ fn collect_reads_a_node_whose_settings_want_tls_over_tls() {
 }
 
 #[test]
+fn collect_reads_a_node_on_tls_whatever_its_settings_say() {
+    // Arrange: cell 06, the blind spot the settings left. A node started with `-d` and TLS switched
+    // on by an `-E` its launcher took away has a file that says plain, and was sent plaintext,
+    // which the node logs as a WARN. Asked in TLS first, it answers for itself.
+    let node = FakeNode::serving_tls(&[("/", ROOT)]);
+    let proc = node.proc("elasticsearch-facet-tls-unsaid");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert_eq!(text(&field(&field(reported, "http"), "scheme")), "https");
+}
+
+#[test]
 fn collect_dials_a_node_on_plain_http_without_tls() {
     // Arrange
     let node = FakeNode::serving(&[("/", ROOT)]);
