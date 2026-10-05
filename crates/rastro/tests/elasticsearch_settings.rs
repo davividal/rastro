@@ -342,6 +342,58 @@ fn read_in_refuses_a_file_it_cannot_read() {
 }
 
 #[test]
+fn read_in_refuses_a_file_that_is_a_fifo_rather_than_waiting_on_it() {
+    // Arrange: found by the security review. The file is inside the node's root, which a
+    // container's tenant owns, and opening a FIFO blocks until a writer appears: **if this test
+    // ever hangs, the check is gone.**
+    let proc = scratch_tree(
+        "elasticsearch-settings-file-fifo",
+        &["600/root/etc/elasticsearch"],
+    );
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    let made = std::process::Command::new("mkfifo")
+        .arg(proc.join(CONFIG_FILE))
+        .status()
+        .expect("mkfifo should be runnable");
+    assert!(made.success(), "the fixture needs a FIFO");
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("a FIFO for a file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("not a regular file"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
+fn read_in_refuses_a_file_larger_than_any_settings_file() {
+    // Arrange: found by the security review. Read whole, a file of any size became rastro's
+    // memory, and the largest file in the matrix is under 5 KiB.
+    let proc = scratch_tree("elasticsearch-settings-file-huge", &["600/root"]);
+    write(&proc, "600/cmdline", SERVER_ARGV);
+    write(&proc, "600/environ", "");
+    write(
+        &proc,
+        CONFIG_FILE,
+        &format!("# {}\n", "x".repeat(2 * 1024 * 1024)),
+    );
+
+    // Act
+    let unread = NodeSettings::read_in(&proc, &node_in(&proc)).expect_err("an oversized file");
+
+    // Assert
+    assert!(
+        unread.reason().contains("larger than"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
 fn read_in_refuses_a_node_whose_argv_cannot_be_read_exactly() {
     // Arrange: a setting or a path spelled in bytes that are not UTF-8 cannot be read back as the
     // node reads it, and a near copy is a wrong port or a wrong file.

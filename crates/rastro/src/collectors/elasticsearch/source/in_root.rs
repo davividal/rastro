@@ -22,12 +22,28 @@ struct FileIdentity {
     inode: u64,
 }
 
+/// The most of a node's file that is read. The largest file in the matrix is under 5 KiB.
+const MOST_READ: u64 = 1024 * 1024;
+
 /// A file's text, every component of `relative` resolved inside `root`.
+///
+/// **Bounded, and a regular file only**, found by the security review: the root is the
+/// process's, so its owner chooses what is at the path, and read as root a FIFO blocked the run
+/// and `/dev/zero` grew without end. Opened without blocking, so the type is checked on what was
+/// opened rather than on a path that could change in between.
 pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
-    let mut file = open_inside(root, relative, Opening::Read)?;
+    let file = open_inside(root, relative, Opening::Read)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("it is not a regular file"));
+    }
     let mut text = String::new();
-    file.read_to_string(&mut text)?;
-    Ok(text)
+    file.take(MOST_READ + 1).read_to_string(&mut text)?;
+    match u64::try_from(text.len()).is_ok_and(|length| length <= MOST_READ) {
+        true => Ok(text),
+        false => Err(std::io::Error::other(format!(
+            "it is larger than {MOST_READ} bytes"
+        ))),
+    }
 }
 
 /// The host's own directory at `path`, canonical, where `path` inside the process's root is that
@@ -129,7 +145,7 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
         Mode::empty(),
     )?;
     let flags = match opening {
-        Opening::Read => OFlags::RDONLY | OFlags::CLOEXEC,
+        Opening::Read => OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC,
         Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
     };
@@ -150,5 +166,10 @@ fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Resul
 /// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
 #[cfg(not(target_os = "linux"))]
 fn open_inside(root: &Path, relative: &Path, _opening: Opening) -> std::io::Result<File> {
-    File::open(root.join(relative))
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(root.join(relative))
 }

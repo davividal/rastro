@@ -4,6 +4,7 @@
 //! has not identified as an Elasticsearch server, so the identification has to be right in
 //! both directions, across the two argv shapes the supported versions start with.
 
+use std::fs;
 use std::path::Path;
 
 use rastro::collectors::elasticsearch::ResidentNode;
@@ -345,6 +346,39 @@ fn census_in_counts_a_java_whose_unread_argument_file_could_start_the_server_as_
         "/usr/share/elasticsearch/jdk/bin/java\0@args\0",
     );
     std::os::unix::fs::symlink("/work", proc.join("90/cwd")).expect("a writable fixture");
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(census.some_processes_unseen);
+}
+
+#[test]
+fn census_in_counts_a_java_whose_argument_file_is_a_fifo_as_unseen() {
+    // Arrange: found by the security review. The file is in the process's own root, which its
+    // owner controls, and opening a FIFO blocks: **if this test ever hangs, the check is gone.**
+    let proc = launched_from_an_argument_file("elasticsearch-residency-argfile-fifo", "");
+    fs::remove_file(proc.join("90/root/work/args")).expect("a writable fixture");
+    fifo(&proc.join("90/root/work/args"));
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(census.some_processes_unseen);
+}
+
+#[test]
+fn census_in_counts_a_java_whose_argument_file_is_larger_than_any_launch_as_unseen() {
+    // Arrange: found by the security review. Read whole, a file of any size became rastro's
+    // memory, as root, for any process on the box.
+    let proc = launched_from_an_argument_file(
+        "elasticsearch-residency-argfile-huge",
+        &format!("-Dpadding={}\n", "x".repeat(2 * 1024 * 1024)),
+    );
 
     // Act
     let census = ResidentNode::census_in(&proc);
