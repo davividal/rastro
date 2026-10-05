@@ -11,6 +11,8 @@ readonly DEBS="7.17.29 8.19.22 9.5.4 8.15.3 9.4.7"
 readonly TARS="9.4.7 8.19.22 7.17.29 9.5.4"
 readonly IMAGES="$IMG:7.17.29 $IMG:8.19.22 $IMG:9.4.7 $IMG:9.5.4 $IMG:9.2.0 docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.2"
 readonly PACKAGE_FILE=/etc/elasticsearch/elasticsearch.yml
+# curl's protocol list for a download and each redirect it follows: HTTPS and nothing else.
+readonly HTTPS_ONLY='=https'
 
 # The capture's view of a cell: which ports serve HTTP, in which protocol, with which credential.
 readonly PLAIN_9200='PORTS="9200=http"'
@@ -26,8 +28,8 @@ log() {
 fetch() {
   local url=$1 file=$2 expected
   [[ -f "$file" ]] && return 0
-  curl -sfL --proto '=https' --proto-redir '=https' -o "$file.part" "$url" || return 1
-  expected=$(curl -sfL --proto '=https' --proto-redir '=https' "$url.sha512" | cut -d' ' -f1)
+  curl -sfL --proto "$HTTPS_ONLY" --proto-redir "$HTTPS_ONLY" -o "$file.part" "$url" || return 1
+  expected=$(curl -sfL --proto "$HTTPS_ONLY" --proto-redir "$HTTPS_ONLY" "$url.sha512" | cut -d' ' -f1)
   if [[ -z "$expected" ]] || ! echo "$expected  $file.part" | sha512sum -c --quiet -; then
     log "$url does not match its published checksum"
     rm -f "$file.part"
