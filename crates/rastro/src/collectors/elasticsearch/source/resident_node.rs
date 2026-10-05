@@ -438,9 +438,19 @@ fn expanded(process: &Path, arguments: Vec<String>) -> Expansion {
     let mut scan = OptionScan::default();
     let mut rest = arguments.into_iter();
     expansion.arguments.extend(rest.next());
+    // Found by the security review: every process is inspected, as root, and `curl -d @fifo`
+    // blocked the census on the FIFO. The `@` is only java's to expand.
+    let launched_by_java = is_java(
+        &expansion
+            .arguments
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    );
 
     for argument in rest {
-        let from_argument: Vec<String> = match (scan.expanding(), argument.strip_prefix('@')) {
+        let expanding = launched_by_java && scan.expanding();
+        let from_argument: Vec<String> = match (expanding, argument.strip_prefix('@')) {
             (true, Some(literal)) if literal.starts_with('@') => vec![literal.to_owned()],
             (true, Some(file)) => match argument_file_text(process, file) {
                 Some(text) => java_argument_file::arguments_in(&text),

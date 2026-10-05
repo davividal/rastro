@@ -370,6 +370,40 @@ fn census_in_sees_past_a_java_whose_argument_files_were_all_read() {
     assert!(!census.some_processes_unseen);
 }
 
+/// A FIFO at `path`, which blocks whoever opens it for reading until a writer appears.
+fn fifo(path: &Path) {
+    let made = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("mkfifo should be runnable");
+    assert!(made.success(), "the fixture needs a FIFO");
+}
+
+#[test]
+fn census_in_opens_no_argument_file_of_a_program_that_is_not_java() {
+    // Arrange: found by the security review. `curl -d @body` is an ordinary argv, and every
+    // process on the box is inspected, as root; the `@` is only java's to expand. Here `body` is
+    // a FIFO, so opening it blocks: **if this test ever hangs, the check is gone.**
+    let proc = scratch_tree(
+        "elasticsearch-residency-argfile-not-java",
+        &["91/root/work"],
+    );
+    write(
+        &proc,
+        "91/cmdline",
+        "/usr/bin/curl\0-d\0@body\0http://example.test/\0",
+    );
+    fifo(&proc.join("91/root/work/body"));
+    std::os::unix::fs::symlink("/work", proc.join("91/cwd")).expect("a writable fixture");
+
+    // Act
+    let census = ResidentNode::census_in(&proc);
+
+    // Assert
+    assert!(census.nodes.is_empty());
+    assert!(!census.some_processes_unseen);
+}
+
 #[test]
 fn all_in_reads_an_argument_file_as_java_does() {
     // Arrange: measured on the bundled JDK of 8.15.3. Quotes group and are removed, `#` outside
