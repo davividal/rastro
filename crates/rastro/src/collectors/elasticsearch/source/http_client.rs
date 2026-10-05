@@ -242,16 +242,26 @@ impl HttpClient {
 
         // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
         // settings said plain, so this is the blind spot `docs/decisions.md` accepts.
+        let plainly = match endpoint.transport() {
+            Transport::Plain => {
+                ", most likely TLS, although the node's settings say it serves plain HTTP"
+            }
+            Transport::Tls => "",
+        };
         if raw.is_empty() {
             return Err(Unread::new(format!(
-                "{address} closed the connection without an HTTP answer, as a listener that \
-                 wants TLS does, although the node's settings say it serves plain HTTP"
+                "{address} closed the connection without an HTTP answer{}",
+                match endpoint.transport() {
+                    Transport::Plain =>
+                        ", as a listener that wants TLS does, although the \
+                                         node's settings say it serves plain HTTP",
+                    Transport::Tls => "",
+                }
             )));
         }
         if !raw.starts_with(HTTP_VERSION_PREFIX) {
             return Err(Unread::new(format!(
-                "{address} answered in something other than HTTP, most likely TLS, although the \
-                 node's settings say it serves plain HTTP"
+                "{address} answered in something other than HTTP{plainly}"
             )));
         }
         Ok(raw)

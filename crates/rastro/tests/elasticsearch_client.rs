@@ -623,6 +623,30 @@ fn get_over_tls_gives_up_on_a_listener_that_trickles_its_handshake_past_the_dead
 }
 
 #[test]
+fn get_over_tls_says_what_closed_without_blaming_the_settings() {
+    // Arrange: found by review. A TLS listener that closes after its handshake was reported as
+    // one the settings said served plain HTTP, which on this path they did not.
+    let port = tls_listener::serving(|_| Vec::new());
+
+    // Act
+    let unread = HttpClient::new()
+        .get(&loopback(port).over(Transport::Tls), "/")
+        .expect_err("no answer");
+
+    // Assert
+    assert!(
+        unread.reason().contains("without an HTTP answer"),
+        "{}",
+        unread.reason()
+    );
+    assert!(
+        !unread.reason().contains("plain HTTP"),
+        "{}",
+        unread.reason()
+    );
+}
+
+#[test]
 fn get_dials_the_fallback_where_the_first_address_cannot_be_reached() {
     // Arrange: nothing listens on `::1` at this port, the IPv4 loopback does.
     let (served, _) = serve_once(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec());
