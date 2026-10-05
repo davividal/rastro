@@ -298,10 +298,18 @@ fn collect_reports_a_node_in_a_namespace_it_cannot_join_on_the_node() {
     // Act
     let facet = collector(&proc, false).collect().expect("a facet");
 
-    // Assert: where it listens was found from its own table; asking it was not possible.
+    // Assert: where it listens was found from its own table; asking it was not possible. As root
+    // the kernel refuses a file that is not a namespace, the node's `error`; unprivileged it
+    // refuses the join for want of `CAP_SYS_ADMIN` first, the box keeping rastro out, `not_read`.
     let reported = &items_of(&field(&facet, "nodes"))[0];
     assert_eq!(text(&field(reported, "network_namespace")), "separate");
-    assert!(text(&field(reported, "error")).contains("namespace"));
+    let reason = ["error", "not_read"]
+        .into_iter()
+        .map(|kind| field(reported, kind))
+        .find(|reason| !is_null(reason))
+        .map(|reason| text(&reason))
+        .expect("an error or a not_read");
+    assert!(reason.contains("namespace"), "{reason}");
     assert!(node.requests().is_empty(), "{:?}", node.requests());
 }
 
