@@ -95,6 +95,9 @@ const DEFAULT_CONFIG: &str = "config";
 const SERVER_JAR_PREFIX: &str = "elasticsearch-";
 const SERVER_JAR_SUFFIX: &str = ".jar";
 
+/// What the kernel appends to an open file's link once the file is removed.
+const DELETED_MARKER: &str = " (deleted)";
+
 /// The system property naming how the node was installed: `docker`, `tar`, `deb` or `rpm`.
 const DISTRIBUTION_PROPERTY: &str = "-Des.distribution.type=";
 
@@ -121,8 +124,13 @@ pub struct ResidentNode {
     /// install sets it to `/etc/elasticsearch`, and the default would name another directory.
     config: Option<PathBuf>,
 
-    /// The release, from the server jar in the install, read inside the node's own root.
+    /// The release the node runs: the server jar it holds open, or where that cannot be seen, the
+    /// one its install holds.
     release: Option<Release>,
+
+    /// The release the node's install holds, read inside its own root, which an upgrade not yet
+    /// followed by a restart makes another than the one it runs.
+    installed_release: Option<Release>,
 
     /// When the process started, in clock ticks since boot, which with its id names this process
     /// and no later one given the same id.
@@ -230,13 +238,20 @@ impl ResidentNode {
             .ok()
     }
 
-    /// Which release the node runs, as its install's server jar names it.
+    /// Which release the node runs, as the server jar it holds open names it.
     ///
     /// Not `GET /`, which a node with security on refuses: the version decides how a node is
-    /// read before it is asked. Nothing where the install is unknown or unreadable, or holds no
-    /// server jar, or more than one.
+    /// read before it is asked. Found by the third domain review, measured on cell 31: a package
+    /// upgraded under a running node replaces the jar in `lib/` and leaves the node running the
+    /// old one, held open and marked ` (deleted)`, so the install is the fallback, where the
+    /// descriptors cannot be listed. Nothing where neither names exactly one server jar.
     pub fn release(&self) -> Option<Release> {
         self.release
+    }
+
+    /// Which release the node's install holds, as its `lib/` names it.
+    pub fn installed_release(&self) -> Option<Release> {
+        self.installed_release
     }
 
     /// Whether [`Self::application_arguments`], and the paths before them, are the argv exactly,
@@ -313,9 +328,10 @@ impl ResidentNode {
             .or_else(|| configured_in_environment(path, home.as_deref()));
         let distribution = property_in(&spelled, DISTRIBUTION_PROPERTY)
             .map(|distribution| distribution.to_string_lossy().into_owned());
-        let release = home
+        let installed_release = home
             .as_deref()
             .and_then(|home| installed_release(path, home));
+        let release = running_release(path).or(installed_release);
         let module_server = starts_as_a_module(&spelled);
 
         // A launcher that exited, or a parent that is not one, lends nothing: taking any
@@ -332,6 +348,7 @@ impl ResidentNode {
             home,
             config,
             release,
+            installed_release,
             distribution,
             launched_with_an_argument_file: launch.unread_argument_file,
             launch_arguments_are_exact: launch.exact,
@@ -627,19 +644,46 @@ fn module_install(arguments: &[&str]) -> Option<PathBuf> {
     (lib.file_name()? == "lib").then(|| lib.parent().map(Path::to_path_buf))?
 }
 
-/// The server jar's version among the install's `lib/`, read inside the process's root. The
-/// other jars there are named `elasticsearch-<module>-<version>.jar`, which no version parses.
+/// The server jar's version among the install's `lib/`, read inside the process's root.
 fn installed_release(process: &Path, home: &Path) -> Option<Release> {
     let lib = home.join("lib");
     let names = names_inside(&process.join("root"), lib.strip_prefix("/").ok()?).ok()?;
-    let mut versions = names.iter().filter_map(|name| {
-        name.strip_prefix(SERVER_JAR_PREFIX)?
-            .strip_suffix(SERVER_JAR_SUFFIX)
-            .and_then(Release::parse)
-    });
-    let version = versions.next()?;
+    single_release(names.iter().map(String::as_str))
+}
 
-    versions.next().is_none().then_some(version)
+/// The server jar's version among the files the process holds open, ` (deleted)` taken off.
+fn running_release(process: &Path) -> Option<Release> {
+    let targets: Vec<String> = fs::read_dir(process.join("fd"))
+        .ok()?
+        .flatten()
+        .filter_map(|descriptor| fs::read_link(descriptor.path()).ok())
+        .filter_map(|target| target.to_str().map(str::to_owned))
+        .collect();
+    let names = targets.iter().filter_map(|target| {
+        let path = target.strip_suffix(DELETED_MARKER).unwrap_or(target);
+        Path::new(path).file_name()?.to_str()
+    });
+
+    single_release(names)
+}
+
+/// The one release the server jars among `names` name, where they name exactly one. The other
+/// jars are named `elasticsearch-<module>-<version>.jar`, which no version parses.
+fn single_release<'name>(names: impl Iterator<Item = &'name str>) -> Option<Release> {
+    let mut versions: Vec<Release> = names
+        .filter_map(|name| {
+            name.strip_prefix(SERVER_JAR_PREFIX)?
+                .strip_suffix(SERVER_JAR_SUFFIX)
+                .and_then(Release::parse)
+        })
+        .collect();
+    versions.sort();
+    versions.dedup();
+
+    match versions.as_slice() {
+        [release] => Some(*release),
+        _ => None,
+    }
 }
 
 /// The config directory as the server's environment gives it: `ES_PATH_CONF`, else the default

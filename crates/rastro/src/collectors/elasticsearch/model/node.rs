@@ -24,8 +24,11 @@ pub struct Node {
     /// `es.path.conf`, as the node's argv names it.
     pub config_directory: Option<String>,
 
-    /// The release its install holds, read before it is asked.
+    /// The release it runs, read before it is asked.
     pub release: Option<String>,
+
+    /// The release its install holds, another than the one it runs until it is restarted.
+    pub installed_release: Option<String>,
 
     pub network_namespace: Option<NetworkNamespace>,
     pub http: Option<HttpEndpoint>,
@@ -179,6 +182,10 @@ impl From<&Node> for Observation {
                 optional(node.config_directory.as_deref()),
             ),
             ("release", optional(node.release.as_deref())),
+            (
+                "installed_release",
+                optional(node.installed_release.as_deref()),
+            ),
             (
                 "network_namespace",
                 optional(node.network_namespace.map(|namespace| namespace.as_str())),

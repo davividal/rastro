@@ -36,6 +36,9 @@ pub fn read_node(proc: &Path, resident: &ResidentNode, client: &HttpClient) -> N
             .config()
             .map(|config| config.to_string_lossy().into_owned()),
         release: resident.release().map(|release| release.to_string()),
+        installed_release: resident
+            .installed_release()
+            .map(|release| release.to_string()),
         network_namespace: None,
         http: None,
         identity: None,

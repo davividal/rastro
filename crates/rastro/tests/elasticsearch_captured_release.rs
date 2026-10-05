@@ -5,7 +5,7 @@
 //! filesystem, `<home>/lib/elasticsearch-<version>.jar`, read inside its root: a container's
 //! install is not the host's. One test per cell of `docs/elasticsearch-matrix.md`.
 
-use rastro::collectors::elasticsearch::ResidentNode;
+use rastro::collectors::elasticsearch::{Release, ResidentNode};
 
 mod support;
 
@@ -91,3 +91,18 @@ cell!(release_of_cell_28_a_survivor_of_a_lost_master, "28");
 cell!(release_of_cell_29_a_daemonised_node_on_custom_ports, "29");
 cell!(release_of_cell_30_an_8_19_package_on_mutual_tls, "30");
 cell!(release_of_cell_32_nothing_installed, "32");
+
+#[test]
+fn release_of_cell_31_is_what_the_node_runs_and_not_what_was_installed_over_it() {
+    // Arrange: measured on cell 31, `dpkg -i` of 8.19.22 over a running 8.15.3 node leaves it
+    // running, its `GET /` saying 8.15.3, `lib/` holding 8.19.22, and its open server jar the old
+    // one, marked ` (deleted)`.
+    let proc = captured_proc("31", installs_of("31"));
+
+    // Act
+    let nodes = ResidentNode::all_in(&proc);
+
+    // Assert
+    assert_eq!(nodes[0].release(), Release::parse("8.15.3"));
+    assert_eq!(nodes[0].installed_release(), Release::parse("8.19.22"));
+}

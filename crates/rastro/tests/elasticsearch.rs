@@ -638,3 +638,27 @@ fn collect_asks_nothing_more_of_a_process_id_another_process_has_taken() {
         "{reported:?}"
     );
 }
+
+#[test]
+fn collect_reads_a_node_upgraded_under_itself_as_what_it_runs_and_says_a_restart_is_pending() {
+    // Arrange: found by the third domain review, measured on cell 31. A package upgraded without
+    // a restart is a state a fingerprint should show, not a node rastro failed to read.
+    let answer = root_of("8.15.3");
+    let node = FakeNode::serving(&[("/", answer.as_str())]);
+    let proc = node.proc("elasticsearch-facet-pending-restart");
+    std::os::unix::fs::symlink(
+        "/usr/share/elasticsearch/lib/elasticsearch-8.15.3.jar (deleted)",
+        proc.join("600/fd/9"),
+    )
+    .expect("a writable fixture");
+
+    // Act
+    let facet = collector(&proc, false).collect().expect("a facet");
+
+    // Assert
+    let reported = &items_of(&field(&facet, "nodes"))[0];
+    assert!(is_null(&field(reported, "error")), "{reported:?}");
+    assert_eq!(text(&field(reported, "release")), "8.15.3");
+    assert_eq!(text(&field(reported, "installed_release")), "8.19.22");
+    assert_eq!(text(&field(reported, "node_name")), "search-1");
+}

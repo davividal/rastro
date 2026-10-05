@@ -18,6 +18,7 @@ fn node(process_id: u32, port: Option<u16>, config: &str) -> Node {
         process_id,
         config_directory: Some(config.to_owned()),
         release: None,
+        installed_release: None,
         network_namespace: None,
         http: port.map(|port| {
             HttpEndpoint::new(
