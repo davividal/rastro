@@ -21,11 +21,20 @@ log() {
   return 0
 }
 
-# Downloads over HTTPS only, redirects included.
+# Downloads over HTTPS only, redirects included, and keeps the file only where it matches the
+# `.sha512` Elastic publishes beside it, since what it holds is installed and run as root.
 fetch() {
-  local url=$1 file=$2
-  [[ -f "$file" ]] || curl -sfL --proto '=https' --proto-redir '=https' -o "$file" "$url"
-  return $?
+  local url=$1 file=$2 expected
+  [[ -f "$file" ]] && return 0
+  curl -sfL --proto '=https' --proto-redir '=https' -o "$file.part" "$url" || return 1
+  expected=$(curl -sfL --proto '=https' --proto-redir '=https' "$url.sha512" | cut -d' ' -f1)
+  if [[ -z "$expected" ]] || ! echo "$expected  $file.part" | sha512sum -c --quiet -; then
+    log "$url does not match its published checksum"
+    rm -f "$file.part"
+    return 1
+  fi
+  mv "$file.part" "$file"
+  return 0
 }
 
 prepare() {
