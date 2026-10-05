@@ -206,3 +206,22 @@ fn http_endpoint_has_no_fallback_for_an_address_the_node_bound_itself() {
     // Assert
     assert_eq!(endpoint.fallback(), None);
 }
+
+#[test]
+fn http_endpoint_names_a_port_setting_it_cannot_read_and_never_its_value() {
+    // Arrange: found by review. A placeholder resolves before this read, so `http.port:
+    // ${TOKEN}` arrives as whatever `TOKEN` holds, and a refusal is written into the document.
+    let listeners = [listener("127.0.0.1", 9200)];
+    let settings = settings(&[("http.port", "s3cret-token")]);
+
+    // Act
+    let unread = http_endpoint(&listeners, &settings).expect_err("not a port");
+
+    // Assert
+    assert!(unread.reason().contains("http.port"), "{}", unread.reason());
+    assert!(
+        !unread.reason().contains("s3cret-token"),
+        "{}",
+        unread.reason()
+    );
+}

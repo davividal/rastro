@@ -126,11 +126,9 @@ fn port_range(
         return Ok(default);
     };
 
-    let unreadable = || {
-        Unread::new(format!(
-            "{name} is `{value}`, which is not a port or a range"
-        ))
-    };
+    // The setting only, never its value: found by review, a placeholder resolves before this,
+    // so the value can be a secret from the node's environment, and the reason is in the document.
+    let unreadable = || Unread::new(format!("{name} is not a port or a range"));
     let port = |text: &str| text.trim().parse::<u16>().map_err(|_| unreadable());
 
     match value.split_once('-') {
