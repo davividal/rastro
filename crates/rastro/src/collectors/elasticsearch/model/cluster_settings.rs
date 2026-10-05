@@ -12,6 +12,10 @@ use crate::collectors::elasticsearch::value_objects::ApiValue;
 /// restart keeps them, and a setting moving from one to the other is a change that survives or
 /// does not survive the next outage. Defaults are not read: what the cluster was *told* is the
 /// state an operator changes, and the defaults change with the version the facet already names.
+///
+/// **Each value withheld on its own**, found by review: Elasticsearch leaves a `Filtered` setting
+/// out of the answer, and a plugin can register a credential without that property, which the
+/// answer then carries. The names stay readable, and a change to one is a change to one digest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClusterSettings {
     pub persistent: BTreeMap<String, ApiValue>,
@@ -24,7 +28,7 @@ impl From<&ClusterSettings> for Observation {
             Observation::object(
                 values
                     .iter()
-                    .map(|(name, value)| (name.as_str(), Observation::from(value))),
+                    .map(|(name, value)| (name.as_str(), Observation::from(value).sensitive())),
             )
         };
 

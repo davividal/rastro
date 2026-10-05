@@ -6490,3 +6490,19 @@ mount of a device shows which part of it, so every host path that shows the stor
 part, is sealed: through a mount of something holding the store, the store under its point;
 through a mount of something inside the store, the whole of that mount. For a node in a container
 and for one on the host alike.
+
+## Each cluster setting is withheld, its name kept
+
+Found by review: the cluster settings were the one settings surface not withheld. Elasticsearch
+leaves a `Filtered` setting out of `GET _cluster/settings`, measured for the monitoring exporter's
+`auth.password` on 7.17, but a plugin can register a credential without that property, and the
+answer then carries it. So each persistent and transient value is withheld on its own, as the
+node's own settings are: which settings were set stays readable, a change to one is a change to
+one digest, and `--raw` shows the values.
+
+## Mount tables are read as bytes
+
+Found by review: one mount point anywhere on the box whose name was not UTF-8 failed the whole
+table read as text, and the seals that depend on it found nothing, so a node's live store was
+walked. The tables are read as the kernel's bytes, as the argv already is, and an escaped byte is
+that byte rather than a character.

@@ -2,7 +2,7 @@
 
 use rastro::collectors::elasticsearch::{ElasticsearchCollector, HttpClient};
 use rastro_collector::Collector;
-use rastro_fingerprint::Completeness;
+use rastro_fingerprint::{Completeness, Sensitivity};
 
 mod support;
 
@@ -126,4 +126,30 @@ fn collect_keeps_a_null_setting_as_null() {
         &persistent,
         "cluster.routing.allocation.enable"
     )));
+}
+
+#[test]
+fn collect_withholds_each_cluster_setting_and_keeps_its_name() {
+    // Arrange: found by review. Elasticsearch leaves a `Filtered` setting out of the answer, and a
+    // plugin can register a credential without that property, which the answer then carries. Each
+    // value is withheld on its own, as the node's own settings are: which settings were set stays
+    // readable, and a change to one is a change to one digest.
+    let node = FakeNode::serving(&[("/", ROOT), (CLUSTER_SETTINGS, SETTINGS)]);
+
+    // Act
+    let reported = node_reported(&node, "elasticsearch-cluster-settings-withheld");
+
+    // Assert
+    let persistent = field(&field(&reported, "cluster_settings"), "persistent");
+    assert_eq!(keys_of(&persistent), ["cluster.routing.allocation.enable"]);
+    assert_eq!(persistent.sensitivity(), Sensitivity::Public);
+    assert_eq!(
+        field(&persistent, "cluster.routing.allocation.enable").sensitivity(),
+        Sensitivity::Sensitive
+    );
+    let transient = field(&field(&reported, "cluster_settings"), "transient");
+    assert_eq!(
+        field(&transient, "indices.recovery.max_bytes_per_sec").sensitivity(),
+        Sensitivity::Sensitive
+    );
 }
