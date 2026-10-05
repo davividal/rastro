@@ -11,6 +11,9 @@ use std::fmt;
 use std::io::Read;
 use std::path::Path;
 
+/// The most of a credentials file that is read, far more than any set of credentials needs.
+const MOST_READ: u64 = 64 * 1024;
+
 /// The names and values one run was given.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Credentials {
@@ -52,24 +55,34 @@ impl Credentials {
     }
 
     /// The credentials in the file at `path`, or on stdin where it is `-`.
+    ///
+    /// **Bounded**, found by review: read whole, a wrong path, `/dev/zero` say, grew memory until
+    /// the kernel stopped the run. A pipe is still read, since `<(op read ...)` is one.
     pub fn read(path: &Path) -> Result<Self, String> {
-        let text = match path == Path::new("-") {
-            true => {
-                let mut text = String::new();
-                std::io::stdin()
-                    .read_to_string(&mut text)
-                    .map_err(|error| {
-                        format!("the credentials on stdin could not be read: {error}")
-                    })?;
-                text
+        let (source, named) = match path == Path::new("-") {
+            true => (
+                Box::new(std::io::stdin()) as Box<dyn Read>,
+                "on stdin".to_owned(),
+            ),
+            false => {
+                let named = format!("in {}", path.display());
+                let file = std::fs::File::open(path).map_err(|error| {
+                    format!("the credentials {named} could not be read: {error}")
+                })?;
+                (Box::new(file) as Box<dyn Read>, named)
             }
-            false => std::fs::read_to_string(path).map_err(|error| {
-                format!(
-                    "the credentials in {} could not be read: {error}",
-                    path.display()
-                )
-            })?,
         };
+
+        let mut text = String::new();
+        source
+            .take(MOST_READ + 1)
+            .read_to_string(&mut text)
+            .map_err(|error| format!("the credentials {named} could not be read: {error}"))?;
+        if u64::try_from(text.len()).map_or(true, |length| length > MOST_READ) {
+            return Err(format!(
+                "the credentials {named} are larger than {MOST_READ} bytes"
+            ));
+        }
 
         Self::parse(&text)
     }

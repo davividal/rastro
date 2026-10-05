@@ -96,3 +96,21 @@ fn names_lists_what_was_given_and_never_a_value() {
     assert_eq!(names, ["ELASTICSEARCH_PASSWORD", "ELASTICSEARCH_USERNAME"]);
     assert!(!format!("{credentials:?}").contains("s3cret"));
 }
+
+#[test]
+fn a_credentials_file_larger_than_any_set_of_credentials_is_refused() {
+    // Arrange: found by review. The file was read whole, so a wrong path, `/dev/zero` say, grew
+    // memory until the kernel stopped the run. A pipe stays readable: `<(op read ...)` is one.
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("credentials-huge");
+    std::fs::write(
+        &path,
+        format!("ELASTICSEARCH_API_KEY={}\n", "k".repeat(1024 * 1024)),
+    )
+    .expect("a writable fixture");
+
+    // Act
+    let refusal = Credentials::read(&path).expect_err("an oversized file");
+
+    // Assert
+    assert!(refusal.contains("larger than"), "{refusal}");
+}
