@@ -246,9 +246,7 @@ impl From<&Node> for Observation {
             ),
             (
                 "ingest_pipelines",
-                surface_observation(node.ingest_pipelines.as_ref(), |pipelines| {
-                    Observation::from(pipelines)
-                }),
+                surface_observation(node.ingest_pipelines.as_ref(), NamedDefinitions::withheld),
             ),
             (
                 "snapshot_repositories",

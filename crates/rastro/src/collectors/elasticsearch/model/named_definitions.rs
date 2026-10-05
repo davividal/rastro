@@ -13,6 +13,20 @@ use crate::collectors::elasticsearch::value_objects::ApiValue;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NamedDefinitions(pub BTreeMap<String, ApiValue>);
 
+impl NamedDefinitions {
+    /// The same, each definition withheld on its own and every name kept.
+    ///
+    /// For pipelines, found by review: a processor can carry a token, and a digest per pipeline
+    /// still shows which one changed.
+    pub fn withheld(&self) -> Observation {
+        Observation::object(
+            self.0.iter().map(|(name, definition)| {
+                (name.as_str(), Observation::from(definition).sensitive())
+            }),
+        )
+    }
+}
+
 impl From<&NamedDefinitions> for Observation {
     fn from(definitions: &NamedDefinitions) -> Self {
         Observation::object(

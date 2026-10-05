@@ -100,3 +100,22 @@ fn collect_reports_a_node_without_ilm_on_that_surface_alone() {
         ["app-pipeline"]
     );
 }
+
+#[test]
+fn collect_withholds_each_ingest_pipeline_and_keeps_its_name() {
+    // Arrange: found by review. A pipeline can carry a token, a `set` processor writing an
+    // `Authorization` header say, so each one is withheld on its own: a change to one pipeline is
+    // a change to one digest, and which pipelines exist stays readable.
+    let reported = node_reported(&all_routes(), "elasticsearch-lifecycle-pipeline-withheld");
+
+    // Act
+    let pipelines = field(&reported, "ingest_pipelines");
+
+    // Assert
+    assert_eq!(keys_of(&pipelines), ["app-pipeline"]);
+    assert_eq!(pipelines.sensitivity(), Sensitivity::Public);
+    assert_eq!(
+        field(&pipelines, "app-pipeline").sensitivity(),
+        Sensitivity::Sensitive
+    );
+}
