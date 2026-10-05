@@ -181,3 +181,28 @@ fn http_endpoint_refuses_a_port_setting_it_cannot_read() {
     // Assert
     assert!(unread.reason().contains("http.port"), "{}", unread.reason());
 }
+
+#[test]
+fn http_endpoint_falls_back_to_ipv4_loopback_for_an_ipv6_wildcard() {
+    // Arrange: found by review, measured on 8.19.22. A `::` listener is dual-stack by default,
+    // and `::1` can be unavailable while it is bound, with IPv6 off on `lo` alone.
+    let listeners = [listener("::", 9200), listener("::", 9300)];
+
+    // Act
+    let endpoint = http_endpoint(&listeners, &settings(&[])).expect("one HTTP port");
+
+    // Assert
+    assert_eq!(endpoint.fallback().map(InetHost::as_str), Some("127.0.0.1"));
+}
+
+#[test]
+fn http_endpoint_has_no_fallback_for_an_address_the_node_bound_itself() {
+    // Arrange
+    let listeners = [listener("::1", 9200), listener("::1", 9300)];
+
+    // Act
+    let endpoint = http_endpoint(&listeners, &settings(&[])).expect("one HTTP port");
+
+    // Assert
+    assert_eq!(endpoint.fallback(), None);
+}

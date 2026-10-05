@@ -30,6 +30,7 @@ use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureSch
 use crate::collectors::elasticsearch::value_objects::{
     ApiCredential, HttpEndpoint, Transport, Unread,
 };
+use crate::collectors::inet::InetHost;
 
 /// How long one exchange may take, connecting included.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -116,8 +117,15 @@ impl HttpClient {
         if let Some(check) = &self.peer_check {
             check()?;
         }
-        let address = socket_address_of(endpoint)?;
-        let raw = self.exchange(address, endpoint.transport(), path)?;
+        let mut address = socket_address_of(endpoint.host(), endpoint)?;
+        let raw = match self.exchange(address, endpoint.transport(), path) {
+            Err(Dial::Unreachable(_)) if endpoint.fallback().is_some() => {
+                address = socket_address_of(endpoint.fallback().expect("checked"), endpoint)?;
+                self.exchange(address, endpoint.transport(), path)
+                    .map_err(Dial::into_unread)?
+            }
+            other => other.map_err(Dial::into_unread)?,
+        };
 
         // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
         // settings said plain, so this is the blind spot `docs/decisions.md` accepts.
@@ -171,26 +179,33 @@ impl HttpClient {
         address: SocketAddr,
         transport: Transport,
         path: &str,
-    ) -> Result<Vec<u8>, Unread> {
+    ) -> Result<Vec<u8>, Dial> {
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
 
-        let socket =
-            TcpStream::connect_timeout(&address, self.timeout).map_err(|error| {
-                match error.kind() {
-                    ErrorKind::TimedOut => timed_out(),
-                    _ => Unread::new(format!("could not connect to {address}: {error}")),
-                }
-            })?;
+        let socket = TcpStream::connect_timeout(&address, self.timeout).map_err(|error| {
+            let unread = Unread::new(format!("could not connect to {address}: {error}"));
+            match error.kind() {
+                ErrorKind::TimedOut => Dial::Failed(timed_out()),
+                ErrorKind::ConnectionRefused
+                | ErrorKind::AddrNotAvailable
+                | ErrorKind::NetworkUnreachable
+                | ErrorKind::HostUnreachable => Dial::Unreachable(unread),
+                _ => Dial::Failed(unread),
+            }
+        })?;
 
         match transport {
-            Transport::Plain => self.converse(socket, address, path),
+            Transport::Plain => self.converse(socket, address, path).map_err(Dial::Failed),
             Transport::Tls => {
                 let peer = ServerName::IpAddress(address.ip().into());
                 let connection =
                     ClientConnection::new(tls_configuration(), peer).map_err(|error| {
-                        Unread::new(format!("TLS to {address} could not start: {error}"))
+                        Dial::Failed(Unread::new(format!(
+                            "TLS to {address} could not start: {error}"
+                        )))
                     })?;
                 self.converse(StreamOwned::new(connection, socket), address, path)
+                    .map_err(Dial::Failed)
             }
         }
     }
@@ -363,17 +378,32 @@ impl Default for HttpClient {
     }
 }
 
-/// The endpoint as a socket address. Its host always came from a kernel table, so it is an
-/// address and never a name, and nothing is resolved.
-fn socket_address_of(endpoint: &HttpEndpoint) -> Result<SocketAddr, Unread> {
-    let host: IpAddr = endpoint.host().as_str().parse().map_err(|_| {
+/// How a dial failed: before anything reached the listener, which another address may still
+/// reach, or after.
+enum Dial {
+    Unreachable(Unread),
+    Failed(Unread),
+}
+
+impl Dial {
+    fn into_unread(self) -> Unread {
+        match self {
+            Self::Unreachable(unread) | Self::Failed(unread) => unread,
+        }
+    }
+}
+
+/// `host` at the endpoint's port as a socket address. A host always came from a kernel table, so
+/// it is an address and never a name, and nothing is resolved.
+fn socket_address_of(host: &InetHost, endpoint: &HttpEndpoint) -> Result<SocketAddr, Unread> {
+    let address: IpAddr = host.as_str().parse().map_err(|_| {
         Unread::new(format!(
             "{} is not an address, and rastro resolves no names",
-            endpoint.host().as_str()
+            host.as_str()
         ))
     })?;
 
-    Ok(SocketAddr::new(host, endpoint.port().as_u16()))
+    Ok(SocketAddr::new(address, endpoint.port().as_u16()))
 }
 
 /// Whether the answer is all here, for a node that keeps the connection open after it.

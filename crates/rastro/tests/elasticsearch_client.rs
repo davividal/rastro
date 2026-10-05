@@ -531,3 +531,17 @@ fn get_over_tls_gives_up_on_a_listener_that_never_completes_the_handshake() {
     let unread = outcome.expect_err("no handshake");
     assert!(unread.reason().contains("timed out"), "{}", unread.reason());
 }
+
+#[test]
+fn get_dials_the_fallback_where_the_first_address_cannot_be_reached() {
+    // Arrange: nothing listens on `::1` at this port, the IPv4 loopback does.
+    let (served, _) = serve_once(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec());
+    let endpoint = HttpEndpoint::new(InetHost::new("::1").expect("a host"), *served.port())
+        .falling_back_to(InetHost::new("127.0.0.1").expect("a host"));
+
+    // Act
+    let body = HttpClient::new().get(&endpoint, "/").expect("an answer");
+
+    // Assert
+    assert_eq!(body, "{}");
+}

@@ -73,8 +73,18 @@ pub fn http_endpoint(
     let chosen = bound
         .first()
         .expect("a candidate port is one some listener holds");
+    let endpoint = HttpEndpoint::new(host.clone(), chosen.port);
 
-    Ok(HttpEndpoint::new(host, chosen.port))
+    // Found by review, measured on 8.19.22: `::1` can be unavailable while `::` is bound, with IPv6
+    // off on `lo` alone, and a `::` socket is dual-stack unless the box says otherwise.
+    let wildcard_only =
+        host.as_str() == "::1" && bound.iter().any(|listener| listener.host.as_str() == "::");
+    match wildcard_only {
+        true => Ok(endpoint.falling_back_to(
+            InetHost::new("127.0.0.1").map_err(|error| Unread::new(error.to_string()))?,
+        )),
+        false => Ok(endpoint),
+    }
 }
 
 /// The address to dial among those the port is bound on, loopback first.

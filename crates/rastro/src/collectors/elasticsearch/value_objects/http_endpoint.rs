@@ -9,6 +9,9 @@ pub struct HttpEndpoint {
     host: InetHost,
     port: PortNumber,
     transport: Transport,
+
+    /// A second address for the same listener, dialled where the first cannot be reached.
+    fallback: Option<InetHost>,
 }
 
 impl HttpEndpoint {
@@ -18,6 +21,15 @@ impl HttpEndpoint {
             host,
             port,
             transport: Transport::Plain,
+            fallback: None,
+        }
+    }
+
+    /// The same endpoint, dialled on `fallback` where its own address cannot be reached.
+    pub fn falling_back_to(self, fallback: InetHost) -> Self {
+        Self {
+            fallback: Some(fallback),
+            ..self
         }
     }
 
@@ -36,5 +48,9 @@ impl HttpEndpoint {
 
     pub fn transport(&self) -> Transport {
         self.transport
+    }
+
+    pub fn fallback(&self) -> Option<&InetHost> {
+        self.fallback.as_ref()
     }
 }
