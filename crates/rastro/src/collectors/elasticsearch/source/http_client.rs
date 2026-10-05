@@ -51,6 +51,17 @@ const HTTP_VERSION_PREFIX: &[u8] = b"HTTP/";
 /// The two answers a secured node gives a request without credentials.
 const UNAUTHORISED: u16 = 401;
 const FORBIDDEN: u16 = 403;
+const NOT_FOUND: u16 = 404;
+
+/// What a `404` answer to a path means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotFound {
+    /// The node refused the read, as it does for most paths.
+    Refusal,
+
+    /// The node holds none of what the path lists, and says so with its usual body.
+    NothingThere,
+}
 const LAST_CHUNK: &[u8] = b"0\r\n\r\n";
 
 /// A check that the peer is still the node, run before each request.
@@ -130,6 +141,16 @@ impl HttpClient {
 
     /// The body of a `200` answer to `GET path`; any other outcome is the reason it was not had.
     pub fn get(&self, endpoint: &HttpEndpoint, path: &str) -> Result<String, Unread> {
+        self.get_where(endpoint, path, NotFound::Refusal)
+    }
+
+    /// The same, where a `404` answer to `path` is what the node says when it holds none.
+    pub fn get_where(
+        &self,
+        endpoint: &HttpEndpoint,
+        path: &str,
+        not_found: NotFound,
+    ) -> Result<String, Unread> {
         if let Some(check) = &self.peer_check {
             check()?;
         }
@@ -155,7 +176,8 @@ impl HttpClient {
                 ),
             }));
         }
-        if answer.status != 200 {
+        let holds_none = answer.status == NOT_FOUND && not_found == NotFound::NothingThere;
+        if answer.status != 200 && !holds_none {
             return Err(Unread::new(format!(
                 "the node answered {} to GET {path}",
                 answer.status

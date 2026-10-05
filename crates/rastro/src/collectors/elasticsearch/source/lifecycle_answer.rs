@@ -7,9 +7,9 @@ use serde::Deserialize;
 use crate::collectors::elasticsearch::model::{
     IlmPolicies, IlmPolicy, NamedDefinitions, SnapshotRepositories, SnapshotRepository,
 };
-use crate::collectors::elasticsearch::source::HttpClient;
 use crate::collectors::elasticsearch::source::api_value_of::api_value_of;
 use crate::collectors::elasticsearch::source::json_answer::read_answer;
+use crate::collectors::elasticsearch::source::{HttpClient, NotFound};
 use crate::collectors::elasticsearch::value_objects::{HttpEndpoint, Unread};
 
 const ILM: &str = "/_ilm/policy";
@@ -56,8 +56,9 @@ pub fn read_ingest_pipelines(
     client: &HttpClient,
     endpoint: &HttpEndpoint,
 ) -> Result<NamedDefinitions, Unread> {
-    let answer: BTreeMap<String, serde_json::Value> =
-        read_answer(&client.get(endpoint, PIPELINES)?, PIPELINES)?;
+    // Measured on 7.17.29 with its built-in pipelines deleted: no pipeline is a 404 of `{}`.
+    let body = client.get_where(endpoint, PIPELINES, NotFound::NothingThere)?;
+    let answer: BTreeMap<String, serde_json::Value> = read_answer(&body, PIPELINES)?;
 
     Ok(NamedDefinitions(
         answer

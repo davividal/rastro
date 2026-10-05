@@ -119,3 +119,24 @@ fn collect_withholds_each_ingest_pipeline_and_keeps_its_name() {
         Sensitivity::Sensitive
     );
 }
+
+#[test]
+fn collect_reports_a_node_with_no_pipeline_as_holding_none() {
+    // Arrange: found by review, measured on 7.17.29 once its two built-in pipelines were deleted:
+    // `GET /_ingest/pipeline` answers 404 with `{}` where there is none, and the node read as an
+    // error for an empty, healthy surface.
+    let node = FakeNode::answering(&[("/", 200, ROOT), (PIPELINES, 404, "{}")]);
+    let proc = node.proc("elasticsearch-lifecycle-no-pipeline");
+
+    // Act
+    let facet = ElasticsearchCollector::reading(&proc, false, HttpClient::new())
+        .collect()
+        .expect("a facet");
+
+    // Assert
+    let reported = items_of(&field(&facet, "nodes")).remove(0);
+    assert!(
+        keys_of(&field(&reported, "ingest_pipelines")).is_empty(),
+        "{reported:?}"
+    );
+}
