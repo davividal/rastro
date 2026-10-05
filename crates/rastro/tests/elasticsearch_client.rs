@@ -580,8 +580,10 @@ fn get_reports_a_403_without_a_credential_as_refused_to_no_credential() {
 }
 
 #[test]
-fn get_sends_the_credential_it_was_given() {
-    // Arrange
+fn get_sends_no_credential_to_a_node_that_does_not_ask_for_one() {
+    // Arrange: found by review. With a secured cluster and an open node on one box, the credential
+    // went to the open node too, in the clear over plain HTTP, inside a namespace its container's
+    // root can capture; a node that never answers 401 has no use for it.
     let (endpoint, requests) = serve_each(&[OK]);
 
     // Act
@@ -592,13 +594,97 @@ fn get_sends_the_credential_it_was_given() {
 
     // Assert
     let request = requests.recv().expect("the request");
-    assert!(request.contains(API_KEY_HEADER), "{request}");
+    assert!(!request.contains("Authorization"), "{request}");
+}
+
+#[test]
+fn get_over_tls_sends_no_credential_to_a_node_that_does_not_ask_for_one() {
+    // Arrange: TLS keeps it from the wire, not from the node, and a node that does not ask is not
+    // one the credential is for.
+    let (sender, received) = mpsc::channel();
+    let port = tls_listener::serving(move |request| {
+        let _ = sender.send(request.to_owned());
+        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec()
+    });
+
+    // Act
+    HttpClient::new()
+        .authenticating(Some(api_key()))
+        .get(&loopback(port).over(Transport::Tls), "/")
+        .expect("an answer");
+
+    // Assert
+    let request = received.recv().expect("the request");
+    assert!(!request.contains("Authorization"), "{request}");
+}
+
+#[test]
+fn get_sends_the_credential_once_the_node_asks_for_one() {
+    // Arrange: a secured node answers 401, then the same request with the credential, then the
+    // next request, which needs no second asking.
+    let (endpoint, requests) = serve_each(&[UNAUTHORISED, OK, OK]);
+    let client = HttpClient::new().authenticating(Some(api_key()));
+
+    // Act
+    client.get(&endpoint, "/").expect("an answer");
+    client
+        .get(&endpoint, "/_cluster/settings")
+        .expect("an answer");
+
+    // Assert
+    let sent: Vec<String> = requests.iter().take(3).collect();
+    assert!(!sent[0].contains("Authorization"), "{}", sent[0]);
+    assert!(sent[1].contains(API_KEY_HEADER), "{}", sent[1]);
+    assert!(sent[2].contains(API_KEY_HEADER), "{}", sent[2]);
+}
+
+#[test]
+fn get_sends_no_credential_to_the_next_node_because_another_asked() {
+    // Arrange: one client is cloned for each node, bound to its listener by its peer check, and a
+    // secured node's asking is no evidence about an open one beside it.
+    let (secured, _) = serve_each(&[UNAUTHORISED, OK]);
+    let (open, requests) = serve_each(&[OK]);
+    let client = HttpClient::new().authenticating(Some(api_key()));
+    client
+        .clone()
+        .checking_the_peer_with(|| Ok(()))
+        .get(&secured, "/")
+        .expect("an answer");
+
+    // Act
+    client
+        .clone()
+        .checking_the_peer_with(|| Ok(()))
+        .get(&open, "/")
+        .expect("an answer");
+
+    // Assert
+    let request = requests.recv().expect("the request");
+    assert!(!request.contains("Authorization"), "{request}");
+}
+
+#[test]
+fn get_sends_the_credential_where_anonymous_access_is_refused() {
+    // Arrange: a node with anonymous access answers 403 where the anonymous role lacks the
+    // privilege, which the operator's credential may well have.
+    let forbidden: &[u8] = b"HTTP/1.1 403 Forbidden\r\ncontent-length: 2\r\n\r\n{}";
+    let (endpoint, requests) = serve_each(&[forbidden, OK]);
+
+    // Act
+    HttpClient::new()
+        .authenticating(Some(api_key()))
+        .get(&endpoint, "/")
+        .expect("an answer");
+
+    // Assert
+    let sent: Vec<String> = requests.iter().take(2).collect();
+    assert!(sent[1].contains(API_KEY_HEADER), "{}", sent[1]);
 }
 
 #[test]
 fn get_reports_a_rejected_credential_as_not_read() {
     // Arrange
-    let (endpoint, _) = serve_each(&[UNAUTHORISED]);
+    let (endpoint, _) = serve_each(&[UNAUTHORISED, UNAUTHORISED]);
 
     // Act
     let unread = HttpClient::new()

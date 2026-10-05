@@ -6454,3 +6454,20 @@ predates "Not read is not an error", which makes the box keeping rastro out `not
 already is for a refused `/proc` file or a node that wants a client certificate. A namespace the
 kernel refuses to open, or to join, for want of privilege is now `not_read`; any other failure of
 the join is still the node's `error`.
+
+## A node that does not ask is sent no credential
+
+**Reverses the part of "A process that behaves like Elasticsearch is Elasticsearch" that sent the
+credential with every request.** Asking first was removed with the guards against a disguised
+node, and it was not one, found by review: on a box holding a secured cluster and a genuine open
+node, the open node was sent the credential too, in the clear over plain HTTP, inside a network
+namespace its container's root can capture, and it had no use for it. So every node is asked
+without the credential first, over TLS as well, since TLS keeps it from the wire and not from the
+node. A 401, or a 403 to the anonymous request, is the node asking; that request is made again
+with the credential, and every later one for that node carries it. Another node's asking says
+nothing about the next: the flag is the node's own.
+
+**Accepted: the peer check before each request lists all of the node's descriptors**, outside the
+request's deadline. The kernel bounds how many a process holds, a real node's few tens of
+thousands cost milliseconds, and keeping the one descriptor that holds the listener instead is
+left for a later change.

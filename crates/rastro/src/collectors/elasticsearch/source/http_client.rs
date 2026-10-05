@@ -19,6 +19,7 @@
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -73,8 +74,12 @@ pub struct HttpClient {
     timeout: Duration,
     body_limit: usize,
 
-    /// What every request authenticates with, where the operator gave one.
+    /// What a request authenticates with once the node has asked, where the operator gave one.
     credential: Option<ApiCredential>,
+
+    /// Whether this node answered a request without the credential with a 401 or a 403, after
+    /// which every request carries it. Shared by the clones one node's read makes.
+    node_asked_for_the_credential: Arc<AtomicBool>,
 
     /// Whether the listener is still the node's, asked before each request.
     peer_check: Option<PeerCheck>,
@@ -102,6 +107,7 @@ impl HttpClient {
             timeout,
             body_limit,
             credential: None,
+            node_asked_for_the_credential: Arc::new(AtomicBool::new(false)),
             peer_check: None,
         }
     }
@@ -118,6 +124,8 @@ impl HttpClient {
     ) -> Self {
         Self {
             peer_check: Some(Arc::new(check)),
+            // A client for one node's listener: another node's asking says nothing about this one.
+            node_asked_for_the_credential: Arc::new(AtomicBool::new(false)),
             ..self
         }
     }
@@ -134,7 +142,7 @@ impl HttpClient {
         }
     }
 
-    /// The same client, sending `credential` with every request.
+    /// The same client, sending `credential` to a node once it asks for one.
     pub fn authenticating(self, credential: Option<ApiCredential>) -> Self {
         Self { credential, ..self }
     }
@@ -157,7 +165,26 @@ impl HttpClient {
         // One deadline for the whole of it, the fallback's dial included, found by the security
         // review: a bound per read let a peer that trickled its handshake hold the run.
         let deadline = Instant::now() + self.timeout;
-        let raw = self.ask(endpoint, path, deadline, self.credential.as_ref())?;
+        // A node that does not ask is not sent the credential, found by review: beside a secured
+        // cluster an open node got it too, in the clear over plain HTTP, inside a namespace its
+        // container's root can capture. A 401, or a 403 to an anonymous request, is the asking.
+        let asked = self.node_asked_for_the_credential.load(Ordering::Relaxed);
+        let mut raw = self.ask(
+            endpoint,
+            path,
+            deadline,
+            self.credential.as_ref().filter(|_| asked),
+        )?;
+        if let Some(credential) = self.credential.as_ref().filter(|_| !asked)
+            && matches!(Answer::parse(&raw, path)?.status, UNAUTHORISED | FORBIDDEN)
+        {
+            self.node_asked_for_the_credential
+                .store(true, Ordering::Relaxed);
+            if let Some(check) = &self.peer_check {
+                check()?;
+            }
+            raw = self.ask(endpoint, path, deadline, Some(credential))?;
+        }
         let answer = Answer::parse(&raw, path)?;
 
         if answer.status == UNAUTHORISED {

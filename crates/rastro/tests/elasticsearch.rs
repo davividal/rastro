@@ -597,12 +597,14 @@ fn collect_reports_a_node_that_rejects_the_credential_given_as_not_read() {
         "the credential given was rejected"
     );
     assert!(is_null(&field(reported, "error")));
+    // Asked without the credential first, and with it once the node answered 401.
+    let sent = node.authorizations();
+    assert_eq!(sent.first(), Some(&None), "{sent:?}");
     assert!(
-        node.authorizations()
+        sent[1..]
             .iter()
-            .all(|sent| sent.as_deref() == Some("ApiKey b3RoZXI6Y2x1c3Rlcg==")),
-        "{:?}",
-        node.authorizations()
+            .all(|header| header.as_deref() == Some("ApiKey b3RoZXI6Y2x1c3Rlcg==")),
+        "{sent:?}"
     );
 }
 
