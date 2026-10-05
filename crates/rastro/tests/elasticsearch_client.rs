@@ -465,37 +465,84 @@ fn get_over_tls_reads_an_answer_whose_peer_closes_without_close_notify() {
     assert_eq!(body, "{\"cluster\":\"one\"}");
 }
 
+/// Serves one connection per answer in `responses`, in turn, and hands back each request.
+fn serve_each(responses: &[&[u8]]) -> (HttpEndpoint, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound port").port();
+    let (sender, receiver) = mpsc::channel();
+    let responses: Vec<Vec<u8>> = responses.iter().map(|response| response.to_vec()).collect();
+
+    thread::spawn(move || {
+        for response in responses {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                request.push(byte[0]);
+            }
+            let _ = sender.send(String::from_utf8_lossy(&request).into_owned());
+            let _ = stream.write_all(&response);
+        }
+    });
+
+    (loopback(port), receiver)
+}
+
+const OK: &[u8] = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}";
+const UNAUTHORISED: &[u8] = b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 2\r\n\r\n{}";
+const API_KEY_HEADER: &str = "\r\nAuthorization: ApiKey a2V5OnNlY3JldA==\r\n";
+
+fn api_key() -> rastro::collectors::elasticsearch::ApiCredential {
+    rastro::collectors::elasticsearch::ApiCredential::api_key("a2V5OnNlY3JldA==")
+}
+
 #[test]
-fn get_sends_the_credential_it_was_given() {
-    // Arrange
-    let (endpoint, request) =
-        serve_once(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}".to_vec());
-    let credential = rastro::collectors::elasticsearch::ApiCredential::api_key("a2V5OnNlY3JldA==");
+fn get_over_plain_http_sends_no_credential_to_a_node_that_does_not_ask_for_one() {
+    // Arrange: found by the security review. Plain HTTP carries the credential in the clear to
+    // whatever holds the listener, so it goes only where the node asks for it.
+    let (endpoint, requests) = serve_each(&[OK]);
 
     // Act
     HttpClient::new()
-        .authenticating(Some(credential))
+        .authenticating(Some(api_key()))
         .get(&endpoint, "/")
         .expect("an answer");
 
     // Assert
-    let request = request.recv().expect("the request");
-    assert!(
-        request.contains("\r\nAuthorization: ApiKey a2V5OnNlY3JldA==\r\n"),
-        "{request}"
-    );
+    let request = requests.recv().expect("the request");
+    assert!(!request.contains("Authorization"), "{request}");
+}
+
+#[test]
+fn get_over_plain_http_sends_the_credential_once_the_node_asks_for_one() {
+    // Arrange: a secured node answers 401, then the same request with the credential, then the
+    // next request, which needs no second asking.
+    let (endpoint, requests) = serve_each(&[UNAUTHORISED, OK, OK]);
+    let client = HttpClient::new().authenticating(Some(api_key()));
+
+    // Act
+    client.get(&endpoint, "/").expect("an answer");
+    client
+        .get(&endpoint, "/_cluster/settings")
+        .expect("an answer");
+
+    // Assert
+    let sent: Vec<String> = requests.iter().take(3).collect();
+    assert!(!sent[0].contains("Authorization"), "{}", sent[0]);
+    assert!(sent[1].contains(API_KEY_HEADER), "{}", sent[1]);
+    assert!(sent[2].contains(API_KEY_HEADER), "{}", sent[2]);
 }
 
 #[test]
 fn get_reports_a_rejected_credential_as_not_read() {
     // Arrange
-    let (endpoint, _) =
-        serve_once(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 2\r\n\r\n{}".to_vec());
-    let credential = rastro::collectors::elasticsearch::ApiCredential::api_key("d3Jvbmc6a2V5");
+    let (endpoint, _) = serve_each(&[UNAUTHORISED, UNAUTHORISED]);
 
     // Act
     let unread = HttpClient::new()
-        .authenticating(Some(credential))
+        .authenticating(Some(api_key()))
         .get(&endpoint, "/")
         .expect_err("a 401");
 

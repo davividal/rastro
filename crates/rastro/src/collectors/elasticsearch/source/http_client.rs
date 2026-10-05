@@ -19,6 +19,7 @@
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -68,6 +69,10 @@ pub struct HttpClient {
     /// Why no credential is sent where one was given, said where the node asks for one.
     withheld: Option<String>,
 
+    /// Whether the node answered a request without the credential with a 401, after which every
+    /// request carries it. Shared by the clones one node's read makes.
+    node_asked_for_the_credential: Arc<AtomicBool>,
+
     /// Whether the listener is still the node's, asked before each request.
     peer_check: Option<PeerCheck>,
 }
@@ -96,6 +101,7 @@ impl HttpClient {
             body_limit,
             credential: None,
             withheld: None,
+            node_asked_for_the_credential: Arc::new(AtomicBool::new(false)),
             peer_check: None,
         }
     }
@@ -128,11 +134,13 @@ impl HttpClient {
         }
     }
 
-    /// The same client, sending `credential` with every request.
+    /// The same client, sending `credential` over TLS, and over plain HTTP once a node asks.
     pub fn authenticating(self, credential: Option<ApiCredential>) -> Self {
         Self {
             credential,
             withheld: None,
+            // A node of its own: one node's asking is no evidence about another's.
+            node_asked_for_the_credential: Arc::new(AtomicBool::new(false)),
             ..self
         }
     }
@@ -154,32 +162,26 @@ impl HttpClient {
         // One deadline for the whole of it, the fallback's dial included, found by the security
         // review: a bound per read let a peer that trickled its handshake hold the run.
         let deadline = Instant::now() + self.timeout;
-        let mut address = socket_address_of(endpoint.host(), endpoint)?;
-        let raw = match (
-            self.exchange(address, endpoint.transport(), path, deadline),
-            endpoint.fallback(),
-        ) {
-            (Err(Dial::Unreachable(_)), Some(fallback)) => {
-                address = socket_address_of(fallback, endpoint)?;
-                self.exchange(address, endpoint.transport(), path, deadline)
-                    .map_err(Dial::into_unread)?
-            }
-            (other, _) => other.map_err(Dial::into_unread)?,
-        };
 
-        // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
-        // settings said plain, so this is the blind spot `docs/decisions.md` accepts.
-        if raw.is_empty() {
-            return Err(Unread::new(format!(
-                "{address} closed the connection without an HTTP answer, as a listener that \
-                 wants TLS does, although the node's settings say it serves plain HTTP"
-            )));
-        }
-        if !raw.starts_with(HTTP_VERSION_PREFIX) {
-            return Err(Unread::new(format!(
-                "{address} answered in something other than HTTP, most likely TLS, although the \
-                 node's settings say it serves plain HTTP"
-            )));
+        // Over plain HTTP the credential is in the clear to whatever holds the listener, so it is
+        // sent only once the node has asked for it, found by the security review.
+        let at_once = endpoint.transport() == Transport::Tls
+            || self.node_asked_for_the_credential.load(Ordering::Relaxed);
+        let mut raw = self.ask(
+            endpoint,
+            path,
+            deadline,
+            self.credential.as_ref().filter(|_| at_once),
+        )?;
+        if let Some(credential) = self.credential.as_ref().filter(|_| !at_once)
+            && Answer::parse(&raw, path)?.status == UNAUTHORISED
+        {
+            self.node_asked_for_the_credential
+                .store(true, Ordering::Relaxed);
+            if let Some(check) = &self.peer_check {
+                check()?;
+            }
+            raw = self.ask(endpoint, path, deadline, Some(credential))?;
         }
 
         let answer = Answer::parse(&raw, path)?;
@@ -217,12 +219,51 @@ impl HttpClient {
             .map_err(|_| Unread::new(format!("the answer to GET {path} is not UTF-8")))
     }
 
+    /// The raw answer to `GET path`, dialling the fallback where the first address is not there.
+    fn ask(
+        &self,
+        endpoint: &HttpEndpoint,
+        path: &str,
+        deadline: Instant,
+        credential: Option<&ApiCredential>,
+    ) -> Result<Vec<u8>, Unread> {
+        let mut address = socket_address_of(endpoint.host(), endpoint)?;
+        let raw = match (
+            self.exchange(address, endpoint.transport(), path, deadline, credential),
+            endpoint.fallback(),
+        ) {
+            (Err(Dial::Unreachable(_)), Some(fallback)) => {
+                address = socket_address_of(fallback, endpoint)?;
+                self.exchange(address, endpoint.transport(), path, deadline, credential)
+                    .map_err(Dial::into_unread)?
+            }
+            (other, _) => other.map_err(Dial::into_unread)?,
+        };
+
+        // Measured on 8.15.3: a TLS-only listener closes a plaintext connection unanswered. The
+        // settings said plain, so this is the blind spot `docs/decisions.md` accepts.
+        if raw.is_empty() {
+            return Err(Unread::new(format!(
+                "{address} closed the connection without an HTTP answer, as a listener that \
+                 wants TLS does, although the node's settings say it serves plain HTTP"
+            )));
+        }
+        if !raw.starts_with(HTTP_VERSION_PREFIX) {
+            return Err(Unread::new(format!(
+                "{address} answered in something other than HTTP, most likely TLS, although the \
+                 node's settings say it serves plain HTTP"
+            )));
+        }
+        Ok(raw)
+    }
+
     fn exchange(
         &self,
         address: SocketAddr,
         transport: Transport,
         path: &str,
         deadline: Instant,
+        credential: Option<&ApiCredential>,
     ) -> Result<Vec<u8>, Dial> {
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -244,7 +285,9 @@ impl HttpClient {
         let socket = Deadlined { socket, deadline };
 
         match transport {
-            Transport::Plain => self.converse(socket, address, path).map_err(Dial::Failed),
+            Transport::Plain => self
+                .converse(socket, address, path, credential)
+                .map_err(Dial::Failed),
             Transport::Tls => {
                 let peer = ServerName::IpAddress(address.ip().into());
                 let connection =
@@ -253,8 +296,13 @@ impl HttpClient {
                             "TLS to {address} could not start: {error}"
                         )))
                     })?;
-                self.converse(StreamOwned::new(connection, socket), address, path)
-                    .map_err(Dial::Failed)
+                self.converse(
+                    StreamOwned::new(connection, socket),
+                    address,
+                    path,
+                    credential,
+                )
+                .map_err(Dial::Failed)
             }
         }
     }
@@ -265,12 +313,11 @@ impl HttpClient {
         mut stream: impl Read + Write,
         address: SocketAddr,
         path: &str,
+        credential: Option<&ApiCredential>,
     ) -> Result<Vec<u8>, Unread> {
         let timed_out = || Unread::new(format!("GET {path} timed out after {:?}", self.timeout));
 
-        let authorization = self
-            .credential
-            .as_ref()
+        let authorization = credential
             .map(|credential| format!("Authorization: {}\r\n", credential.authorization()))
             .unwrap_or_default();
         let request = format!(

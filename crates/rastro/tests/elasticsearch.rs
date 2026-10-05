@@ -575,8 +575,8 @@ fn credential_for(account: u32) -> NodeCredential {
 
 #[test]
 fn collect_sends_the_credential_to_a_node_its_account_runs() {
-    // Arrange
-    let node = FakeNode::serving(&[("/", ROOT)]);
+    // Arrange: a secured node over plain HTTP, which asks for the credential with a 401.
+    let node = FakeNode::answering(&[("/", 401, MISSING_CREDENTIALS), ("/", 200, ROOT)]);
     let proc = node.proc("elasticsearch-facet-credential-sent");
 
     // Act
@@ -587,9 +587,10 @@ fn collect_sends_the_credential_to_a_node_its_account_runs() {
 
     // Assert
     let authorizations = node.authorizations();
-    assert!(!authorizations.is_empty());
+    assert!(authorizations.len() > 2, "{authorizations:?}");
+    assert_eq!(authorizations[0], None);
     assert!(
-        authorizations
+        authorizations[1..]
             .iter()
             .all(|sent| sent.as_deref() == Some("ApiKey b3RoZXI6Y2x1c3Rlcg==")),
         "{authorizations:?}"
