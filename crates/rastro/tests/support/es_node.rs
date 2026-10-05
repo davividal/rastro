@@ -71,6 +71,8 @@ fn plain_listener(respond: impl Fn(&str) -> Vec<u8> + Send + 'static) -> u16 {
 }
 
 /// A node answering `routes`, with a 404 for anything else, and the requests it was sent.
+///
+/// A path given more than once is answered with each in turn, the last kept for the rest.
 pub struct FakeNode {
     pub port: u16,
     requests: Arc<Mutex<Vec<String>>>,
@@ -125,9 +127,18 @@ impl FakeNode {
                 .nth(1)
                 .unwrap_or_default()
                 .to_owned();
-            seen.lock().expect("the request log").push(path.clone());
+            let asked_before = {
+                let mut seen = seen.lock().expect("the request log");
+                let asked_before = seen.iter().filter(|asked| **asked == path).count();
+                seen.push(path.clone());
+                asked_before
+            };
             after(&path);
-            match routes.iter().find(|(route, _, _)| *route == path) {
+            let answers: Vec<_> = routes
+                .iter()
+                .filter(|(route, _, _)| *route == path)
+                .collect();
+            match answers.get(asked_before).or(answers.last()) {
                 Some((_, status, body)) => format!(
                     "HTTP/1.1 {status} Answer\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
                     body.len()

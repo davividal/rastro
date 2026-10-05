@@ -424,3 +424,81 @@ fn collect_reads_an_alias_answer_larger_than_the_common_bound() {
     // Assert
     assert_eq!(keys_of(&indices), ["paid"]);
 }
+
+/// The three answers of a node that rolled `logs-2` over between the alias and settings reads.
+fn rolled_over_mid_read() -> (String, String, String) {
+    let settings = settings_of(&[
+        settings_answer("logs-1", "aaaaaaaaaaaaaaaaaaaaaa", "1"),
+        settings_answer("logs-2", "bbbbbbbbbbbbbbbbbbbbbb", "2"),
+    ]);
+    let before = r#"{"logs-1":{"aliases":{"logs":{}}}}"#.to_owned();
+    let after = r#"{"logs-1":{"aliases":{}},"logs-2":{"aliases":{"logs":{}}}}"#.to_owned();
+    (settings, before, after)
+}
+
+#[test]
+fn collect_reads_again_where_an_index_changed_between_the_requests() {
+    // Arrange: found by review. Measured on 7.17.29, 8.19.22 and 9.5.4, every index the settings
+    // answer holds, a closed one included, is in the alias and mapping answers too, so one missing
+    // there was made between the requests, not left without aliases.
+    let (settings, before, after) = rolled_over_mid_read();
+    let mappings = r#"{"logs-1":{"mappings":{}},"logs-2":{"mappings":{}}}"#;
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, &before),
+            (ALIASES, &after),
+            (SETTINGS, &settings),
+            (MAPPINGS, mappings),
+        ],
+        "elasticsearch-indices-torn-once",
+    );
+
+    // Assert: read as the second, whole, snapshot: the alias on the new index.
+    assert_eq!(keys_of(&indices), ["logs", "logs-1"]);
+    assert_eq!(text(&field(&field(&indices, "logs"), "index")), "logs-2");
+}
+
+#[test]
+fn collect_reports_the_indices_unread_where_they_changed_on_every_read() {
+    // Arrange: the same tear, on both reads.
+    let (settings, before, _) = rolled_over_mid_read();
+    let mappings = r#"{"logs-1":{"mappings":{}},"logs-2":{"mappings":{}}}"#;
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, &before),
+            (SETTINGS, &settings),
+            (MAPPINGS, mappings),
+        ],
+        "elasticsearch-indices-torn-twice",
+    );
+
+    // Assert
+    assert!(text(&field(&indices, "error")).contains("changed while"));
+}
+
+#[test]
+fn collect_reports_the_indices_unread_where_an_index_is_missing_from_the_mapping_answer() {
+    // Arrange: the same tear, in the mapping answer, on both reads.
+    let settings = settings_of(&[settings_answer("orders-7", "cccccccccccccccccccccc", "3")]);
+    let aliases = r#"{"orders-7":{"aliases":{}}}"#;
+
+    // Act
+    let indices = indices_of(
+        &[
+            ("/", ROOT),
+            (ALIASES, aliases),
+            (SETTINGS, &settings),
+            (MAPPINGS, "{}"),
+        ],
+        "elasticsearch-indices-torn-mapping",
+    );
+
+    // Assert
+    assert!(text(&field(&indices, "error")).contains("changed while"));
+}

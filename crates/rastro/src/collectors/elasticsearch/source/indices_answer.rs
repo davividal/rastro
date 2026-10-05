@@ -51,15 +51,57 @@ struct MappingsOf {
     mappings: serde_json::Value,
 }
 
+/// The three answers the indices are made of, taken one request after another.
+struct Snapshot {
+    aliases: BTreeMap<String, AliasesOf>,
+    settings: BTreeMap<String, SettingsOf>,
+    mappings: BTreeMap<String, MappingsOf>,
+}
+
+impl Snapshot {
+    fn read(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Self, Unread> {
+        Ok(Self {
+            aliases: read_answer(&client.get(endpoint, ALIASES)?, ALIASES)?,
+            settings: read_answer(&client.get(endpoint, SETTINGS)?, SETTINGS)?,
+            mappings: read_answer(&client.get(endpoint, MAPPINGS)?, MAPPINGS)?,
+        })
+    }
+
+    /// Whether every index the settings answer holds is in the other two as well.
+    ///
+    /// Measured on 7.17.29, 8.19.22 and 9.5.4: each answer holds every index, a closed one
+    /// included, so one missing from the alias or mapping answer was made between the requests.
+    /// Read as it stood, a rollover's new index would lose its alias, and with it its key.
+    fn is_whole(&self) -> bool {
+        self.settings
+            .keys()
+            .all(|index| self.aliases.contains_key(index) && self.mappings.contains_key(index))
+    }
+}
+
+/// Found by review: the indices are read once more where they changed between the requests,
+/// and refused where they changed again, rather than recorded as no request saw them.
+const CHANGED_WHILE_READ: &str = "the indices changed while they were read, on both attempts";
+
 pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indices, Unread> {
     let large = client.for_large_answers();
-    let aliases: BTreeMap<String, AliasesOf> =
-        read_answer(&large.get(endpoint, ALIASES)?, ALIASES)?;
-    let settings: BTreeMap<String, SettingsOf> =
-        read_answer(&large.get(endpoint, SETTINGS)?, SETTINGS)?;
-    let mut mappings: BTreeMap<String, MappingsOf> =
-        read_answer(&large.get(endpoint, MAPPINGS)?, MAPPINGS)?;
+    let first = Snapshot::read(&large, endpoint)?;
+    let snapshot = match first.is_whole() {
+        true => first,
+        false => Snapshot::read(&large, endpoint)?,
+    };
+    match snapshot.is_whole() {
+        true => Ok(indices_of(snapshot)),
+        false => Err(Unread::new(CHANGED_WHILE_READ)),
+    }
+}
 
+fn indices_of(snapshot: Snapshot) -> Indices {
+    let Snapshot {
+        aliases,
+        settings,
+        mut mappings,
+    } = snapshot;
     let aliases_of: BTreeMap<String, BTreeMap<String, ApiValue>> = aliases
         .into_iter()
         .map(|(index, of)| {
@@ -76,8 +118,8 @@ pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indi
         *indices_behind.entry(alias).or_default() += 1;
     }
 
-    // The settings answer is the list, since every index has settings. An index made or
-    // dropped between the three requests is taken as far as they saw it.
+    // The settings answer is the list, since every index has settings, and the snapshot is
+    // whole, so every index in it is in the other two answers.
     let mut entries = BTreeMap::new();
     for (index, of) in settings {
         if of.settings.get(HIDDEN).and_then(|value| value.as_str()) == Some("true") {
@@ -96,7 +138,7 @@ pub fn read_indices(client: &HttpClient, endpoint: &HttpEndpoint) -> Result<Indi
         entries.insert(entry.key().to_owned(), entry);
     }
 
-    Ok(Indices(entries))
+    Indices(entries)
 }
 
 fn entry_of(
