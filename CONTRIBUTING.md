@@ -127,12 +127,12 @@ server did.
   stop. Needing a body means the commit is too big.
 - **Comments carry the non-obvious *why*.** Never a restatement of the code, the
   filename, or git history. See the comment-scope note in
-  [CLAUDE.md](CLAUDE.md#comment-scope).
+  [AGENTS.md](AGENTS.md#comment-scope).
 - **Remove what your change orphaned** in the same commit.
 
 ## The invariants a change must not break
 
-These are in full in [CLAUDE.md](CLAUDE.md#design-invariants). Breaking one is a
+These are in full in [AGENTS.md](AGENTS.md#design-invariants). Breaking one is a
 plan change, not a detail. The four that a pull request gets wrong most easily:
 
 1. **The output format is the contract.** Fixed key order, defined list ordering,
