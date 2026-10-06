@@ -1,0 +1,3 @@
+user default on >cell-eight-default ~* &* +@all
+user app on >cell-eight-app ~app:* +@read +@write
+user monitor on >cell-eight-monitor ~* +info +ping

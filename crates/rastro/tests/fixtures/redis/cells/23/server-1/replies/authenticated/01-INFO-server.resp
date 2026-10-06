@@ -1,0 +1,28 @@
+$624
+# Server
+redis_version:8.10.2
+redis_git_sha1:00000000
+redis_git_dirty:1
+redis_build_id:26142e2a33b527c
+redis_mode:standalone
+os:Linux 6.1.0-47-arm64 aarch64
+arch_bits:64
+monotonic_clock:ARM CNTVCT @ 24 ticks/us
+multiplexing_api:epoll
+atomicvar_api:c11-builtin
+gcc_version:14.2.0
+process_id:1
+process_supervised:no
+run_id:f7fbed4896e342b58489cb5aa3ab6be9e6c9d75a
+tcp_port:6379
+server_time_usec:1791298292279739
+uptime_in_seconds:0
+uptime_in_days:0
+hz:10
+configured_hz:10
+lru_clock:12913396
+executable:/data/redis-server
+config_file:
+io_threads_active:0
+listener0:name=tcp,bind=*,bind=-::*,port=6379
+

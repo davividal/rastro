@@ -1,0 +1,5 @@
+*2
+$93
+user default on #dc0abb6236140a13c1eb8aac4004d2a9c9599df6f6ca7a04e4209e0c5a383c86 ~* &* +@all
+$110
+user reader on #1842c15509b1ea7f0f5d8d74a181eba111acf4bb9c581dd23c2c85e8df8cf94f ~* resetchannels -@all +@read

@@ -1,0 +1,21 @@
+424 328 0:49 / / rw,relatime master:161 - overlay overlay rw,lowerdir=/var/lib/docker/overlay2/l/6CEHHY3L6Z2U5PMG3UU2I7HV6P:/var/lib/docker/overlay2/l/GIBSHCUFAOGSDMMDQJQNF7HK6I:/var/lib/docker/overlay2/l/HVIBWA7XCGBZAA5RLAZKRPNBXD:/var/lib/docker/overlay2/l/4SLBZNTLFKMNDTIGL4NJTDGEIE:/var/lib/docker/overlay2/l/SBFNASHSJPRCTYJBVGO6XOEDLD:/var/lib/docker/overlay2/l/XUZO2ZYA2T67THI2ZQVBJS4Q3G:/var/lib/docker/overlay2/l/443UGHBZWRJS2B7PT26ZZNS6AG:/var/lib/docker/overlay2/l/IPSUFVWCV6LLA4EGMHHJBFMLCW,upperdir=/var/lib/docker/overlay2/bdcebeb3e3ba144159f74277add3df2fcb9d3049db9d8040774fbfec5bb5d5bb/diff,workdir=/var/lib/docker/overlay2/bdcebeb3e3ba144159f74277add3df2fcb9d3049db9d8040774fbfec5bb5d5bb/work
+425 424 0:52 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+426 424 0:53 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+427 426 0:54 / /dev/pts rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+428 424 0:55 / /sys ro,nosuid,nodev,noexec,relatime - sysfs sysfs ro
+429 428 0:27 /system.slice/docker-4c19eea8fe9d905a8d20c3fa227fda2f44851ba5a73c94d80cd17589350fc3fb.scope /sys/fs/cgroup ro,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw,nsdelegate,memory_recursiveprot
+430 426 0:51 / /dev/mqueue rw,nosuid,nodev,noexec,relatime - mqueue mqueue rw
+431 426 0:56 / /dev/shm rw,nosuid,nodev,noexec,relatime - tmpfs shm rw,size=65536k,inode64
+432 424 8:1 /var/lib/docker/containers/4c19eea8fe9d905a8d20c3fa227fda2f44851ba5a73c94d80cd17589350fc3fb/resolv.conf /etc/resolv.conf rw,relatime - ext4 /dev/sda1 rw,discard,errors=remount-ro
+433 424 8:1 /var/lib/docker/containers/4c19eea8fe9d905a8d20c3fa227fda2f44851ba5a73c94d80cd17589350fc3fb/hostname /etc/hostname rw,relatime - ext4 /dev/sda1 rw,discard,errors=remount-ro
+434 424 8:1 /var/lib/docker/containers/4c19eea8fe9d905a8d20c3fa227fda2f44851ba5a73c94d80cd17589350fc3fb/hosts /etc/hosts rw,relatime - ext4 /dev/sda1 rw,discard,errors=remount-ro
+329 425 0:52 /bus /proc/bus ro,nosuid,nodev,noexec,relatime - proc proc rw
+330 425 0:52 /fs /proc/fs ro,nosuid,nodev,noexec,relatime - proc proc rw
+331 425 0:52 /irq /proc/irq ro,nosuid,nodev,noexec,relatime - proc proc rw
+332 425 0:52 /sys /proc/sys ro,nosuid,nodev,noexec,relatime - proc proc rw
+333 425 0:52 /sysrq-trigger /proc/sysrq-trigger ro,nosuid,nodev,noexec,relatime - proc proc rw
+334 425 0:57 / /proc/acpi ro,relatime - tmpfs tmpfs ro,inode64
+335 425 0:53 /null /proc/kcore rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+336 425 0:53 /null /proc/keys rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+337 425 0:53 /null /proc/timer_list rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+338 428 0:58 / /sys/firmware ro,relatime - tmpfs tmpfs ro,inode64

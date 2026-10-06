@@ -1,0 +1,57 @@
+Name:	redis-server
+Umask:	0007
+State:	S (sleeping)
+Tgid:	211819
+Ngid:	0
+Pid:	211819
+PPid:	1
+TracerPid:	0
+Uid:	105	105	105	105
+Gid:	112	112	112	112
+FDSize:	128
+Groups:	112 
+NStgid:	211819
+NSpid:	211819
+NSpgid:	211819
+NSsid:	211819
+VmPeak:	   64000 kB
+VmSize:	   64000 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	   16624 kB
+VmRSS:	   16624 kB
+RssAnon:	    8108 kB
+RssFile:	    8516 kB
+RssShmem:	       0 kB
+VmData:	   47372 kB
+VmStk:	     132 kB
+VmExe:	    1996 kB
+VmLib:	   12404 kB
+VmPTE:	     104 kB
+VmSwap:	       0 kB
+HugetlbPages:	       0 kB
+CoreDumping:	0
+THP_enabled:	0
+Threads:	5
+SigQ:	0/187430
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000000000000
+SigIgn:	0000000000003001
+SigCgt:	00000001000044ea
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000000000000000
+CapAmb:	0000000000000000
+NoNewPrivs:	1
+Seccomp:	2
+Seccomp_filters:	24
+Speculation_Store_Bypass:	vulnerable
+SpeculationIndirectBranch:	unknown
+Cpus_allowed:	f
+Cpus_allowed_list:	0-3
+Mems_allowed:	0001
+Mems_allowed_list:	0
+voluntary_ctxt_switches:	20
+nonvoluntary_ctxt_switches:	1

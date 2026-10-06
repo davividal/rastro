@@ -1,0 +1,6 @@
+ExecStart={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; ignore_errors=no ; start_time=[Tue 2026-10-06 14:53:28 UTC] ; stop_time=[n/a] ; pid=218397 ; code=(null) ; status=0/0 }
+ExecStartEx={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf ; flags= ; start_time=[Tue 2026-10-06 14:53:28 UTC] ; stop_time=[n/a] ; pid=218397 ; code=(null) ; status=0/0 }
+ControlGroup=/system.slice/redis-server.service
+WorkingDirectory=
+RootDirectory=
+Id=redis-server.service

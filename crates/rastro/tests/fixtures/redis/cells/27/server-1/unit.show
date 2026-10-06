@@ -1,0 +1,6 @@
+ExecStart={ path=/opt/valkey-9.0.6/bin/valkey-server ; argv[]=/opt/valkey-9.0.6/bin/valkey-server /etc/valkey/valkey-27.conf ; ignore_errors=no ; start_time=[Tue 2026-10-06 14:51:41 UTC] ; stop_time=[n/a] ; pid=208583 ; code=(null) ; status=0/0 }
+ExecStartEx={ path=/opt/valkey-9.0.6/bin/valkey-server ; argv[]=/opt/valkey-9.0.6/bin/valkey-server /etc/valkey/valkey-27.conf ; flags= ; start_time=[Tue 2026-10-06 14:51:41 UTC] ; stop_time=[n/a] ; pid=208583 ; code=(null) ; status=0/0 }
+ControlGroup=/system.slice/valkey-27.service
+WorkingDirectory=/var/lib/valkey-27
+RootDirectory=
+Id=valkey-27.service

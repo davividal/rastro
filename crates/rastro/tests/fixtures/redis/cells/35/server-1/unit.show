@@ -1,0 +1,6 @@
+ExecStart={ path=/opt/redis-5.0.14/bin/redis-server ; argv[]=/opt/redis-5.0.14/bin/redis-server /etc/redis/redis5.conf ; ignore_errors=no ; start_time=[Tue 2026-10-06 14:52:09 UTC] ; stop_time=[n/a] ; pid=213945 ; code=(null) ; status=0/0 }
+ExecStartEx={ path=/opt/redis-5.0.14/bin/redis-server ; argv[]=/opt/redis-5.0.14/bin/redis-server /etc/redis/redis5.conf ; flags= ; start_time=[Tue 2026-10-06 14:52:09 UTC] ; stop_time=[n/a] ; pid=213945 ; code=(null) ; status=0/0 }
+ControlGroup=/system.slice/redis5.service
+WorkingDirectory=/var/lib/redis5
+RootDirectory=
+Id=redis5.service
