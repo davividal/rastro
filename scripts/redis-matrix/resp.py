@@ -20,9 +20,28 @@ LOOPBACK = "127.0.0.1"
 CAPTURES = "/captures/"
 CELLS = "/root/cells/"
 LISTENING = "00010000"
+# The kernel's ceiling, `/proc/sys/kernel/pid_max` on 64-bit Linux.
+PID_MAX = 4194304
+PORT_MAX = 65535
 
 
-def listening_socket_of(pid):
+def process_pid(text: str) -> int:
+    """A process id: init's 1 and anything past the kernel's ceiling are refused."""
+    pid = int(text)
+    if not 1 < pid <= PID_MAX:
+        raise argparse.ArgumentTypeError(f"{text} is not a process id")
+    return pid
+
+
+def tcp_port(text: str) -> int:
+    """A TCP port a server can listen on."""
+    port = int(text)
+    if not 0 < port <= PORT_MAX:
+        raise argparse.ArgumentTypeError(f"{text} is not a TCP port")
+    return port
+
+
+def listening_socket_of(pid: int) -> str:
     """The unix socket the process listens on, through its own root, from the kernel's tables."""
     held = {os.readlink(f"/proc/{pid}/fd/{fd}") for fd in os.listdir(f"/proc/{pid}/fd")}
     with open(f"/proc/{pid}/net/unix") as table:
@@ -89,8 +108,8 @@ class Reader:
 def main():
     parser = argparse.ArgumentParser()
     target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--unix", type=int, metavar="PID")
-    target.add_argument("--tcp", type=int, metavar="PORT")
+    target.add_argument("--unix", type=process_pid, metavar="PID")
+    target.add_argument("--tcp", type=tcp_port, metavar="PORT")
     parser.add_argument("--password-file")
     parser.add_argument("out")
     parser.add_argument("commands", nargs="+")
