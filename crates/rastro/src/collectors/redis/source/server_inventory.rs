@@ -21,6 +21,9 @@ use crate::collectors::redis::value_objects::Listener;
 /// The first command any server is sent.
 const INFO_SERVER: [&str; 2] = ["INFO", "server"];
 
+/// The mode `INFO server` names for a sentinel.
+const SENTINEL: &str = "sentinel";
+
 /// How a server refuses a command until it has a password.
 const NOAUTH: &str = "NOAUTH";
 
@@ -92,6 +95,21 @@ fn read_instance(
             instance.errors.push(error.to_string());
             return instance;
         }
+    }
+
+    // A sentinel answers `INFO` and rejects the rest, measured, and each rejection is one more
+    // error the server counts; this facet reads one box's servers, not a sentinel's topology.
+    let is_sentinel = instance
+        .identity
+        .as_ref()
+        .and_then(|identity| identity.mode.as_deref())
+        == Some(SENTINEL);
+    if is_sentinel {
+        instance.errors.push(
+            "it is a sentinel, which this facet names and does not read beyond its identity"
+                .to_owned(),
+        );
+        return instance;
     }
 
     // A refusal from here on is one item's: `rename-command CONFIG ""` leaves `INFO` answering.

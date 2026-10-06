@@ -494,3 +494,21 @@ fn a_socket_the_kernel_says_another_process_holds_is_sent_nothing() {
     assert!(error.contains("not the server's own"), "{error}");
     assert!(server.received().is_empty(), "{:?}", server.received());
 }
+
+#[test]
+fn a_sentinel_is_named_and_asked_nothing_more() {
+    // Arrange: `redis-server --sentinel` keeps `comm`, and measured on redis 8.10 it rejects
+    // `CONFIG GET *` and `MODULE LIST`; each rejection is one more error the server counts.
+    let info = bulk("# Server\r\nredis_version:8.10.2\r\nredis_mode:sentinel\r\n");
+    let server = FakeRedis::stock("facet-sentinel", &[("INFO server", &info)]);
+    let proc = server.proc("redis-facet-sentinel");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = instance_of(&observation, &key_of(&server));
+    assert_eq!(text(&field(&instance, "mode")), "sentinel");
+    assert!(text(&field(&instance, "error")).contains("sentinel"));
+    assert_eq!(server.received(), [["INFO", "server"]]);
+}
