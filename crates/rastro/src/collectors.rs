@@ -12,6 +12,7 @@ pub mod file_metadata;
 pub mod filesystem;
 pub mod firewall;
 pub mod inet;
+pub mod inside_root;
 pub mod kernel_residency;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
