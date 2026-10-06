@@ -1,5 +1,6 @@
 //! The `/proc` interface: which server processes are running.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -42,5 +43,22 @@ pub fn resident_servers(proc: &Path) -> Vec<ResidentServer> {
     // document's contract forbids.
     resident.sort_unstable_by_key(|server| server.process_id);
 
+    // A background save or AOF rewrite forks a child that keeps `comm` and closes the listeners,
+    // measured on every version; it is the server's work, not a second server.
+    let servers: BTreeSet<u32> = resident.iter().map(|server| server.process_id).collect();
+    resident.retain(|server| {
+        parent_of(proc, server.process_id).is_none_or(|parent| !servers.contains(&parent))
+    });
+
     resident
+}
+
+/// The parent a process's `stat` names, or nothing where it cannot be read.
+///
+/// Read after the last `)`, because `comm` is in parentheses and may itself hold one.
+fn parent_of(proc: &Path, process_id: u32) -> Option<u32> {
+    let stat = fs::read_to_string(proc.join(process_id.to_string()).join("stat")).ok()?;
+    let (_, after_comm) = stat.rsplit_once(')')?;
+
+    after_comm.split_whitespace().nth(1)?.parse().ok()
 }

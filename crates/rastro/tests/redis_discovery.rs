@@ -51,6 +51,8 @@ struct Process<'a> {
     title: &'a str,
     /// The socket inodes it holds, or `None` for descriptors this run may not read.
     holds: Option<&'a [u64]>,
+    /// The process that started it, as `/proc/<pid>/stat` names it.
+    parent: &'a str,
 }
 
 fn server(pid: &'static str, holds: &'static [u64]) -> Process<'static> {
@@ -59,6 +61,7 @@ fn server(pid: &'static str, holds: &'static [u64]) -> Process<'static> {
         comm: "redis-server",
         title: "/usr/bin/redis-server 127.0.0.1:6379\0",
         holds: Some(holds),
+        parent: "1",
     }
 }
 
@@ -74,6 +77,14 @@ fn proc_with(name: &str, processes: &[Process], tcp: &str, tcp6: &str, unix: &st
         fs::create_dir_all(&directory).expect("a writable scratch directory");
         write(&directory, "comm", &format!("{}\n", process.comm));
         write(&directory, "cmdline", process.title);
+        write(
+            &directory,
+            "stat",
+            &format!(
+                "{} ({}) S {} {} 0 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 0 0 0\n",
+                process.pid, process.comm, process.parent, process.pid
+            ),
+        );
 
         match process.holds {
             Some(inodes) => {
@@ -251,6 +262,7 @@ fn a_socket_another_process_holds_is_not_the_servers() {
         comm: "haproxy",
         title: "haproxy\0",
         holds: Some(&[1009]),
+        parent: "1",
     };
     let proc = proc_with(
         "redis-discovery-other-holder",
@@ -505,4 +517,34 @@ fn a_title_naming_no_port_leaves_the_usual_order() {
             "127.0.0.1:6379".parse().expect("an address")
         ))
     );
+}
+
+#[test]
+fn a_child_a_server_forked_to_save_is_not_another_server() {
+    // Arrange: measured on redis 5 to 8.10 and valkey 7.2 to 9.1, a background save or an AOF
+    // rewrite forks a child that keeps `comm`, retitles itself `redis-rdb-bgsave *:6379`, and
+    // closes the listeners. Counted as a server, it would come and go with the save.
+    let saving = Process {
+        pid: "413",
+        title: "redis-rdb-bgsave *:6379\0",
+        holds: Some(&[]),
+        parent: "412",
+        ..server("413", &[])
+    };
+    let proc = proc_with(
+        "redis-discovery-bgsave",
+        &[server("412", &[1001]), saving],
+        &tcp_row(LOOPBACK_6379, 1001),
+        "",
+        "",
+    );
+
+    // Act
+    let keys: Vec<String> = discover(&proc)
+        .into_iter()
+        .map(|server| server.key)
+        .collect();
+
+    // Assert
+    assert_eq!(keys, ["6379"]);
 }
