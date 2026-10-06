@@ -2,9 +2,9 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::Path;
 
+use crate::collectors::processes::source::proc_processes::departed;
 use crate::collectors::redis::value_objects::ServerKind;
 
 /// One running server process.
@@ -63,7 +63,9 @@ pub fn resident_census(proc: &Path) -> ResidentCensus {
                     census.servers.push(ResidentServer { process_id, kind });
                 }
             }
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            // A process reaped mid-read answers `ESRCH`, not `ENOENT`; it left, and was not
+            // refused, or the flag would move between two runs of a busy box.
+            Err(error) if departed(&error) => {}
             Err(_) => census.some_processes_unseen = true,
         }
     }
