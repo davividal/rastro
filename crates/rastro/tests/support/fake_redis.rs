@@ -124,9 +124,20 @@ impl FakeRedis {
     }
 }
 
-/// A `/proc` in which a redis server holds a unix socket at `socket`.
+/// The pid a fixture `/proc` gives the server: this test process, which is what the kernel names
+/// as the holder of a socket the fake server listens on.
+pub fn server_pid() -> String {
+    std::process::id().to_string()
+}
+
+/// A `/proc` in which a redis server, this test process, holds a unix socket at `socket`.
 pub fn proc_holding(name: &str, socket: &Path) -> PathBuf {
-    let proc = scratch_tree(name, &["proc/net", "proc/412/fd"]).join("proc");
+    proc_holding_as(name, socket, &server_pid())
+}
+
+/// The same, with the server under a pid the caller names.
+pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
+    let proc = scratch_tree(name, &["proc/net", &format!("proc/{pid}/fd")]).join("proc");
     write(&proc, "net/tcp", TCP_HEADER);
     write(&proc, "net/tcp6", TCP_HEADER);
     write(
@@ -137,16 +148,23 @@ pub fn proc_holding(name: &str, socket: &Path) -> PathBuf {
             socket.display()
         ),
     );
-    write(&proc, "412/comm", "redis-server\n");
+    write(&proc, &format!("{pid}/comm"), "redis-server\n");
     // Arrange: the Debian package's unit, as cgroup v2 names it.
     write(
         &proc,
-        "412/cgroup",
+        &format!("{pid}/cgroup"),
         "0::/system.slice/redis-server.service\n",
     );
-    write(&proc, "412/cmdline", "/usr/bin/redis-server unixsocket\0");
-    symlink(format!("socket:[{SOCKET_INODE}]"), proc.join("412/fd/3"))
-        .expect("a writable scratch symlink");
+    write(
+        &proc,
+        &format!("{pid}/cmdline"),
+        "/usr/bin/redis-server unixsocket\0",
+    );
+    symlink(
+        format!("socket:[{SOCKET_INODE}]"),
+        proc.join(pid).join("fd/3"),
+    )
+    .expect("a writable scratch symlink");
 
     proc
 }

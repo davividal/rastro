@@ -13,7 +13,7 @@ use rastro_collector::{Collector, Observation};
 
 mod support;
 
-use support::fake_redis::{FakeRedis, key_of};
+use support::fake_redis::{FakeRedis, key_of, server_pid};
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, is_null, keys_of, text};
 use support::shim;
@@ -83,7 +83,7 @@ impl AuthBox {
     }
 
     fn in_cgroup(self, line: &str) -> Self {
-        write(&self.proc, "412/cgroup", line);
+        write(&self.proc, &format!("{}/cgroup", server_pid()), line);
         self
     }
 

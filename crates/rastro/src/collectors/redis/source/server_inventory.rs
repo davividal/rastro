@@ -71,7 +71,7 @@ fn read_instance(
     };
 
     // Dialling and the first answer are where a TLS port hangs up on a plain client.
-    let answered = RespConnection::dial(target).and_then(|mut connection| {
+    let answered = RespConnection::dial(target, process_id).and_then(|mut connection| {
         let first = connection.ask(&INFO_SERVER)?;
         Ok((connection, first))
     });

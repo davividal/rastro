@@ -110,6 +110,19 @@ impl Write for ServerStream {
     }
 }
 
+/// Whether the kernel names `server` as the process at the other end of a connected unix socket.
+#[cfg(target_os = "linux")]
+fn held_by(socket: &UnixStream, server: u32) -> bool {
+    rustix::net::sockopt::socket_peercred(socket)
+        .is_ok_and(|peer| u32::try_from(peer.pid.as_raw_pid()).is_ok_and(|pid| pid == server))
+}
+
+/// rastro reads Linux hosts; elsewhere, where only its tests run, there is no `SO_PEERCRED`.
+#[cfg(not(target_os = "linux"))]
+fn held_by(_socket: &UnixStream, _server: u32) -> bool {
+    true
+}
+
 /// A connection to one server, asked one command at a time.
 #[derive(Debug)]
 pub struct RespConnection {
@@ -132,7 +145,13 @@ impl RespConnection {
     }
 
     /// A connection to the socket discovery chose.
-    pub fn dial(target: &DialTarget) -> Result<Self, CollectionError> {
+    ///
+    /// **A unix socket is spoken to only once the kernel names the server as its peer.** The socket
+    /// table that led here prints a path raw, newline included, measured, so another account can
+    /// bind a path that forges a row naming the server's inode. `SO_PEERCRED` on the connected
+    /// socket is the kernel's own answer, and anything but the server's pid is sent nothing. A TCP
+    /// row has no free text to forge.
+    pub fn dial(target: &DialTarget, server: u32) -> Result<Self, CollectionError> {
         let stream: io::Result<ServerStream> = match target {
             DialTarget::Unix(path) => UnixStream::connect(path).map(ServerStream::from),
             DialTarget::Tcp(address) => {
@@ -143,6 +162,15 @@ impl RespConnection {
         let stream = stream.map_err(|error| {
             CollectionError::new(format!("could not connect to {target}: {error}"))
         })?;
+
+        if let ServerStream::Unix(socket) = &stream
+            && !held_by(socket, server)
+        {
+            return Err(CollectionError::new(format!(
+                "the socket at {target} is not the server's own: the kernel names another process \
+                 as its holder, so nothing was sent"
+            )));
+        }
 
         Self::over(stream)
     }

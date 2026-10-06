@@ -12,7 +12,7 @@ use rastro_collector::{ClaimedReading, Collector, FilesystemClaim};
 
 mod support;
 
-use support::fake_redis::proc_holding;
+use support::fake_redis::{proc_holding, server_pid};
 use support::fs_tree::{scratch_tree, write};
 
 /// A socket path standing for the server's key; nothing listens on it, because nothing asks.
@@ -24,7 +24,7 @@ fn claims_of(proc: &Path) -> Vec<FilesystemClaim> {
 
 fn with_working_directory(name: &str, directory: &Path) -> PathBuf {
     let proc = proc_holding(name, Path::new(SOCKET));
-    symlink(directory, proc.join("412/cwd")).expect("a writable scratch symlink");
+    symlink(directory, proc.join(server_pid()).join("cwd")).expect("a writable scratch symlink");
 
     proc
 }
@@ -76,11 +76,11 @@ fn a_directory_is_still_sealed_when_its_instance_cannot_name_the_claim() {
     // Arrange: a server keyed by its title, whose colon a claim qualifier may not hold.
     let data = scratch_tree("redis-claims-data-unnamed", &["data"]).join("data");
     let proc = with_working_directory("redis-claims-unnamed", &data);
-    std::fs::remove_dir_all(proc.join("412/fd")).expect("a removable fixture");
-    write(&proc, "412/fd", "");
+    std::fs::remove_dir_all(proc.join(server_pid()).join("fd")).expect("a removable fixture");
+    write(&proc, &format!("{}/fd", server_pid()), "");
     write(
         &proc,
-        "412/cmdline",
+        &format!("{}/cmdline", server_pid()),
         "/usr/bin/redis-server 127.0.0.1:6379\0",
     );
 

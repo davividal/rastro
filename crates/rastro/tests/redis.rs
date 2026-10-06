@@ -474,3 +474,23 @@ fn a_socket_that_hangs_up_names_the_sockets_not_tried_and_why() {
     assert!(error.contains("not tried"), "{error}");
     assert!(!error.contains(&format!("127.0.0.1:{port}")), "{error}");
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_socket_the_kernel_says_another_process_holds_is_sent_nothing() {
+    // Arrange: `/proc/net/unix` prints a socket path raw, newline included, measured, so another
+    // account can bind a path that forges a row naming the server's inode. Here the table says
+    // the server holds the socket, and the kernel, asked about the connected peer, says otherwise.
+    let server = FakeRedis::stock_with_password("facet-not-the-server", "hunter2", &[]);
+    let proc =
+        support::fake_redis::proc_holding_as("redis-facet-not-the-server", &server.socket, "412");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: refused before a single byte, so nothing, a password least of all, reaches it.
+    let instance = instance_of(&observation, &key_of(&server));
+    let error = text(&field(&instance, "error"));
+    assert!(error.contains("not the server's own"), "{error}");
+    assert!(server.received().is_empty(), "{:?}", server.received());
+}
