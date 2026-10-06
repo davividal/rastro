@@ -36,46 +36,23 @@ impl FakeRedis {
     /// A server answering each command, keyed by its words joined with spaces, with the bytes
     /// given. Anything unscripted is answered the way redis answers a command it lacks.
     pub fn answering(name: &str, script: &[(&str, &str)]) -> Self {
-        Self::serving(name, script, None)
+        Self::serving(name, owned(script.iter().copied()), None)
     }
 
     /// A stock server that wants `password` before it answers anything, as `requirepass` makes
     /// it: `NOAUTH` to every command until an `AUTH` with the password, `WRONGPASS` to one
     /// without it. Measured on Debian 12.
     pub fn stock_with_password(name: &str, password: &str, overrides: &[(&str, &str)]) -> Self {
-        let info = bulk(DEBIAN_12_INFO);
-        let config = debian_12_config();
-        let replication = bulk(DEBIAN_12_REPLICATION);
-        let acl = array_of(&["user default on nopass sanitize-payload ~* &* +@all"]);
-        let mut script: BTreeMap<&str, &str> = [
-            ("INFO server", info.as_str()),
-            ("CONFIG GET *", config.as_str()),
-            ("INFO replication", replication.as_str()),
-            ("ACL LIST", acl.as_str()),
-            ("MODULE LIST", "*0\r\n"),
-        ]
-        .into_iter()
-        .collect();
-        script.extend(overrides.iter().copied());
-
-        Self::serving(
-            name,
-            &script.into_iter().collect::<Vec<_>>(),
-            Some(password.to_owned()),
-        )
+        Self::serving(name, stock_script(overrides), Some(password.to_owned()))
     }
 
-    fn serving(name: &str, script: &[(&str, &str)], password: Option<String>) -> Self {
+    fn serving(name: &str, script: BTreeMap<String, String>, password: Option<String>) -> Self {
         // A short path rather than the scratch tree: a unix socket path is capped at about a
         // hundred bytes, and the target directory of a worktree is most of that already.
         let socket = std::env::temp_dir().join(format!("rastro-{name}.sock"));
         let _ = fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).expect("a bindable socket path");
 
-        let script: BTreeMap<String, String> = script
-            .iter()
-            .map(|(command, reply)| ((*command).to_owned(), (*reply).to_owned()))
-            .collect();
         let received = Arc::new(Mutex::new(Vec::new()));
         let recorder = Arc::clone(&received);
 
@@ -133,22 +110,7 @@ impl FakeRedis {
     /// So a test states only what is peculiar to its box, and a read added to the collector later
     /// does not turn every earlier test into one about a server that refuses it.
     pub fn stock(name: &str, overrides: &[(&str, &str)]) -> Self {
-        let info = bulk(DEBIAN_12_INFO);
-        let config = debian_12_config();
-        let replication = bulk(DEBIAN_12_REPLICATION);
-        let acl = array_of(&["user default on nopass sanitize-payload ~* &* +@all"]);
-        let mut script: BTreeMap<&str, &str> = [
-            ("INFO server", info.as_str()),
-            ("CONFIG GET *", config.as_str()),
-            ("INFO replication", replication.as_str()),
-            ("ACL LIST", acl.as_str()),
-            ("MODULE LIST", "*0\r\n"),
-        ]
-        .into_iter()
-        .collect();
-        script.extend(overrides.iter().copied());
-
-        Self::answering(name, &script.into_iter().collect::<Vec<_>>())
+        Self::serving(name, stock_script(overrides), None)
     }
 
     /// Every command received so far, as its words.
@@ -187,6 +149,32 @@ pub fn proc_holding(name: &str, socket: &Path) -> PathBuf {
         .expect("a writable scratch symlink");
 
     proc
+}
+
+/// What a stock Debian 12 server answers to every read rastro makes, each override replacing or
+/// adding one command's answer.
+fn stock_script(overrides: &[(&str, &str)]) -> BTreeMap<String, String> {
+    let info = bulk(DEBIAN_12_INFO);
+    let config = debian_12_config();
+    let replication = bulk(DEBIAN_12_REPLICATION);
+    let acl = array_of(&["user default on nopass sanitize-payload ~* &* +@all"]);
+    let mut script = owned([
+        ("INFO server", info.as_str()),
+        ("CONFIG GET *", config.as_str()),
+        ("INFO replication", replication.as_str()),
+        ("ACL LIST", acl.as_str()),
+        ("MODULE LIST", "*0\r\n"),
+    ]);
+    script.extend(owned(overrides.iter().copied()));
+
+    script
+}
+
+fn owned<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> BTreeMap<String, String> {
+    pairs
+        .into_iter()
+        .map(|(command, reply)| (command.to_owned(), reply.to_owned()))
+        .collect()
 }
 
 impl Drop for FakeRedis {

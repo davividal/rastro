@@ -4,6 +4,7 @@
 //! command is where the configuration file is named, and the configuration file is where the
 //! password is; a server that answers freely needs neither and systemd is not bothered.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +84,7 @@ pub fn start_of(systemctl: &CanonicalTool, unit: &str) -> Result<ServerStart, Co
     // runner, a redis a job starts runs in `hosted-compute-agent.service`.
     let program = Path::new(command.executable.as_str())
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(OsStr::to_str)
         .unwrap_or_default();
     if ServerKind::from_program(program).is_none() {
         return Err(CollectionError::new(format!(
