@@ -8,8 +8,8 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use crate::collectors::mount_table::{host_aliases_of, host_paths_of};
 use crate::collectors::inside_root::{Opening, open_inside};
+use crate::collectors::mount_table::{host_aliases_of, host_paths_of};
 
 /// Which file a path leads to: the device and the inode, which two paths share only if they are
 /// one file.

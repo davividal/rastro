@@ -22,6 +22,12 @@ fn claims_of(proc: &Path) -> Vec<FilesystemClaim> {
     RedisCollector::reading(InstalledServers::new([]), proc).filesystem_claims()
 }
 
+fn in_own_mount_namespace(proc: &Path) {
+    let link = proc.join(server_pid()).join("ns/mnt");
+    std::fs::remove_file(&link).expect("a removable fixture");
+    symlink("mnt:[4026532999]", &link).expect("a writable scratch symlink");
+}
+
 fn with_working_directory(name: &str, directory: &Path) -> PathBuf {
     let proc = proc_holding(name, Path::new(SOCKET));
     symlink(directory, proc.join(server_pid()).join("cwd")).expect("a writable scratch symlink");
@@ -93,14 +99,37 @@ fn a_directory_is_still_sealed_when_its_instance_cannot_name_the_claim() {
 }
 
 #[test]
-fn a_server_in_another_mount_namespace_claims_nothing() {
+fn a_packaged_server_in_a_private_mount_namespace_seals_the_hosts_directory() {
+    // Arrange: measured, the package's unit gives every server a mount namespace of its own
+    // (`PrivateTmp=yes`, `ReadOnlyDirectories=/`), and its `dir` is still the host's directory.
+    let data = scratch_tree("redis-claims-data-private", &["var/lib/redis"]).join("var/lib/redis");
+    let proc = with_working_directory("redis-claims-private", &data);
+    in_own_mount_namespace(&proc);
+
+    // Act
+    let claims = claims_of(&proc);
+
+    // Assert
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    assert_eq!(
+        claims[0].tree().as_str(),
+        data.to_str().expect("a UTF-8 path")
+    );
+}
+
+#[test]
+fn a_server_whose_directory_is_its_own_roots_and_not_the_hosts_claims_nothing() {
     // Arrange: measured, a redis in a container reports its working directory as `/data`, a path
-    // in its own mount namespace; sealed as it stands, it would hide the host's `/data`.
-    let data = scratch_tree("redis-claims-data-container", &["data"]).join("data");
-    let proc = with_working_directory("redis-claims-container", &data);
-    let link = proc.join(server_pid()).join("ns/mnt");
-    std::fs::remove_file(&link).expect("a removable fixture");
-    symlink("mnt:[4026532999]", &link).expect("a writable scratch symlink");
+    // in its own root; the host has a directory at that spelling, and it is not the server's.
+    let host = scratch_tree("redis-claims-data-container", &["data"]).join("data");
+    let proc = with_working_directory("redis-claims-container", &host);
+    in_own_mount_namespace(&proc);
+    let image = scratch_tree("redis-claims-image", &[]);
+    std::fs::create_dir_all(image.join(host.strip_prefix("/").expect("an absolute path")))
+        .expect("a scratch directory");
+    let root = proc.join(server_pid()).join("root");
+    std::fs::remove_file(&root).expect("a removable fixture");
+    symlink(&image, &root).expect("a writable scratch symlink");
 
     // Act & Assert: the walk's default is the safe direction to be wrong in.
     assert!(claims_of(&proc).is_empty());

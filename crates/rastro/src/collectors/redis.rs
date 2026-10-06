@@ -14,9 +14,9 @@ pub use model::{
 pub use source::{
     AclList, ConfigGet, Credential, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
     InstalledServers, ModuleList, PasswordDirectives, Reply, ResidentServer, RespConnection,
-    ServerCgroup, ServerStart, ServerStream, data_directory_of, default_user_in_acl_file, discover,
-    password_directives_in, password_for, password_for_default_account, read_installation,
-    resident_servers, start_of, unit_of,
+    ServerCgroup, ServerStart, ServerStream, data_directories_of, default_user_in_acl_file,
+    discover, password_directives_in, password_for, password_for_default_account,
+    read_installation, resident_servers, start_of, unit_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 
@@ -126,15 +126,18 @@ impl Collector for RedisCollector {
     fn filesystem_claims(&self) -> Vec<FilesystemClaim> {
         discover(&self.proc)
             .into_iter()
-            .filter_map(|server| {
-                let directory = data_directory_of(&self.proc, server.process_id)?;
-                let tree = WalkedTree::new(directory.to_str()?).ok()?;
-                let sealed = FilesystemClaim::sealed(tree);
+            .flat_map(|server| {
+                data_directories_of(&self.proc, server.process_id)
+                    .into_iter()
+                    .filter_map(move |directory| {
+                        let tree = WalkedTree::new(directory.to_str()?).ok()?;
+                        let sealed = FilesystemClaim::sealed(tree);
 
-                Some(match ClaimQualifier::new(server.key) {
-                    Ok(qualifier) => sealed.for_entry(qualifier),
-                    Err(_) => sealed,
-                })
+                        Some(match ClaimQualifier::new(server.key.clone()) {
+                            Ok(qualifier) => sealed.for_entry(qualifier),
+                            Err(_) => sealed,
+                        })
+                    })
             })
             .collect()
     }

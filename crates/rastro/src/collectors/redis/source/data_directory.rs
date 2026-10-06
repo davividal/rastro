@@ -3,9 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::mount_namespace::shares_our_mounts;
+use crate::collectors::host_directories::host_directories_of;
 
-/// Where a server keeps its dump and its append-only files, or nothing where it cannot be told.
+/// The host's directories that hold a server's dump and append-only files, or none where that
+/// cannot be told.
 ///
 /// **The working directory is the setting.** redis applies `dir` with `chdir`, at start and on
 /// every `CONFIG SET dir`, and `CONFIG GET dir` answers with `getcwd`, so `/proc/<pid>/cwd` is
@@ -15,16 +16,21 @@ use super::mount_namespace::shares_our_mounts;
 /// **The root is never it.** `dir ./` in a server started from `/` leaves the working directory at
 /// the root, and sealing that would seal the whole walk to hide one dump file.
 ///
-/// **Only for a server in rastro's own mount namespace.** A redis in a container reports its
-/// working directory in its own namespace, `/data` measured, and sealed as it stands that would
-/// hide the host's `/data`. Where the two cannot be compared nothing is claimed either: the walk's
-/// default is the safe direction to be wrong in.
-pub fn data_directory_of(proc: &Path, process_id: u32) -> Option<PathBuf> {
-    if !shares_our_mounts(proc, process_id) {
-        return None;
+/// **The host's directory behind the path, by identity rather than by namespace**, measured: the
+/// package's unit gives every server a mount namespace of its own and its `dir` is still the host's
+/// `/var/lib/redis`, while a redis in a container reports `/data`, a path in its own root. The rule
+/// elasticsearch reached first, shared: the same directory on both sides, or the volume or bind
+/// mount the mount tables say it is. Nothing where neither side can be read.
+pub fn data_directories_of(proc: &Path, process_id: u32) -> Vec<PathBuf> {
+    let Ok(directory) = fs::read_link(proc.join(process_id.to_string()).join("cwd")) else {
+        return Vec::new();
+    };
+    if directory.parent().is_none() {
+        return Vec::new();
     }
 
-    let directory = fs::read_link(proc.join(process_id.to_string()).join("cwd")).ok()?;
-
-    (directory.parent().is_some()).then_some(directory)
+    host_directories_of(proc, process_id, &directory)
+        .into_iter()
+        .filter(|host| host.parent().is_some())
+        .collect()
 }
