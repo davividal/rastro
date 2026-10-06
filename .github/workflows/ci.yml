@@ -54,7 +54,7 @@ jobs:
       # until the label-gated workflow runs, or nobody adds the label and it lands broken.
       # Compiling them is cheap and catches exactly that.
       - name: Compile the conformance tests, which the suite deliberately does not run
-        run: cargo test --no-run --locked --test containers_conformance --test rabbitmq_conformance --test redis_conformance
+        run: cargo test --no-run --locked --test containers_conformance --test rabbitmq_conformance --test redis_conformance --test elasticsearch_conformance
       # One test asks nginx which files it reads, so rastro's include resolution is checked
       # against nginx rather than against what somebody wrote down. It runs `nginx -T` in a
       # prefix it owns and needs no privilege; the shipped binary never runs it, which is
