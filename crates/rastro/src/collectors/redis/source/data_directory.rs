@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::mount_namespace::shares_our_mounts;
+
 /// Where a server keeps its dump and its append-only files, or nothing where it cannot be told.
 ///
 /// **The working directory is the setting.** redis applies `dir` with `chdir`, at start and on
@@ -18,17 +20,11 @@ use std::path::{Path, PathBuf};
 /// hide the host's `/data`. Where the two cannot be compared nothing is claimed either: the walk's
 /// default is the safe direction to be wrong in.
 pub fn data_directory_of(proc: &Path, process_id: u32) -> Option<PathBuf> {
-    let server = proc.join(process_id.to_string());
-    let theirs = fs::read_link(server.join(MOUNT_NAMESPACE)).ok()?;
-    let ours = fs::read_link(proc.join("self").join(MOUNT_NAMESPACE)).ok()?;
-    if theirs != ours {
+    if !shares_our_mounts(proc, process_id) {
         return None;
     }
 
-    let directory = fs::read_link(server.join("cwd")).ok()?;
+    let directory = fs::read_link(proc.join(process_id.to_string()).join("cwd")).ok()?;
 
     (directory.parent().is_some()).then_some(directory)
 }
-
-/// Where a process's mount namespace is linked from, relative to its `/proc` entry.
-const MOUNT_NAMESPACE: &str = "ns/mnt";

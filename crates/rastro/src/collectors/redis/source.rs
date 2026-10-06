@@ -10,6 +10,7 @@ mod info_replication;
 mod info_server;
 mod installed_servers;
 mod module_list;
+mod mount_namespace;
 mod reply;
 mod resident_servers;
 mod resp_connection;

@@ -95,6 +95,14 @@ impl AuthBox {
         self
     }
 
+    /// The server in a mount namespace of its own, as `RootDirectory=` or a container puts it.
+    fn in_own_mount_namespace(self) -> Self {
+        let link = self.proc.join(server_pid()).join("ns/mnt");
+        fs::remove_file(&link).expect("a removable fixture");
+        std::os::unix::fs::symlink("mnt:[4026532999]", &link).expect("a writable scratch symlink");
+        self
+    }
+
     fn systemctl_calls(&self) -> Vec<String> {
         fs::read_to_string(&self.systemctl_log)
             .unwrap_or_default()
@@ -144,6 +152,24 @@ fn the_password_the_servers_own_file_sets_unlocks_it() {
     assert_eq!(text(&field(&instance, "version")), "7.0.15");
     assert_eq!(auths(&server), [["AUTH", "hunter2"]]);
     assert_eq!(server.received()[0], ["INFO", "server"]);
+}
+
+#[test]
+fn a_server_in_another_mount_namespace_is_not_read_from_the_hosts_files() {
+    // Arrange: the unit's path names a file in the server's own namespace, and the host's file at
+    // the same path sets a different password.
+    let server = FakeRedis::stock_with_password("auth-namespace", "hunter2", &[]);
+    let auth_box = auth_box("redis-auth-namespace", &server, "")
+        .configured("requirepass not-the-servers\n")
+        .in_own_mount_namespace();
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert: a wrong password is an entry in the server's `ACL LOG`.
+    let error = text(&field(&instance(&observation, &server), "error"));
+    assert!(error.contains("mount namespace"), "{error}");
+    assert!(auths(&server).is_empty());
 }
 
 #[test]

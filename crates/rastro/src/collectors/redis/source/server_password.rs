@@ -6,6 +6,7 @@ use super::config_password::{
     PasswordDirectives, default_user_in_acl_file, password_directives_in,
 };
 use super::default_account::password_for_default_account;
+use super::mount_namespace::shares_our_mounts;
 use super::server_unit::{start_of, unit_of};
 use crate::collectors::canonical_tool::CanonicalTool;
 
@@ -53,6 +54,16 @@ pub fn password_for(
     if file.is_none() && start.password.is_none() {
         return Err(format!(
             "the server requires a password, and {unit} starts it with no configuration file"
+        ));
+    }
+
+    if let Some(file) = &file
+        && !shares_our_mounts(proc, process_id)
+    {
+        return Err(format!(
+            "the server requires a password, and it runs in a mount namespace of its own, where \
+             {} need not be the file the host has at that path",
+            file.display()
         ));
     }
 
