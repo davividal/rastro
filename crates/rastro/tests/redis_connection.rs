@@ -215,3 +215,73 @@ fn a_server_that_never_answers_is_given_up_on() {
     let error = answer.expect_err("a silent server").to_string();
     assert!(error.contains("did not answer"), "{error}");
 }
+
+#[test]
+fn a_reply_nested_past_any_real_one_is_refused_rather_than_crashing_the_run() {
+    // Arrange: measured, 10 000 nested arrays, 40 KB, overflowed the stack of a decoder with no
+    // depth limit and aborted the whole run. Real replies nest three deep at most.
+    let reply = format!("{}:1\r\n", "*1\r\n".repeat(10_000)).into_bytes();
+    let (client, handle) = server(PING.len(), vec![reply]);
+
+    // Act: on a thread with the stack a collector gets, where an overflow is an abort.
+    let answer = thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            let mut connection = RespConnection::over(client).expect("a connection");
+            connection.ask(&["PING"]).map_err(|error| error.to_string())
+        })
+        .expect("a thread")
+        .join()
+        .expect("no overflow");
+    // The server may find rastro gone mid-write, which is the refusal working.
+    let _ = handle.join();
+
+    // Assert
+    assert!(answer.is_err(), "{answer:?}");
+}
+
+#[test]
+fn a_peer_that_trickles_is_given_up_on_at_the_deadline() {
+    // Arrange: one byte at a time, each well inside a per-read timeout; only a deadline over the
+    // whole reply ends it.
+    let reply = b"$20\r\nabcdefghijklmnopqrst\r\n"
+        .iter()
+        .map(|byte| vec![*byte])
+        .collect();
+    let (client, handle) = server(PING.len(), reply);
+    let mut connection = RespConnection::over(client)
+        .expect("a connection")
+        .timing_out_after(Duration::from_millis(150))
+        .expect("a settable timeout");
+
+    // Act
+    let started = std::time::Instant::now();
+    let answer = connection.ask(&["PING"]);
+    let waited = started.elapsed();
+    drop(connection);
+    let _ = handle.join();
+
+    // Assert: refused, and near the deadline rather than after every byte arrived.
+    let error = answer.expect_err("a trickling peer").to_string();
+    assert!(error.contains("did not answer"), "{error}");
+    assert!(waited < Duration::from_millis(400), "{waited:?}");
+}
+
+#[test]
+fn two_replies_arriving_together_are_answered_in_order() {
+    // Arrange: a reply's surplus is the next reply, never lost and never misread.
+    let (client, handle) = server(PING.len(), vec![b"+first\r\n+second\r\n".to_vec()]);
+    let mut connection = RespConnection::over(client).expect("a connection");
+
+    // Act
+    let first = connection.ask(&["PING"]);
+    let second = connection.ask(&["PING"]);
+    handle.join().expect("the server finished");
+
+    // Assert
+    assert_eq!(first.expect("an answer"), Reply::Simple("first".to_owned()));
+    assert_eq!(
+        second.expect("an answer"),
+        Reply::Simple("second".to_owned())
+    );
+}

@@ -1,7 +1,7 @@
 //! What a server said, once the framing is gone.
 
 use rastro_collector::CollectionError;
-use redis_protocol::resp2::types::OwnedFrame;
+use redis::Value;
 
 /// One reply, in the shapes RESP2 has.
 ///
@@ -23,22 +23,36 @@ pub enum Reply {
     Array(Vec<Reply>),
 }
 
-impl TryFrom<OwnedFrame> for Reply {
+impl TryFrom<Value> for Reply {
     type Error = CollectionError;
 
-    fn try_from(frame: OwnedFrame) -> Result<Self, CollectionError> {
-        Ok(match frame {
-            OwnedFrame::SimpleString(bytes) => Reply::Simple(text_of(bytes)?),
-            OwnedFrame::Error(message) => Reply::Error(message),
-            OwnedFrame::Integer(number) => Reply::Integer(number),
-            OwnedFrame::BulkString(bytes) => Reply::Bulk(text_of(bytes)?),
-            OwnedFrame::Null => Reply::Nil,
-            OwnedFrame::Array(frames) => Reply::Array(
-                frames
+    /// The reply in rastro's terms, or a refusal for a shape RESP2 does not have.
+    ///
+    /// Nothing here sends `HELLO 3`, so a map, a set, a double or a push is a server answering in a
+    /// protocol rastro did not ask for. Recursion is safe: the parser refuses nesting past a
+    /// hundred levels before this sees it, and real replies nest three deep.
+    fn try_from(value: Value) -> Result<Self, CollectionError> {
+        Ok(match value {
+            Value::SimpleString(text) => Reply::Simple(text),
+            Value::Okay => Reply::Simple("OK".to_owned()),
+            Value::ServerError(error) => Reply::Error(match error.details() {
+                Some(details) => format!("{} {details}", error.code()),
+                None => error.code().to_owned(),
+            }),
+            Value::Int(number) => Reply::Integer(number),
+            Value::BulkString(bytes) => Reply::Bulk(text_of(bytes)?),
+            Value::Nil => Reply::Nil,
+            Value::Array(values) => Reply::Array(
+                values
                     .into_iter()
                     .map(Reply::try_from)
                     .collect::<Result<_, _>>()?,
             ),
+            _ => {
+                return Err(CollectionError::new(
+                    "the server replied in a protocol newer than the RESP2 rastro asked in",
+                ));
+            }
         })
     }
 }

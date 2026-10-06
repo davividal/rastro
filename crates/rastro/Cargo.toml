@@ -34,7 +34,7 @@ serde_path_to_error = { workspace = true }
 sha2 = { workspace = true }
 # Reading a redis server over its own protocol, where the reply bound and the handshake are
 # rastro's rather than a client library's: see `docs/decisions.md`.
-redis-protocol = { workspace = true }
+redis = { workspace = true }
 # Shelling out to a canonical tool, hardened: `subprocess` bounds the time and the
 # output of a run and can signal the child's whole process group.
 subprocess = { workspace = true }

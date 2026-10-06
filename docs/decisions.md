@@ -6577,11 +6577,17 @@ in the canonical tool's cleared environment or its immediate end of input; `--ra
 `--json` does not exist on 5.0 or 7.0; and the tool exits 0 on `NOAUTH`. Going through the tool
 would also have put a child process in the run for `processes` and `sockets` to catch.
 
-**Not through the `redis` client crate** either: fifty-four crates, a URL parser pulling ICU,
-its own connect handshake with a `CLIENT SETINFO` unless told not to, and no bound on a reply.
-`redis-protocol` does the framing and nothing else, in four crates new to the tree; rastro holds
-the socket, the connect and read timeouts, a byte bound refused rather than truncated, and every
-byte sent. The canonical tool seam's guarantees, restated for a socket.
+**Through the `redis` crate's parser, never its client.** Its client owns the connect handshake
+and sends a `CLIENT SETINFO` of its own, so rastro keeps the socket, the connect timeout, a
+deadline over each command and its whole reply, a byte bound refused rather than truncated, and
+every byte sent; `redis::Parser` reads one reply from what rastro hands it, and `redis::cmd` encodes
+a command. The first version used `redis-protocol`, a smaller framing crate, until the review
+measured its decoder recursing without a depth limit: a 40 KB reply of ten thousand nested arrays
+overflowed the stack and aborted the whole run. The `redis` parser caps nesting at a hundred, with
+tests for it, as `serde_json` caps it at 128. Its tree is larger, a URL parser and ICU's Unicode
+tables among it, and the maintainer chose that over writing a reader in rastro: code in a widely
+used crate has many more people watching it than code in this repository does. The licence,
+BSD-3-Clause, was already allowed, for `subtle`.
 
 ## A TLS port is told apart by the title, and never tried blind
 

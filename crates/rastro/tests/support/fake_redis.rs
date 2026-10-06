@@ -8,15 +8,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::symlink;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use redis_protocol::resp2::decode::decode;
-use redis_protocol::resp2::types::OwnedFrame;
+use redis::{Parser, Value};
 
 use super::fs_tree::{scratch_tree, write};
 
@@ -60,42 +59,36 @@ impl FakeRedis {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
                 let mut authenticated = password.is_none();
-                let mut buffer = Vec::new();
-                let mut chunk = [0_u8; 4096];
+                let mut parser = Parser::new();
+                let Ok(mut reading) = stream.try_clone() else {
+                    return;
+                };
 
-                while let Ok(read) = stream.read(&mut chunk) {
-                    if read == 0 {
-                        break;
-                    }
-                    buffer.extend_from_slice(&chunk[..read]);
-
-                    while let Ok(Some((frame, consumed))) = decode(&buffer) {
-                        buffer.drain(..consumed);
-                        let words = words_of(frame);
-                        let is_auth = words[0].eq_ignore_ascii_case("AUTH");
-                        let reply = match (&password, is_auth) {
-                            (None, true) => "-ERR AUTH <password> called without any password \
-                                             configured for the default user. Are you sure your \
-                                             configuration is correct?\r\n"
-                                .to_owned(),
-                            (Some(expected), true) if words.last() == Some(expected) => {
-                                authenticated = true;
-                                "+OK\r\n".to_owned()
-                            }
-                            (Some(_), true) => "-WRONGPASS invalid username-password pair or \
-                                                user is disabled.\r\n"
-                                .to_owned(),
-                            _ if !authenticated => {
-                                "-NOAUTH Authentication required.\r\n".to_owned()
-                            }
-                            _ => script.get(&words.join(" ")).cloned().unwrap_or_else(|| {
-                                format!("-ERR unknown command '{}'\r\n", words[0])
-                            }),
-                        };
-                        recorder.lock().expect("an unpoisoned lock").push(words);
-                        if stream.write_all(reply.as_bytes()).is_err() {
-                            break;
+                // One command at a time until the client hangs up, which ends the parse.
+                while let Ok(command) = parser.parse_value(&mut reading) {
+                    let words = words_of(command);
+                    let is_auth = words[0].eq_ignore_ascii_case("AUTH");
+                    let reply = match (&password, is_auth) {
+                        (None, true) => "-ERR AUTH <password> called without any password \
+                                         configured for the default user. Are you sure your \
+                                         configuration is correct?\r\n"
+                            .to_owned(),
+                        (Some(expected), true) if words.last() == Some(expected) => {
+                            authenticated = true;
+                            "+OK\r\n".to_owned()
                         }
+                        (Some(_), true) => "-WRONGPASS invalid username-password pair or \
+                                            user is disabled.\r\n"
+                            .to_owned(),
+                        _ if !authenticated => "-NOAUTH Authentication required.\r\n".to_owned(),
+                        _ => script
+                            .get(&words.join(" "))
+                            .cloned()
+                            .unwrap_or_else(|| format!("-ERR unknown command '{}'\r\n", words[0])),
+                    };
+                    recorder.lock().expect("an unpoisoned lock").push(words);
+                    if stream.write_all(reply.as_bytes()).is_err() {
+                        break;
                     }
                 }
             }
@@ -210,12 +203,12 @@ impl Drop for FakeRedis {
     }
 }
 
-fn words_of(frame: OwnedFrame) -> Vec<String> {
-    match frame {
-        OwnedFrame::Array(frames) => frames
+fn words_of(command: Value) -> Vec<String> {
+    match command {
+        Value::Array(frames) => frames
             .into_iter()
             .map(|frame| match frame {
-                OwnedFrame::BulkString(bytes) => String::from_utf8(bytes).expect("UTF-8"),
+                Value::BulkString(bytes) => String::from_utf8(bytes).expect("UTF-8"),
                 other => panic!("a command word that is not a bulk string: {other:?}"),
             })
             .collect(),
