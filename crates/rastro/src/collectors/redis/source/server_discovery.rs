@@ -14,6 +14,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use crate::collectors::inet::{InetHost, PortNumber};
+use crate::collectors::network_namespace::ProcessNamespace;
 use crate::collectors::proc_sockets::{
     InetListener, UnixListener, inet_listeners, sockets_held_by, unix_listeners,
 };
@@ -64,6 +65,9 @@ pub struct DiscoveredServer {
 
     /// The socket rastro would connect to, or why there is none.
     pub reach: Result<DialTarget, String>,
+
+    /// The network namespace `reach` is in: the server's own, where it listens in a container.
+    pub namespace: ProcessNamespace,
 
     /// The key where another server shares the port: the lowest address on it, which a restart
     /// keeps, where numbering in pid order would swap the two.
@@ -125,6 +129,8 @@ fn discovered(
         process_id: server.process_id,
         listeners: Vec::new(),
         reach: Err(reason),
+        // Nothing is dialled for a server with no reach, so nothing is joined either.
+        namespace: ProcessNamespace::ours(),
         shared_port_key: None,
     };
 
@@ -138,6 +144,23 @@ fn discovered(
                 "its file descriptors could not be read ({error}), so which sockets it listens \
                  on is unknown; a run as root can see them"
             ));
+        }
+    };
+
+    let namespace = match ProcessNamespace::of_in(proc, server.process_id) {
+        Ok(namespace) => namespace,
+        Err(refusal) => return unreached(refusal.reason),
+    };
+
+    // A server in a container listens only in its own namespace, whose tables the host's lack.
+    let (own_inet, own_unix);
+    let (inet, unix) = match namespace.is_ours() {
+        true => (inet, unix),
+        false => {
+            let net = proc.join(server.process_id.to_string()).join(NET);
+            own_inet = inet_listeners(&net);
+            own_unix = unix_listeners(&net);
+            (own_inet.as_deref(), own_unix.as_deref())
         }
     };
 
@@ -166,9 +189,21 @@ fn discovered(
     paths.sort_unstable();
     paths.dedup();
 
-    let Some(reach) = reach_of(&addresses, &paths, titled_port(&title)) else {
-        return unreached("it listens on nothing rastro could connect to".to_owned());
+    // A unix socket's path is the server's own root's, which a connection from the host would
+    // resolve on the host's: inside another namespace, only its TCP sockets are reached.
+    let reachable_paths = match namespace.is_ours() {
+        true => paths.as_slice(),
+        false => &[],
     };
+    let reach =
+        reach_of(&addresses, reachable_paths, titled_port(&title)).ok_or_else(|| {
+            match paths.is_empty() {
+                true => "it listens on nothing rastro could connect to".to_owned(),
+                false => "it listens only on a unix socket in its own namespace, whose path a \
+                      connection from the host would resolve on the host"
+                    .to_owned(),
+            }
+        });
 
     let lowest_port = addresses.iter().map(SocketAddr::port).min();
     let key = match (lowest_port, paths.first()) {
@@ -198,7 +233,8 @@ fn discovered(
         kind: server.kind,
         process_id: server.process_id,
         listeners,
-        reach: Ok(reach),
+        reach,
+        namespace,
         shared_port_key,
     }
 }

@@ -161,10 +161,12 @@ pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
     .expect("a writable scratch symlink");
     // Arrange: the server in rastro's own root, so its paths mean the same on both sides.
     symlink("/", proc.join(pid).join("root")).expect("a writable scratch symlink");
-    // Arrange: the server and rastro in one mount namespace, as a server on the host is.
+    // Arrange: the server and rastro in one mount and one network namespace, as on the host.
     for process in [pid, "self"] {
         fs::create_dir_all(proc.join(process).join("ns")).expect("a writable scratch directory");
         symlink(HOST_MOUNT_NAMESPACE, proc.join(process).join("ns/mnt"))
+            .expect("a writable scratch symlink");
+        symlink(HOST_NETWORK_NAMESPACE, proc.join(process).join("ns/net"))
             .expect("a writable scratch symlink");
     }
 
@@ -173,6 +175,9 @@ pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
 
 /// The mount namespace a fixture's server and rastro share, as `/proc/<pid>/ns/mnt` names it.
 pub const HOST_MOUNT_NAMESPACE: &str = "mnt:[4026531841]";
+
+/// The network namespace a fixture's server and rastro share, as `/proc/<pid>/ns/net` names it.
+pub const HOST_NETWORK_NAMESPACE: &str = "net:[4026531840]";
 
 /// What a stock server answers to every read rastro makes, each override replacing or adding one
 /// command's answer: redis 8.10 from the redis.io package, captured as cell 01 of the matrix.

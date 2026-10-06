@@ -73,8 +73,14 @@ fn read_instance(
         }
     };
 
+    // A socket keeps the namespace it was made in, so only the connection joins the server's.
+    let dialled = server
+        .namespace
+        .run(|| RespConnection::dial(target, process_id))
+        .map_err(|refusal| CollectionError::new(refusal.reason))
+        .and_then(|dialled| dialled);
     // Dialling and the first answer are where a TLS port hangs up on a plain client.
-    let answered = RespConnection::dial(target, process_id).and_then(|mut connection| {
+    let answered = dialled.and_then(|mut connection| {
         let first = connection.ask(&INFO_SERVER)?;
         Ok((connection, first))
     });

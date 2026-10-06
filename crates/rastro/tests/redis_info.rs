@@ -11,7 +11,9 @@ fn info_of(cell: &str) -> String {
     let reply = captured_reply(cell, "INFO server");
     let (_, body) = reply.split_once("\r\n").expect("a RESP header");
 
-    body.strip_suffix("\r\n").expect("a RESP terminator").to_owned()
+    body.strip_suffix("\r\n")
+        .expect("a RESP terminator")
+        .to_owned()
 }
 
 /// Debian 12's own package, captured as cell 32 of the matrix.
@@ -55,7 +57,9 @@ fn a_valkey_server_is_known_by_its_own_name_and_version() {
 fn a_server_started_without_a_file_has_no_config_file() {
     // Act & Assert: redis prints the field empty, which is not a path.
     assert_eq!(
-        InfoServer::parse(&info_of(VALKEY)).expect("a real reply").config_file,
+        InfoServer::parse(&info_of(VALKEY))
+            .expect("a real reply")
+            .config_file,
         None
     );
 }

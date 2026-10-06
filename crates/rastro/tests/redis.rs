@@ -1,6 +1,7 @@
 //! The facet itself: what it says about a box, and what it declines to say.
 
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use rastro::collectors::redis::{InstalledServers, RedisCollector, ServerKind};
@@ -10,7 +11,8 @@ mod support;
 
 use support::captured_redis_cell::captured_reply;
 use support::fake_redis::{
-    FakeRedis, array_of, bulk, dead_socket, key_of, proc_holding, unknown_command,
+    FakeRedis, HOST_NETWORK_NAMESPACE, array_of, bulk, dead_socket, key_of, proc_holding,
+    unknown_command,
 };
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, is_null, items_of, keys_of, text};
@@ -21,10 +23,14 @@ use support::observation::{field, is_null, items_of, keys_of, text};
 /// into a process title the moment it has started and never touches `comm`. Measured on Debian
 /// 12 and 13, Alpine, and the redis 5, redis 8 and valkey images.
 fn proc_with(name: &str, processes: &[(&str, &str, &str)]) -> PathBuf {
-    let proc = scratch_tree(name, &["proc"]).join("proc");
+    let proc = scratch_tree(name, &["proc/self/ns"]).join("proc");
+    symlink(HOST_NETWORK_NAMESPACE, proc.join("self/ns/net")).expect("a writable scratch symlink");
 
     for (pid, comm, cmdline) in processes {
-        fs::create_dir_all(proc.join(pid)).expect("a writable scratch directory");
+        // Arrange: on the host, in rastro's own network namespace.
+        fs::create_dir_all(proc.join(pid).join("ns")).expect("a writable scratch directory");
+        symlink(HOST_NETWORK_NAMESPACE, proc.join(pid).join("ns/net"))
+            .expect("a writable scratch symlink");
         write(&proc, &format!("{pid}/comm"), &format!("{comm}\n"));
         write(&proc, &format!("{pid}/cmdline"), cmdline);
     }

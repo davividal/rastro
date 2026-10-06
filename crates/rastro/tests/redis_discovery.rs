@@ -11,6 +11,7 @@ use rastro::collectors::redis::{DialTarget, DiscoveredServer, ServerKind, discov
 
 mod support;
 
+use support::fake_redis::HOST_NETWORK_NAMESPACE;
 use support::fs_tree::{scratch_tree, write};
 
 const TCP_HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
@@ -67,7 +68,8 @@ fn server(pid: &'static str, holds: &'static [u64]) -> Process<'static> {
 
 /// A `/proc` with the processes and socket tables named.
 fn proc_with(name: &str, processes: &[Process], tcp: &str, tcp6: &str, unix: &str) -> PathBuf {
-    let proc = scratch_tree(name, &["proc/net"]).join("proc");
+    let proc = scratch_tree(name, &["proc/net", "proc/self/ns"]).join("proc");
+    symlink(HOST_NETWORK_NAMESPACE, proc.join("self/ns/net")).expect("a writable scratch symlink");
     write(&proc, "net/tcp", &format!("{TCP_HEADER}{tcp}"));
     write(&proc, "net/tcp6", &format!("{TCP_HEADER}{tcp6}"));
     write(&proc, "net/unix", &format!("{UNIX_HEADER}{unix}"));
@@ -75,6 +77,10 @@ fn proc_with(name: &str, processes: &[Process], tcp: &str, tcp6: &str, unix: &st
     for process in processes {
         let directory = proc.join(process.pid);
         fs::create_dir_all(&directory).expect("a writable scratch directory");
+        // Arrange: on the host, in rastro's own network namespace.
+        fs::create_dir_all(directory.join("ns")).expect("a writable scratch directory");
+        symlink(HOST_NETWORK_NAMESPACE, directory.join("ns/net"))
+            .expect("a writable scratch symlink");
         write(&directory, "comm", &format!("{}\n", process.comm));
         write(&directory, "cmdline", process.title);
         write(
@@ -325,6 +331,37 @@ fn a_server_is_not_reached_where_the_socket_tables_are_unreadable() {
 
     // Assert
     assert!(refusal.contains("socket tables"), "{refusal}");
+}
+
+#[test]
+fn a_unix_socket_in_another_namespace_is_not_dialled_from_the_host() {
+    // Arrange: a server in a container of its own, holding a unix socket and nothing else; its
+    // path is its own root's, and the host's at that spelling is another socket or none.
+    let proc = proc_with(
+        "redis-discovery-container-unix",
+        &[server("412", &[1003])],
+        "",
+        "",
+        &unix_row("/run/redis/redis.sock", 1003),
+    );
+    fs::create_dir_all(proc.join("412/net")).expect("a writable scratch directory");
+    for table in ["tcp", "tcp6", "unix"] {
+        fs::copy(
+            proc.join("net").join(table),
+            proc.join("412/net").join(table),
+        )
+        .expect("a copied table");
+    }
+    fs::remove_file(proc.join("412/ns/net")).expect("a removable fixture");
+    symlink("net:[4026532777]", proc.join("412/ns/net")).expect("a writable scratch symlink");
+
+    // Act
+    let discovered = only(&proc);
+
+    // Assert: listed, and not reached.
+    assert_eq!(listeners_of(&discovered), ["/run/redis/redis.sock"]);
+    let refusal = discovered.reach.expect_err("an unreached server");
+    assert!(refusal.contains("in its own namespace"), "{refusal}");
 }
 
 #[test]
