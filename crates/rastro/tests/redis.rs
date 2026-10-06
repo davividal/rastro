@@ -8,6 +8,7 @@ use rastro_collector::{Collector, CollectorCategory, Presence};
 
 mod support;
 
+use support::captured_redis_cell::captured_reply;
 use support::fake_redis::{
     FakeRedis, array_of, bulk, dead_socket, key_of, proc_holding, unknown_command,
 };
@@ -128,7 +129,7 @@ fn a_server_that_answers_is_an_instance_with_nothing_missing() {
     // Assert
     let instance = instance_of(&observation, &key_of(&server));
     assert_eq!(text(&field(&instance, "server")), "redis");
-    assert_eq!(text(&field(&instance, "version")), "7.0.15");
+    assert_eq!(text(&field(&instance, "version")), "8.10.2");
     assert_eq!(text(&field(&instance, "mode")), "standalone");
     assert_eq!(
         text(&field(&instance, "executable")),
@@ -144,6 +145,43 @@ fn a_server_that_answers_is_an_instance_with_nothing_missing() {
         .collect();
     assert_eq!(listening, [key_of(&server)]);
     assert!(is_null(&field(&instance, "error")));
+}
+
+#[test]
+fn a_supported_server_is_not_marked() {
+    // Arrange: redis 8.10, the redis.io package's own reply.
+    let server = FakeRedis::stock("facet-supported", &[]);
+    let proc = server.proc("redis-facet-supported");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = instance_of(&observation, &key_of(&server));
+    assert!(is_null(&field(&instance, "unsupported")));
+    assert_eq!(observation.approximate_items(), 0);
+}
+
+#[test]
+fn an_older_server_is_read_in_full_and_marked_unsupported() {
+    // Arrange: redis 7.4, which endoflife.date lists as maintained and the maintainer left out.
+    let info = captured_reply("33", "INFO server");
+    let server = FakeRedis::stock("facet-unsupported", &[("INFO server", &info)]);
+    let proc = server.proc("redis-facet-unsupported");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: read, and marked, so the run's summary tells the operator.
+    let instance = instance_of(&observation, &key_of(&server));
+    assert_eq!(text(&field(&instance, "version")), "7.4.11");
+    assert_eq!(
+        text(&field(&instance, "unsupported")),
+        "redis 7.4.11 is not a release rastro supports, so it is read on a best-effort basis"
+    );
+    assert!(!is_null(&field(&instance, "settings")));
+    assert!(is_null(&field(&instance, "error")));
+    assert_eq!(observation.approximate_items(), 1);
 }
 
 #[test]
@@ -285,7 +323,7 @@ fn a_server_with_config_renamed_away_keeps_everything_else() {
     assert!(is_null(&field(&instance, "settings")));
     let error = text(&field(&instance, "error"));
     assert!(error.contains("CONFIG GET"), "{error}");
-    assert_eq!(text(&field(&instance, "version")), "7.0.15");
+    assert_eq!(text(&field(&instance, "version")), "8.10.2");
 }
 
 #[test]
@@ -336,7 +374,8 @@ fn a_refused_replication_read_costs_only_itself() {
     let instance = instance_of(&observation, &key_of(&server));
     assert!(is_null(&field(&instance, "replication")));
     assert!(text(&field(&instance, "error")).contains("INFO replication"));
-    assert_eq!(keys_of(&field(&instance, "settings")).len(), 3);
+    // Every setting redis 8.10's package answers with, read in full.
+    assert_eq!(keys_of(&field(&instance, "settings")).len(), 303);
 }
 
 #[test]

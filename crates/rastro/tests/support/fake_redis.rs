@@ -17,6 +17,7 @@ use std::thread;
 
 use redis::{Parser, Value};
 
+use super::captured_redis_cell::captured_reply;
 use super::fs_tree::{scratch_tree, write};
 
 /// The inode the fixture's server socket is published under.
@@ -173,24 +174,29 @@ pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
 /// The mount namespace a fixture's server and rastro share, as `/proc/<pid>/ns/mnt` names it.
 pub const HOST_MOUNT_NAMESPACE: &str = "mnt:[4026531841]";
 
-/// What a stock Debian 12 server answers to every read rastro makes, each override replacing or
-/// adding one command's answer.
+/// What a stock server answers to every read rastro makes, each override replacing or adding one
+/// command's answer: redis 8.10 from the redis.io package, captured as cell 01 of the matrix.
 fn stock_script(overrides: &[(&str, &str)]) -> BTreeMap<String, String> {
-    let info = bulk(DEBIAN_12_INFO);
-    let config = debian_12_config();
-    let replication = bulk(DEBIAN_12_REPLICATION);
-    let acl = array_of(&["user default on nopass sanitize-payload ~* &* +@all"]);
-    let mut script = owned([
-        ("INFO server", info.as_str()),
-        ("CONFIG GET *", config.as_str()),
-        ("INFO replication", replication.as_str()),
-        ("ACL LIST", acl.as_str()),
-        ("MODULE LIST", "*0\r\n"),
-    ]);
+    let mut script: BTreeMap<String, String> = STOCK_COMMANDS
+        .iter()
+        .map(|command| ((*command).to_owned(), captured_reply(STOCK_CELL, command)))
+        .collect();
     script.extend(owned(overrides.iter().copied()));
 
     script
 }
+
+/// The cell the stock server replays: the packaged default, the matrix's baseline.
+const STOCK_CELL: &str = "01";
+
+/// Every command rastro sends a server that answers, in the order it sends them.
+const STOCK_COMMANDS: [&str; 5] = [
+    "INFO server",
+    "CONFIG GET *",
+    "INFO replication",
+    "ACL LIST",
+    "MODULE LIST",
+];
 
 fn owned<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> BTreeMap<String, String> {
     pairs
@@ -223,29 +229,11 @@ pub fn bulk(text: &str) -> String {
     format!("${}\r\n{text}\r\n", text.len())
 }
 
-/// `INFO server` from a Debian 12 package, trimmed.
-pub const DEBIAN_12_INFO: &str = "# Server\r\nredis_version:7.0.15\r\nredis_mode:standalone\r\nexecutable:/usr/bin/redis-server\r\nconfig_file:/etc/redis/redis.conf\r\n";
-
-/// `INFO replication` from a stock server, which replicates nothing.
-pub const DEBIAN_12_REPLICATION: &str = "# Replication\r\nrole:master\r\nconnected_slaves:0\r\n";
-
 /// An array reply of bulk strings, which is how `CONFIG GET` answers.
 pub fn array_of(items: &[&str]) -> String {
     let elements: String = items.iter().map(|item| bulk(item)).collect();
 
     format!("*{}\r\n{elements}", items.len())
-}
-
-/// `CONFIG GET *` from a stock server, trimmed to three settings.
-pub fn debian_12_config() -> String {
-    array_of(&[
-        "bind",
-        "127.0.0.1 -::1",
-        "port",
-        "6379",
-        "save",
-        "3600 1 300 100 60 10000",
-    ])
 }
 
 /// What a server says about a command renamed away. Measured on Debian 12 and redis 8.

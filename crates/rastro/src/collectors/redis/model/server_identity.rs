@@ -1,6 +1,6 @@
 //! What a server says it is.
 
-use crate::collectors::redis::value_objects::ServerKind;
+use crate::collectors::redis::value_objects::{ServerKind, is_supported};
 
 /// A server's own account of itself, from `INFO server`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,5 +49,19 @@ impl ServerIdentity {
             .next()
             .and_then(|major| major.parse::<u32>().ok())
             .is_none_or(|major| major >= ACCOUNTS_SINCE)
+    }
+
+    /// Why this server is read on a best-effort basis, where its release is not a supported one.
+    ///
+    /// Read with the same rules all the same, so what the collector can handle appears and what it
+    /// cannot is a refused item with its reason: nothing about an older server is an error.
+    pub fn unsupported(&self) -> Option<String> {
+        (!is_supported(self.kind, &self.version)).then(|| {
+            format!(
+                "{} {} is not a release rastro supports, so it is read on a best-effort basis",
+                self.kind.as_str(),
+                self.version
+            )
+        })
     }
 }

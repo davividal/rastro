@@ -2,28 +2,24 @@
 
 use rastro::collectors::redis::{InfoServer, ServerKind};
 
-/// Debian 12's own package, trimmed to the fields around the ones read. Measured.
-const DEBIAN_12: &str = "# Server\r\n\
-redis_version:7.0.15\r\n\
-redis_git_sha1:00000000\r\n\
-redis_mode:standalone\r\n\
-os:Linux 6.1.0-18-amd64 x86_64\r\n\
-process_id:412\r\n\
-run_id:3c1f8f2b0f1d4a7e9d6b5c4a3f2e1d0c9b8a7f6e\r\n\
-tcp_port:6379\r\n\
-uptime_in_seconds:81\r\n\
-executable:/usr/bin/redis-server\r\n\
-config_file:/etc/redis/redis.conf\r\n";
+mod support;
 
-/// The official valkey image: a `redis_version` frozen at the release valkey forked from, and
-/// the real version beside it. Measured.
-const VALKEY: &str = "# Server\r\n\
-redis_version:7.2.4\r\n\
-server_name:valkey\r\n\
-valkey_version:9.1.2\r\n\
-server_mode:standalone\r\n\
-executable:/usr/local/bin/valkey-server\r\n\
-config_file:\r\n";
+use support::captured_redis_cell::captured_reply;
+
+/// The text of a cell's `INFO server` reply, as the captured server sent it.
+fn info_of(cell: &str) -> String {
+    let reply = captured_reply(cell, "INFO server");
+    let (_, body) = reply.split_once("\r\n").expect("a RESP header");
+
+    body.strip_suffix("\r\n").expect("a RESP terminator").to_owned()
+}
+
+/// Debian 12's own package, captured as cell 32 of the matrix.
+const DEBIAN_12: &str = "32";
+
+/// The official valkey image, captured as cell 26: a `redis_version` frozen at the release valkey
+/// forked from, and the real version beside it.
+const VALKEY: &str = "26";
 
 /// The field host's version, whose `INFO` predates both `executable` and `server_name`.
 const REDIS_5: &str = "# Server\r\n\
@@ -34,7 +30,7 @@ config_file:/etc/redis/redis.conf\r\n";
 #[test]
 fn a_redis_server_reports_its_version_mode_and_where_it_came_from() {
     // Act
-    let info = InfoServer::parse(DEBIAN_12).expect("a real reply");
+    let info = InfoServer::parse(&info_of(DEBIAN_12)).expect("a real reply");
 
     // Assert
     assert_eq!(info.kind, ServerKind::Redis);
@@ -47,7 +43,7 @@ fn a_redis_server_reports_its_version_mode_and_where_it_came_from() {
 #[test]
 fn a_valkey_server_is_known_by_its_own_name_and_version() {
     // Act
-    let info = InfoServer::parse(VALKEY).expect("a real reply");
+    let info = InfoServer::parse(&info_of(VALKEY)).expect("a real reply");
 
     // Assert: `redis_version` would say 7.2.4 about a 9.1.2 server.
     assert_eq!(info.kind, ServerKind::Valkey);
@@ -59,7 +55,7 @@ fn a_valkey_server_is_known_by_its_own_name_and_version() {
 fn a_server_started_without_a_file_has_no_config_file() {
     // Act & Assert: redis prints the field empty, which is not a path.
     assert_eq!(
-        InfoServer::parse(VALKEY).expect("a real reply").config_file,
+        InfoServer::parse(&info_of(VALKEY)).expect("a real reply").config_file,
         None
     );
 }

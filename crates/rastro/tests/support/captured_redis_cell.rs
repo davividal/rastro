@@ -203,3 +203,17 @@ fn fake_systemctl(cell: &str, bin: &Path) -> CanonicalTool {
         ),
     )
 }
+
+/// The bytes a cell's first server sent in reply to `command`, after `AUTH` where it wanted one.
+pub fn captured_reply(cell: &str, command: &str) -> String {
+    let suffix = format!("-{}.resp", command.replace(' ', "-").replace('*', "star"));
+    let replies = cell_directory(cell).join("server-1/replies/authenticated");
+    let reply = fs::read_dir(&replies)
+        .expect("captured replies")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.to_string_lossy().ends_with(&suffix))
+        .unwrap_or_else(|| panic!("cell {cell} captured no reply to {command}"));
+
+    String::from_utf8(fs::read(reply).expect("a captured reply")).expect("a UTF-8 reply")
+}

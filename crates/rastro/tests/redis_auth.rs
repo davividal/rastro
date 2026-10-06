@@ -154,7 +154,7 @@ fn the_password_the_servers_own_file_sets_unlocks_it() {
     // Assert: read in full, after exactly one `AUTH` that followed the refusal.
     let instance = instance(&observation, &server);
     assert!(is_null(&field(&instance, "error")), "{instance:?}");
-    assert_eq!(text(&field(&instance, "version")), "7.0.15");
+    assert_eq!(text(&field(&instance, "version")), "8.10.2");
     assert_eq!(auths(&server), [["AUTH", "hunter2"]]);
     assert_eq!(server.received()[0], ["INFO", "server"]);
 }

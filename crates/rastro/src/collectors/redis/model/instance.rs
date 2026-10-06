@@ -69,7 +69,8 @@ impl From<&Instance> for Observation {
             None => Observation::null(),
         };
 
-        Observation::object([
+        let unsupported = identity.and_then(ServerIdentity::unsupported);
+        let observation = Observation::object([
             ("server", Observation::text(instance.server().as_str())),
             (
                 "listening",
@@ -120,8 +121,15 @@ impl From<&Instance> for Observation {
                     None => Observation::null(),
                 },
             ),
+            ("unsupported", text_or_null(unsupported.as_ref())),
             ("error", text_or_null(instance.error().as_ref())),
-        ])
-        .incomplete_when(!instance.errors.is_empty())
+        ]);
+
+        // Read by the supported releases' rules all the same, and said so to the run's summary.
+        let best_effort = match unsupported.is_some() {
+            true => observation.approximate(),
+            false => observation,
+        };
+        best_effort.incomplete_when(!instance.errors.is_empty())
     }
 }
