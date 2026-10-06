@@ -15,6 +15,7 @@ readonly REDIS_5_SHA256=3ea5024766d983249e80d4aa9457c897a9f079957d0fb1f35682df23
 readonly HTTPS_ONLY='=https'
 readonly CONF=/etc/redis/redis.conf
 readonly PACKAGE_LOG=/var/log/redis/redis-server.log
+readonly CLIENT_6379="redis-cli -p 6379"
 
 log() {
   echo "[$(date +%T)] $*" >&2
@@ -104,7 +105,7 @@ install_package() {
   [[ -n "$package" ]] || { log "redis.io has no $version"; return 1; }
   DEBIAN_FRONTEND=noninteractive apt-get -qqy install --allow-downgrades \
     "redis-server=$package" "redis-tools=$package" > /root/cells/install-redis.log 2>&1 || return 1
-  wait_ready "redis-cli -p 6379"
+  wait_ready "$CLIENT_6379"
   return $?
 }
 
@@ -114,7 +115,7 @@ install_debian_package() {
   package=$(apt-cache madison redis-server | awk '$3 ~ /^5:7\.0\.15/ {print $3; exit}')
   DEBIAN_FRONTEND=noninteractive apt-get -qqy install --allow-downgrades \
     "redis-server=$package" "redis-tools=$package" > /root/cells/install-redis.log 2>&1 || return 1
-  wait_ready "redis-cli -p 6379"
+  wait_ready "$CLIENT_6379"
   return $?
 }
 
@@ -431,7 +432,7 @@ cell_19() {
   install_package 8.10.2 || return 1
   systemctl disable --now redis-server >/dev/null 2>&1
   (cd /root && setsid redis-server --port 6379 --dir ./ --daemonize yes --logfile /root/redis-19.log)
-  wait_ready "redis-cli -p 6379" || return 1
+  wait_ready "$CLIENT_6379" || return 1
   env_file 19 <<'ENV'
 REACH=tcp:6379
 LOG=/root/redis-19.log
@@ -444,7 +445,7 @@ cell_20() {
   systemctl disable --now redis-server >/dev/null 2>&1
   (cd / && setsid redis-server --port 6379 --requirepass cell-twenty-by-hand --daemonize yes \
     --logfile /root/redis-20.log)
-  wait_ready "redis-cli -p 6379" || return 1
+  wait_ready "$CLIENT_6379" || return 1
   env_file 20 <<'ENV'
 REACH=tcp:6379
 PASSWORD=cell-twenty-by-hand

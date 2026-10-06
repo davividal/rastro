@@ -1,17 +1,35 @@
 #!/usr/bin/env python3
 """Sends RESP2 commands to one server and keeps each raw reply, byte for byte.
 
-Usage: resp.py (--unix PATH | --tcp HOST PORT) [--password-file FILE] OUT COMMAND...
+Usage: resp.py (--unix PATH | --tcp PORT) [--password-file FILE] OUT COMMAND...
 Each COMMAND is one string, split on spaces; its reply is written to OUT/<n>-<command>.resp.
 `AUTH` is sent first where a password file is given, and its reply kept like any other.
+
+Run as root, so it reaches only what a capture needs: TCP on loopback, a unix socket inside a
+process's own root, writes under /captures and passwords from /root/cells.
 """
 
 import argparse
+import os
 import pathlib
+import re
 import socket
 import sys
 
 DEADLINE_SECONDS = 10
+LOOPBACK = "127.0.0.1"
+CAPTURES = "/captures/"
+CELLS = "/root/cells/"
+# A server's socket, reached through its own root so a container's path means its own.
+SOCKET_IN_A_ROOT = re.compile(r"/proc/[0-9]+/root/[A-Za-z0-9._/-]+")
+
+
+def inside(path, directory):
+    """The path, resolved, where it is inside `directory`; refused otherwise."""
+    resolved = os.path.realpath(path)
+    if not resolved.startswith(directory):
+        raise SystemExit(f"{path} is outside {directory}")
+    return resolved
 
 
 def encode(words):
@@ -64,27 +82,28 @@ def main():
     parser = argparse.ArgumentParser()
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--unix")
-    target.add_argument("--tcp", nargs=2, metavar=("HOST", "PORT"))
+    target.add_argument("--tcp", type=int, metavar="PORT")
     parser.add_argument("--password-file")
     parser.add_argument("out")
     parser.add_argument("commands", nargs="+")
     arguments = parser.parse_args()
 
     if arguments.unix:
+        if not SOCKET_IN_A_ROOT.fullmatch(arguments.unix) or ".." in arguments.unix:
+            raise SystemExit(f"{arguments.unix} is not a socket inside a process's root")
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(DEADLINE_SECONDS)
         sock.connect(arguments.unix)
     else:
-        host, port = arguments.tcp
-        sock = socket.create_connection((host, int(port)), timeout=DEADLINE_SECONDS)
+        sock = socket.create_connection((LOOPBACK, arguments.tcp), timeout=DEADLINE_SECONDS)
 
-    out = pathlib.Path(arguments.out)
+    out = pathlib.Path(inside(arguments.out, CAPTURES))
     out.mkdir(parents=True, exist_ok=True)
     reader = Reader(sock)
     commands = [command.split(" ") for command in arguments.commands]
     if arguments.password_file:
         # One word, the default account's password, or two, an account and its password.
-        credential = pathlib.Path(arguments.password_file).read_text().split()
+        credential = pathlib.Path(inside(arguments.password_file, CELLS)).read_text().split()
         commands.insert(0, ["AUTH", *credential])
 
     for number, words in enumerate(commands, start=1):
