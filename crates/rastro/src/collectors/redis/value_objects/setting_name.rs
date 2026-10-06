@@ -7,10 +7,13 @@ use rastro_collector::{CollectionError, NonEmptyText};
 /// **Named rather than sniffed.** A value is never judged by how it looks, and a name that merely
 /// sounds like a secret is not one: `masteruser` names the account a replica authenticates as,
 /// which is whose secret `masterauth` is, and is carried as it stands. The TLS pair are the
-/// passphrases of the key files, present on Debian's build as well as Alpine's.
-const CREDENTIALS: [&str; 4] = [
+/// passphrases of the key files, present on Debian's build as well as Alpine's. `primaryauth` is
+/// valkey's name for `masterauth` from 8.1, answered beside it with the same value, measured on
+/// 8.1 and 9.1; a release that renames a credential again has to be added here by name.
+const CREDENTIALS: [&str; 5] = [
     "requirepass",
     "masterauth",
+    "primaryauth",
     "tls-key-file-pass",
     "tls-client-key-file-pass",
 ];

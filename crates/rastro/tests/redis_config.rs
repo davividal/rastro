@@ -47,6 +47,8 @@ fn every_credential_a_server_holds_in_its_settings_is_sensitive() {
     let reply = pairs(&[
         ("requirepass", "hunter2"),
         ("masterauth", "hunter3"),
+        // Measured: valkey 8.1 and later answer `CONFIG GET *` with both names, one value.
+        ("primaryauth", "hunter3"),
         ("tls-key-file-pass", "hunter4"),
         ("tls-client-key-file-pass", "hunter5"),
         ("masteruser", "replicator"),
@@ -60,6 +62,7 @@ fn every_credential_a_server_holds_in_its_settings_is_sensitive() {
     for name in [
         "requirepass",
         "masterauth",
+        "primaryauth",
         "tls-key-file-pass",
         "tls-client-key-file-pass",
     ] {
