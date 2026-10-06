@@ -285,3 +285,49 @@ fn two_replies_arriving_together_are_answered_in_order() {
         Reply::Simple("second".to_owned())
     );
 }
+
+#[test]
+fn every_reply_shape_has_a_name_for_a_refusal() {
+    // Act & Assert: a refusal names the shape, never the content.
+    let kinds: Vec<&str> = [
+        Reply::Simple(String::new()),
+        Reply::Error(String::new()),
+        Reply::Integer(0),
+        Reply::Bulk(String::new()),
+        Reply::Nil,
+        Reply::Array(Vec::new()),
+    ]
+    .iter()
+    .map(Reply::kind)
+    .collect();
+    assert_eq!(
+        kinds,
+        [
+            "a status",
+            "an error",
+            "an integer",
+            "text",
+            "nothing",
+            "a list"
+        ]
+    );
+}
+
+#[test]
+fn an_error_with_no_detail_is_its_code() {
+    // Act & Assert
+    assert_eq!(
+        answer_to_ping(b"-NOAUTH\r\n").expect("an answer"),
+        Reply::Error("NOAUTH".to_owned())
+    );
+}
+
+#[test]
+fn a_reply_in_a_newer_protocol_is_refused() {
+    // Act: a RESP3 boolean, which a server sends only after a `HELLO 3` rastro never sends.
+    let answer = answer_to_ping(b"#t\r\n");
+
+    // Assert
+    let error = answer.expect_err("a newer protocol");
+    assert!(error.contains("newer than the RESP2"), "{error}");
+}

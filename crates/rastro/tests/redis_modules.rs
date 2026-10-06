@@ -124,3 +124,50 @@ fn a_modules_arguments_are_sensitive() {
     // Assert
     assert_eq!(args.sensitivity(), Sensitivity::Sensitive);
 }
+
+fn refused(reply: Reply) -> String {
+    ModuleList::parse(reply)
+        .expect_err("a misread reply")
+        .to_string()
+}
+
+#[test]
+fn every_misread_shape_is_refused_with_its_reason() {
+    // Act & Assert: each a reply no server sends, so each is a misread rather than a module.
+    assert!(refused(bulk("ReJSON")).contains("rather than a list"));
+    assert!(refused(Reply::Array(vec![bulk("ReJSON")])).contains("not a list of fields"));
+    assert!(
+        refused(Reply::Array(vec![Reply::Array(vec![
+            Reply::Integer(1),
+            bulk("x")
+        ])]))
+        .contains("field name that is not text")
+    );
+    assert!(
+        refused(Reply::Array(vec![Reply::Array(vec![
+            bulk("name"),
+            Reply::Integer(1)
+        ])]))
+        .contains("unexpected kind")
+    );
+    assert!(
+        refused(Reply::Array(vec![Reply::Array(vec![
+            bulk("name"),
+            bulk("ReJSON")
+        ])]))
+        .contains("no version")
+    );
+    let twice = module("ReJSON", 1, "/lib/rejson.so", &[]);
+    assert!(refused(Reply::Array(vec![twice.clone(), twice])).contains("twice"));
+    assert!(
+        refused(Reply::Array(vec![Reply::Array(vec![
+            bulk("name"),
+            bulk("ReJSON"),
+            bulk("ver"),
+            Reply::Integer(1),
+            bulk("args"),
+            Reply::Array(vec![Reply::Integer(1)]),
+        ])]))
+        .contains("argument that is not text")
+    );
+}

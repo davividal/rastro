@@ -57,10 +57,7 @@ impl fmt::Debug for PasswordDirectives {
                 "requirepass",
                 &self.requirepass.as_ref().map(|_| "<withheld>"),
             )
-            .field(
-                "default_user",
-                &self.default_user.as_ref().map(|rules| rules.len()),
-            )
+            .field("default_user", &self.default_user.as_ref().map(Vec::len))
             .field("acl_file", &self.acl_file)
             .finish()
     }

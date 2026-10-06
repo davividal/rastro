@@ -512,3 +512,22 @@ fn a_sentinel_is_named_and_asked_nothing_more() {
     assert!(text(&field(&instance, "error")).contains("sentinel"));
     assert_eq!(server.received(), [["INFO", "server"]]);
 }
+
+#[test]
+fn a_long_refusal_from_the_server_is_shortened() {
+    // Arrange: the server's own words are the redis account's to choose, at any length.
+    let refusal = format!("-ERR {}\r\n", "x".repeat(5_000));
+    let server = FakeRedis::stock("facet-long-refusal", &[("CONFIG GET *", &refusal)]);
+    let proc = server.proc("redis-facet-long-refusal");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let error = text(&field(
+        &instance_of(&observation, &key_of(&server)),
+        "error",
+    ));
+    assert!(error.len() < 400, "{}", error.len());
+    assert!(error.contains('…'), "{error}");
+}

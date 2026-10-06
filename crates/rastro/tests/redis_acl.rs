@@ -82,3 +82,24 @@ fn an_account_named_twice_is_refused() {
     // Assert
     assert!(result.is_err(), "{result:?}");
 }
+
+#[test]
+fn an_answer_that_is_not_a_list_is_refused_by_its_kind() {
+    // Act
+    let error = AclList::parse(Reply::Bulk("user default on".to_owned()))
+        .expect_err("not a list")
+        .to_string();
+
+    // Assert: named by its kind, the content not quoted.
+    assert!(error.contains("text"), "{error}");
+    assert!(!error.contains("user default"), "{error}");
+}
+
+#[test]
+fn a_line_that_is_not_text_is_refused() {
+    // Act
+    let result = AclList::parse(Reply::Array(vec![Reply::Integer(1)]));
+
+    // Assert
+    assert!(result.is_err(), "{result:?}");
+}
