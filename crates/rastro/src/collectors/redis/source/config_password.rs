@@ -34,6 +34,12 @@ const DEFAULT_USER: &str = "default";
 /// directly or round a loop, without a set of open files. A real configuration names a handful.
 const MOST_FILES: usize = 64;
 
+/// How many entries the directories an `include` pattern lists may hold between them.
+///
+/// The file budget counts matches, and every entry is listed before one is found, in a directory
+/// the redis account can fill. A real include directory holds a handful.
+const MOST_ENTRIES: usize = 1024;
+
 /// What a configuration file says about the default account's password.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct PasswordDirectives {
@@ -214,7 +220,7 @@ fn included_files(from: &Path, argument: &str) -> Result<Vec<PathBuf>, Collectio
     }
 
     match file_glob::is_pattern(path) {
-        true => file_glob::matching(path),
+        true => file_glob::matching_at_most(path, MOST_ENTRIES),
         false => Ok(vec![path.to_path_buf()]),
     }
 }

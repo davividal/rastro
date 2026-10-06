@@ -327,6 +327,37 @@ fn includes_that_fan_out_stop_at_a_total_budget() {
 }
 
 #[test]
+fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_full() {
+    // Arrange: the directory is the redis account's to fill, and every entry is listed before the
+    // file budget sees a match; none of these match, so only a bound on the listing stops it.
+    let root = scratch_tree("redis-pass-wide-directory", &["owned"]);
+    for entry in 0..1100 {
+        write(&root.join("owned"), &format!("{entry}.txt"), "");
+    }
+    let file = file_with(
+        "redis-pass-wide-include",
+        &format!("include {}/*.conf\n", root.join("owned").display()),
+    );
+
+    // Act
+    let result = password_directives_in(&file);
+
+    // Assert
+    let error = result.expect_err("a huge directory").to_string();
+    assert!(error.contains("entries"), "{error}");
+}
+
+#[test]
+fn a_relative_configuration_file_is_refused_rather_than_read_from_rastros_directory() {
+    // Act: the server resolved it against the unit's working directory, which nothing records.
+    let result = password_directives_in(std::path::Path::new("conf/redis.conf"));
+
+    // Assert
+    let error = result.expect_err("a relative file").to_string();
+    assert!(error.contains("relative"), "{error}");
+}
+
+#[test]
 fn a_backslash_x_without_two_hex_digits_is_the_letter_x() {
     // Act & Assert: measured, redis takes `"a\xzb"` as `axzb`.
     assert_eq!(
