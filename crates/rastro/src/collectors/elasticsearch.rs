@@ -21,8 +21,8 @@ pub use model::{
     Surface,
 };
 pub use source::{
-    HeldStore, HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode,
-    host_directories_of, http_endpoint, read_node,
+    HeldStore, HttpClient, NodeListener, NodeNamespace, NodeSettings, ResidentNode, http_endpoint,
+    read_node,
 };
 pub use value_objects::{
     ApiCredential, ApiValue, HttpEndpoint, NetworkNamespace, Release, ReleaseSupport,
@@ -34,6 +34,8 @@ use rastro_collector::{
     ClaimQualifier, CollectionError, Collector, CollectorCategory, CollectorId, CollectorIdentity,
     CollectorVersion, FacetName, FilesystemClaim, Observation, Presence, WalkedTree,
 };
+
+use crate::collectors::host_directories::host_directories_of;
 
 /// The launcher the deb and rpm packages install. An archive is extracted wherever its operator
 /// chose, so this path says nothing about one; see [`Collector::presence`] for what that costs.

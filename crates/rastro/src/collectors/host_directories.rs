@@ -1,17 +1,14 @@
-//! Reading a node's files as the node sees them, inside its own root.
+//! The host's own directories behind a path a service names in its own root.
 //!
-//! **Measured in the podman VM:** an absolute symlink met under `/proc/<pid>/root` resolves
-//! against the reader's root, so a container whose `elasticsearch.yml` links to
-//! `/srv/config/elasticsearch.yml` read as not found, or read the host's file at that path. Not
-//! found puts the node on its defaults, the wrong port and the wrong store among them, which a
-//! symlink should not decide. `RESOLVE_IN_ROOT`
-//! makes the kernel treat the root as `/` for the whole walk, `..` at the top included.
+//! Shared, because two collectors seal a service's data directory from the walk, and both meet the
+//! same problem: the path is the service's, `elasticsearch`'s `path.data` or the working directory
+//! a redis server keeps its dump in, while the walk is the host's. Found first by elasticsearch.
 
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use crate::collectors::elasticsearch::source::mount_table::{host_aliases_of, host_paths_of};
+use crate::collectors::mount_table::{host_aliases_of, host_paths_of};
 use crate::collectors::inside_root::{Opening, open_inside};
 
 /// Which file a path leads to: the device and the inode, which two paths share only if they are
