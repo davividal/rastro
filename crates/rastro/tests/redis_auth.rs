@@ -95,11 +95,16 @@ impl AuthBox {
         self
     }
 
-    /// The server in a mount namespace of its own, as `RootDirectory=` or a container puts it.
-    fn in_own_mount_namespace(self) -> Self {
-        let link = self.proc.join(server_pid()).join("ns/mnt");
+    /// The server in a root of its own, holding its own file at the path the unit names.
+    fn rooted_with(self, contents: &str) -> Self {
+        let root = self.config.parent().expect("a parent").join("server-root");
+        let inside = root.join(self.config.strip_prefix("/").expect("an absolute path"));
+        fs::create_dir_all(inside.parent().expect("a parent")).expect("a scratch directory");
+        fs::write(&inside, contents).expect("a writable fixture");
+
+        let link = self.proc.join(server_pid()).join("root");
         fs::remove_file(&link).expect("a removable fixture");
-        std::os::unix::fs::symlink("mnt:[4026532999]", &link).expect("a writable scratch symlink");
+        std::os::unix::fs::symlink(&root, &link).expect("a writable scratch symlink");
         self
     }
 
@@ -155,21 +160,21 @@ fn the_password_the_servers_own_file_sets_unlocks_it() {
 }
 
 #[test]
-fn a_server_in_another_mount_namespace_is_not_read_from_the_hosts_files() {
-    // Arrange: the unit's path names a file in the server's own namespace, and the host's file at
-    // the same path sets a different password.
-    let server = FakeRedis::stock_with_password("auth-namespace", "hunter2", &[]);
-    let auth_box = auth_box("redis-auth-namespace", &server, "")
+fn a_server_in_its_own_root_is_read_there_rather_than_from_the_hosts_files() {
+    // Arrange: the unit's path names a file in the server's own root, as the package's private
+    // mount namespace or a container leaves it, and the host's file at that path sets another.
+    let server = FakeRedis::stock_with_password("auth-own-root", "hunter2", &[]);
+    let auth_box = auth_box("redis-auth-own-root", &server, "")
         .configured("requirepass not-the-servers\n")
-        .in_own_mount_namespace();
+        .rooted_with("requirepass hunter2\n");
 
     // Act
     let observation = read(&auth_box);
 
-    // Assert: a wrong password is an entry in the server's `ACL LOG`.
-    let error = text(&field(&instance(&observation, &server), "error"));
-    assert!(error.contains("mount namespace"), "{error}");
-    assert!(auths(&server).is_empty());
+    // Assert
+    let instance = instance(&observation, &server);
+    assert!(is_null(&field(&instance, "error")), "{instance:?}");
+    assert_eq!(auths(&server), [["AUTH", "hunter2"]]);
 }
 
 #[test]

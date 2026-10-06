@@ -3,11 +3,14 @@
 //! Each case here is one where reading differently from the server means sending it a wrong
 //! password, which is an entry in its `ACL LOG`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rastro::collectors::redis::{default_user_in_acl_file, password_directives_in};
 
 mod support;
+
+/// A server in rastro's own root, whose paths mean the same on both sides.
+const HOST_ROOT: &str = "/";
 
 use support::fs_tree::{scratch_tree, write};
 
@@ -19,7 +22,7 @@ fn file_with(name: &str, contents: &str) -> PathBuf {
 }
 
 fn password_in(name: &str, contents: &str) -> Option<String> {
-    password_directives_in(&file_with(name, contents))
+    password_directives_in(Path::new(HOST_ROOT), &file_with(name, contents))
         .expect("a readable file")
         .requirepass
 }
@@ -84,10 +87,10 @@ fn a_file_without_the_directive_sets_no_password() {
 #[test]
 fn unbalanced_quotes_are_refused() {
     // Act
-    let result = password_directives_in(&file_with(
-        "redis-pass-unbalanced",
-        "requirepass \"hunter2\n",
-    ));
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with("redis-pass-unbalanced", "requirepass \"hunter2\n"),
+    );
 
     // Assert: the server would have refused to start, so nothing here is its password.
     assert!(result.is_err(), "{result:?}");
@@ -96,7 +99,10 @@ fn unbalanced_quotes_are_refused() {
 #[test]
 fn a_byte_escape_outside_ascii_is_refused_rather_than_approximated() {
     // Act
-    let result = password_directives_in(&file_with("redis-pass-byte", "requirepass \"\\xff\"\n"));
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with("redis-pass-byte", "requirepass \"\\xff\"\n"),
+    );
 
     // Assert
     assert!(result.is_err(), "{result:?}");
@@ -105,7 +111,10 @@ fn a_byte_escape_outside_ascii_is_refused_rather_than_approximated() {
 #[test]
 fn a_relative_include_is_refused() {
     // Act
-    let result = password_directives_in(&file_with("redis-pass-relative", "include local.conf\n"));
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with("redis-pass-relative", "include local.conf\n"),
+    );
 
     // Assert: resolved against a working directory nothing records.
     let error = result.expect_err("a relative include").to_string();
@@ -123,7 +132,7 @@ fn a_file_that_includes_itself_is_refused() {
     );
 
     // Act
-    let result = password_directives_in(&file);
+    let result = password_directives_in(Path::new(HOST_ROOT), &file);
 
     // Assert
     let error = result.expect_err("a cycle").to_string();
@@ -144,7 +153,7 @@ fn a_pattern_include_is_read_in_byte_order() {
 
     // Act & Assert
     assert_eq!(
-        password_directives_in(&root.join("redis.conf"))
+        password_directives_in(Path::new(HOST_ROOT), &root.join("redis.conf"))
             .expect("a readable file")
             .requirepass,
         Some("second".to_owned())
@@ -160,7 +169,7 @@ fn the_default_accounts_line_is_read_with_its_rules_in_order() {
     );
 
     // Act
-    let directives = password_directives_in(&file).expect("a readable file");
+    let directives = password_directives_in(Path::new(HOST_ROOT), &file).expect("a readable file");
 
     // Assert: quoted as the server splits it, and the directive matched whatever its case.
     assert_eq!(
@@ -179,10 +188,13 @@ fn the_default_accounts_line_is_read_with_its_rules_in_order() {
 #[test]
 fn the_default_account_declared_twice_is_refused() {
     // Act: measured, the server refuses to start on such a file.
-    let result = password_directives_in(&file_with(
-        "redis-pass-user-twice",
-        "user default on >one\nuser default on >two\n",
-    ));
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with(
+            "redis-pass-user-twice",
+            "user default on >one\nuser default on >two\n",
+        ),
+    );
 
     // Assert
     assert!(result.is_err(), "{result:?}");
@@ -191,10 +203,13 @@ fn the_default_account_declared_twice_is_refused() {
 #[test]
 fn an_acl_file_is_named() {
     // Act
-    let directives = password_directives_in(&file_with(
-        "redis-pass-aclfile",
-        "requirepass ignored\naclfile /etc/redis/users.acl\n",
-    ))
+    let directives = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with(
+            "redis-pass-aclfile",
+            "requirepass ignored\naclfile /etc/redis/users.acl\n",
+        ),
+    )
     .expect("a readable file");
 
     // Assert
@@ -216,7 +231,8 @@ fn the_default_account_is_read_out_of_an_acl_file() {
 
     // Act & Assert
     assert_eq!(
-        default_user_in_acl_file(&root.join("users.acl")).expect("a readable file"),
+        default_user_in_acl_file(Path::new(HOST_ROOT), &root.join("users.acl"))
+            .expect("a readable file"),
         Some(
             ["on", ">fromfile", "~*", "&*", "+@all"]
                 .map(str::to_owned)
@@ -233,7 +249,8 @@ fn an_acl_file_without_the_default_account_says_so() {
 
     // Act & Assert: measured, the server then leaves the default account without a password.
     assert_eq!(
-        default_user_in_acl_file(&root.join("users.acl")).expect("a readable file"),
+        default_user_in_acl_file(Path::new(HOST_ROOT), &root.join("users.acl"))
+            .expect("a readable file"),
         None
     );
 }
@@ -249,7 +266,7 @@ fn an_acl_file_declaring_the_default_account_twice_is_refused() {
     );
 
     // Act
-    let result = default_user_in_acl_file(&root.join("users.acl"));
+    let result = default_user_in_acl_file(Path::new(HOST_ROOT), &root.join("users.acl"));
 
     // Assert
     assert!(result.is_err(), "{result:?}");
@@ -268,7 +285,7 @@ fn a_fifo_where_the_file_should_be_is_refused_rather_than_waited_on() {
     assert!(made.success());
 
     // Act
-    let result = password_directives_in(&fifo);
+    let result = password_directives_in(Path::new(HOST_ROOT), &fifo);
 
     // Assert
     let error = result.expect_err("a FIFO").to_string();
@@ -278,10 +295,13 @@ fn a_fifo_where_the_file_should_be_is_refused_rather_than_waited_on() {
 #[test]
 fn a_device_where_an_include_should_be_is_refused() {
     // Act: `/dev/zero` never ends, and read whole it grows without end.
-    let result = password_directives_in(&file_with(
-        "redis-pass-device",
-        "include /dev/zero\nrequirepass hunter2\n",
-    ));
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with(
+            "redis-pass-device",
+            "include /dev/zero\nrequirepass hunter2\n",
+        ),
+    );
 
     // Assert
     let error = result.expect_err("a device").to_string();
@@ -291,10 +311,10 @@ fn a_device_where_an_include_should_be_is_refused() {
 #[test]
 fn a_file_past_the_size_bound_is_refused() {
     // Act
-    let result = password_directives_in(&file_with(
-        "redis-pass-huge",
-        &"# padding\n".repeat(120_000),
-    ));
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with("redis-pass-huge", &"# padding\n".repeat(120_000)),
+    );
 
     // Assert
     let error = result.expect_err("a huge file").to_string();
@@ -318,7 +338,7 @@ fn includes_that_fan_out_stop_at_a_total_budget() {
 
     // Act
     let started = std::time::Instant::now();
-    let result = password_directives_in(&root.join("level-0.conf"));
+    let result = password_directives_in(Path::new(HOST_ROOT), &root.join("level-0.conf"));
 
     // Assert: refused, and quickly.
     let error = result.expect_err("a fan-out").to_string();
@@ -331,7 +351,7 @@ fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_fu
     // Arrange: the directory is the redis account's to fill, and every entry is listed before the
     // file budget sees a match; none of these match, so only a bound on the listing stops it.
     let root = scratch_tree("redis-pass-wide-directory", &["owned"]);
-    for entry in 0..1100 {
+    for entry in 0..=10_000 {
         write(&root.join("owned"), &format!("{entry}.txt"), "");
     }
     let file = file_with(
@@ -340,7 +360,7 @@ fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_fu
     );
 
     // Act
-    let result = password_directives_in(&file);
+    let result = password_directives_in(Path::new(HOST_ROOT), &file);
 
     // Assert
     let error = result.expect_err("a huge directory").to_string();
@@ -348,9 +368,22 @@ fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_fu
 }
 
 #[test]
+fn a_wildcard_outside_the_last_component_is_refused_rather_than_resolved() {
+    // Arrange: every packaged layout globs a drop-in directory's files, never the directory.
+    let file = file_with("redis-pass-directory-glob", "include /etc/*/redis.conf\n");
+
+    // Act
+    let result = password_directives_in(Path::new(HOST_ROOT), &file);
+
+    // Assert
+    let error = result.expect_err("an unresolved pattern").to_string();
+    assert!(error.contains("does not resolve"), "{error}");
+}
+
+#[test]
 fn a_relative_configuration_file_is_refused_rather_than_read_from_rastros_directory() {
     // Act: the server resolved it against the unit's working directory, which nothing records.
-    let result = password_directives_in(std::path::Path::new("conf/redis.conf"));
+    let result = password_directives_in(Path::new(HOST_ROOT), Path::new("conf/redis.conf"));
 
     // Assert
     let error = result.expect_err("a relative file").to_string();
@@ -378,10 +411,13 @@ fn only_ascii_whitespace_separates_words() {
 #[test]
 fn the_directives_never_print_their_password() {
     // Act
-    let directives = password_directives_in(&file_with(
-        "redis-pass-debug",
-        "requirepass printed-nowhere\nuser default on >also-nowhere\n",
-    ))
+    let directives = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with(
+            "redis-pass-debug",
+            "requirepass printed-nowhere\nuser default on >also-nowhere\n",
+        ),
+    )
     .expect("a readable file");
 
     // Assert: a `{:?}` in some later message must not carry the password.

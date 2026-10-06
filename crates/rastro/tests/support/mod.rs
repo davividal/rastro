@@ -1,4 +1,5 @@
 pub mod captured_cell;
+pub mod captured_redis_cell;
 pub mod es_node;
 pub mod fake_redis;
 pub mod fs_tree;

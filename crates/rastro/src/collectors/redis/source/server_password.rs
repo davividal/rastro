@@ -6,9 +6,12 @@ use super::config_password::{
     PasswordDirectives, default_user_in_acl_file, password_directives_in,
 };
 use super::default_account::password_for_default_account;
-use super::mount_namespace::shares_our_mounts;
 use super::server_unit::{start_of, unit_of};
 use crate::collectors::canonical_tool::CanonicalTool;
+
+/// Where a process's root is linked from, relative to its `/proc` entry: every path the server
+/// was started with means what it meant to the server only there.
+const ROOT: &str = "root";
 
 /// The rules an ACL file without a `default` line leaves that account with, measured.
 const SWITCHED_ON: &str = "on";
@@ -57,18 +60,9 @@ pub fn password_for(
         ));
     }
 
-    if let Some(file) = &file
-        && !shares_our_mounts(proc, process_id)
-    {
-        return Err(format!(
-            "the server requires a password, and it runs in a mount namespace of its own, where \
-             {} need not be the file the host has at that path",
-            file.display()
-        ));
-    }
-
+    let root = proc.join(process_id.to_string()).join(ROOT);
     let directives = match &file {
-        Some(file) => password_directives_in(file)
+        Some(file) => password_directives_in(&root, file)
             .map_err(|error| format!("the server requires a password, and {error}"))?,
         None => PasswordDirectives::default(),
     };
@@ -84,7 +78,7 @@ pub fn password_for(
             ));
         }
         Some(acl_file) => {
-            let rules = default_user_in_acl_file(acl_file)
+            let rules = default_user_in_acl_file(&root, acl_file)
                 .map_err(|error| format!("the server requires a password, and {error}"))?
                 .unwrap_or_else(|| vec![SWITCHED_ON.to_owned(), NO_PASSWORD.to_owned()]);
             (Some(rules), acl_file.display().to_string())

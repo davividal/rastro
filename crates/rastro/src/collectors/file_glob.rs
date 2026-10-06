@@ -53,18 +53,6 @@ pub fn is_pattern(path: &Path) -> bool {
 /// a set of vhosts the server does not have, and there is no way for a reader to tell that
 /// from a set it does.
 pub fn matching(pattern: &Path) -> Result<Vec<PathBuf>, CollectionError> {
-    matching_at_most(pattern, usize::MAX)
-}
-
-/// [`matching`], refused once the directories it lists hold more than `most_entries` between them.
-///
-/// For a pattern from a file another account owns, a redis `include` among them: the directories
-/// are that account's to fill, and every entry is listed before any budget on matches applies.
-pub fn matching_at_most(
-    pattern: &Path,
-    most_entries: usize,
-) -> Result<Vec<PathBuf>, CollectionError> {
-    let mut entries_left = most_entries;
     let mut found = vec![PathBuf::new()];
 
     for component in pattern.components() {
@@ -87,13 +75,7 @@ pub fn matching_at_most(
         }
 
         found = match holds_wildcard(&name) {
-            true => expanded(&found, &name, &mut entries_left).ok_or_else(|| {
-                CollectionError::new(format!(
-                    "the pattern {} lists directories holding more than {most_entries} entries \
-                     between them, which is wider than any configuration rastro reads them for",
-                    pattern.display()
-                ))
-            })?,
+            true => expanded(&found, &name),
             false => found
                 .into_iter()
                 .map(|candidate| candidate.join(&name))
@@ -118,13 +100,8 @@ fn holds_wildcard(name: &str) -> bool {
 ///
 /// A directory that cannot be read contributes nothing rather than failing the pattern, the
 /// same way `glob(3)` skips what it cannot open: a fingerprint run has no business turning
-/// one unreadable directory into a missing set of vhosts elsewhere. Nothing at all where the
-/// listing runs past `entries_left`.
-fn expanded(
-    candidates: &[PathBuf],
-    pattern: &str,
-    entries_left: &mut usize,
-) -> Option<Vec<PathBuf>> {
+/// one unreadable directory into a missing set of vhosts elsewhere.
+fn expanded(candidates: &[PathBuf], pattern: &str) -> Vec<PathBuf> {
     let mut found = Vec::new();
 
     for candidate in candidates {
@@ -138,7 +115,6 @@ fn expanded(
         };
 
         for entry in entries.flatten() {
-            *entries_left = entries_left.checked_sub(1)?;
             let name = entry.file_name();
             if matches(&name, pattern) {
                 found.push(candidate.join(&name));
@@ -146,7 +122,7 @@ fn expanded(
         }
     }
 
-    Some(found)
+    found
 }
 
 /// Whether one directory entry's name matches the pattern.
@@ -154,8 +130,12 @@ fn expanded(
 /// A leading dot is matched only by a pattern that spells one, which is `glob(3)`'s rule and
 /// the reason `include conf.d/*.conf` does not pick up an editor's `.site.conf.swp`.
 fn matches(name: &OsStr, pattern: &str) -> bool {
-    let name = name.to_string_lossy();
+    name_matches(&name.to_string_lossy(), pattern)
+}
 
+/// Whether a name matches one component of a pattern, as `glob(3)` matches it, for a caller that
+/// lists the directory itself: one inside another process's root, say.
+pub fn name_matches(name: &str, pattern: &str) -> bool {
     if name.starts_with('.') != pattern.starts_with('.') {
         return false;
     }

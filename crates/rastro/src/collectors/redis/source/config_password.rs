@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use rastro_collector::CollectionError;
 
 use crate::collectors::file_glob;
-use crate::collectors::inside_root::read_inside;
+use crate::collectors::inside_root::{names_inside, read_inside};
 
 const REQUIREPASS: &str = "requirepass";
 const INCLUDE: &str = "include";
@@ -33,12 +33,6 @@ const DEFAULT_USER: &str = "default";
 /// including the next three times took 35 s, measured. It also stops a file that includes itself,
 /// directly or round a loop, without a set of open files. A real configuration names a handful.
 const MOST_FILES: usize = 64;
-
-/// How many entries the directories an `include` pattern lists may hold between them.
-///
-/// The file budget counts matches, and every entry is listed before one is found, in a directory
-/// the redis account can fill. A real include directory holds a handful.
-const MOST_ENTRIES: usize = 1024;
 
 /// What a configuration file says about the default account's password.
 #[derive(Clone, PartialEq, Eq, Default)]
@@ -69,14 +63,22 @@ impl fmt::Debug for PasswordDirectives {
     }
 }
 
-/// The password directives the file leaves the server with.
+/// The password directives the file leaves the server with, every path resolved inside `root`.
+///
+/// **Inside the server's root, not the host's**, measured: the package's unit gives every server
+/// a mount namespace of its own (`PrivateTmp=yes`, `ReadOnlyDirectories=/`), and a container's or a
+/// `RootDirectory=` unit's paths are its own, so `/proc/<pid>/root` is where its paths mean what
+/// they meant to the server.
 ///
 /// **The last `requirepass` wins**, the file read top to bottom with each include read in place,
 /// because that is the order the server applies them in. **A second `user default` is refused**:
 /// measured, the server will not start on such a file, so it is not the file of a running one.
-pub fn password_directives_in(file: &Path) -> Result<PasswordDirectives, CollectionError> {
+pub fn password_directives_in(
+    root: &Path,
+    file: &Path,
+) -> Result<PasswordDirectives, CollectionError> {
     let mut directives = PasswordDirectives::default();
-    read_into(file, &mut 0, &mut directives)?;
+    read_into(root, file, &mut 0, &mut directives)?;
     directives.requirepass = directives
         .requirepass
         .filter(|password: &String| !password.is_empty());
@@ -88,8 +90,11 @@ pub fn password_directives_in(file: &Path) -> Result<PasswordDirectives, Collect
 ///
 /// Nothing is an answer, not a failure: measured, a server whose ACL file declares no `default`
 /// leaves that account without a password, whatever `requirepass` says.
-pub fn default_user_in_acl_file(file: &Path) -> Result<Option<Vec<String>>, CollectionError> {
-    let text = read_bounded(file)?;
+pub fn default_user_in_acl_file(
+    root: &Path,
+    file: &Path,
+) -> Result<Option<Vec<String>>, CollectionError> {
+    let text = read_bounded(root, file)?;
 
     let mut default_user = None;
     for line in text.lines() {
@@ -107,6 +112,7 @@ pub fn default_user_in_acl_file(file: &Path) -> Result<Option<Vec<String>>, Coll
 }
 
 fn read_into(
+    root: &Path,
     file: &Path,
     files_read: &mut usize,
     directives: &mut PasswordDirectives,
@@ -120,7 +126,7 @@ fn read_into(
         )));
     }
 
-    let text = read_bounded(file)?;
+    let text = read_bounded(root, file)?;
 
     for line in text.lines() {
         let Some(words) = words_of(file, line)? else {
@@ -138,8 +144,8 @@ fn read_into(
             (REQUIREPASS, 2) => directives.requirepass = Some(words[1].clone()),
             (ACLFILE, 2) => directives.acl_file = Some(PathBuf::from(&words[1])),
             (INCLUDE, 2) => {
-                for included in included_files(file, &words[1])? {
-                    read_into(&included, files_read, directives)?;
+                for included in included_files(root, file, &words[1])? {
+                    read_into(root, &included, files_read, directives)?;
                 }
             }
             _ => {}
@@ -153,8 +159,8 @@ fn read_into(
 ///
 /// The file is the redis account's, Debian's `redis.conf` among them, so what is at the path is
 /// that account's choice: a FIFO there blocked the run and `/dev/zero` grew without end, the
-/// finding the elasticsearch collector met first. The path is absolute by the time it gets here.
-fn read_bounded(file: &Path) -> Result<String, CollectionError> {
+/// finding the elasticsearch collector met first.
+fn read_bounded(root: &Path, file: &Path) -> Result<String, CollectionError> {
     let relative = file.strip_prefix("/").map_err(|_| {
         CollectionError::new(format!(
             "{} is a relative path, which the server resolved against a working directory \
@@ -163,7 +169,7 @@ fn read_bounded(file: &Path) -> Result<String, CollectionError> {
         ))
     })?;
 
-    read_inside(Path::new("/"), relative).map_err(|error| {
+    read_inside(root, relative).map_err(|error| {
         CollectionError::new(format!("{} could not be read: {error}", file.display()))
     })
 }
@@ -209,7 +215,11 @@ fn declared_twice(file: &Path) -> CollectionError {
 ///
 /// A relative path is refused rather than resolved: the server resolves it against its working
 /// directory at start, which nothing on the box still records.
-fn included_files(from: &Path, argument: &str) -> Result<Vec<PathBuf>, CollectionError> {
+fn included_files(
+    root: &Path,
+    from: &Path,
+    argument: &str,
+) -> Result<Vec<PathBuf>, CollectionError> {
     let path = Path::new(argument);
     if path.is_relative() {
         return Err(CollectionError::new(format!(
@@ -218,11 +228,42 @@ fn included_files(from: &Path, argument: &str) -> Result<Vec<PathBuf>, Collectio
             from.display()
         )));
     }
-
-    match file_glob::is_pattern(path) {
-        true => file_glob::matching_at_most(path, MOST_ENTRIES),
-        false => Ok(vec![path.to_path_buf()]),
+    if !file_glob::is_pattern(path) {
+        return Ok(vec![path.to_path_buf()]);
     }
+
+    // A wildcard in the last component alone, the drop-in directory every packaged layout uses.
+    let (Some(directory), Some(pattern)) = (
+        path.parent(),
+        path.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return Err(unresolved_pattern(from, argument));
+    };
+    if file_glob::is_pattern(directory) || pattern.contains('[') {
+        return Err(unresolved_pattern(from, argument));
+    }
+
+    let relative = directory.strip_prefix("/").unwrap_or(directory);
+    let mut names = names_inside(root, relative).map_err(|error| {
+        CollectionError::new(format!(
+            "{} includes {argument:?}, and {} could not be listed: {error}",
+            from.display(),
+            directory.display()
+        ))
+    })?;
+    names.retain(|name| file_glob::name_matches(name, pattern));
+    // Byte order, as `file_glob` sorts, so the include order is the same under every locale.
+    names.sort();
+
+    Ok(names.into_iter().map(|name| directory.join(name)).collect())
+}
+
+fn unresolved_pattern(from: &Path, argument: &str) -> CollectionError {
+    CollectionError::new(format!(
+        "{} includes {argument:?}, a pattern rastro does not resolve: a wildcard outside the last \
+         component, or a bracket expression",
+        from.display()
+    ))
 }
 
 /// Splits a line into its arguments as redis's `sdssplitargs` does, or nothing where the quotes
