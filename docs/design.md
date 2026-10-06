@@ -212,8 +212,8 @@ The server is the only honest account of itself, because on the estate this was 
 for `maxmemory` and `save` are applied with `CONFIG SET` and written to no file. It is
 asked over its own protocol rather than through `redis-cli`, whose only ways to carry a
 password are argv, the environment and stdin, and whose text output cannot tell an empty
-value from a missing one; `redis-protocol` frames the replies and rastro holds the
-socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
+value from a missing one; the `redis` crate parses the replies, its client unused, and
+rastro holds the socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
 seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
 a password the files its own unit names give the `default` account, replayed the way the
 server builds it and checked against its hashes first, because a refused one is an entry in
