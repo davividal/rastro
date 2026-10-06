@@ -10,14 +10,14 @@ arch_bits:64
 multiplexing_api:epoll
 atomicvar_api:atomic-builtin
 gcc_version:12.2.0
-process_id:213945
-run_id:f578626769242122263f7e74edd85337c569af4c
+process_id:245563
+run_id:5234b5e9e19ac28b2e85c2b7056eaf3e6837b14e
 tcp_port:6379
 uptime_in_seconds:0
 uptime_in_days:0
 hz:10
 configured_hz:10
-lru_clock:12913433
+lru_clock:12914875
 executable:/opt/redis-5.0.14/bin/redis-server
 config_file:/etc/redis/redis5.conf
 

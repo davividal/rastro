@@ -23,5 +23,3 @@ rastro: sysctl excluded by config, so it is not in this fingerprint
 rastro: time excluded by config, so it is not in this fingerprint
 rastro: timers excluded by config, so it is not in this fingerprint
 rastro: units excluded by config, so it is not in this fingerprint
-rastro: 1 facet is incomplete:
-  redis: 1 item could not be read

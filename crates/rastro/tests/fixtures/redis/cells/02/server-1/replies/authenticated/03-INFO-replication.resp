@@ -3,7 +3,7 @@ $349
 role:master
 connected_slaves:0
 master_failover_state:no-failover
-master_replid:4d7f0d82a0130ada92d7f68819df5b00dbb23cb9
+master_replid:0b6d32b9611a8e47e88cb9dba40f04784435e80b
 master_replid2:0000000000000000000000000000000000000000
 master_repl_offset:0
 second_repl_offset:-1

@@ -216,6 +216,7 @@
             "replication": null,
             "server": "redis",
             "settings": null,
+            "unsupported": null,
             "version": null
           }
         }

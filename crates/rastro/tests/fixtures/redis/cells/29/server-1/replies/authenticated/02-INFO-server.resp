@@ -12,16 +12,16 @@ arch_bits:64
 monotonic_clock:POSIX clock_gettime
 multiplexing_api:epoll
 gcc_version:12.2.0
-process_id:209506
+process_id:241153
 process_supervised:no
-run_id:39100f77d0e6d2836ee4390443cc7035d6a4b99a
+run_id:10c12e9f7b6dc1e5f09cbc50ae355d4a4e009256
 tcp_port:0
-server_time_usec:1791298307893167
+server_time_usec:1791299752524009
 uptime_in_seconds:1
 uptime_in_days:0
 hz:10
 configured_hz:10
-lru_clock:12913411
+lru_clock:12914856
 executable:/opt/valkey-8.0.11/bin/valkey-server
 config_file:/etc/valkey/valkey-29.conf
 io_threads_active:0

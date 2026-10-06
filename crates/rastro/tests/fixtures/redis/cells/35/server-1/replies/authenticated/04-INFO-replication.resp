@@ -2,7 +2,7 @@ $314
 # Replication
 role:master
 connected_slaves:0
-master_replid:4c2c161f4720592708fd422f8ae8a78b0e97fc0c
+master_replid:01527a3aa8cd86683ebcee1d2065da70d8ddc9e5
 master_replid2:0000000000000000000000000000000000000000
 master_repl_offset:0
 second_repl_offset:-1

@@ -161,6 +161,18 @@
             ],
             "reading": "churns"
           },
+          "/var/lib/redis/cache": {
+            "claimed_by": [
+              "redis:6381"
+            ],
+            "reading": "sealed"
+          },
+          "/var/lib/redis/queue": {
+            "claimed_by": [
+              "redis:6380"
+            ],
+            "reading": "sealed"
+          },
           "/var/lib/systemd/random-seed": {
             "claimed_by": [
               "filesystem"
@@ -558,6 +570,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": null,
             "version": "8.10.2"
           },
           "6381": {
@@ -916,6 +929,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": null,
             "version": "8.10.2"
           }
         }

@@ -65,6 +65,12 @@
             ],
             "reading": "metadata_only"
           },
+          "/data/redis": {
+            "claimed_by": [
+              "redis:6379"
+            ],
+            "reading": "sealed"
+          },
           "/run/containerd": {
             "claimed_by": [
               "containers"
@@ -558,6 +564,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": null,
             "version": "8.10.2"
           }
         }

@@ -19,7 +19,7 @@ slave_read_only:1
 replica_announced:1
 connected_slaves:0
 master_failover_state:no-failover
-master_replid:734eaabac0b82101386e7161e634f9b0536c021f
+master_replid:e585990b2802dc38af6efbeb9ec4fecf41247b60
 master_replid2:0000000000000000000000000000000000000000
 master_repl_offset:0
 second_repl_offset:-1

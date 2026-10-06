@@ -13,14 +13,14 @@ atomicvar_api:c11-builtin
 gcc_version:14.2.0
 process_id:1
 process_supervised:no
-run_id:9d81c09222b5e048b310204d1d4a9a3dcb647ce0
+run_id:0fb9c9600136b956799440c23740e4447452ca61
 tcp_port:6379
-server_time_usec:1791298298631008
+server_time_usec:1791299743198681
 uptime_in_seconds:3
 uptime_in_days:0
 hz:10
 configured_hz:10
-lru_clock:12913402
+lru_clock:12914847
 executable:/data/redis-server
 config_file:/usr/local/etc/redis/redis.conf
 io_threads_active:0

@@ -13,17 +13,17 @@ arch_bits:64
 monotonic_clock:POSIX clock_gettime
 multiplexing_api:epoll
 gcc_version:12.2.0
-process_id:209041
+process_id:240702
 process_supervised:no
-run_id:ff195e3c0e4616a2c6cc1cd5a1b362bf57f00943
+run_id:a4e279ead2254c3f010c8e8904ae39af0a1fce81
 tcp_port:6379
-server_time_usec:1791298305365523
-uptime_in_seconds:1
+server_time_usec:1791299750010052
+uptime_in_seconds:2
 uptime_in_days:0
 hz:10
 configured_hz:10
 clients_hz:10
-lru_clock:12913409
+lru_clock:12914854
 executable:/opt/valkey-8.1.10/bin/redis-server
 config_file:/etc/valkey/valkey-28.conf
 io_threads_active:0

@@ -330,6 +330,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": "redis 5.0.14 is not a release rastro supports, so it is read on a best-effort basis",
             "version": "5.0.14"
           }
         }

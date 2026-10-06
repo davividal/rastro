@@ -161,6 +161,12 @@
             ],
             "reading": "churns"
           },
+          "/var/lib/redis": {
+            "claimed_by": [
+              "redis:/run/redis/redis-server.sock"
+            ],
+            "reading": "sealed"
+          },
           "/var/lib/systemd/random-seed": {
             "claimed_by": [
               "filesystem"
@@ -557,6 +563,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": null,
             "version": "8.10.2"
           }
         }

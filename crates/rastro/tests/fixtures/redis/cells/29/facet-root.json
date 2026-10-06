@@ -452,6 +452,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": null,
             "version": "8.0.11"
           }
         }

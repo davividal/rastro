@@ -1,5 +1,5 @@
-ExecStart={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis-queue.conf ; ignore_errors=no ; start_time=[Tue 2026-10-06 14:50:57 UTC] ; stop_time=[n/a] ; pid=197351 ; code=(null) ; status=0/0 }
-ExecStartEx={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis-queue.conf ; flags= ; start_time=[Tue 2026-10-06 14:50:57 UTC] ; stop_time=[n/a] ; pid=197351 ; code=(null) ; status=0/0 }
+ExecStart={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis-queue.conf ; ignore_errors=no ; start_time=[Tue 2026-10-06 15:15:01 UTC] ; stop_time=[n/a] ; pid=229040 ; code=(null) ; status=0/0 }
+ExecStartEx={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis-queue.conf ; flags= ; start_time=[Tue 2026-10-06 15:15:01 UTC] ; stop_time=[n/a] ; pid=229040 ; code=(null) ; status=0/0 }
 ControlGroup=/system.slice/system-redis\x2dserver.slice/redis-server@queue.service
 WorkingDirectory=
 RootDirectory=

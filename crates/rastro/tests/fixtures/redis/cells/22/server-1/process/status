@@ -1,33 +1,33 @@
 Name:	redis-sentinel
 Umask:	0007
 State:	S (sleeping)
-Tgid:	205436
+Tgid:	237094
 Ngid:	0
-Pid:	205436
+Pid:	237094
 PPid:	1
 TracerPid:	0
 Uid:	105	105	105	105
 Gid:	112	112	112	112
 FDSize:	128
 Groups:	112 
-NStgid:	205436
-NSpid:	205436
-NSpgid:	205436
-NSsid:	205436
+NStgid:	237094
+NSpid:	237094
+NSpgid:	237094
+NSsid:	237094
 VmPeak:	  205384 kB
 VmSize:	  139848 kB
 VmLck:	       0 kB
 VmPin:	       0 kB
-VmHWM:	   16608 kB
-VmRSS:	   16608 kB
-RssAnon:	    8248 kB
+VmHWM:	   16604 kB
+VmRSS:	   16604 kB
+RssAnon:	    8244 kB
 RssFile:	    8360 kB
 RssShmem:	       0 kB
 VmData:	   59136 kB
 VmStk:	     132 kB
 VmExe:	    3728 kB
 VmLib:	    9708 kB
-VmPTE:	     124 kB
+VmPTE:	     120 kB
 VmSwap:	       0 kB
 HugetlbPages:	       0 kB
 CoreDumping:	0

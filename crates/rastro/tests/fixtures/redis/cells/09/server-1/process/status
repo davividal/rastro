@@ -1,19 +1,19 @@
 Name:	redis-server
 Umask:	0007
 State:	S (sleeping)
-Tgid:	194936
+Tgid:	226624
 Ngid:	0
-Pid:	194936
+Pid:	226624
 PPid:	1
 TracerPid:	0
 Uid:	105	105	105	105
 Gid:	112	112	112	112
 FDSize:	128
 Groups:	112 
-NStgid:	194936
-NSpid:	194936
-NSpgid:	194936
-NSsid:	194936
+NStgid:	226624
+NSpid:	226624
+NSpgid:	226624
+NSsid:	226624
 VmPeak:	  228964 kB
 VmSize:	  163428 kB
 VmLck:	       0 kB
@@ -53,5 +53,5 @@ Cpus_allowed:	f
 Cpus_allowed_list:	0-3
 Mems_allowed:	0001
 Mems_allowed_list:	0
-voluntary_ctxt_switches:	20
-nonvoluntary_ctxt_switches:	1
+voluntary_ctxt_switches:	19
+nonvoluntary_ctxt_switches:	0

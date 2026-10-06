@@ -161,6 +161,12 @@
             ],
             "reading": "churns"
           },
+          "/var/lib/redis": {
+            "claimed_by": [
+              "redis:6379"
+            ],
+            "reading": "sealed"
+          },
           "/var/lib/systemd/random-seed": {
             "claimed_by": [
               "filesystem"
@@ -205,7 +211,7 @@
           "6379": {
             "acl": null,
             "config_file": null,
-            "error": "the server requires a password, and it runs in a mount namespace of its own, where /etc/redis/redis.conf need not be the file the host has at that path",
+            "error": "the server requires a password, and the default account is switched off in the server's configuration, so no password opens it (/etc/redis/redis.conf)",
             "executable": null,
             "listening": [
               "127.0.0.1:6379",
@@ -216,6 +222,7 @@
             "replication": null,
             "server": "redis",
             "settings": null,
+            "unsupported": null,
             "version": null
           }
         }

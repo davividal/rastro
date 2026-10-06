@@ -1,19 +1,19 @@
 Name:	valkey-server
 Umask:	0077
 State:	S (sleeping)
-Tgid:	210005
+Tgid:	241650
 Ngid:	0
-Pid:	210005
-PPid:	209976
+Pid:	241650
+PPid:	241625
 TracerPid:	0
 Uid:	999	999	999	999
 Gid:	999	999	999	999
 FDSize:	64
 Groups:	 
-NStgid:	210005	7
-NSpid:	210005	7
-NSpgid:	210005	7
-NSsid:	209976	1
+NStgid:	241650	6
+NSpid:	241650	6
+NSpgid:	241650	6
+NSsid:	241625	1
 VmPeak:	   60056 kB
 VmSize:	   60056 kB
 VmLck:	       0 kB
@@ -27,7 +27,7 @@ VmData:	   44412 kB
 VmStk:	     132 kB
 VmExe:	    3072 kB
 VmLib:	   10996 kB
-VmPTE:	     108 kB
+VmPTE:	     104 kB
 VmSwap:	       0 kB
 HugetlbPages:	       0 kB
 CoreDumping:	0
@@ -54,4 +54,4 @@ Cpus_allowed_list:	0-3
 Mems_allowed:	0001
 Mems_allowed_list:	0
 voluntary_ctxt_switches:	40
-nonvoluntary_ctxt_switches:	2
+nonvoluntary_ctxt_switches:	1

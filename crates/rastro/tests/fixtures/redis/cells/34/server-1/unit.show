@@ -1,5 +1,5 @@
-ExecStart={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf --requirepass cell-thirty-four-command-line ; ignore_errors=no ; start_time=[Tue 2026-10-06 14:52:07 UTC] ; stop_time=[n/a] ; pid=213381 ; code=(null) ; status=0/0 }
-ExecStartEx={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf --requirepass cell-thirty-four-command-line ; flags= ; start_time=[Tue 2026-10-06 14:52:07 UTC] ; stop_time=[n/a] ; pid=213381 ; code=(null) ; status=0/0 }
+ExecStart={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf --requirepass cell-thirty-four-command-line ; ignore_errors=no ; start_time=[Tue 2026-10-06 15:16:09 UTC] ; stop_time=[n/a] ; pid=244997 ; code=(null) ; status=0/0 }
+ExecStartEx={ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server /etc/redis/redis.conf --requirepass cell-thirty-four-command-line ; flags= ; start_time=[Tue 2026-10-06 15:16:09 UTC] ; stop_time=[n/a] ; pid=244997 ; code=(null) ; status=0/0 }
 ControlGroup=/system.slice/redis-server.service
 WorkingDirectory=
 RootDirectory=

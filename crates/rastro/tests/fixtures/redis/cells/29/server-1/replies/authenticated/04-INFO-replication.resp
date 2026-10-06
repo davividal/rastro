@@ -4,7 +4,7 @@ role:master
 connected_slaves:0
 replicas_waiting_psync:0
 master_failover_state:no-failover
-master_replid:55f59dbff9ac88d9c270d4bead17aa5855e8b56f
+master_replid:fe3358f9b9a99889e34a4cd49e857b446489fbf3
 master_replid2:0000000000000000000000000000000000000000
 master_repl_offset:0
 second_repl_offset:-1

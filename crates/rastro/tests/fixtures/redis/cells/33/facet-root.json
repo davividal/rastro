@@ -161,6 +161,12 @@
             ],
             "reading": "churns"
           },
+          "/var/lib/redis": {
+            "claimed_by": [
+              "redis:6379"
+            ],
+            "reading": "sealed"
+          },
           "/var/lib/systemd/random-seed": {
             "claimed_by": [
               "filesystem"
@@ -431,6 +437,7 @@
               "zset-max-ziplist-entries": "128",
               "zset-max-ziplist-value": "64"
             },
+            "unsupported": "redis 7.4.11 is not a release rastro supports, so it is read on a best-effort basis",
             "version": "7.4.11"
           }
         }

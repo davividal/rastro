@@ -141,6 +141,7 @@
             "replication": null,
             "server": "redis",
             "settings": null,
+            "unsupported": null,
             "version": null
           },
           "/usr/bin/redis-server 127.0.0.1:6381": {
@@ -154,6 +155,7 @@
             "replication": null,
             "server": "redis",
             "settings": null,
+            "unsupported": null,
             "version": null
           }
         }
