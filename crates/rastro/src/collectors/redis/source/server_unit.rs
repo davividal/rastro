@@ -31,6 +31,10 @@ const END_OF_OPTIONS: &str = "--";
 /// The option that sets the password on redis's command line.
 const REQUIREPASS_OPTION: &str = "--requirepass";
 
+/// The command-line options that change the default account other than by `requirepass`, which
+/// rastro does not replay: redis applies them after the file, so their presence is a refusal.
+const ACCOUNT_OPTIONS: [&str; 3] = ["--aclfile", "--user", "--include"];
+
 /// How a server was started, as far as finding its password needs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServerStart {
@@ -135,7 +139,7 @@ pub fn start_of(
         )));
     }
 
-    Ok(start_from(command.argv.as_str()))
+    start_from(command.argv.as_str())
 }
 
 /// The configuration file and any command-line password in a start command.
@@ -144,23 +148,43 @@ pub fn start_of(
 /// systemd prints the vector without its quoting, so a file whose path holds a space would be cut
 /// in two; redis takes its first argument as the file only when it does not start with `-`, and a
 /// cut path fails to open rather than opening something else.
-fn start_from(argv: &str) -> ServerStart {
+fn start_from(argv: &str) -> Result<ServerStart, CollectionError> {
     let words: Vec<&str> = argv.split_whitespace().collect();
+
+    if let Some(option) = words
+        .iter()
+        .find(|word| ACCOUNT_OPTIONS.contains(&word.to_ascii_lowercase().as_str()))
+    {
+        return Err(CollectionError::new(format!(
+            "the unit starts the server with {option}, which changes the default account in a way \
+             rastro does not replay"
+        )));
+    }
 
     let config_file = words
         .get(1)
         .filter(|word| !word.starts_with('-'))
         .map(PathBuf::from);
-    let password = words
-        .windows(2)
-        .filter(|pair| pair[0] == REQUIREPASS_OPTION)
-        .map(|pair| pair[1].to_owned())
-        .next_back();
+    let password = match words.iter().rposition(|word| *word == REQUIREPASS_OPTION) {
+        None => None,
+        // Only where the next word starts another option or ends the command: systemd prints
+        // the vector without its quoting, so a password holding a space would be cut.
+        Some(at) => match (words.get(at + 1), words.get(at + 2)) {
+            (Some(password), None) => Some((*password).to_owned()),
+            (Some(password), Some(next)) if next.starts_with("--") => Some((*password).to_owned()),
+            _ => {
+                return Err(CollectionError::new(format!(
+                    "the unit's {REQUIREPASS_OPTION} cannot be told apart from the words after it, \
+                     since systemd shows the command without its quoting"
+                )));
+            }
+        },
+    };
 
-    ServerStart {
+    Ok(ServerStart {
         config_file,
         password,
-    }
+    })
 }
 
 /// Whether a name is one systemd could have given a service, and nothing else.

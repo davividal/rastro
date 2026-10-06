@@ -480,3 +480,40 @@ fn a_users_own_unit_sharing_a_system_units_name_is_not_taken_for_it() {
     );
     assert!(auths(&server).is_empty());
 }
+
+#[test]
+fn a_command_line_option_that_changes_the_account_is_refused_rather_than_ignored() {
+    // Arrange: redis applies every `--option value` after the file, so `--aclfile` here would
+    // decide the password, and rastro does not replay it.
+    let server = FakeRedis::stock_with_password("auth-argv-aclfile", "hunter2", &[]);
+    let auth_box = auth_box(
+        "redis-auth-argv-aclfile",
+        &server,
+        "--aclfile /etc/redis/users.acl",
+    )
+    .configured("requirepass hunter2\n");
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let error = text(&field(&instance(&observation, &server), "error"));
+    assert!(error.contains("--aclfile"), "{error}");
+    assert!(auths(&server).is_empty());
+}
+
+#[test]
+fn a_command_line_password_systemd_shows_ambiguously_is_not_sent() {
+    // Arrange: systemd prints the vector without its quoting, so `--requirepass two words`
+    // cannot be told from a password `two` followed by a word that is not an option.
+    let server = FakeRedis::stock_with_password("auth-argv-spaced", "two words", &[]);
+    let auth_box = auth_box("redis-auth-argv-spaced", &server, "--requirepass two words");
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert: a cut password is a wrong one, and a wrong one is an `ACL LOG` entry.
+    let error = text(&field(&instance(&observation, &server), "error"));
+    assert!(error.contains("--requirepass"), "{error}");
+    assert!(auths(&server).is_empty());
+}
