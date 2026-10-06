@@ -23,6 +23,32 @@ pub enum Reply {
     Array(Vec<Reply>),
 }
 
+impl Reply {
+    /// The reply's shape in a word, for a refusal that must not quote what the server chose to say.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Reply::Simple(_) => "a status",
+            Reply::Error(_) => "an error",
+            Reply::Integer(_) => "an integer",
+            Reply::Bulk(_) => "text",
+            Reply::Nil => "nothing",
+            Reply::Array(_) => "a list",
+        }
+    }
+}
+
+/// The most of a server's own text quoted into a refusal.
+const MOST_QUOTED: usize = 200;
+
+/// A server's text, cut to a length a message can carry: what a reply says is the redis
+/// account's to choose, and a whole one does not belong in a refusal.
+pub fn shortened(text: &str) -> String {
+    match text.char_indices().nth(MOST_QUOTED) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text.to_owned(),
+    }
+}
+
 impl TryFrom<Value> for Reply {
     type Error = CollectionError;
 

@@ -11,6 +11,7 @@
 //! value most likely to hold a quote or a space, and reading it differently from the server means
 //! sending it a wrong password, which is an entry in its `ACL LOG`.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use rastro_collector::CollectionError;
@@ -34,7 +35,7 @@ const DEFAULT_USER: &str = "default";
 const MOST_FILES: usize = 64;
 
 /// What a configuration file says about the default account's password.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct PasswordDirectives {
     /// The last `requirepass`, where it sets one; `requirepass ""` clears an earlier one.
     pub requirepass: Option<String>,
@@ -44,6 +45,25 @@ pub struct PasswordDirectives {
 
     /// The ACL file, where one is named; the server then ignores `requirepass` entirely.
     pub acl_file: Option<PathBuf>,
+}
+
+/// Says which directives were found and never what they hold, so a `{:?}` in some later message
+/// cannot carry a password.
+impl fmt::Debug for PasswordDirectives {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PasswordDirectives")
+            .field(
+                "requirepass",
+                &self.requirepass.as_ref().map(|_| "<withheld>"),
+            )
+            .field(
+                "default_user",
+                &self.default_user.as_ref().map(|rules| rules.len()),
+            )
+            .field("acl_file", &self.acl_file)
+            .finish()
+    }
 }
 
 /// The password directives the file leaves the server with.

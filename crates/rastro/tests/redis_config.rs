@@ -114,3 +114,27 @@ fn an_unset_credential_is_shown_as_unset() {
     assert_eq!(masterauth.sensitivity(), Sensitivity::Public);
     assert_eq!(text(&masterauth), "");
 }
+
+#[test]
+fn a_setting_named_twice_is_refused() {
+    // Act: the server names each setting once, so a second is a misread reply.
+    let result = ConfigGet::parse(pairs(&[("save", ""), ("save", "60 1")]));
+
+    // Assert
+    assert!(result.is_err(), "{result:?}");
+}
+
+#[test]
+fn a_reply_of_the_wrong_shape_is_not_echoed_into_the_refusal() {
+    // Arrange: a bulk string where a list belongs, as large as the redis account likes.
+    let reply = Reply::Bulk("leaked ".repeat(10_000));
+
+    // Act
+    let error = ConfigGet::parse(reply)
+        .expect_err("a wrong shape")
+        .to_string();
+
+    // Assert: the kind is named, the content is not.
+    assert!(!error.contains("leaked"), "{error}");
+    assert!(error.len() < 300, "{}", error.len());
+}

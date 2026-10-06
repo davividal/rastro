@@ -2,6 +2,7 @@
 
 use rastro::collectors::redis::{ModuleList, Reply};
 use rastro_collector::Observation;
+use rastro_fingerprint::Sensitivity;
 
 mod support;
 
@@ -104,4 +105,22 @@ fn a_module_built_into_the_server_has_no_path() {
 
     // Assert: empty is not a file, so it is null like a path never reported.
     assert!(is_null(&field(&vectorset, "path")));
+}
+
+#[test]
+fn a_modules_arguments_are_sensitive() {
+    // Arrange: a module can take a password as a load argument, RediSearch documents one, and no
+    // value is judged by its name, as with a container's environment.
+    let reply = Reply::Array(vec![module(
+        "search",
+        21005,
+        "/usr/lib/redis/modules/redisearch.so",
+        &["OSS_GLOBAL_PASSWORD", "hunter2"],
+    )]);
+
+    // Act
+    let args = field(&field(&modules(reply), "search"), "args");
+
+    // Assert
+    assert_eq!(args.sensitivity(), Sensitivity::Sensitive);
 }

@@ -130,7 +130,8 @@ fn inet_listener_of(line: &str, is_ipv6: bool) -> Option<InetListener> {
 }
 
 fn unix_listener_of(line: &str) -> Option<UnixListener> {
-    let row = unix_columns(line.trim_end())?;
+    // `lines` has already taken the terminator; a path may itself end in a space.
+    let row = unix_columns(line)?;
     let flags = u32::from_str_radix(row.fields[UNIX_FLAGS], 16).ok()?;
 
     let accepts = flags & ACCEPT_CONNECTIONS != 0

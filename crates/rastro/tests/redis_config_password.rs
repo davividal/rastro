@@ -343,3 +343,18 @@ fn only_ascii_whitespace_separates_words() {
         Some("pass\u{a0}word".to_owned())
     );
 }
+
+#[test]
+fn the_directives_never_print_their_password() {
+    // Act
+    let directives = password_directives_in(&file_with(
+        "redis-pass-debug",
+        "requirepass printed-nowhere\nuser default on >also-nowhere\n",
+    ))
+    .expect("a readable file");
+
+    // Assert: a `{:?}` in some later message must not carry the password.
+    let printed = format!("{directives:?}");
+    assert!(!printed.contains("printed-nowhere"), "{printed}");
+    assert!(!printed.contains("also-nowhere"), "{printed}");
+}

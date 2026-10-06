@@ -22,7 +22,8 @@ impl ModuleList {
     pub fn parse(reply: Reply) -> Result<Modules, CollectionError> {
         let Reply::Array(entries) = reply else {
             return Err(misread(format!(
-                "answered with {reply:?} rather than a list"
+                "answered with {} rather than a list",
+                reply.kind()
             )));
         };
 

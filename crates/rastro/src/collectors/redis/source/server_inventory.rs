@@ -10,7 +10,7 @@ use super::info_replication::InfoReplication;
 use super::info_server::InfoServer;
 use super::installed_servers::InstalledServers;
 use super::module_list::ModuleList;
-use super::reply::Reply;
+use super::reply::{Reply, shortened};
 use super::resp_connection::RespConnection;
 use super::server_discovery::{DialTarget, DiscoveredServer, discover};
 use super::server_password::{Credential, password_for};
@@ -233,7 +233,8 @@ fn refusal_of(command: &[&str], reply: Reply) -> Result<Reply, CollectionError> 
             "the server requires a password, and none was given",
         )),
         Reply::Error(message) => Err(CollectionError::new(format!(
-            "the server refused {name}: {message}"
+            "the server refused {name}: {}",
+            shortened(&message)
         ))),
         reply => Ok(reply),
     }
@@ -254,8 +255,9 @@ fn text_of(command: &[&str], reply: Reply) -> Result<String, CollectionError> {
     match refusal_of(command, reply)? {
         Reply::Bulk(text) => Ok(text),
         other => Err(CollectionError::new(format!(
-            "the server answered {} with {other:?} rather than text",
-            command.join(" ")
+            "the server answered {} with {} rather than text",
+            command.join(" "),
+            other.kind()
         ))),
     }
 }

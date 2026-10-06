@@ -48,9 +48,12 @@ impl From<&Modules> for Observation {
                         "args",
                         match &module.args {
                             // A sequence: a module reads its arguments by position.
+                            // Sensitive whole: a module can take a password as a load argument,
+                            // RediSearch documents one, and no value is judged by its name.
                             Some(args) => Observation::sequence(
                                 args.iter().map(|arg| Observation::text(arg.as_str())),
-                            ),
+                            )
+                            .sensitive(),
                             None => Observation::null(),
                         },
                     ),

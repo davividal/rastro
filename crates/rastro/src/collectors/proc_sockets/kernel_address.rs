@@ -26,7 +26,7 @@ pub fn ipv4_of(hexadecimal: &str) -> Result<Ipv4Addr, CollectionError> {
 /// sixteen bytes instead produces a plausible and entirely wrong address, which is why this
 /// is word by word.
 pub fn ipv6_of(hexadecimal: &str) -> Result<Ipv6Addr, CollectionError> {
-    if hexadecimal.len() != 32 {
+    if hexadecimal.len() != 32 || !hexadecimal.is_ascii() {
         return Err(CollectionError::new(format!(
             "{hexadecimal:?} is not a 16-byte address, so the row was misread"
         )));

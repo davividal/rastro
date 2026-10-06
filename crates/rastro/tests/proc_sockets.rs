@@ -9,7 +9,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use rastro::collectors::proc_sockets::{SocketHolders, listening_inodes};
+use rastro::collectors::proc_sockets::{SocketHolders, ipv6_of, listening_inodes, unix_listeners};
 
 mod support;
 
@@ -221,4 +221,30 @@ fn readable() -> fs::Permissions {
     use std::os::unix::fs::PermissionsExt;
 
     fs::Permissions::from_mode(0o700)
+}
+
+#[test]
+fn an_address_that_is_not_ascii_hexadecimal_is_refused_rather_than_panicking() {
+    // Act: 32 bytes, with a character straddling an 8-byte word.
+    let result = ipv6_of(&format!("a{}a", "é".repeat(15)));
+
+    // Assert
+    assert!(result.is_err(), "{result:?}");
+}
+
+#[test]
+fn a_unix_socket_path_keeps_trailing_whitespace() {
+    // Arrange: a path may end in a space, and a trimmed one is a different socket.
+    let net = scratch_tree("proc-sockets-trailing-space", &["net"]).join("net");
+    write(
+        &net,
+        "unix",
+        "Num       RefCount Protocol Flags    Type St Inode Path\n0000000000000000: 00000002 00000000 00010000 0001 01 7001 /run/odd.sock \n",
+    );
+
+    // Act
+    let listeners = unix_listeners(&net).expect("a readable table");
+
+    // Assert
+    assert_eq!(listeners[0].path, "/run/odd.sock ");
 }

@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use rastro_collector::CollectionError;
 use redis::Parser;
 
-use super::reply::Reply;
+use super::reply::{Reply, shortened};
 use super::server_discovery::DialTarget;
 
 /// How long a server gets to accept a request or finish a reply.
@@ -51,9 +51,6 @@ const CONNECT_WITHIN: Duration = Duration::from_secs(1);
 /// The least a socket timeout is set to: zero means "never" to the kernel, and a deadline about to
 /// pass is the read's own business to notice.
 const SHORTEST_WAIT: Duration = Duration::from_millis(1);
-
-/// The most of a server's own text quoted into a refusal.
-const MOST_QUOTED: usize = 200;
 
 /// A socket to a server, over either of the two ways a server listens locally.
 #[derive(Debug)]
@@ -326,14 +323,5 @@ impl Read for Exchange<'_> {
             }
             Err(error) => Err(error),
         }
-    }
-}
-
-/// A server's text, cut to a length a message can carry: what a reply says is the redis
-/// account's to choose, and a whole one does not belong in a refusal.
-fn shortened(text: &str) -> String {
-    match text.char_indices().nth(MOST_QUOTED) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text.to_owned(),
     }
 }

@@ -20,7 +20,8 @@ impl ConfigGet {
     pub fn parse(reply: Reply) -> Result<Settings, CollectionError> {
         let Reply::Array(elements) = reply else {
             return Err(CollectionError::new(format!(
-                "the server answered CONFIG GET * with {reply:?} rather than a list of settings"
+                "the server answered CONFIG GET * with {} rather than a list of settings",
+                reply.kind()
             )));
         };
 
@@ -40,7 +41,14 @@ impl ConfigGet {
                 ));
             };
 
-            values.insert(SettingName::new(name)?, value);
+            let name = SettingName::new(name)?;
+            if values.contains_key(&name) {
+                return Err(CollectionError::new(format!(
+                    "the server's CONFIG GET * names {} twice, so it was misread",
+                    name.as_str()
+                )));
+            }
+            values.insert(name, value);
         }
 
         Ok(Settings { values })

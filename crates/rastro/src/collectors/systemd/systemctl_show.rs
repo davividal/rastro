@@ -75,7 +75,7 @@ fn parse_group(group: &str) -> Result<(UnitName, ShownUnit), CollectionError> {
         .ok_or_else(|| {
             CollectionError::new(format!(
                 "`systemctl show` printed a group with no {ID:?} line, so what it describes \
-                 cannot be named: {group:?}"
+                 cannot be named"
             ))
         })?;
 

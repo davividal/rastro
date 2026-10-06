@@ -26,7 +26,8 @@ impl AclList {
     pub fn parse(reply: Reply) -> Result<Accounts, CollectionError> {
         let Reply::Array(lines) = reply else {
             return Err(CollectionError::new(format!(
-                "the server answered ACL LIST with {reply:?} rather than a list of accounts"
+                "the server answered ACL LIST with {} rather than a list of accounts",
+                reply.kind()
             )));
         };
 

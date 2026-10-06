@@ -5,6 +5,7 @@
 //! password is; a server that answers freely needs neither and systemd is not bothered.
 
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -36,13 +37,24 @@ const REQUIREPASS_OPTION: &str = "--requirepass";
 const ACCOUNT_OPTIONS: [&str; 3] = ["--aclfile", "--user", "--include"];
 
 /// How a server was started, as far as finding its password needs.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct ServerStart {
     /// The configuration file, where the start command names one.
     pub config_file: Option<PathBuf>,
 
     /// A password given on the command line, which redis applies after the file.
     pub password: Option<String>,
+}
+
+/// Says whether a command-line password was found and never what it is.
+impl fmt::Debug for ServerStart {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServerStart")
+            .field("config_file", &self.config_file)
+            .field("password", &self.password.as_ref().map(|_| "<withheld>"))
+            .finish()
+    }
 }
 
 /// The service unit a process's cgroup names, and the cgroup itself.
