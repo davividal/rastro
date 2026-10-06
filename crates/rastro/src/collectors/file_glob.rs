@@ -143,16 +143,41 @@ fn matches(name: &OsStr, pattern: &str) -> bool {
 }
 
 /// `*` for any run of characters, `?` for exactly one, everything else itself.
+///
+/// **Iterative, in time the product of the two lengths at worst.** Trying every split for every
+/// star is exponential in the stars, and a pattern can come from a file another account owns, a
+/// redis `include` among them. A mismatch only ever resumes from the last star, one character
+/// further on, which is enough because a later star can absorb anything an earlier one could.
 fn wildcard_matches(name: &[char], pattern: &[char]) -> bool {
-    let Some((first, rest)) = pattern.split_first() else {
-        return name.is_empty();
-    };
+    let (mut at_name, mut at_pattern) = (0, 0);
+    let mut last_star: Option<(usize, usize)> = None;
 
-    match first {
-        '*' => (0..=name.len()).any(|taken| wildcard_matches(&name[taken..], rest)),
-        '?' => !name.is_empty() && wildcard_matches(&name[1..], rest),
-        expected => name
-            .split_first()
-            .is_some_and(|(actual, tail)| actual == expected && wildcard_matches(tail, rest)),
+    while at_name < name.len() {
+        match pattern.get(at_pattern) {
+            Some('*') => {
+                last_star = Some((at_pattern, at_name));
+                at_pattern += 1;
+            }
+            Some('?') => {
+                at_name += 1;
+                at_pattern += 1;
+            }
+            Some(expected) if *expected == name[at_name] => {
+                at_name += 1;
+                at_pattern += 1;
+            }
+            _ => match last_star {
+                Some((star, absorbed_from)) => {
+                    at_pattern = star + 1;
+                    at_name = absorbed_from + 1;
+                    last_star = Some((star, absorbed_from + 1));
+                }
+                None => return false,
+            },
+        }
     }
+
+    pattern[at_pattern..]
+        .iter()
+        .all(|remaining| *remaining == '*')
 }
