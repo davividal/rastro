@@ -12,8 +12,23 @@ use std::path::{Path, PathBuf};
 ///
 /// **The root is never it.** `dir ./` in a server started from `/` leaves the working directory at
 /// the root, and sealing that would seal the whole walk to hide one dump file.
+///
+/// **Only for a server in rastro's own mount namespace.** A redis in a container reports its
+/// working directory in its own namespace, `/data` measured, and sealed as it stands that would
+/// hide the host's `/data`. Where the two cannot be compared nothing is claimed either: the walk's
+/// default is the safe direction to be wrong in.
 pub fn data_directory_of(proc: &Path, process_id: u32) -> Option<PathBuf> {
-    let directory = fs::read_link(proc.join(process_id.to_string()).join("cwd")).ok()?;
+    let server = proc.join(process_id.to_string());
+    let theirs = fs::read_link(server.join(MOUNT_NAMESPACE)).ok()?;
+    let ours = fs::read_link(proc.join("self").join(MOUNT_NAMESPACE)).ok()?;
+    if theirs != ours {
+        return None;
+    }
+
+    let directory = fs::read_link(server.join("cwd")).ok()?;
 
     (directory.parent().is_some()).then_some(directory)
 }
+
+/// Where a process's mount namespace is linked from, relative to its `/proc` entry.
+const MOUNT_NAMESPACE: &str = "ns/mnt";

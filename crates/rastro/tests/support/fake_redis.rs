@@ -165,9 +165,18 @@ pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
         proc.join(pid).join("fd/3"),
     )
     .expect("a writable scratch symlink");
+    // Arrange: the server and rastro in one mount namespace, as a server on the host is.
+    for process in [pid, "self"] {
+        fs::create_dir_all(proc.join(process).join("ns")).expect("a writable scratch directory");
+        symlink(HOST_MOUNT_NAMESPACE, proc.join(process).join("ns/mnt"))
+            .expect("a writable scratch symlink");
+    }
 
     proc
 }
+
+/// The mount namespace a fixture's server and rastro share, as `/proc/<pid>/ns/mnt` names it.
+pub const HOST_MOUNT_NAMESPACE: &str = "mnt:[4026531841]";
 
 /// What a stock Debian 12 server answers to every read rastro makes, each override replacing or
 /// adding one command's answer.

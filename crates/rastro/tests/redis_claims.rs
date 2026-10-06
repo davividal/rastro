@@ -91,3 +91,17 @@ fn a_directory_is_still_sealed_when_its_instance_cannot_name_the_claim() {
     assert_eq!(claims.len(), 1, "{claims:?}");
     assert!(claims[0].qualifier().is_none());
 }
+
+#[test]
+fn a_server_in_another_mount_namespace_claims_nothing() {
+    // Arrange: measured, a redis in a container reports its working directory as `/data`, a path
+    // in its own mount namespace; sealed as it stands, it would hide the host's `/data`.
+    let data = scratch_tree("redis-claims-data-container", &["data"]).join("data");
+    let proc = with_working_directory("redis-claims-container", &data);
+    let link = proc.join(server_pid()).join("ns/mnt");
+    std::fs::remove_file(&link).expect("a removable fixture");
+    symlink("mnt:[4026532999]", &link).expect("a writable scratch symlink");
+
+    // Act & Assert: the walk's default is the safe direction to be wrong in.
+    assert!(claims_of(&proc).is_empty());
+}
