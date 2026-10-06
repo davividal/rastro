@@ -9,7 +9,7 @@ readonly PROCESS_FILES=(cmdline comm stat status cgroup mountinfo net/tcp net/tc
   cwd.link root.link exe.link ns/net.link ns/mnt.link ns/pid.link)
 readonly SERVER_FILES=(unit unit.show reach server replies.error replies.unauthenticated.error)
 readonly CELL_FILES=(server-count facet-root.json facet-unprivileged.json stderr-root.txt stderr-unprivileged.txt
-  exit-root exit-unprivileged host-netns.link host-mntns.link SETUP_FAILED)
+  exit-root exit-unprivileged host-netns.link host-mntns.link host-mountinfo SETUP_FAILED)
 
 export_server() {
   local server=$1 out=$2 file

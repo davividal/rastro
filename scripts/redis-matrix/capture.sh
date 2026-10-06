@@ -199,6 +199,7 @@ main() {
   { echo "cell $cell"; date -u +%FT%TZ; uname -a; } > "$out/meta.txt"
   readlink /proc/self/ns/net > "$out/host-netns.link"
   readlink /proc/self/ns/mnt > "$out/host-mntns.link"
+  cat /proc/self/mountinfo > "$out/host-mountinfo"
   # rastro reads the socket tables of its own namespace, which a container's server is not in.
   mkdir -p "$out/host-net"
   for table in tcp tcp6 unix; do cat "/proc/self/net/$table" > "$out/host-net/$table"; done
