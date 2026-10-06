@@ -408,9 +408,11 @@ cell_16() {
 cell_17() {
   # One module from the file, a second loaded at runtime.
   install_package 8.10.2 || return 1
+  # Since 7.0, `enable-module-command no` refuses `MODULE LOAD` unless the operator allows it.
   sed -i '/^loadmodule .*redistimeseries/d' "$CONF"
+  set_directive enable-module-command local
   restart_package || return 1
-  redis-cli MODULE LOAD /usr/lib/redis/modules/redistimeseries.so >/dev/null
+  redis-cli MODULE LOAD /usr/lib/redis/modules/redistimeseries.so | grep -qx OK || return 1
   package_env 17
   return 0
 }

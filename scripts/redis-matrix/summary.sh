@@ -27,7 +27,7 @@ for capture in /captures/redis/[0-9][0-9]; do
     noauth=$(head -c 40 "$server"/replies/unauthenticated/*.resp 2>/dev/null | tr -d '\r\n')
     echo "  $(basename "$server") comm=$(cat "$server/process/comm") unit=$(cat "$server/unit" 2>/dev/null || echo -)" \
       "name=$(field "$info" server_name) redis=$(field "$info" redis_version) valkey=$(field "$info" valkey_version)" \
-      "unauthenticated=[$noauth] acl_log_after=$(acl_entries "$server/cost/after/01-ACL-LOG.resp")" \
+      "unauthenticated=[$noauth] acl_log_after=$(acl_entries "$(ls "$server"/cost/after/*ACL-LOG.resp 2>/dev/null | head -1)")" \
       "log_lines_during=$(wc -l < "$server/cost/log-during-rastro.txt" 2>/dev/null || echo -)"
   done
 done
