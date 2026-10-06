@@ -6687,15 +6687,18 @@ grew without end, and fifteen files each including the next three times took 35 
 Every read goes through the reader the elasticsearch collector already had for the same finding,
 now shared: the path pinned without being opened, its type checked on the pin, a megabyte at most.
 A configuration is read to sixty-four files at most, includes and theirs together, which also
-stops a file including itself. An `include` pattern is refused once the directories it lists hold
-more than 1024 entries between them, found by review: every entry is listed before the file
-budget sees a match, in a directory the redis account can fill.
+stops a file including itself.
 
-**Nor is a file read for a server in another mount namespace**, found by review. A unit with
-`RootDirectory=` or a bind path names its configuration in the server's namespace, and the host's
-file at the same path, read and its password sent, is a failed `AUTH`. The data-directory claim
-already compared the namespaces; the password route now asks the same question. A password on the
-command line alone needs no file and is still used.
+**Every file is read inside the server's own root**, found by the matrix. A review had the
+password route refuse a server in another mount namespace, so that a unit with `RootDirectory=`
+or a container's paths would not be read on the host; the first capture showed the package's own
+unit sets `PrivateTmp=yes` and `ReadOnlyDirectories=/`, so every packaged server has a mount
+namespace of its own and the refusal stopped the most common install there is, cells 3 to 8, 15,
+18, 32 and 34. `/proc/<pid>/root` is where the server's paths mean what they meant to it, the rule
+the elasticsearch collector reads a node's files by, so the file, its `include`s and its ACL file
+are resolved there, symlinks included. An `include` pattern is listed there too, with a wildcard
+in its last component only, which is the drop-in directory every packaged layout uses, and its
+directory is listed to the 10 000 entries the shared reader allows.
 
 **What the command line hides from the replay is refused.** systemd shows the start command
 without its quoting, so `--requirepass two words` cannot be told from a password and a word; it is
@@ -6746,11 +6749,58 @@ Once a server has answered, its own `server_name` outranks `comm`: Debian's valk
 package installs a `redis-server` symlink, and the kernel records the name a process was started
 under.
 
-## No version floor
+## redis 8.0 to 8.10 and valkey 7.2 to 9.1 are supported, every other release best effort
 
-RabbitMQ has one because its reply shapes changed. `INFO` and `CONFIG GET` have not changed
-shape since redis 2, and the one command that is new, `ACL`, is asked only of 6.0 and later; on
-the field host's 5.0 the facet reports `acl: null` with no error and sends nothing to find out.
+Not because the replies differ: `INFO` and `CONFIG GET` have kept their shape, measured on every
+cell from 5.0 to 9.1, and every release is read by the same rules. Support says which releases
+rastro has measured and keeps measuring. From endoflife.date's API, rastro's source of
+truth for what to support, with one override by the maintainer: redis 8.0, 8.2, 8.4, 8.6, 8.8 and
+8.10, where endoflife.date also lists 7.4, 7.2 and 6.2 as maintained; valkey 7.2, 8.0, 8.1, 9.0 and
+9.1, every line it lists.
+
+Any other release is read with the same rules, so what the collector can handle appears and what
+it cannot is a refused item with its reason, and the instance is marked `unsupported`, carrying
+`Fidelity::Approximate` as an unsupported elasticsearch node does, which the run's summary on
+stderr counts. Nothing about an older release is an error. `ACL` is still asked only of 6.0 and
+later; on 5.0 the facet reports `acl: null` with no error and sends nothing to find out, measured
+on cell 35. The release is valkey's own `valkey_version` where `server_name` says valkey.
+
+## The redis matrix
+
+[`redis-matrix.md`](redis-matrix.md): 35 cells, captured on real servers by
+`scripts/redis-matrix/`, whose `/proc` side, units, files and replies are the fixtures the tests
+read (`crates/rastro/tests/fixtures/redis/cells`). The stock fake server the facet's tests use is
+cell 1, the redis.io package's 8.10, where it was a reply trimmed by hand from Debian 12's 7.0,
+which is now a best-effort release. Each `.resp` is kept byte for byte, `-text` in
+`.gitattributes`, since RESP ends every line with CRLF.
+
+**Measured on the second capture, with the collector the first one drove:** every password cell
+the route can serve authenticated, every refusal sent nothing, and the one cell whose password was
+rotated since start cost exactly one `ACL LOG` entry, the documented price. No other cell added an
+`ACL LOG` entry or a line to the server's log, except the TLS-only server, whose one line is the
+documented cost of a port the title cannot tell from a plain one.
+
+## A server in a container is read through its network namespace
+
+Decided by the maintainer: as elasticsearch reads a node. A server in a container listens only in
+its own network namespace, so its sockets are in that namespace's tables, read from
+`/proc/<pid>/net`, and not the host's. It is reached from a thread that joins the namespace, now a
+module both collectors share, and only for the connection, since a socket keeps the namespace it
+was made in. The join needs `CAP_SYS_ADMIN`, so an unprivileged run does not get that far: the
+server's descriptors are refused first, as for every other server. Measured on cells 23, 24, 26,
+30 and 31, each read in full as root; on cell 24, docker-proxy's socket on the host's port is not
+the server's and is not taken for it.
+
+**Only its TCP sockets are dialled.** A unix socket's path is the container's own root's, which a
+connection from the host would resolve on the host; such a socket is listed and not reached.
+
+**It has no route to its password.** No unit started it, its title names no file, and nothing on
+the host records the container's start command but the engine, which rastro does not ask: cell 25,
+a `requirepass` in a bind-mounted file, is refused with that reason and sent nothing.
+
+**Two servers sharing a port across namespaces** are keyed by the lowest address each holds on it,
+the rule for two on one box, so cell 31's host redis is `127.0.0.1:6379` and its valkey container
+`0.0.0.0:6379`, an address in the container's own namespace.
 
 ## What is not read, and what moves
 
@@ -6765,10 +6815,17 @@ touching this box.
 redis applies `dir` with `chdir` and answers `CONFIG GET dir` with `getcwd`, so `/proc/<pid>/cwd`
 is the directory without a connection, which matters in the claim phase. Sealed for the reason
 the PostgreSQL and RabbitMQ stores are. **Never `/`**: `dir ./` in a server started from the root
-would otherwise seal the whole walk to hide one dump. **And only in rastro's own mount
-namespace**: a redis in a container reports `/data`, measured, a path in its own namespace, and
-sealed as it stands it would hide the host's `/data`. Where the namespaces differ or cannot be
-compared, nothing is claimed, until a container's paths are mapped to the host's.
+would otherwise seal the whole walk to hide one dump.
+
+**The host's directory behind the path, by identity rather than by namespace**, found by the
+matrix. A review had sealed only a server in rastro's own mount namespace, so a container's `/data`
+would not seal the host's; the first capture showed every packaged server has a namespace of its
+own and so sealed none of them, elasticsearch's finding exactly. Its rule is now shared: the path
+inside the server's root and the host's are one directory, by device and inode, or the mount
+tables name the host directory of the volume or bind it is on. Measured: the package's
+`/var/lib/redis`, cell 16's `/data/redis` on its own volume, and cell 24's named volume under
+`/var/lib/docker/volumes`. A directory in a container's own image, cell 23's `/data` since redis
+8.10's image declares no volume, is the containers facet's to account for and is not claimed.
 
 ## The live check runs after the suite, not in it
 
@@ -6784,11 +6841,12 @@ containers it never starts, which the Debian image's `policy-rc.d` was measured 
 - **Cluster and Sentinel topology.** `mode` is recorded; `CLUSTER NODES` and `SENTINEL MASTERS`
   are reads of many boxes, and a `redis-server --sentinel` is named and not read.
 - **A server no systemd unit started has no route to its password**, even with its file readable:
-  the file is found through the unit, and a hand-started server or one under another supervisor
-  is reported as unreachable rather than matched to a file by guesswork.
-- **A box running only `redis-sentinel` reports the facet `absent`.** Discovery matches
-  `redis-server` and `valkey-server`, so a sentinel is not recognised at all, rather than
-  recognised and left unwalked.
+  the file is found through the unit, and a hand-started server, one under another supervisor or
+  one in a container is reported as unreachable rather than matched to a file by guesswork.
+- **A `redis-sentinel` process is not an instance.** Discovery matches `redis-server` and
+  `valkey-server`, so a sentinel is not recognised at all, rather than recognised and left
+  unwalked. Measured on cell 22, the sentinel package installs the server too, so the facet is
+  present with the server installed and no instances.
 - **An unprivileged route to the password.** Debian's file is 0640 `redis:redis`, and dropping to
   that account the way `postgresql` runs `psql` is owed rather than built.
 - **TLS.** No socket is spoken to in TLS; a server reachable only on its TLS port is a failed read.

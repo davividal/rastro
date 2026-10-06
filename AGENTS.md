@@ -201,7 +201,8 @@ credential, to have a directory sealed, or to be read many times over, is a fals
 whatever it then leads to: it is someone with access to the server masquerading inside it.
 
 **2. Is the reading right?** Correctness is bounded by the envelope each collector declares in
-`docs/decisions.md` (and, for Elasticsearch, `docs/elasticsearch-matrix.md`): its supported releases,
+`docs/decisions.md` (and, for Elasticsearch and redis, `docs/elasticsearch-matrix.md` and
+`docs/redis-matrix.md`): its supported releases,
 shapes and accepted gaps.
 
 - **P1:** a supported shape read wrongly; two runs of an unchanged box that differ; a failure
