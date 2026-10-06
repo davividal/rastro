@@ -23,6 +23,7 @@ pub mod modules;
 pub mod mount_table;
 pub mod mounts;
 pub mod network;
+pub mod network_namespace;
 pub mod nginx;
 pub mod packages;
 pub mod pam;
