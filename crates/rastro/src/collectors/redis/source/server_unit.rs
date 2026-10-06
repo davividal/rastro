@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use rastro_collector::CollectionError;
 
 use crate::collectors::canonical_tool::CanonicalTool;
+use crate::collectors::redis::value_objects::ServerKind;
 use crate::collectors::systemd::systemctl_show;
 
 /// The suffix of the one kind of unit that runs a daemon.
@@ -77,6 +78,20 @@ pub fn start_of(systemctl: &CanonicalTool, unit: &str) -> Result<ServerStart, Co
         .next()
         .and_then(|shown_unit| shown_unit.exec_start.into_iter().next())
         .ok_or_else(|| CollectionError::new(format!("systemd shows no ExecStart for {unit}")))?;
+
+    // The unit enclosing a process is not always the one that started it: measured on GitHub's
+    // runner, a redis a job starts runs in `hosted-compute-agent.service`.
+    let program = Path::new(command.executable.as_str())
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if ServerKind::from_program(program).is_none() {
+        return Err(CollectionError::new(format!(
+            "{unit} encloses the server, but its start command runs {}, which does not start a \
+             redis server, so it is not the unit that started this one",
+            command.executable.as_str()
+        )));
+    }
 
     Ok(start_from(command.argv.as_str()))
 }

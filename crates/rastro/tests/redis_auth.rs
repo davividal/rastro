@@ -46,8 +46,13 @@ impl AuthBox {
     /// A `systemctl` that shows the unit starting the server with `arguments`, and records how
     /// it was asked.
     fn with_unit(self, arguments: &str) -> Self {
+        self.with_unit_running("/usr/bin/redis-server", arguments)
+    }
+
+    /// A unit whose start command runs `program`, which need not be a redis server.
+    fn with_unit_running(self, program: &str, arguments: &str) -> Self {
         let dump = format!(
-            "ExecStartEx={{ path=/usr/bin/redis-server ; argv[]=/usr/bin/redis-server {arguments} ; flags= ; pid=0 }}\nId=redis-server.service\n"
+            "ExecStartEx={{ path={program} ; argv[]={program} {arguments} ; flags= ; pid=0 }}\nId=redis-server.service\n"
         );
         fs::write(self.bin.join("dump"), dump).expect("a writable fixture");
 
@@ -412,4 +417,27 @@ fn a_refused_password_is_named_as_changed_since_the_server_started() {
         error.contains("changed since the server started"),
         "{error}"
     );
+}
+
+#[test]
+fn a_unit_that_starts_something_else_is_not_taken_for_the_servers() {
+    // Arrange: measured on GitHub's runner, a redis started by a job runs in the job agent's
+    // cgroup, `hosted-compute-agent.service`, so the enclosing unit is not the one that
+    // started redis; a cron job or another service's script does the same.
+    let server = FakeRedis::stock_with_password("auth-foreign-unit", "hunter2", &[]);
+    let auth_box = auth_box("redis-auth-foreign-unit", &server, "")
+        .configured("requirepass hunter2\n")
+        .in_cgroup("0::/system.slice/hosted-compute-agent.service\n");
+    let config = auth_box.config.display().to_string();
+    let auth_box = auth_box.with_unit_running("/opt/runner/agent", &config);
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert: the file the other unit names is never read as redis's, nothing is sent, and
+    // the reason names the unit.
+    let error = text(&field(&instance(&observation, &server), "error"));
+    assert!(error.contains("hosted-compute-agent.service"), "{error}");
+    assert!(error.contains("does not start a redis server"), "{error}");
+    assert!(auths(&server).is_empty());
 }

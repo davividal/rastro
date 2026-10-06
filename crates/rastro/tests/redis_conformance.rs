@@ -14,12 +14,12 @@
 //! suite, so the unprivileged half of the container suite reads a server it owns.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rastro::collectors::redis::{InstalledServers, RedisCollector};
+use rastro::collectors::redis::RedisCollector;
 use rastro_collector::{ClaimedReading, Collector, Observation};
 use rastro_fingerprint::Sensitivity;
 
@@ -123,8 +123,12 @@ impl Drop for LiveServer {
     }
 }
 
+/// The collector as a run builds it, `systemctl` included where the box has one.
+///
+/// Measured on GitHub's runner: a server this test starts runs in the job agent's own unit, and
+/// only a collector that asks systemd sees that unit is not the server's.
 fn collector() -> RedisCollector {
-    RedisCollector::reading(InstalledServers::located(), Path::new("/proc"))
+    RedisCollector::new()
 }
 
 /// The instance this test's server is, among whatever else runs on the box.

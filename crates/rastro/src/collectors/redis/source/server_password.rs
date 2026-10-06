@@ -44,11 +44,8 @@ pub fn password_for(
             "the server requires a password, and there is no systemctl to ask how {unit} starts it"
         )
     })?;
-    let start = start_of(systemctl, &unit).map_err(|error| {
-        format!(
-            "the server requires a password, and how {unit} starts it could not be read: {error}"
-        )
-    })?;
+    let start = start_of(systemctl, &unit)
+        .map_err(|error| format!("the server requires a password, and {error}"))?;
 
     let file = start.config_file;
     if file.is_none() && start.password.is_none() {

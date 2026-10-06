@@ -6647,6 +6647,14 @@ started, which is itself the finding, and that is the one refusal left to cost a
 **A unit name from a cgroup is refused unless it is a plain service name**, and is passed after
 `--`: it is the one argument to `systemctl` rastro did not write.
 
+**The enclosing unit is believed only when its start command runs a redis server.** A process
+runs in the cgroup of whatever started it, which is not always a unit of its own: measured on
+GitHub's runner, a redis a job starts runs in `hosted-compute-agent.service`, and a cron job or
+another service's script does the same. Taken at its word, that unit's first argument would have
+been read as redis's configuration, as root, and a password in it sent. So a unit whose
+`ExecStart` runs anything but `redis-server` or `valkey-server` is named in the instance's error
+and nothing more is read.
+
 ## Credentials are carried and marked sensitive, the verifier included
 
 `requirepass`, `masterauth` and the two TLS key passphrases arrive in plain text from
