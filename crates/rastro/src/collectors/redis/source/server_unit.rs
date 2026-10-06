@@ -41,6 +41,16 @@ pub struct ServerStart {
     pub password: Option<String>,
 }
 
+/// The service unit a process's cgroup names, and the cgroup itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerCgroup {
+    pub unit: String,
+
+    /// The process's cgroup path, `/system.slice/redis-server.service`, which systemd's own
+    /// `ControlGroup` for the unit has to match before the unit is believed.
+    pub path: String,
+}
+
 /// The service unit a process runs in, from its cgroup.
 ///
 /// **From the kernel's record rather than by asking systemd which unit owns a pid**, because the
@@ -50,18 +60,25 @@ pub struct ServerStart {
 ///
 /// **Refused unless it is a plain service name**, since it becomes an argument to `systemctl`
 /// and every other argument rastro passes is a literal an author wrote.
-pub fn unit_of(proc: &Path, process_id: u32) -> Result<String, String> {
+pub fn unit_of(proc: &Path, process_id: u32) -> Result<ServerCgroup, String> {
     let cgroup = fs::read_to_string(proc.join(process_id.to_string()).join("cgroup"))
         .map_err(|error| format!("its cgroup could not be read ({error})"))?;
 
-    let unit = cgroup
+    // `hierarchy:controllers:path`, and the path may hold a colon of its own.
+    let (unit, path) = cgroup
         .lines()
-        .filter_map(|line| line.rsplit('/').next())
-        .find(|component| component.ends_with(SERVICE))
+        .filter_map(|line| line.splitn(3, ':').nth(2))
+        .find_map(|path| {
+            let unit = path.rsplit('/').next()?;
+            unit.ends_with(SERVICE).then_some((unit, path))
+        })
         .ok_or_else(|| "it does not run in a systemd service unit".to_owned())?;
 
     match is_plain_unit_name(unit) {
-        true => Ok(unit.to_owned()),
+        true => Ok(ServerCgroup {
+            unit: unit.to_owned(),
+            path: path.to_owned(),
+        }),
         false => Err(format!(
             "its cgroup names {unit:?}, which is not a unit name rastro will pass to systemctl"
         )),
@@ -69,7 +86,31 @@ pub fn unit_of(proc: &Path, process_id: u32) -> Result<String, String> {
 }
 
 /// How `unit` starts the server, as systemd resolved it.
-pub fn start_of(systemctl: &CanonicalTool, unit: &str) -> Result<ServerStart, CollectionError> {
+///
+/// **Only once systemd puts the unit in the server's own cgroup.** The last component of a
+/// cgroup path is a name anybody's user manager can also give a unit:
+/// `user@1000.service/app.slice/redis-server.service` names the system unit too, whose file holds
+/// the system server's password.
+pub fn start_of(
+    systemctl: &CanonicalTool,
+    cgroup: &ServerCgroup,
+) -> Result<ServerStart, CollectionError> {
+    let unit = cgroup.unit.as_str();
+    let group = systemctl.run(&[
+        "show",
+        "--property=ControlGroup",
+        "--value",
+        "--no-pager",
+        END_OF_OPTIONS,
+        unit,
+    ])?;
+    if group.trim_end() != cgroup.path {
+        return Err(CollectionError::new(format!(
+            "its cgroup is named like {unit}, but it does not run in {unit}, which systemd keeps \
+             in another cgroup"
+        )));
+    }
+
     let mut arguments = SHOW.to_vec();
     arguments.extend([END_OF_OPTIONS, unit]);
 

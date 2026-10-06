@@ -56,6 +56,13 @@ impl AuthBox {
         );
         fs::write(self.bin.join("dump"), dump).expect("a writable fixture");
 
+        self.with_control_group("/system.slice/redis-server.service")
+    }
+
+    /// The cgroup systemd says the unit runs in, which the server's own must match.
+    fn with_control_group(self, path: &str) -> Self {
+        fs::write(self.bin.join("control_group"), format!("{path}\n")).expect("a writable fixture");
+
         self
     }
 
@@ -64,9 +71,10 @@ impl AuthBox {
             &self.bin,
             "systemctl",
             &format!(
-                "#!/bin/sh\necho \"$@\" >> {log}\ncat {dump}\n",
+                "#!/bin/sh\necho \"$@\" >> {log}\ncase \"$*\" in\n  *--property=ControlGroup*) cat {group} ;;\n  *) cat {dump} ;;\nesac\n",
                 log = self.systemctl_log.display(),
-                dump = self.bin.join("dump").display()
+                dump = self.bin.join("dump").display(),
+                group = self.bin.join("control_group").display()
             ),
         );
 
@@ -276,16 +284,21 @@ fn systemd_is_asked_about_the_servers_own_unit_and_nothing_else() {
     let server = FakeRedis::stock_with_password("auth-template", "hunter2", &[]);
     let auth_box = auth_box("redis-auth-template", &server, "")
         .configured("requirepass hunter2\n")
-        .in_cgroup("0::/system.slice/system-redis\\x2dserver.slice/redis-server@cache.service\n");
+        .in_cgroup("0::/system.slice/system-redis\\x2dserver.slice/redis-server@cache.service\n")
+        .with_control_group(
+            "/system.slice/system-redis\\x2dserver.slice/redis-server@cache.service",
+        );
 
     // Act
     read(&auth_box);
 
     // Assert
     let calls = auth_box.systemctl_calls();
-    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(!calls.is_empty());
     assert!(
-        calls[0].ends_with("-- redis-server@cache.service"),
+        calls
+            .iter()
+            .all(|call| call.ends_with("-- redis-server@cache.service")),
         "{calls:?}"
     );
 }
@@ -429,7 +442,9 @@ fn a_unit_that_starts_something_else_is_not_taken_for_the_servers() {
         .configured("requirepass hunter2\n")
         .in_cgroup("0::/system.slice/hosted-compute-agent.service\n");
     let config = auth_box.config.display().to_string();
-    let auth_box = auth_box.with_unit_running("/opt/runner/agent", &config);
+    let auth_box = auth_box
+        .with_unit_running("/opt/runner/agent", &config)
+        .with_control_group("/system.slice/hosted-compute-agent.service");
 
     // Act
     let observation = read(&auth_box);
@@ -439,5 +454,29 @@ fn a_unit_that_starts_something_else_is_not_taken_for_the_servers() {
     let error = text(&field(&instance(&observation, &server), "error"));
     assert!(error.contains("hosted-compute-agent.service"), "{error}");
     assert!(error.contains("does not start a redis server"), "{error}");
+    assert!(auths(&server).is_empty());
+}
+
+#[test]
+fn a_users_own_unit_sharing_a_system_units_name_is_not_taken_for_it() {
+    // Arrange: a redis under the user manager, in a unit the user called `redis-server.service`.
+    // The last component of its cgroup names the system unit too, whose file holds the system
+    // server's password.
+    let server = FakeRedis::stock_with_password("auth-user-unit", "hunter2", &[]);
+    let auth_box = auth_box("redis-auth-user-unit", &server, "")
+        .configured("requirepass hunter2\n")
+        .in_cgroup(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/redis-server.service\n",
+        );
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert: systemd's own cgroup for the unit is not the server's, so its file is not read.
+    let error = text(&field(&instance(&observation, &server), "error"));
+    assert!(
+        error.contains("does not run in redis-server.service"),
+        "{error}"
+    );
     assert!(auths(&server).is_empty());
 }

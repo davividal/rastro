@@ -34,4 +34,4 @@ pub use resp_connection::{RespConnection, ServerStream};
 pub use server_discovery::{DialTarget, DiscoveredServer, discover};
 pub use server_inventory::read_installation;
 pub use server_password::{Credential, password_for};
-pub use server_unit::{ServerStart, start_of, unit_of};
+pub use server_unit::{ServerCgroup, ServerStart, start_of, unit_of};

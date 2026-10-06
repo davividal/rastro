@@ -33,7 +33,7 @@ pub fn password_for(
     process_id: u32,
     systemctl: Option<&CanonicalTool>,
 ) -> Result<Credential, String> {
-    let unit = unit_of(proc, process_id).map_err(|reason| {
+    let cgroup = unit_of(proc, process_id).map_err(|reason| {
         format!(
             "the server requires a password, and {reason}, so which file it was started with is \
              unknown"
@@ -41,11 +41,13 @@ pub fn password_for(
     })?;
     let systemctl = systemctl.ok_or_else(|| {
         format!(
-            "the server requires a password, and there is no systemctl to ask how {unit} starts it"
+            "the server requires a password, and there is no systemctl to ask how {} starts it",
+            cgroup.unit
         )
     })?;
-    let start = start_of(systemctl, &unit)
+    let start = start_of(systemctl, &cgroup)
         .map_err(|error| format!("the server requires a password, and {error}"))?;
+    let unit = cgroup.unit.as_str();
 
     let file = start.config_file;
     if file.is_none() && start.password.is_none() {
