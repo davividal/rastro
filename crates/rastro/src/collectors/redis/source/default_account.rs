@@ -87,7 +87,8 @@ fn account_from(rules: &[String]) -> Account {
     let mut account = Account::default();
 
     for rule in rules {
-        match rule.as_str() {
+        // Rule words are case-insensitive in redis, measured; a password rule is not lowercased.
+        match rule.to_ascii_lowercase().as_str() {
             "on" => account.enabled = true,
             "off" => account.enabled = false,
             "nopass" => {

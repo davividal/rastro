@@ -325,3 +325,21 @@ fn includes_that_fan_out_stop_at_a_total_budget() {
     assert!(error.contains("files"), "{error}");
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
 }
+
+#[test]
+fn a_backslash_x_without_two_hex_digits_is_the_letter_x() {
+    // Act & Assert: measured, redis takes `"a\xzb"` as `axzb`.
+    assert_eq!(
+        password_in("redis-pass-x-literal", "requirepass \"a\\xzb\"\n"),
+        Some("axzb".to_owned())
+    );
+}
+
+#[test]
+fn only_ascii_whitespace_separates_words() {
+    // Act & Assert: redis splits on C `isspace`, so a non-breaking space is part of the word.
+    assert_eq!(
+        password_in("redis-pass-nbsp", "requirepass pass\u{a0}word\n"),
+        Some("pass\u{a0}word".to_owned())
+    );
+}

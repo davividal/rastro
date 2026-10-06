@@ -136,3 +136,14 @@ fn a_removed_hash_takes_its_password_with_it() {
     // Assert
     assert!(refusal.contains("no password at all"), "{refusal}");
 }
+
+#[test]
+fn rule_words_are_read_whatever_their_case() {
+    // Act & Assert: measured on redis 8 and valkey 9.1, `ON` switches the account on.
+    assert_eq!(
+        password_for_default_account(None, Some(&rules("ON >hunter2 ~* +@all"))),
+        Ok("hunter2".to_owned())
+    );
+    let refusal = refusal(None, "on >hunter2 NoPass");
+    assert!(refusal.contains("without a password"), "{refusal}");
+}

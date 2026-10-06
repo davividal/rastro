@@ -215,7 +215,7 @@ fn split_arguments(line: &str) -> Option<Vec<String>> {
 
     loop {
         while characters
-            .next_if(|character| character.is_whitespace())
+            .next_if(|character| is_c_space(*character))
             .is_some()
         {}
         if characters.peek().is_none() {
@@ -226,16 +226,16 @@ fn split_arguments(line: &str) -> Option<Vec<String>> {
         loop {
             match characters.next() {
                 None => break,
-                Some(character) if character.is_whitespace() => break,
+                Some(character) if is_c_space(character) => break,
                 Some('"') => {
                     double_quoted(&mut characters, &mut argument)?;
-                    if characters.peek().is_some_and(|next| !next.is_whitespace()) {
+                    if characters.peek().is_some_and(|next| !is_c_space(*next)) {
                         return None;
                     }
                 }
                 Some('\'') => {
                     single_quoted(&mut characters, &mut argument)?;
-                    if characters.peek().is_some_and(|next| !next.is_whitespace()) {
+                    if characters.peek().is_some_and(|next| !is_c_space(*next)) {
                         return None;
                     }
                 }
@@ -245,6 +245,12 @@ fn split_arguments(line: &str) -> Option<Vec<String>> {
 
         arguments.push(argument);
     }
+}
+
+/// Whether a character separates words, as C's `isspace` decides it in redis: ASCII only, so a
+/// non-breaking space inside a password stays inside it.
+fn is_c_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}')
 }
 
 fn double_quoted(
@@ -257,11 +263,21 @@ fn double_quoted(
             '\\' => match characters.next()? {
                 // A byte above 0x7F is a raw byte to redis and would go out as two in UTF-8,
                 // which is a wrong password, so it is refused rather than approximated.
+                // `\x` takes two hex digits, and without them is the letter `x`, as in redis.
                 'x' => {
-                    let high = characters.next()?.to_digit(16)?;
-                    let low = characters.next()?.to_digit(16)?;
-                    let byte = u8::try_from(high * 16 + low).ok().filter(u8::is_ascii)?;
-                    argument.push(char::from(byte));
+                    let mut ahead = characters.clone();
+                    match (
+                        ahead.next().and_then(|digit| digit.to_digit(16)),
+                        ahead.next().and_then(|digit| digit.to_digit(16)),
+                    ) {
+                        (Some(high), Some(low)) => {
+                            characters.next();
+                            characters.next();
+                            let byte = u8::try_from(high * 16 + low).ok().filter(u8::is_ascii)?;
+                            argument.push(char::from(byte));
+                        }
+                        _ => argument.push('x'),
+                    }
                 }
                 'n' => argument.push('\n'),
                 'r' => argument.push('\r'),
