@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sends RESP2 commands to one server and keeps each raw reply, byte for byte.
 
-Usage: resp.py (--unix PATH | --tcp PORT) [--password-file FILE] OUT COMMAND...
+Usage: resp.py (--unix PID | --tcp PORT) [--password-file FILE] OUT COMMAND...
 Each COMMAND is one string, split on spaces; its reply is written to OUT/<n>-<command>.resp.
 `AUTH` is sent first where a password file is given, and its reply kept like any other.
 
@@ -12,7 +12,6 @@ process's own root, writes under /captures and passwords from /root/cells.
 import argparse
 import os
 import pathlib
-import re
 import socket
 import sys
 
@@ -20,8 +19,17 @@ DEADLINE_SECONDS = 10
 LOOPBACK = "127.0.0.1"
 CAPTURES = "/captures/"
 CELLS = "/root/cells/"
-# A server's socket, reached through its own root so a container's path means its own.
-SOCKET_IN_A_ROOT = re.compile(r"/proc/\d+/root/[A-Za-z0-9._/-]+")
+LISTENING = "00010000"
+
+
+def listening_socket_of(pid):
+    """The unix socket the process listens on, through its own root, from the kernel's tables."""
+    held = {os.readlink(f"/proc/{pid}/fd/{fd}") for fd in os.listdir(f"/proc/{pid}/fd")}
+    with open(f"/proc/{pid}/net/unix") as table:
+        rows = [line.split() for line in table]
+    path = next(row[7] for row in rows if len(row) == 8 and row[3] == LISTENING
+                and f"socket:[{row[6]}]" in held)
+    return f"/proc/{pid}/root{path}"
 
 
 def inside(path, directory):
@@ -81,7 +89,7 @@ class Reader:
 def main():
     parser = argparse.ArgumentParser()
     target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--unix")
+    target.add_argument("--unix", type=int, metavar="PID")
     target.add_argument("--tcp", type=int, metavar="PORT")
     parser.add_argument("--password-file")
     parser.add_argument("out")
@@ -89,11 +97,9 @@ def main():
     arguments = parser.parse_args()
 
     if arguments.unix:
-        if not SOCKET_IN_A_ROOT.fullmatch(arguments.unix) or ".." in arguments.unix:
-            raise SystemExit(f"{arguments.unix} is not a socket inside a process's root")
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(DEADLINE_SECONDS)
-        sock.connect(arguments.unix)
+        sock.connect(listening_socket_of(arguments.unix))
     else:
         sock = socket.create_connection((LOOPBACK, arguments.tcp), timeout=DEADLINE_SECONDS)
 

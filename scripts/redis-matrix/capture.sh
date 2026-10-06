@@ -77,7 +77,7 @@ copy_files() {
 client_for() {
   local pid=$1 reach=$2
   case "$reach" in
-    unix:*) echo "python3 /root/resp.py --unix /proc/$pid/root${reach#unix:}" ;;
+    unix:*) echo "python3 /root/resp.py --unix $pid" ;;
     tcp:*) echo "nsenter -t $pid -n python3 /root/resp.py --tcp ${reach#tcp:}" ;;
   esac
   return 0
