@@ -29,6 +29,9 @@ const SHOW: [&str; 4] = [
 /// What separates options from the unit name, so a name can never be read as an option.
 const END_OF_OPTIONS: &str = "--";
 
+/// What every option on redis's command line starts with.
+const OPTION_PREFIX: &str = "--";
+
 /// The option that sets the password on redis's command line.
 const REQUIREPASS_OPTION: &str = "--requirepass";
 
@@ -156,10 +159,10 @@ pub fn start_of(
 
 /// The configuration file and any command-line password in a start command.
 ///
-/// **Split on whitespace, which is only safe because redis's own rule is refutable by it.**
-/// systemd prints the vector without its quoting, so a file whose path holds a space would be cut
-/// in two; redis takes its first argument as the file only when it does not start with `-`, and a
-/// cut path fails to open rather than opening something else.
+/// **Split on whitespace, and believed only where nothing can have been cut.** systemd prints the
+/// vector without its quoting, so a file whose path holds a space is cut in two, and the cut
+/// prefix can itself be a file; redis takes its first argument as the file only when it does not
+/// start with `-`, so the file is believed only where the word after it is an option or nothing.
 fn start_from(argv: &str) -> Result<ServerStart, CollectionError> {
     let words: Vec<&str> = argv.split_whitespace().collect();
 
@@ -177,13 +180,27 @@ fn start_from(argv: &str) -> Result<ServerStart, CollectionError> {
         .get(1)
         .filter(|word| !word.starts_with('-'))
         .map(PathBuf::from);
+    // Only where the word after it starts an option or ends the command, found by review: a cut
+    // path's prefix can itself be a file, and its password would be sent.
+    if config_file.is_some()
+        && words
+            .get(2)
+            .is_some_and(|next| !next.starts_with(OPTION_PREFIX))
+    {
+        return Err(CollectionError::new(
+            "the unit's configuration file cannot be told apart from the words after it, since \
+             systemd shows the command without its quoting",
+        ));
+    }
     let password = match words.iter().rposition(|word| *word == REQUIREPASS_OPTION) {
         None => None,
         // Only where the next word starts another option or ends the command: systemd prints
         // the vector without its quoting, so a password holding a space would be cut.
         Some(at) => match (words.get(at + 1), words.get(at + 2)) {
             (Some(password), None) => Some((*password).to_owned()),
-            (Some(password), Some(next)) if next.starts_with("--") => Some((*password).to_owned()),
+            (Some(password), Some(next)) if next.starts_with(OPTION_PREFIX) => {
+                Some((*password).to_owned())
+            }
             _ => {
                 return Err(CollectionError::new(format!(
                     "the unit's {REQUIREPASS_OPTION} cannot be told apart from the words after it, \

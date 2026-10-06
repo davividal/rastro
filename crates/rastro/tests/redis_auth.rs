@@ -548,3 +548,23 @@ fn a_command_line_password_systemd_shows_ambiguously_is_not_sent() {
     assert!(error.contains("--requirepass"), "{error}");
     assert!(auths(&server).is_empty());
 }
+
+#[test]
+fn a_configuration_path_systemd_shows_ambiguously_is_not_read() {
+    // Arrange: systemd prints `/opt/cache prod/redis.conf` without its quoting, and the cut prefix
+    // `/opt/cache` is itself a regular file, so reading it would send its password, not the one
+    // the server was started with.
+    let server = FakeRedis::stock_with_password("auth-argv-spaced-file", "hunter2", &[]);
+    let auth_box = auth_box("redis-auth-argv-spaced-file", &server, "");
+    let directory = auth_box.config.parent().expect("a parent").to_path_buf();
+    write(&directory, "cache", "requirepass hunter2\n");
+    let auth_box = auth_box.with_unit(&format!("{}/cache prod/redis.conf", directory.display()));
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let error = text(&field(&instance(&observation, &server), "error"));
+    assert!(error.contains("cannot be told apart"), "{error}");
+    assert!(auths(&server).is_empty());
+}
