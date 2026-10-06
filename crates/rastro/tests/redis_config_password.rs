@@ -254,3 +254,74 @@ fn an_acl_file_declaring_the_default_account_twice_is_refused() {
     // Assert
     assert!(result.is_err(), "{result:?}");
 }
+
+#[test]
+fn a_fifo_where_the_file_should_be_is_refused_rather_than_waited_on() {
+    // Arrange: the file is the redis account's, so a FIFO is its to put there; opened for
+    // reading as it stands, it blocks until a writer appears, which is never.
+    let root = scratch_tree("redis-pass-fifo", &[]);
+    let fifo = root.join("redis.conf");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+
+    // Act
+    let result = password_directives_in(&fifo);
+
+    // Assert
+    let error = result.expect_err("a FIFO").to_string();
+    assert!(error.contains("not a regular file"), "{error}");
+}
+
+#[test]
+fn a_device_where_an_include_should_be_is_refused() {
+    // Act: `/dev/zero` never ends, and read whole it grows without end.
+    let result = password_directives_in(&file_with(
+        "redis-pass-device",
+        "include /dev/zero\nrequirepass hunter2\n",
+    ));
+
+    // Assert
+    let error = result.expect_err("a device").to_string();
+    assert!(error.contains("not a regular file"), "{error}");
+}
+
+#[test]
+fn a_file_past_the_size_bound_is_refused() {
+    // Act
+    let result = password_directives_in(&file_with(
+        "redis-pass-huge",
+        &"# padding\n".repeat(120_000),
+    ));
+
+    // Assert
+    let error = result.expect_err("a huge file").to_string();
+    assert!(error.contains("larger than"), "{error}");
+}
+
+#[test]
+fn includes_that_fan_out_stop_at_a_total_budget() {
+    // Arrange: measured, fifteen files each including the next three times took 35 s; depth
+    // alone bounds nesting, not work.
+    let root = scratch_tree("redis-pass-fanout", &[]);
+    for level in 0..15 {
+        let next = root.join(format!("level-{}.conf", level + 1));
+        write(
+            &root,
+            &format!("level-{level}.conf"),
+            &format!("include {0}\ninclude {0}\ninclude {0}\n", next.display()),
+        );
+    }
+    write(&root, "level-15.conf", "requirepass hunter2\n");
+
+    // Act
+    let started = std::time::Instant::now();
+    let result = password_directives_in(&root.join("level-0.conf"));
+
+    // Assert: refused, and quickly.
+    let error = result.expect_err("a fan-out").to_string();
+    assert!(error.contains("files"), "{error}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}

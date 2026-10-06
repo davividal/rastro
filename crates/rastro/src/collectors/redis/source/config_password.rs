@@ -11,12 +11,12 @@
 //! value most likely to hold a quote or a space, and reading it differently from the server means
 //! sending it a wrong password, which is an entry in its `ACL LOG`.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use rastro_collector::CollectionError;
 
 use crate::collectors::file_glob;
+use crate::collectors::inside_root::read_inside;
 
 const REQUIREPASS: &str = "requirepass";
 const INCLUDE: &str = "include";
@@ -26,11 +26,12 @@ const ACLFILE: &str = "aclfile";
 /// The account `requirepass` sets, and the only one whose password rastro ever needs.
 const DEFAULT_USER: &str = "default";
 
-/// How deep includes may nest before the file is taken to be broken.
+/// The most files one configuration is read to, includes and their includes together.
 ///
-/// Also what stops a file that includes itself, directly or round a loop, without keeping a set
-/// of open files: a cycle nests without end, and no real configuration nests this deep.
-const INCLUDE_DEPTH: usize = 16;
+/// A budget of work rather than a depth: depth alone bounds nesting, and fifteen files each
+/// including the next three times took 35 s, measured. It also stops a file that includes itself,
+/// directly or round a loop, without a set of open files. A real configuration names a handful.
+const MOST_FILES: usize = 64;
 
 /// What a configuration file says about the default account's password.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -52,7 +53,7 @@ pub struct PasswordDirectives {
 /// measured, the server will not start on such a file, so it is not the file of a running one.
 pub fn password_directives_in(file: &Path) -> Result<PasswordDirectives, CollectionError> {
     let mut directives = PasswordDirectives::default();
-    read_into(file, 0, &mut directives)?;
+    read_into(file, &mut 0, &mut directives)?;
     directives.requirepass = directives
         .requirepass
         .filter(|password: &String| !password.is_empty());
@@ -65,9 +66,7 @@ pub fn password_directives_in(file: &Path) -> Result<PasswordDirectives, Collect
 /// Nothing is an answer, not a failure: measured, a server whose ACL file declares no `default`
 /// leaves that account without a password, whatever `requirepass` says.
 pub fn default_user_in_acl_file(file: &Path) -> Result<Option<Vec<String>>, CollectionError> {
-    let text = fs::read_to_string(file).map_err(|error| {
-        CollectionError::new(format!("{} could not be read: {error}", file.display()))
-    })?;
+    let text = read_bounded(file)?;
 
     let mut default_user = None;
     for line in text.lines() {
@@ -86,19 +85,19 @@ pub fn default_user_in_acl_file(file: &Path) -> Result<Option<Vec<String>>, Coll
 
 fn read_into(
     file: &Path,
-    depth: usize,
+    files_read: &mut usize,
     directives: &mut PasswordDirectives,
 ) -> Result<(), CollectionError> {
-    if depth > INCLUDE_DEPTH {
+    *files_read += 1;
+    if *files_read > MOST_FILES {
         return Err(CollectionError::new(format!(
-            "{} is included more than {INCLUDE_DEPTH} deep, which is a file including itself",
+            "{} is past the {MOST_FILES} files a configuration is read to, which is a file \
+             including itself or an include tree wider than any real one",
             file.display()
         )));
     }
 
-    let text = fs::read_to_string(file).map_err(|error| {
-        CollectionError::new(format!("{} could not be read: {error}", file.display()))
-    })?;
+    let text = read_bounded(file)?;
 
     for line in text.lines() {
         let Some(words) = words_of(file, line)? else {
@@ -117,7 +116,7 @@ fn read_into(
             (ACLFILE, 2) => directives.acl_file = Some(PathBuf::from(&words[1])),
             (INCLUDE, 2) => {
                 for included in included_files(file, &words[1])? {
-                    read_into(&included, depth + 1, directives)?;
+                    read_into(&included, files_read, directives)?;
                 }
             }
             _ => {}
@@ -125,6 +124,25 @@ fn read_into(
     }
 
     Ok(())
+}
+
+/// A file's text, read bounded and only where it is a regular file.
+///
+/// The file is the redis account's, Debian's `redis.conf` among them, so what is at the path is
+/// that account's choice: a FIFO there blocked the run and `/dev/zero` grew without end, the
+/// finding the elasticsearch collector met first. The path is absolute by the time it gets here.
+fn read_bounded(file: &Path) -> Result<String, CollectionError> {
+    let relative = file.strip_prefix("/").map_err(|_| {
+        CollectionError::new(format!(
+            "{} is a relative path, which the server resolved against a working directory \
+             nothing records",
+            file.display()
+        ))
+    })?;
+
+    read_inside(Path::new("/"), relative).map_err(|error| {
+        CollectionError::new(format!("{} could not be read: {error}", file.display()))
+    })
 }
 
 /// A line's arguments, nothing for a blank line or a comment, or a failure where it will not
