@@ -3,7 +3,7 @@
 //! A box rebuilt from a redis matrix cell captured on a real server.
 //!
 //! The process files, socket tables and namespace links are the captured ones, byte for byte:
-//! `fixtures/redis/cells/<cell>` was exported by `scripts/redis-matrix/export-fixtures.sh`, with
+//! `fixtures/redis/cells/<cell>` was exported by the matrix tooling in rastro-research, with
 //! the one edit its README records. What a capture cannot carry is the server's filesystem, so
 //! each server's `root` is rebuilt from the files the cell configured, read on the real box
 //! inside that server's own root, at the same paths. `systemctl` answers from what the real one

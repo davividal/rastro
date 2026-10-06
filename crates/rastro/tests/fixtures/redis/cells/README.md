@@ -1,7 +1,7 @@
 # Captured redis and valkey cells
 
 What each cell of `docs/redis-matrix.md` showed, captured on real servers by
-`scripts/redis-matrix/capture.sh` and copied here by `export-fixtures.sh` beside it. Regenerate
+the matrix tooling in rastro-research (`collectors/redis-expert/matrix/`). Regenerate
 rather than edit.
 
 Per server, `server-N/`:

@@ -6768,7 +6768,7 @@ on cell 35. The release is valkey's own `valkey_version` where `server_name` say
 ## The redis matrix
 
 [`redis-matrix.md`](redis-matrix.md): 35 cells, captured on real servers by
-`scripts/redis-matrix/`, whose `/proc` side, units, files and replies are the fixtures the tests
+the matrix tooling in rastro-research, whose `/proc` side, units, files and replies are the fixtures the tests
 read (`crates/rastro/tests/fixtures/redis/cells`). The stock fake server the facet's tests use is
 cell 1, the redis.io package's 8.10, where it was a reply trimmed by hand from Debian 12's 7.0,
 which is now a best-effort release. Each `.resp` is kept byte for byte, `-text` in

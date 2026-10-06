@@ -106,7 +106,8 @@ valkey, hence the source builds.
 
 ## How it is captured
 
-`scripts/redis-matrix/`, on the Debian 12 VM `scripts/elasticsearch-matrix/Vagrantfile` makes:
+The matrix tooling, kept in rastro-research (`collectors/redis-expert/matrix/`) rather than here,
+on the Debian 12 VM `scripts/elasticsearch-matrix/Vagrantfile` makes:
 `cells.sh prepare` once to add the redis.io repository, build valkey and redis 5 from source and
 pull the images, then `run-all.sh`, which takes one cell at a time (reset the box, set the cell
 up, `capture.sh`, collect the logs). `summary.sh` prints one line per captured server;
