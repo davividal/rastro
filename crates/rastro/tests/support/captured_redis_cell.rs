@@ -55,7 +55,7 @@ pub fn servers_of(cell: &str) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| {
             path.file_name()
-                .and_then(|name| name.to_str())
+                .and_then(std::ffi::OsStr::to_str)
                 .and_then(|name| name.strip_prefix("server-"))
                 .is_some_and(|number| number.bytes().all(|byte| byte.is_ascii_digit()))
         })

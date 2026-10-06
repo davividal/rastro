@@ -13,10 +13,11 @@ pub use model::{
 };
 pub use source::{
     AclList, ConfigGet, Credential, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
-    InstalledServers, ModuleList, PasswordDirectives, Reply, ResidentServer, RespConnection,
-    ServerCgroup, ServerStart, ServerStream, data_directories_of, default_user_in_acl_file,
-    discover, password_directives_in, password_for, password_for_default_account,
-    read_installation, resident_servers, start_of, unit_of,
+    InstalledServers, ModuleList, PasswordDirectives, Reply, ResidentCensus, ResidentServer,
+    RespConnection, ServerCgroup, ServerStart, ServerStream, data_directories_of,
+    default_user_in_acl_file, discover, password_directives_in, password_for,
+    password_for_default_account, read_installation, resident_census, resident_servers, start_of,
+    unit_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 
@@ -105,11 +106,21 @@ impl Collector for RedisCollector {
     /// not-installed are different facts, and what rastro cannot read surfaces from
     /// [`Collector::collect`] as an `error`.
     fn presence(&self) -> Presence {
-        let running = !resident_servers(&self.proc).is_empty();
+        let census = resident_census(&self.proc);
 
-        match running || !self.installed.is_empty() {
-            true => Presence::Present,
-            false => Presence::Absent,
+        match (
+            !census.servers.is_empty() || !self.installed.is_empty(),
+            census.some_processes_unseen,
+        ) {
+            (true, _) => Presence::Present,
+            (false, false) => Presence::Absent,
+            // Found by review: a server among processes rastro could not inspect, under
+            // `hidepid=1` say, would be reported `absent`, a confident claim about a box unseen.
+            (false, true) => Presence::Undetermined {
+                reason: "some processes could not be inspected, so a server among them would not \
+                         be found"
+                    .to_owned(),
+            },
         }
     }
 

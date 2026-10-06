@@ -29,7 +29,7 @@ pub use info_server::InfoServer;
 pub use installed_servers::InstalledServers;
 pub use module_list::ModuleList;
 pub use reply::Reply;
-pub use resident_servers::{ResidentServer, resident_servers};
+pub use resident_servers::{ResidentCensus, ResidentServer, resident_census, resident_servers};
 pub use resp_connection::{RespConnection, ServerStream};
 pub use server_discovery::{DialTarget, DiscoveredServer, discover};
 pub use server_inventory::read_installation;

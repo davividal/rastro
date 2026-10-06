@@ -19,6 +19,12 @@ pub struct Installation {
 
     /// The running servers, keyed as discovery keyed them.
     pub instances: BTreeMap<String, Instance>,
+
+    /// Whether some process could not be inspected, so a server among them would not be listed.
+    ///
+    /// Rendered as words with no count, and marked incomplete: how many processes a run was
+    /// refused moves between two runs of an unchanged box, which the document must not.
+    pub uninspected_processes: bool,
 }
 
 impl From<&Installation> for Observation {
@@ -42,6 +48,17 @@ impl From<&Installation> for Observation {
                         .iter()
                         .map(|(key, instance)| (key.as_str(), Observation::from(instance))),
                 ),
+            ),
+            (
+                "uninspected_processes",
+                match installation.uninspected_processes {
+                    true => Observation::text(
+                        "some processes could not be inspected, so a server among them would not \
+                         be listed",
+                    )
+                    .incomplete(),
+                    false => Observation::null(),
+                },
             ),
         ])
     }

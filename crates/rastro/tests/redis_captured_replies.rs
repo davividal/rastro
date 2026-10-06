@@ -24,7 +24,7 @@ static REPLAYED: AtomicUsize = AtomicUsize::new(0);
 fn command_of(reply: &Path) -> String {
     let name = reply
         .file_stem()
-        .and_then(|stem| stem.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .expect("a name");
     let (_, command) = name.split_once('-').expect("a numbered reply");
 

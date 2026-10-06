@@ -235,7 +235,7 @@ fn included_files(
     // A wildcard in the last component alone, the drop-in directory every packaged layout uses.
     let (Some(directory), Some(pattern)) = (
         path.parent(),
-        path.file_name().and_then(|name| name.to_str()),
+        path.file_name().and_then(std::ffi::OsStr::to_str),
     ) else {
         return Err(unresolved_pattern(from, argument));
     };

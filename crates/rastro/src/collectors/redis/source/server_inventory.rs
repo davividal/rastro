@@ -11,6 +11,7 @@ use super::info_server::InfoServer;
 use super::installed_servers::InstalledServers;
 use super::module_list::ModuleList;
 use super::reply::{Reply, shortened};
+use super::resident_servers::resident_census;
 use super::resp_connection::RespConnection;
 use super::server_discovery::{DialTarget, DiscoveredServer, discover};
 use super::server_password::{Credential, password_for};
@@ -37,6 +38,7 @@ pub fn read_installation(
     systemctl: Option<&CanonicalTool>,
 ) -> Installation {
     Installation {
+        uninspected_processes: resident_census(proc).some_processes_unseen,
         installed: installed.kinds().clone(),
         instances: discover(proc)
             .into_iter()

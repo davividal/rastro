@@ -64,6 +64,44 @@ fn presence_is_absent_where_no_server_is_installed_or_running() {
     assert_eq!(collector(&[], &proc).presence(), Presence::Absent);
 }
 
+/// A process table entry whose `comm` this run is refused, as `hidepid=1` refuses another
+/// account's: a directory where the file should be refuses the read with `EISDIR`, which stands
+/// for `EACCES` without depending on who runs the suite.
+fn with_an_uninspectable_process(proc: &Path) {
+    fs::create_dir_all(proc.join("999/comm")).expect("a writable scratch directory");
+}
+
+#[test]
+fn presence_is_undetermined_where_a_process_could_not_be_inspected() {
+    // Arrange: nothing installed, and one process whose program could not be read.
+    let proc = proc_with("redis-facet-unseen", &[("1", "systemd", "/sbin/init\0")]);
+    with_an_uninspectable_process(&proc);
+
+    // Act
+    let presence = collector(&[], &proc).presence();
+
+    // Assert: a server could be among them, so `absent` would be a claim about a box unseen.
+    assert!(
+        matches!(presence, Presence::Undetermined { .. }),
+        "{presence:?}"
+    );
+}
+
+#[test]
+fn collect_says_when_a_process_could_not_be_inspected() {
+    // Arrange
+    let proc = proc_with("redis-facet-unseen-installed", &[]);
+    with_an_uninspectable_process(&proc);
+
+    // Act
+    let observation = collector(&[ServerKind::Redis], &proc)
+        .collect()
+        .expect("a readable box");
+
+    // Assert: words, not a count, which would move between two runs of an unchanged box.
+    assert!(text(&field(&observation, "uninspected_processes")).contains("could not be inspected"));
+}
+
 #[test]
 fn presence_is_present_where_a_server_is_installed_and_nothing_runs() {
     // Arrange
