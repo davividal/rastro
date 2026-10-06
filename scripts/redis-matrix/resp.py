@@ -21,7 +21,7 @@ LOOPBACK = "127.0.0.1"
 CAPTURES = "/captures/"
 CELLS = "/root/cells/"
 # A server's socket, reached through its own root so a container's path means its own.
-SOCKET_IN_A_ROOT = re.compile(r"/proc/[0-9]+/root/[A-Za-z0-9._/-]+")
+SOCKET_IN_A_ROOT = re.compile(r"/proc/\d+/root/[A-Za-z0-9._/-]+")
 
 
 def inside(path, directory):
