@@ -6,7 +6,7 @@
 //! keeps a connection from being speculative: nothing is dialled to find out whether redis is
 //! there.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
@@ -45,7 +45,8 @@ impl fmt::Display for DialTarget {
 pub struct DiscoveredServer {
     /// What the facet keys the instance by.
     ///
-    /// **The TCP port, else the unix socket's path, else the process title.** A port rather
+    /// **The TCP port, else the unix socket's path, else the process title**, and the lowest
+    /// address on the port where two servers share it. A port rather
     /// than an address, so a change of `bind`, which is exactly what the field host needed seeing,
     /// is a change to one instance rather than one vanishing and another appearing. The title is
     /// the fallback for a server whose sockets cannot be attributed: it is what redis calls
@@ -63,6 +64,10 @@ pub struct DiscoveredServer {
 
     /// The socket rastro would connect to, or why there is none.
     pub reach: Result<DialTarget, String>,
+
+    /// The key where another server shares the port: the lowest address on it, which a restart
+    /// keeps, where numbering in pid order would swap the two.
+    shared_port_key: Option<String>,
 }
 
 /// Every server process on the box, in pid order, each under a key no other one has.
@@ -78,6 +83,18 @@ pub fn discover(proc: &Path) -> Vec<DiscoveredServer> {
         .into_iter()
         .map(|server| discovered(proc, &server, inet.as_deref(), unix.as_deref()))
         .collect();
+
+    let mut keyed = BTreeMap::<String, usize>::new();
+    for server in &discovered {
+        *keyed.entry(server.key.clone()).or_default() += 1;
+    }
+    for server in &mut discovered {
+        if keyed[&server.key] > 1
+            && let Some(address) = server.shared_port_key.clone()
+        {
+            server.key = address;
+        }
+    }
 
     // Two unattributable servers can share a title, and a map keyed by it would keep one of
     // them silently. Numbered in pid order, which only this degenerate case ever sees.
@@ -108,6 +125,7 @@ fn discovered(
         process_id: server.process_id,
         listeners: Vec::new(),
         reach: Err(reason),
+        shared_port_key: None,
     };
 
     let held = match sockets_held_by(proc, server.process_id) {
@@ -152,11 +170,16 @@ fn discovered(
         return unreached("it listens on nothing rastro could connect to".to_owned());
     };
 
-    let key = match (addresses.iter().map(SocketAddr::port).min(), paths.first()) {
+    let lowest_port = addresses.iter().map(SocketAddr::port).min();
+    let key = match (lowest_port, paths.first()) {
         (Some(port), _) => port.to_string(),
         (None, Some(path)) => path.clone(),
         (None, None) => title.clone(),
     };
+    let shared_port_key = addresses
+        .iter()
+        .find(|address| Some(address.port()) == lowest_port)
+        .map(SocketAddr::to_string);
 
     let mut listeners: Vec<Listener> = addresses
         .iter()
@@ -176,6 +199,7 @@ fn discovered(
         process_id: server.process_id,
         listeners,
         reach: Ok(reach),
+        shared_port_key,
     }
 }
 

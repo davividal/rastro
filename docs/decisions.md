@@ -6620,6 +6620,8 @@ reported as a failed read, at the cost of that one log line.
 The TCP port, else the unix socket's path, else the process title for a server whose sockets
 cannot be attributed. A port rather than an address, so a change of `bind`, the field host's
 finding, reads as a change to one instance rather than one vanishing and another appearing.
+Two servers sharing a port, on different addresses, are keyed by the lowest address each holds on
+it, found by review: numbered in pid order, a restart of the older one would swap them.
 
 **A server's forked child is the server.** A background save, an AOF rewrite or a replica's full
 sync forks a child that keeps `comm`, retitles itself `redis-rdb-bgsave *:6379`, and closes the
@@ -6685,7 +6687,15 @@ grew without end, and fifteen files each including the next three times took 35 
 Every read goes through the reader the elasticsearch collector already had for the same finding,
 now shared: the path pinned without being opened, its type checked on the pin, a megabyte at most.
 A configuration is read to sixty-four files at most, includes and theirs together, which also
-stops a file including itself.
+stops a file including itself. An `include` pattern is refused once the directories it lists hold
+more than 1024 entries between them, found by review: every entry is listed before the file
+budget sees a match, in a directory the redis account can fill.
+
+**Nor is a file read for a server in another mount namespace**, found by review. A unit with
+`RootDirectory=` or a bind path names its configuration in the server's namespace, and the host's
+file at the same path, read and its password sent, is a failed `AUTH`. The data-directory claim
+already compared the namespaces; the password route now asks the same question. A password on the
+command line alone needs no file and is still used.
 
 **What the command line hides from the replay is refused.** systemd shows the start command
 without its quoting, so `--requirepass two words` cannot be told from a password and a word; it is

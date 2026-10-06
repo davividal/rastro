@@ -366,6 +366,54 @@ fn each_server_on_the_box_is_its_own_instance() {
     assert_eq!(keys, ["6379", "6380"]);
 }
 
+/// The key each server on one port gets, as which address it holds, with the older one first.
+fn keys_on_one_port(name: &str, older: u64, younger: u64) -> Vec<(String, Vec<String>)> {
+    let proc = proc_with(
+        name,
+        &[
+            Process {
+                holds: Some(&[older]),
+                ..server("412", &[])
+            },
+            Process {
+                holds: Some(&[younger]),
+                ..server("530", &[])
+            },
+        ],
+        &format!(
+            "{}{}",
+            tcp_row(LOOPBACK_6379, 1001),
+            tcp_row(OWN_6379, 1002)
+        ),
+        "",
+        "",
+    );
+
+    let mut keys: Vec<(String, Vec<String>)> = discover(&proc)
+        .iter()
+        .map(|server| (server.key.clone(), listeners_of(server)))
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn servers_sharing_a_port_are_keyed_by_address_whichever_started_first() {
+    // Act: the same two servers, before and after the older one restarts.
+    let before = keys_on_one_port("redis-discovery-port-before", 1001, 1002);
+    let after = keys_on_one_port("redis-discovery-port-after", 1002, 1001);
+
+    // Assert: numbered by pid, a restart would swap them, which is a diff of nothing changed.
+    assert_eq!(before, after);
+    assert_eq!(
+        before
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        ["10.0.0.5:6379", "127.0.0.1:6379"]
+    );
+}
+
 #[test]
 fn servers_sharing_a_title_are_both_kept() {
     // Arrange: two unattributable servers whose titles agree, which a customised
