@@ -223,12 +223,33 @@ impl RespConnection {
             packed.arg(*argument);
         }
 
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        self.stream
-            .set_write_timeout(remaining.max(SHORTEST_WAIT))
-            .and_then(|()| self.stream.write_all(&packed.get_packed_command()))
+        self.write_before(&packed.get_packed_command(), deadline)
             .and_then(|()| self.stream.flush())
             .map_err(|error| self.failure(command, &error))
+    }
+
+    /// Writes all of `bytes`, each write given what is left of the deadline, found by review: a
+    /// timeout per write restarts with every partial one, so a peer draining a little before each
+    /// ran out could hold the run long past the deadline. Each write is capped too, since some
+    /// kernels restart the timeout whenever the peer frees buffer space within one call.
+    fn write_before(&mut self, bytes: &[u8], deadline: Instant) -> io::Result<()> {
+        let mut written = 0;
+        while written < bytes.len() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::from(ErrorKind::TimedOut));
+            }
+            self.stream
+                .set_write_timeout(remaining.max(SHORTEST_WAIT))?;
+            let end = bytes.len().min(written + MOST_WRITTEN_AT_ONCE);
+            match self.stream.write(&bytes[written..end]) {
+                Ok(0) => return Err(io::Error::from(ErrorKind::WriteZero)),
+                Ok(sent) => written += sent,
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
     fn receive(&mut self, command: &str, deadline: Instant) -> Result<Reply, CollectionError> {
@@ -273,6 +294,9 @@ impl RespConnection {
         }
     }
 }
+
+/// The most one write is handed, so the deadline is checked between writes of a long command.
+const MOST_WRITTEN_AT_ONCE: usize = 64 * 1024;
 
 /// Why a read stopped short of a reply, so the refusal names the cause rather than the parser's
 /// account of a stream that ended.

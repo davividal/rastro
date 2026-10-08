@@ -268,6 +268,37 @@ fn a_peer_that_trickles_is_given_up_on_at_the_deadline() {
 }
 
 #[test]
+fn a_peer_that_drains_a_command_slowly_is_given_up_on_at_the_deadline() {
+    // Arrange: a command larger than the socket's buffer, to a peer that takes a little of it
+    // before each per-write timeout runs out, so every write makes progress and none times out.
+    let (client, mut far_end) = UnixStream::pair().expect("a socket pair");
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        while far_end.read(&mut buffer).is_ok_and(|read| read > 0) {
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let mut connection = RespConnection::over(client)
+        .expect("a connection")
+        .timing_out_after(Duration::from_millis(300))
+        .expect("a timeout");
+    let password = "x".repeat(2 * 1024 * 1024);
+
+    // Act
+    let started = std::time::Instant::now();
+    let result = connection.ask(&["AUTH", &password]);
+
+    // Assert: held to the command's deadline, not to one per write.
+    let error = result.expect_err("a peer past the deadline").to_string();
+    assert!(error.contains("within"), "{error}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn two_replies_arriving_together_are_answered_in_order() {
     // Arrange: a reply's surplus is the next reply, never lost and never misread.
     let (client, handle) = server(PING.len(), vec![b"+first\r\n+second\r\n".to_vec()]);
