@@ -451,6 +451,88 @@ fn servers_sharing_a_port_are_keyed_by_address_whichever_started_first() {
     );
 }
 
+/// Two containers each listening on `0.0.0.0:6379` in a namespace of its own, the older first.
+fn keys_of_two_containers(name: &str, older: &str, younger: &str) -> Vec<(String, Vec<String>)> {
+    let wildcard = tcp_row(WILDCARD_6379, 1001);
+    let proc = proc_with(
+        name,
+        &[
+            Process {
+                holds: Some(&[1001]),
+                ..server("412", &[])
+            },
+            Process {
+                holds: Some(&[1001]),
+                ..server("530", &[])
+            },
+        ],
+        "",
+        "",
+        "",
+    );
+    for (pid, scope, namespace) in [
+        ("412", older, "net:[4026532701]"),
+        ("530", younger, "net:[4026532702]"),
+    ] {
+        fs::create_dir_all(proc.join(pid).join("net")).expect("a writable scratch directory");
+        write(
+            &proc.join(pid),
+            "net/tcp",
+            &format!("{TCP_HEADER}{wildcard}"),
+        );
+        write(&proc.join(pid), "net/tcp6", TCP_HEADER);
+        write(&proc.join(pid), "net/unix", UNIX_HEADER);
+        write(
+            &proc.join(pid),
+            "cgroup",
+            &format!("0::/system.slice/{scope}\n"),
+        );
+        fs::remove_file(proc.join(pid).join("ns/net")).expect("a removable fixture");
+        symlink(namespace, proc.join(pid).join("ns/net")).expect("a writable scratch symlink");
+    }
+
+    let mut keys: Vec<(String, Vec<String>)> = discover(&proc)
+        .iter()
+        .map(|server| {
+            let cgroup =
+                fs::read_to_string(proc.join(server.process_id.to_string()).join("cgroup"))
+                    .expect("a cgroup");
+            (server.key.clone(), vec![cgroup])
+        })
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn containers_sharing_an_address_are_keyed_by_their_scope_whichever_started_first() {
+    // Act: the same two containers, before and after the older one restarts, which keeps its
+    // scope and takes a new pid.
+    let before = keys_of_two_containers(
+        "redis-discovery-scope-before",
+        "docker-aaa.scope",
+        "docker-bbb.scope",
+    );
+    let after = keys_of_two_containers(
+        "redis-discovery-scope-after",
+        "docker-bbb.scope",
+        "docker-aaa.scope",
+    );
+
+    // Assert: numbered by pid, a restart would swap them, which is a diff of nothing changed.
+    assert_eq!(before, after);
+    assert_eq!(
+        before
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "0.0.0.0:6379 in docker-aaa.scope",
+            "0.0.0.0:6379 in docker-bbb.scope"
+        ]
+    );
+}
+
 #[test]
 fn servers_sharing_a_title_are_both_kept() {
     // Arrange: two unattributable servers whose titles agree, which a customised

@@ -6621,7 +6621,10 @@ The TCP port, else the unix socket's path, else the process title for a server w
 cannot be attributed. A port rather than an address, so a change of `bind`, the field host's
 finding, reads as a change to one instance rather than one vanishing and another appearing.
 Two servers sharing a port, on different addresses, are keyed by the lowest address each holds on
-it, found by review: numbered in pid order, a restart of the older one would swap them.
+it, found by review: numbered in pid order, a restart of the older one would swap them. Two that
+share the address too, two containers each on `0.0.0.0:6379` in a namespace of its own, are told
+apart by the unit or scope their cgroup names, `0.0.0.0:6379 in docker-<id>.scope`, found by the
+next review: a container's scope survives its restart and its pid does not.
 
 **A server's forked child is the server.** A background save, an AOF rewrite or a replica's full
 sync forks a child that keeps `comm`, retitles itself `redis-rdb-bgsave *:6379`, and closes the

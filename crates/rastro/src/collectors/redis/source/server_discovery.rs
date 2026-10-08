@@ -88,15 +88,16 @@ pub fn discover(proc: &Path) -> Vec<DiscoveredServer> {
         .map(|server| discovered(proc, &server, inet.as_deref(), unix.as_deref()))
         .collect();
 
-    let mut keyed = BTreeMap::<String, usize>::new();
-    for server in &discovered {
-        *keyed.entry(server.key.clone()).or_default() += 1;
-    }
-    for server in &mut discovered {
-        if keyed[&server.key] > 1
-            && let Some(address) = server.shared_port_key.clone()
-        {
+    for server in colliding(&mut discovered) {
+        if let Some(address) = server.shared_port_key.clone() {
             server.key = address;
+        }
+    }
+    // Found by review: two containers each listening on `0.0.0.0:6379` in a namespace of its own
+    // share the address too. The scope systemd gives a container survives its restart.
+    for server in colliding(&mut discovered) {
+        if let Some(scope) = scope_of(proc, server.process_id) {
+            server.key = format!("{} in {scope}", server.key);
         }
     }
 
@@ -114,6 +115,29 @@ pub fn discover(proc: &Path) -> Vec<DiscoveredServer> {
     }
 
     discovered
+}
+
+/// The servers whose key another server also has.
+fn colliding(discovered: &mut [DiscoveredServer]) -> impl Iterator<Item = &mut DiscoveredServer> {
+    let mut keyed = BTreeMap::<String, usize>::new();
+    for server in discovered.iter() {
+        *keyed.entry(server.key.clone()).or_default() += 1;
+    }
+
+    discovered
+        .iter_mut()
+        .filter(move |server| keyed[&server.key] > 1)
+}
+
+/// The last component of the process's cgroup, the unit or scope it runs in.
+fn scope_of(proc: &Path, process_id: u32) -> Option<String> {
+    let cgroup = fs::read_to_string(proc.join(process_id.to_string()).join("cgroup")).ok()?;
+    let path = cgroup.lines().find_map(|line| line.splitn(3, ':').nth(2))?;
+
+    path.rsplit('/')
+        .next()
+        .filter(|scope| !scope.is_empty())
+        .map(str::to_owned)
 }
 
 fn discovered(
