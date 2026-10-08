@@ -252,6 +252,19 @@ fn included_files(
         ))
     })?;
     names.retain(|name| file_glob::name_matches(name, pattern));
+    // Found by review: the listing spells a name that is not UTF-8 lossily, which can collide with
+    // a real file's, so the file the server read would be read as another.
+    if names
+        .iter()
+        .any(|name| name.contains(char::REPLACEMENT_CHARACTER))
+    {
+        return Err(CollectionError::new(format!(
+            "{} includes {argument:?}, and {} holds a matching name that is not UTF-8, which \
+             rastro cannot tell from another",
+            from.display(),
+            directory.display()
+        )));
+    }
     // Byte order, as `file_glob` sorts, so the include order is the same under every locale.
     names.sort();
 

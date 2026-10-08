@@ -368,6 +368,31 @@ fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_fu
 }
 
 #[test]
+fn an_included_name_that_is_not_utf8_is_refused_rather_than_read_as_another() {
+    // Arrange: a drop-in whose name is not UTF-8 beside one spelled as its lossy reading, so a
+    // reader that took names as text would open the second twice and never read the first, whose
+    // password the server applied last.
+    use std::os::unix::ffi::OsStrExt;
+
+    let root = scratch_tree("redis-pass-not-utf8", &["conf.d"]);
+    let directory = root.join("conf.d");
+    let raw = std::ffi::OsStr::from_bytes(b"\xff.conf");
+    std::fs::write(directory.join(raw), "requirepass hunter2\n").expect("a non-UTF-8 name");
+    write(&directory, "\u{FFFD}.conf", "requirepass other\n");
+    let file = file_with(
+        "redis-pass-not-utf8-include",
+        &format!("include {}/*.conf\n", directory.display()),
+    );
+
+    // Act
+    let result = password_directives_in(Path::new(HOST_ROOT), &file);
+
+    // Assert
+    let error = result.expect_err("an unreadable name").to_string();
+    assert!(error.contains("UTF-8"), "{error}");
+}
+
+#[test]
 fn a_wildcard_outside_the_last_component_is_refused_rather_than_resolved() {
     // Arrange: every packaged layout globs a drop-in directory's files, never the directory.
     let file = file_with("redis-pass-directory-glob", "include /etc/*/redis.conf\n");
