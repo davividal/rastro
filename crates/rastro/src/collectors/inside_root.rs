@@ -107,6 +107,11 @@ pub(crate) fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std
         Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
     };
+    // The root itself is `.`: `openat2` refuses an empty path with `ENOENT`, found on `/`.
+    let relative = match relative.as_os_str().is_empty() {
+        true => Path::new("."),
+        false => relative,
+    };
     let file = openat2(
         &root,
         relative,
