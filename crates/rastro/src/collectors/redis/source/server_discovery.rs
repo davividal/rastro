@@ -41,6 +41,46 @@ impl fmt::Display for DialTarget {
     }
 }
 
+/// Why a server will not be dialled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreached {
+    pub reason: String,
+
+    /// Whether the box withheld what reaching it needs, rather than something failing: an
+    /// unprivileged run refused the server's descriptors or its namespace.
+    pub withheld: bool,
+}
+
+impl Unreached {
+    fn failed(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            withheld: false,
+        }
+    }
+
+    fn withheld(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            withheld: true,
+        }
+    }
+}
+
+impl fmt::Display for Unreached {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+impl std::ops::Deref for Unreached {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.reason
+    }
+}
+
 /// One server process, before anything has been asked of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredServer {
@@ -64,7 +104,7 @@ pub struct DiscoveredServer {
     pub listeners: Vec<Listener>,
 
     /// The socket rastro would connect to, or why there is none.
-    pub reach: Result<DialTarget, String>,
+    pub reach: Result<DialTarget, Unreached>,
 
     /// The network namespace `reach` is in: the server's own, where it listens in a container.
     pub namespace: ProcessNamespace,
@@ -147,7 +187,7 @@ fn discovered(
     unix: Option<&[UnixListener]>,
 ) -> DiscoveredServer {
     let title = title_of(proc, server);
-    let unreached = |reason: String| DiscoveredServer {
+    let unreached = |reason: Unreached| DiscoveredServer {
         key: title.clone(),
         kind: server.kind,
         process_id: server.process_id,
@@ -161,19 +201,26 @@ fn discovered(
     let held = match sockets_held_by(proc, server.process_id) {
         Ok(held) => held,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return unreached("the server exited while it was being read".to_owned());
+            return unreached(Unreached::failed(
+                "the server exited while it was being read",
+            ));
         }
         Err(error) => {
-            return unreached(format!(
+            return unreached(Unreached::withheld(format!(
                 "its file descriptors could not be read ({error}), so which sockets it listens \
                  on is unknown; a run as root can see them"
-            ));
+            )));
         }
     };
 
     let namespace = match ProcessNamespace::of_in(proc, server.process_id) {
         Ok(namespace) => namespace,
-        Err(refusal) => return unreached(refusal.reason),
+        Err(refusal) => {
+            return unreached(Unreached {
+                reason: refusal.reason,
+                withheld: refusal.refused,
+            });
+        }
     };
 
     // A server in a container listens only in its own namespace, whose tables the host's lack.
@@ -189,11 +236,10 @@ fn discovered(
     };
 
     if inet.is_none() && unix.is_none() {
-        return unreached(
+        return unreached(Unreached::failed(
             "the kernel's socket tables could not be read, so which sockets it listens on is \
-             unknown"
-                .to_owned(),
-        );
+             unknown",
+        ));
     }
 
     let mut addresses: Vec<SocketAddr> = inet
@@ -219,15 +265,15 @@ fn discovered(
         true => paths.as_slice(),
         false => &[],
     };
-    let reach =
-        reach_of(&addresses, reachable_paths, titled_port(&title)).ok_or_else(|| {
-            match paths.is_empty() {
-                true => "it listens on nothing rastro could connect to".to_owned(),
-                false => "it listens only on a unix socket in its own namespace, whose path a \
-                      connection from the host would resolve on the host"
-                    .to_owned(),
+    let reach = reach_of(&addresses, reachable_paths, titled_port(&title)).ok_or_else(|| {
+        Unreached::failed(match paths.is_empty() {
+            true => "it listens on nothing rastro could connect to",
+            false => {
+                "it listens only on a unix socket in its own namespace, whose path a \
+                     connection from the host would resolve on the host"
             }
-        });
+        })
+    });
 
     let lowest_port = addresses.iter().map(SocketAddr::port).min();
     let key = match (lowest_port, paths.first()) {

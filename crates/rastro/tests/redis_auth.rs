@@ -251,7 +251,7 @@ fn a_password_set_only_at_runtime_is_said_to_be_unreachable() {
     let observation = read(&auth_box);
 
     // Assert: said, and nothing guessed at.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("sets no password"), "{error}");
     assert!(auths(&server).is_empty());
 }
@@ -268,7 +268,7 @@ fn a_password_the_server_refuses_is_sent_once_and_named_as_a_disagreement() {
 
     // Assert: never retried, since each refusal is an entry in the server's `ACL LOG`, and
     // the password itself is nowhere in the document.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("refused"), "{error}");
     assert!(!error.contains("previous-password"), "{error}");
     assert_eq!(auths(&server), [["AUTH", "previous-password"]]);
@@ -287,7 +287,7 @@ fn a_server_no_unit_started_is_not_guessed_at() {
     let observation = read(&auth_box);
 
     // Assert: `/etc/redis/redis.conf` would be a guess, and a wrong guess is an `ACL LOG` entry.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("unit"), "{error}");
     assert!(auths(&server).is_empty());
     assert!(auth_box.systemctl_calls().is_empty());
@@ -304,7 +304,7 @@ fn a_unit_name_that_reads_as_an_option_is_never_handed_to_systemctl() {
     let observation = read(&auth_box);
 
     // Assert
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("unit"), "{error}");
     assert!(auth_box.systemctl_calls().is_empty());
 }
@@ -344,7 +344,7 @@ fn a_file_that_cannot_be_read_says_which_and_why() {
     let observation = read(&auth_box);
 
     // Assert
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(
         error.contains(&auth_box.config.display().to_string()),
         "{error}"
@@ -362,7 +362,7 @@ fn a_unit_that_starts_the_server_with_options_alone_names_no_file() {
     let observation = read(&auth_box);
 
     // Assert
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("no configuration file"), "{error}");
     assert!(auths(&server).is_empty());
 }
@@ -399,7 +399,7 @@ fn a_requirepass_edited_after_a_rewrite_is_never_sent() {
     let observation = read(&auth_box);
 
     // Assert: said, and no `ACL LOG` entry made to find out.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("hash"), "{error}");
     assert!(!error.contains("edited-password"), "{error}");
     assert!(auths(&server).is_empty());
@@ -440,7 +440,7 @@ fn an_acl_file_without_the_default_account_is_a_disagreement() {
     let observation = read(&auth_box);
 
     // Assert
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("without a password"), "{error}");
     assert!(auths(&server).is_empty());
 }
@@ -456,7 +456,7 @@ fn a_refused_password_is_named_as_changed_since_the_server_started() {
     let observation = read(&auth_box);
 
     // Assert: the file is consistent, so the only thing left to disagree is the running server.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(
         error.contains("changed since the server started"),
         "{error}"
@@ -482,7 +482,7 @@ fn a_unit_that_starts_something_else_is_not_taken_for_the_servers() {
 
     // Assert: the file the other unit names is never read as redis's, nothing is sent, and
     // the reason names the unit.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("hosted-compute-agent.service"), "{error}");
     assert!(error.contains("does not start a redis server"), "{error}");
     assert!(auths(&server).is_empty());
@@ -504,7 +504,7 @@ fn a_users_own_unit_sharing_a_system_units_name_is_not_taken_for_it() {
     let observation = read(&auth_box);
 
     // Assert: systemd's own cgroup for the unit is not the server's, so its file is not read.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(
         error.contains("does not run in redis-server.service"),
         "{error}"
@@ -528,7 +528,7 @@ fn a_command_line_option_that_changes_the_account_is_refused_rather_than_ignored
     let observation = read(&auth_box);
 
     // Assert
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("--aclfile"), "{error}");
     assert!(auths(&server).is_empty());
 }
@@ -544,7 +544,7 @@ fn a_command_line_password_systemd_shows_ambiguously_is_not_sent() {
     let observation = read(&auth_box);
 
     // Assert: a cut password is a wrong one, and a wrong one is an `ACL LOG` entry.
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("--requirepass"), "{error}");
     assert!(auths(&server).is_empty());
 }
@@ -564,7 +564,7 @@ fn a_configuration_path_systemd_shows_ambiguously_is_not_read() {
     let observation = read(&auth_box);
 
     // Assert
-    let error = text(&field(&instance(&observation, &server), "error"));
+    let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("cannot be told apart"), "{error}");
     assert!(auths(&server).is_empty());
 }

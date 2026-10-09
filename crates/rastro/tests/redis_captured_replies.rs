@@ -127,7 +127,8 @@ fn cell_14_config_renamed_away_costs_the_settings_alone() {
 
     // Assert
     assert!(is_null(&field(&instance, "settings")));
-    assert!(text(&field(&instance, "error")).contains("CONFIG"));
+    assert!(text(&field(&instance, "not_read")).contains("CONFIG"));
+    assert!(is_null(&field(&instance, "error")));
     assert!(!is_null(&field(&instance, "modules")));
 }
 

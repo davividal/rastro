@@ -229,7 +229,7 @@ fn an_older_server_is_read_in_full_and_marked_unsupported() {
 }
 
 #[test]
-fn a_server_that_wants_a_password_is_an_instance_with_an_error() {
+fn a_server_that_wants_a_password_is_an_instance_not_read() {
     // Arrange
     let server = FakeRedis::answering(
         "facet-noauth",
@@ -242,9 +242,13 @@ fn a_server_that_wants_a_password_is_an_instance_with_an_error() {
 
     // Assert: the refusal is on the instance, and the facet around it is still a reading.
     let instance = instance_of(&observation, &key_of(&server));
-    let error = text(&field(&instance, "error"));
+    let error = text(&field(&instance, "not_read"));
     assert!(error.contains("password"), "{error}");
     assert_eq!(observation.incomplete_items(), 1);
+    assert!(is_null(&field(
+        &instance_of(&observation, &key_of(&server)),
+        "error"
+    )));
 }
 
 #[test]
@@ -264,7 +268,7 @@ fn a_server_whose_socket_refuses_is_an_instance_with_an_error() {
 }
 
 #[test]
-fn a_server_that_was_not_reached_is_an_instance_with_the_reason() {
+fn a_server_whose_descriptors_are_refused_is_an_instance_not_read() {
     // Arrange: descriptors this run may not read.
     let proc = proc_with(
         "redis-facet-unreached",
@@ -281,7 +285,7 @@ fn a_server_that_was_not_reached_is_an_instance_with_the_reason() {
 
     // Assert
     let instance = instance_of(&observation, "/usr/bin/redis-server 127.0.0.1:6379");
-    let error = text(&field(&instance, "error"));
+    let error = text(&field(&instance, "not_read"));
     assert!(error.contains("descriptors"), "{error}");
     assert_eq!(items_of(&field(&instance, "listening")).len(), 0);
 }
@@ -365,7 +369,7 @@ fn a_server_with_config_renamed_away_keeps_everything_else() {
     // Assert: the refused read is null and says why; what was read stays.
     let instance = instance_of(&observation, &key_of(&server));
     assert!(is_null(&field(&instance, "settings")));
-    let error = text(&field(&instance, "error"));
+    let error = text(&field(&instance, "not_read"));
     assert!(error.contains("CONFIG GET"), "{error}");
     assert_eq!(text(&field(&instance, "version")), "8.10.2");
 }
@@ -417,7 +421,7 @@ fn a_refused_replication_read_costs_only_itself() {
     // Assert
     let instance = instance_of(&observation, &key_of(&server));
     assert!(is_null(&field(&instance, "replication")));
-    assert!(text(&field(&instance, "error")).contains("INFO replication"));
+    assert!(text(&field(&instance, "not_read")).contains("INFO replication"));
     // Every setting redis 8.10's package answers with, read in full.
     assert_eq!(keys_of(&field(&instance, "settings")).len(), 303);
 }
@@ -471,7 +475,7 @@ fn a_refused_account_list_says_so() {
     // Assert
     let instance = instance_of(&observation, &key_of(&server));
     assert!(is_null(&field(&instance, "acl")));
-    assert!(text(&field(&instance, "error")).contains("ACL LIST"));
+    assert!(text(&field(&instance, "not_read")).contains("ACL LIST"));
 }
 
 #[test]
@@ -502,7 +506,7 @@ fn a_refused_module_list_says_so() {
     // Assert
     let instance = instance_of(&observation, &key_of(&server));
     assert!(is_null(&field(&instance, "modules")));
-    assert!(text(&field(&instance, "error")).contains("MODULE LIST"));
+    assert!(text(&field(&instance, "not_read")).contains("MODULE LIST"));
 }
 
 #[test]
@@ -592,7 +596,7 @@ fn a_sentinel_is_named_and_asked_nothing_more() {
     // Assert
     let instance = instance_of(&observation, &key_of(&server));
     assert_eq!(text(&field(&instance, "mode")), "sentinel");
-    assert!(text(&field(&instance, "error")).contains("sentinel"));
+    assert!(text(&field(&instance, "not_read")).contains("sentinel"));
     assert_eq!(server.received(), [["INFO", "server"]]);
 }
 
@@ -609,7 +613,7 @@ fn a_long_refusal_from_the_server_is_shortened() {
     // Assert
     let error = text(&field(
         &instance_of(&observation, &key_of(&server)),
-        "error",
+        "not_read",
     ));
     assert!(error.len() < 400, "{}", error.len());
     assert!(error.contains('…'), "{error}");

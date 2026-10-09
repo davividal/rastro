@@ -6752,6 +6752,19 @@ Once a server has answered, its own `server_name` outranks `comm`: Debian's valk
 package installs a `redis-server` symlink, and the kernel records the name a process was started
 under.
 
+
+## What the box withholds is `not_read`, beside `error`
+
+The rule [elasticsearch set](#not-read-is-not-an-error), applied from the facet's first release
+rather than later: what the box's own state keeps rastro from reading is an instance's `not_read`,
+and `error` is left for a read rastro supports that failed. `not_read` covers descriptors or a
+network namespace an unprivileged run is refused; every refusal of the password route, which
+leaves rastro with no credential; a password the server rejects; a command the server refuses,
+`CONFIG` renamed away or `NOPERM`; and a sentinel, named and not read beyond its identity.
+`error` keeps a connection refused or hung up, a reply that is not the protocol or not the shape
+asked for, socket tables that cannot be read, a server that exited mid-read, and one listening on
+nothing rastro can connect to. Both mark the instance incomplete, so the run's summary on stderr
+counts either; what changes is that an operator looking for faults finds only faults.
 ## redis 8.0 to 8.10 and valkey 7.2 to 9.1 are supported, every other release best effort
 
 Not because the replies differ: `INFO` and `CONFIG GET` have kept their shape, measured on every

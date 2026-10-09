@@ -218,9 +218,9 @@ fn a_live_server_wanting_a_password_rastro_cannot_reach_is_said_so() {
     let instance = instance_of(&server);
 
     // Assert
-    let error = text(&field(&instance, "error"));
-    assert!(error.contains("unit"), "{error}");
-    assert!(!error.contains("unreached-password"), "{error}");
+    let reason = text(&field(&instance, "not_read"));
+    assert!(reason.contains("unit"), "{reason}");
+    assert!(!reason.contains("unreached-password"), "{reason}");
 }
 
 #[test]

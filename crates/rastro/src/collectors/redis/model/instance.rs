@@ -37,10 +37,17 @@ pub struct Instance {
     /// The modules it has loaded, where it let them be read.
     pub modules: Option<Modules>,
 
-    /// Each thing this run could not find out about the server, in the order it was asked.
+    /// Each thing the box withheld from this run, in the order it was asked: no privilege, no
+    /// credential or a refused one, a command the server refuses.
     ///
-    /// One reason per refused read rather than the first alone: a server with `CONFIG` renamed
-    /// away may refuse `ACL` too, and each refusal is a separate fact about its hardening.
+    /// **Not an error**, the rule elasticsearch set: nothing on the box is wrong, and an operator
+    /// looking for faults should not find these among them. One reason per withheld read rather
+    /// than the first alone: a server with `CONFIG` renamed away may refuse `ACL` too, and each
+    /// refusal is a separate fact about its hardening.
+    pub not_read: Vec<String>,
+
+    /// Each thing this run tried and failed to find out about the server, in the order it was
+    /// asked.
     pub errors: Vec<String>,
 }
 
@@ -52,12 +59,21 @@ impl Instance {
             .map_or(self.process_kind, |identity| identity.kind)
     }
 
-    /// Every refusal, as one sentence, where there was any.
+    /// Every failure, as one sentence, where there was any.
     pub fn error(&self) -> Option<String> {
-        match self.errors.is_empty() {
-            true => None,
-            false => Some(self.errors.join("; ")),
-        }
+        joined(&self.errors)
+    }
+
+    /// Everything withheld, as one sentence, where there was any.
+    pub fn not_read(&self) -> Option<String> {
+        joined(&self.not_read)
+    }
+}
+
+fn joined(reasons: &[String]) -> Option<String> {
+    match reasons.is_empty() {
+        true => None,
+        false => Some(reasons.join("; ")),
     }
 }
 
@@ -122,6 +138,7 @@ impl From<&Instance> for Observation {
                 },
             ),
             ("unsupported", text_or_null(unsupported.as_ref())),
+            ("not_read", text_or_null(instance.not_read().as_ref())),
             ("error", text_or_null(instance.error().as_ref())),
         ]);
 
@@ -130,6 +147,6 @@ impl From<&Instance> for Observation {
             true => observation.approximate(),
             false => observation,
         };
-        best_effort.incomplete_when(!instance.errors.is_empty())
+        best_effort.incomplete_when(!instance.errors.is_empty() || !instance.not_read.is_empty())
     }
 }
