@@ -21,6 +21,7 @@
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use rastro_collector::CollectionError;
@@ -162,7 +163,9 @@ impl RespConnection {
     /// row has no free text to forge.
     pub fn dial(target: &DialTarget, server: u32) -> Result<Self, CollectionError> {
         let stream: io::Result<ServerStream> = match target {
-            DialTarget::Unix(path) => UnixStream::connect(path).map(ServerStream::from),
+            DialTarget::Unix(path) => {
+                unix_connect_within(path, CONNECT_WITHIN).map(ServerStream::from)
+            }
             DialTarget::Tcp(address) => {
                 TcpStream::connect_timeout(address, CONNECT_WITHIN).map(ServerStream::from)
             }
@@ -294,6 +297,49 @@ impl RespConnection {
         }
     }
 }
+
+/// A unix socket connected within `within`, found by review: a blocking connect waits for room in
+/// a full accept queue, which another account with access to the socket can keep full, and the
+/// socket's timeouts are set only once it is connected. Non-blocking, a full queue is `EAGAIN`,
+/// retried until the deadline.
+#[cfg(target_os = "linux")]
+fn unix_connect_within(path: &Path, within: Duration) -> io::Result<UnixStream> {
+    use rustix::io::Errno;
+    use rustix::net::{
+        AddressFamily, SocketAddrUnix, SocketFlags, SocketType, connect, socket_with,
+    };
+
+    let deadline = Instant::now() + within;
+    let address = SocketAddrUnix::new(path)?;
+    loop {
+        let socket = socket_with(
+            AddressFamily::UNIX,
+            SocketType::STREAM,
+            SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
+            None,
+        )?;
+        match connect(&socket, &address) {
+            Ok(()) => {
+                let stream = UnixStream::from(socket);
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
+            Err(Errno::AGAIN) if Instant::now() < deadline => std::thread::sleep(QUEUE_RETRY),
+            Err(Errno::AGAIN) => return Err(io::Error::from(ErrorKind::TimedOut)),
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// The same on a workstation build, which reads no real server: rastro ships for Linux alone.
+#[cfg(not(target_os = "linux"))]
+fn unix_connect_within(path: &Path, _within: Duration) -> io::Result<UnixStream> {
+    UnixStream::connect(path)
+}
+
+/// How long a connection waits before asking a full accept queue again.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const QUEUE_RETRY: Duration = Duration::from_millis(10);
 
 /// The most one write is handed, so the deadline is checked between writes of a long command.
 const MOST_WRITTEN_AT_ONCE: usize = 64 * 1024;

@@ -298,6 +298,55 @@ fn a_peer_that_drains_a_command_slowly_is_given_up_on_at_the_deadline() {
     );
 }
 
+/// Linux alone: there a blocking connect waits for room in a full queue, where macOS refuses it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_socket_whose_queue_is_full_is_given_up_on_at_the_deadline() {
+    // Arrange: a listener nobody accepts on, its queue filled by connections that stay pending,
+    // which another account with access to the socket can hold open; a blocking connect then waits.
+    let path = std::env::temp_dir().join(format!("rastro-full-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    // A queue of one, so a handful of pending connections fills it on any kernel's defaults.
+    let listener = rustix::net::socket(
+        rustix::net::AddressFamily::UNIX,
+        rustix::net::SocketType::STREAM,
+        None,
+    )
+    .expect("a socket");
+    rustix::net::bind(
+        &listener,
+        &rustix::net::SocketAddrUnix::new(&path).expect("a socket path"),
+    )
+    .expect("a bindable socket path");
+    rustix::net::listen(&listener, 1).expect("a listening socket");
+    for _ in 0..8 {
+        let path = path.clone();
+        thread::spawn(move || {
+            let held = UnixStream::connect(path);
+            thread::sleep(Duration::from_secs(30));
+            drop(held);
+        });
+    }
+    thread::sleep(Duration::from_millis(300));
+
+    // Act
+    let started = std::time::Instant::now();
+    let result = RespConnection::dial(
+        &rastro::collectors::redis::DialTarget::Unix(path.clone()),
+        std::process::id(),
+    );
+
+    // Assert: refused near the connect deadline rather than waiting on the queue.
+    assert!(result.is_err());
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    drop(listener);
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn two_replies_arriving_together_are_answered_in_order() {
     // Arrange: a reply's surplus is the next reply, never lost and never misread.
