@@ -192,7 +192,10 @@ fn start_from(argv: &str) -> Result<ServerStart, CollectionError> {
              systemd shows the command without its quoting",
         ));
     }
-    let password = match words.iter().rposition(|word| *word == REQUIREPASS_OPTION) {
+    let password = match words
+        .iter()
+        .rposition(|word| word.eq_ignore_ascii_case(REQUIREPASS_OPTION))
+    {
         None => None,
         // Only where the next word starts another option or ends the command: systemd prints
         // the vector without its quoting, so a password holding a space would be cut.

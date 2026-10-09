@@ -568,3 +568,17 @@ fn a_configuration_path_systemd_shows_ambiguously_is_not_read() {
     assert!(error.contains("cannot be told apart"), "{error}");
     assert!(auths(&server).is_empty());
 }
+
+#[test]
+fn a_command_line_password_is_found_whatever_its_case() {
+    // Arrange: redis matches directive names case-insensitively, the command line's included.
+    let server = FakeRedis::stock_with_password("auth-argv-case", "actual", &[]);
+    let auth_box = auth_box("redis-auth-argv-case", &server, "--REQUIREPASS actual")
+        .configured("requirepass stale\n");
+
+    // Act
+    read(&auth_box);
+
+    // Assert: the file's stale password would be a wrong `AUTH`, an `ACL LOG` entry.
+    assert_eq!(auths(&server), [["AUTH", "actual"]]);
+}
