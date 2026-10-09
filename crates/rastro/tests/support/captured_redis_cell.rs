@@ -19,11 +19,10 @@ use super::fs_tree::scratch_tree;
 use super::shim;
 
 /// The process files copied as they are; `fd` and the links are rebuilt from their text.
-const PROCESS_FILES: [&str; 9] = [
+const PROCESS_FILES: [&str; 8] = [
     "cmdline",
     "comm",
     "stat",
-    "status",
     "cgroup",
     "mountinfo",
     "net/tcp",
@@ -32,7 +31,7 @@ const PROCESS_FILES: [&str; 9] = [
 ];
 
 /// The links copied as the kernel spelled their targets, which need not exist here.
-const PROCESS_LINKS: [&str; 5] = ["cwd", "exe", "ns/net", "ns/mnt", "ns/pid"];
+const PROCESS_LINKS: [&str; 3] = ["cwd", "ns/net", "ns/mnt"];
 
 /// A captured cell, rebuilt.
 pub struct CapturedBox {

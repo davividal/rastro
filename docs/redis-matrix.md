@@ -111,18 +111,18 @@ collector made of it.
 
 ## Captured from every cell
 
-- for each server process: `cmdline`, `comm`, `stat`, `status`, `cgroup`, `mountinfo`, the `fd`
-  list, the targets of `cwd`, `root`, `exe` and its namespace links, its own `net/tcp`, `net/tcp6`
-  and `net/unix`, and which of them another account may read;
+- for each server process: `cmdline`, `comm`, `stat`, `cgroup`, `mountinfo`, the `fd` list, the
+  targets of `cwd` and its namespace links, and its own socket tables;
 - the host's own socket tables, mount table and namespace links, which is what rastro compares
   each server's against;
 - `systemctl show` for the unit the cgroup names, and the files the cell configured, read inside
   the server's own root at the same paths;
-- the bytes each server sent in reply to rastro's fixed list of commands, without a credential and
-  after `AUTH`;
-- `ACL LOG` and the server's log before and after both of rastro's runs, so a cell proves what a
-  read cost rather than asserting it;
-- rastro's facet as root and unprivileged, its stderr and its exit status.
+- the bytes each server sent in reply to rastro's fixed list of commands, after `AUTH`;
+- `ACL LOG` and the server's log before and after both of rastro's runs, and rastro's facet as root
+  and unprivileged, which this document's outcomes record.
+
+The fixtures keep only what a test reads, as their README says: listening rows of the socket
+tables, and one `CONFIG GET *` per release and shape.
 
 ## Considered and left out
 

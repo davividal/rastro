@@ -2,7 +2,8 @@
 //!
 //! A fake server replays what each real one sent to rastro's fixed list of commands, byte for byte,
 //! so what is tested is the reading of every release and both families as they really answer. One
-//! case per cell of `docs/redis-matrix.md` whose server answered.
+//! case per release and per shape of `docs/redis-matrix.md`: a cell whose server answers exactly as
+//! another release's does keeps no `CONFIG GET` of its own.
 
 use std::fs;
 use std::path::Path;
@@ -90,17 +91,10 @@ read_in_full!(cell_02_redis_8_0, "02", 0, "8.0.6");
 read_in_full!(cell_03_redis_8_2, "03", 0, "8.2.10");
 read_in_full!(cell_05_redis_8_6_rewritten, "05", 0, "8.6.7");
 read_in_full!(cell_08_redis_8_8_with_an_acl_file, "08", 0, "8.8.3");
-read_in_full!(cell_09_redis_8_10_on_a_unix_socket, "09", 0, "8.10.2");
-read_in_full!(cell_10_redis_8_10_beside_tls, "10", 0, "8.10.2");
 read_in_full!(cell_12_the_queue_instance, "12", 0, "8.10.2");
 read_in_full!(cell_12_the_cache_replica, "12", 1, "8.10.2");
 read_in_full!(cell_13_redis_8_10_in_cluster_mode, "13", 0, "8.10.2");
-read_in_full!(cell_15_redis_8_10_with_drop_ins, "15", 0, "8.10.2");
-read_in_full!(cell_16_redis_8_10_with_aof_on_lvm, "16", 0, "8.10.2");
 read_in_full!(cell_17_redis_8_10_with_a_runtime_module, "17", 0, "8.10.2");
-read_in_full!(cell_19_redis_8_10_by_hand, "19", 0, "8.10.2");
-read_in_full!(cell_23_redis_8_10_in_a_container, "23", 0, "8.10.2");
-read_in_full!(cell_24_redis_8_10_with_a_volume, "24", 0, "8.10.2");
 read_in_full!(cell_26_valkey_9_1, "26", 0, "9.1.2");
 read_in_full!(cell_27_valkey_9_0, "27", 0, "9.0.6");
 read_in_full!(cell_28_valkey_8_1, "28", 0, "8.1.10");
