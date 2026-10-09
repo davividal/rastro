@@ -34,6 +34,15 @@ use rastro_collector::{
 /// Where the kernel publishes its process table.
 const PROC: &str = "/proc";
 
+/// The files a server writes in its directory, under redis's default names: the snapshot, and
+/// the directory of append-only files.
+///
+/// **Its files, not its directory**, decided by the maintainer: a server started by hand from
+/// `/root` with `dir ./` keeps its dump in root's home, and sealing the directory would hide the
+/// home's keys and scripts to hide one file. Claims are gathered before any server is asked, so a
+/// renamed `dbfilename` is not known, and that file is walked like any other.
+const SERVER_FILES: [&str; 2] = ["dump.rdb", "appendonlydir"];
+
 /// The tool that says how a unit starts its server.
 const SYSTEMCTL: &str = "systemctl";
 
@@ -140,8 +149,9 @@ impl Collector for RedisCollector {
             .flat_map(|server| {
                 data_directories_of(&self.proc, server.process_id)
                     .into_iter()
-                    .filter_map(move |directory| {
-                        let tree = WalkedTree::new(directory.to_str()?).ok()?;
+                    .flat_map(|directory| SERVER_FILES.map(|name| directory.join(name)))
+                    .filter_map(move |file| {
+                        let tree = WalkedTree::new(file.to_str()?).ok()?;
                         let sealed = FilesystemClaim::sealed(tree);
 
                         Some(match ClaimQualifier::new(server.key.clone()) {

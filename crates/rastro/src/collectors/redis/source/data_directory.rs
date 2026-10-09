@@ -13,9 +13,6 @@ use crate::collectors::host_directories::host_directories_of;
 /// the directory without asking the server anything. Which matters here: claims are gathered
 /// before any collector runs, on the critical path of every run.
 ///
-/// **The root is never it.** `dir ./` in a server started from `/` leaves the working directory at
-/// the root, and sealing that would seal the whole walk to hide one dump file.
-///
 /// **The host's directory behind the path, by identity rather than by namespace**, measured: the
 /// package's unit gives every server a mount namespace of its own and its `dir` is still the host's
 /// `/var/lib/redis`, while a redis in a container reports `/data`, a path in its own root. The rule
@@ -25,12 +22,6 @@ pub fn data_directories_of(proc: &Path, process_id: u32) -> Vec<PathBuf> {
     let Ok(directory) = fs::read_link(proc.join(process_id.to_string()).join("cwd")) else {
         return Vec::new();
     };
-    if directory.parent().is_none() {
-        return Vec::new();
-    }
 
     host_directories_of(proc, process_id, &directory)
-        .into_iter()
-        .filter(|host| host.parent().is_some())
-        .collect()
 }

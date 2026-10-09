@@ -62,15 +62,15 @@ nothing rastro did added to either, except where the outcome says so.
 | 13 | 8.10.2 | redis.io deb + unit | `cluster-enabled yes`, one node | default | none | ok; `mode: cluster`, no topology read |
 | 14 | 8.10.2 | redis.io deb + unit | `rename-command CONFIG ""` | default | none | ok with `settings: null` and its reason; the rest read |
 | 15 | 8.10.2 | redis.io deb + unit | `set-proc-title no`, `include` glob of a drop-in directory | 6390 | `requirepass` in the drop-in | ok; the password found through the glob, inside the server's root |
-| 16 | 8.10.2 | redis.io deb + unit | `dir /data/redis` on LVM, AOF on | default | none | ok; `/data/redis` sealed, found through the mount tables |
+| 16 | 8.10.2 | redis.io deb + unit | `dir /data/redis` on LVM, AOF on | default | none | ok; the dump and AOF directory in `/data/redis` sealed, found through the mount tables |
 | 17 | 8.10.2 | redis.io deb + unit | three modules from the file, a fourth by `MODULE LOAD` | default | none | ok; all five modules (`enable-module-command` had to allow the load) |
 | 18 | 8.10.2 | redis.io deb + unit | default | default | `default` switched off, another account on | refused: the default account is off; nothing sent |
-| 19 | 8.10.2 | by hand, from `/root` | `dir ./` | `bind *` | none | ok; `/root` sealed from the walk, see the open question below |
+| 19 | 8.10.2 | by hand, from `/root` | `dir ./` | `bind *` | none | ok; `/root/dump.rdb` and `/root/appendonlydir` sealed, and nothing else of root's home |
 | 20 | 8.10.2 | by hand | default | `bind *` | `requirepass` | refused: no unit, nothing guessed |
 | 21 | 8.10.2 | redis.io deb, service stopped | default | n/a | n/a | present, `installed: [redis]`, no instances |
 | 22 | 8.10.2 | `redis-sentinel` alone | sentinel config | 26379 | none | present, `installed: [redis]` (the sentinel package installs the server), no instances |
 | 23 | 8.10.2 | docker, no published port | env only | own netns | none | ok as root, through the namespace join; `/data` is the image's, not claimed |
-| 24 | 8.10.2 | docker, `-p 6379:6379` | named volume | own netns, docker-proxy on the host | none | as 23; docker-proxy's host socket is not taken for the server's; the volume's host directory sealed |
+| 24 | 8.10.2 | docker, `-p 6379:6379` | named volume | own netns, docker-proxy on the host | none | as 23; docker-proxy's host socket is not taken for the server's; the server's files in the volume's host directory sealed |
 | 25 | 8.8.3 | docker | config file bind-mounted | own netns | `requirepass` in that file | refused: no unit; the title names no file, and nothing on the host records the container's start command but the engine |
 
 ### valkey, supported
@@ -97,12 +97,6 @@ The deb cells cannot share a box: the package owns `/etc/redis` and one version 
 run one after another on the same VM, purged between them. The redis.io repository carries every
 redis line from 6.0 to 8.10 for bookworm on arm64; 5.0 is not in it, and Debian 12 packages no
 valkey, hence the source builds.
-
-## Open questions
-
-- **A server started by hand in a home directory** (cell 19). Its working directory is its `dir`,
-  so `/root` is sealed from the walk to hide one dump file. The choice is between sealing, sealing
-  only the dump and AOF names, and not claiming at all.
 
 ## How it is captured
 

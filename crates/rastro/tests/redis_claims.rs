@@ -35,9 +35,31 @@ fn with_working_directory(name: &str, directory: &Path) -> PathBuf {
     proc
 }
 
+/// The paths the claims name, sorted.
+fn trees_of(claims: &[FilesystemClaim]) -> Vec<String> {
+    let mut trees: Vec<String> = claims
+        .iter()
+        .map(|claim| claim.tree().as_str().to_owned())
+        .collect();
+    trees.sort();
+    trees
+}
+
+/// The server's own files in `directory`: its snapshot and its append-only directory.
+fn own_files_in(directory: &Path) -> Vec<String> {
+    let directory = directory
+        .to_str()
+        .expect("a UTF-8 path")
+        .trim_end_matches('/');
+    vec![
+        format!("{directory}/appendonlydir"),
+        format!("{directory}/dump.rdb"),
+    ]
+}
+
 #[test]
-fn a_servers_data_directory_is_sealed_for_its_instance() {
-    // Arrange: every attribute under it moves when the server saves, which the `save` rules
+fn a_servers_own_files_are_sealed_for_its_instance() {
+    // Arrange: every attribute of them moves when the server saves, which the `save` rules
     // decide and nobody touching the box does.
     let data = scratch_tree("redis-claims-data", &["var/lib/redis"]).join("var/lib/redis");
     let proc = with_working_directory("redis-claims-sealed", &data);
@@ -46,26 +68,35 @@ fn a_servers_data_directory_is_sealed_for_its_instance() {
     let claims = claims_of(&proc);
 
     // Assert
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    assert_eq!(
-        claims[0].tree().as_str(),
-        data.to_str().expect("a UTF-8 path")
-    );
-    assert_eq!(claims[0].reading(), ClaimedReading::Sealed);
-    assert_eq!(
-        claims[0].qualifier().map(|qualifier| qualifier.as_str()),
-        Some(SOCKET)
-    );
+    assert_eq!(trees_of(&claims), own_files_in(&data));
+    for claim in &claims {
+        assert_eq!(claim.reading(), ClaimedReading::Sealed);
+        assert_eq!(
+            claim.qualifier().map(|qualifier| qualifier.as_str()),
+            Some(SOCKET)
+        );
+    }
 }
 
 #[test]
-fn a_server_working_in_the_root_claims_nothing() {
+fn a_server_working_in_a_home_directory_seals_its_files_and_nothing_else() {
+    // Arrange: measured as cell 19, a server started by hand from `/root` with `dir ./`. The home
+    // is the operator's, and its keys and scripts are what a fingerprint is for.
+    let home = scratch_tree("redis-claims-home", &["root"]).join("root");
+    let proc = with_working_directory("redis-claims-home-proc", &home);
+
+    // Act & Assert
+    assert_eq!(trees_of(&claims_of(&proc)), own_files_in(&home));
+}
+
+#[test]
+fn a_server_working_in_the_root_seals_its_files_and_not_the_walk() {
     // Arrange: `dir ./` in a server started from `/`, which a container or a hand start makes
-    // easy. Sealing it would seal the whole walk.
+    // easy.
     let proc = with_working_directory("redis-claims-root", Path::new("/"));
 
     // Act & Assert
-    assert!(claims_of(&proc).is_empty());
+    assert_eq!(trees_of(&claims_of(&proc)), own_files_in(Path::new("/")));
 }
 
 #[test]
@@ -78,7 +109,7 @@ fn a_server_whose_directory_cannot_be_read_claims_nothing() {
 }
 
 #[test]
-fn a_directory_is_still_sealed_when_its_instance_cannot_name_the_claim() {
+fn a_servers_files_are_still_sealed_when_its_instance_cannot_name_the_claim() {
     // Arrange: a server keyed by its title, whose colon a claim qualifier may not hold.
     let data = scratch_tree("redis-claims-data-unnamed", &["data"]).join("data");
     let proc = with_working_directory("redis-claims-unnamed", &data);
@@ -94,8 +125,8 @@ fn a_directory_is_still_sealed_when_its_instance_cannot_name_the_claim() {
     let claims = claims_of(&proc);
 
     // Assert: losing which instance asked costs a label; losing the claim costs the seal.
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    assert!(claims[0].qualifier().is_none());
+    assert_eq!(claims.len(), 2, "{claims:?}");
+    assert!(claims.iter().all(|claim| claim.qualifier().is_none()));
 }
 
 #[test]
@@ -110,11 +141,7 @@ fn a_packaged_server_in_a_private_mount_namespace_seals_the_hosts_directory() {
     let claims = claims_of(&proc);
 
     // Assert
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    assert_eq!(
-        claims[0].tree().as_str(),
-        data.to_str().expect("a UTF-8 path")
-    );
+    assert_eq!(trees_of(&claims), own_files_in(&data));
 }
 
 #[test]

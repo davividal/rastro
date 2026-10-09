@@ -6813,12 +6813,21 @@ message counts. From `INFO replication`, the role and a replica's master are sta
 master link status and the list of connected replicas are volatile: both change with nobody
 touching this box.
 
-## The data directory is sealed, from the working directory
+## The server's own files are sealed, in its working directory
 
 redis applies `dir` with `chdir` and answers `CONFIG GET dir` with `getcwd`, so `/proc/<pid>/cwd`
 is the directory without a connection, which matters in the claim phase. Sealed for the reason
-the PostgreSQL and RabbitMQ stores are. **Never `/`**: `dir ./` in a server started from the root
-would otherwise seal the whole walk to hide one dump.
+the PostgreSQL and RabbitMQ stores are: every attribute of them moves when the server saves.
+
+**Its files, not its directory**, decided by the maintainer on cell 19, a server started by hand
+from `/root` with `dir ./`. Sealing the directory hid root's home, its keys and scripts, to hide
+one dump file, and deciding which directories are too important to seal would be the wrong fix
+for a misconfigured server. A claim's tree is any path, and the walk applies it to the path
+itself, so the snapshot, `dump.rdb`, and the append-only directory, `appendonlydir`, are claimed
+and nothing beside them. The names are redis's defaults: claims are gathered before any server is
+asked, so a renamed `dbfilename` is walked like any other file. A save in progress leaves a
+`temp-<pid>.rdb` beside the dump for its duration, which the walk then shows; a save means the data
+changed, so the box was not unchanged. A server working in `/` needs no exception any more.
 
 **The host's directory behind the path, by identity rather than by namespace**, found by the
 matrix. A review had sealed only a server in rastro's own mount namespace, so a container's `/data`

@@ -224,21 +224,31 @@ fn a_live_server_wanting_a_password_rastro_cannot_reach_is_said_so() {
 }
 
 #[test]
-fn a_live_servers_directory_is_the_one_claimed() {
+fn a_live_servers_own_files_are_the_ones_claimed() {
     // Arrange
     let server = LiveServer::start("redis-live-claim", &[]);
 
     // Act
     let claims = collector().filesystem_claims();
 
-    // Assert: read from the process's working directory, which is what `dir` sets.
-    let claim = claims
+    // Assert: in the process's working directory, which is what `dir` sets.
+    let mut trees: Vec<&str> = claims
         .iter()
-        .find(|claim| claim.qualifier().map(|qualifier| qualifier.as_str()) == Some(&server.key()))
-        .unwrap_or_else(|| panic!("no claim for {}: {claims:?}", server.key()));
+        .filter(|claim| {
+            claim.qualifier().map(|qualifier| qualifier.as_str()) == Some(&server.key())
+        })
+        .map(|claim| {
+            assert_eq!(claim.reading(), ClaimedReading::Sealed);
+            claim.tree().as_str()
+        })
+        .collect();
+    trees.sort_unstable();
+    let directory = server.directory.to_str().expect("a UTF-8 path");
     assert_eq!(
-        claim.tree().as_str(),
-        server.directory.to_str().expect("a UTF-8 path")
+        trees,
+        [
+            format!("{directory}/appendonlydir"),
+            format!("{directory}/dump.rdb")
+        ]
     );
-    assert_eq!(claim.reading(), ClaimedReading::Sealed);
 }

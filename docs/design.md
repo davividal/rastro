@@ -224,8 +224,8 @@ the server's `ACL LOG`; the files are read inside the server's own root, and a p
 at runtime is unreachable and the instance says so. A server in a container is reached through
 its network namespace, as an elasticsearch node is. `INFO server` is the gate, and every read after it
 fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
-The data directory is sealed from the process's working directory, since `dir` is a
-`chdir`, as the host directory behind it and never when that is `/`.
+The server's own files, `dump.rdb` and `appendonlydir`, are sealed in the process's
+working directory, since `dir` is a `chdir`, as the host directory behind it.
 
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
