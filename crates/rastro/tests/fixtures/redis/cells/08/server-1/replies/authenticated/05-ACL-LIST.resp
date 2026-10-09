@@ -1,0 +1,7 @@
+*3
+$136
+user app on sanitize-payload #f35377579db3f6d853c1ea9795d613bbaa4bfbf6b0d08abea1272b350696cdf8 ~app:* resetchannels -@all +@read +@write
+$110
+user default on sanitize-payload #93d48e05f6f3dbbb86b2dd6ed403dd2eace4440a9b5c5929072bf21b9eda7fc7 ~* &* +@all
+$133
+user monitor on sanitize-payload #8db6030585272b4976fd06b6cf4fb6a892cfc9b66b96ffd8e16f0d9f5cc900d3 ~* resetchannels -@all +info +ping

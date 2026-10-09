@@ -1,0 +1,10 @@
+0 -> /dev/null
+1 -> socket:[611660]
+2 -> socket:[611660]
+3 -> pipe:[611663]
+4 -> pipe:[611663]
+5 -> pipe:[611665]
+6 -> pipe:[611665]
+7 -> anon_inode:[eventpoll]
+8 -> socket:[611666]
+9 -> socket:[611667]

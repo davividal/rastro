@@ -22,8 +22,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::collectors::elasticsearch::source::in_root::names_inside;
 use crate::collectors::elasticsearch::value_objects::Release;
+use crate::collectors::inside_root::names_inside;
 
 /// The argument vector's separator, which is how the kernel writes `cmdline`.
 const ARGUMENT_SEPARATOR: u8 = b'\0';

@@ -130,7 +130,8 @@ telemetry agents print `--version` to stderr and exit zero.
 
 **Layer 3 starters:** nginx, read from its own configuration files and its
 running master; `pg_dumpall --globals-only` plus `SHOW ALL`; RabbitMQ, asked for
-its status and its definitions; and the container engines. Enough to prove the
+its status and its definitions; redis and valkey, asked over their own protocol; and
+the container engines. Enough to prove the
 detect-and-dispatch pattern exec-contract authors will copy, and between them the
 two shapes it comes in: a service that will report its effective state, and a
 service that will not.
@@ -204,6 +205,27 @@ not manage. The
 facet's two halves are the node's own account of itself, `status`, and the durable
 half somebody declared, `export_definitions`, whose credential-bearing values are
 withheld by default. See [decisions.md](decisions.md#a-cli-invocation-starts-epmd-so-nothing-is-asked-speculatively).
+
+**Layer 3, redis.** One `redis` facet for redis and valkey, which Debian 13 and Alpine
+package side by side, keyed by the instance's TCP port, else its unix socket's path. The
+releases it supports and the shapes it was measured on are
+[`redis-matrix.md`](redis-matrix.md): redis 8.0 to 8.10 and valkey 7.2 to 9.1, every other
+release read on a best-effort basis and marked `unsupported`.
+The server is the only honest account of itself, because on the estate this was written
+for `maxmemory` and `save` are applied with `CONFIG SET` and written to no file. It is
+asked over its own protocol rather than through `redis-cli`, whose only ways to carry a
+password are argv, the environment and stdin, and whose text output cannot tell an empty
+value from a missing one; the `redis` crate parses the replies, its client unused, and
+rastro holds the socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
+seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
+a password the files its own unit names give the `default` account, replayed the way the
+server builds it and checked against its hashes first, because a refused one is an entry in
+the server's `ACL LOG`; the files are read inside the server's own root, and a password set only
+at runtime is unreachable and the instance says so. A server in a container is reached through
+its network namespace, as an elasticsearch node is. `INFO server` is the gate, and every read after it
+fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
+The server's own files, `dump.rdb` and `appendonlydir`, are sealed in the process's
+working directory, since `dir` is a `chdir`, as the host directory behind it.
 
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
@@ -362,11 +384,13 @@ with Layer 1.
   the two a document was rendered under is in the `invocation` facet as
   `config.disclosure`, beside the view, because both axes rewrite the document and a
   diff across either would otherwise report changes nothing accounts for.
-- **No network I/O beyond a GET to a service already running on the box.** A request
+- **No network I/O beyond a read sent to a service already running on the box.** A request
   goes only to a listener held by a process rastro found in `/proc`, on the address it
   bound, from inside its network namespace: no name resolution, no remote address, no
   probing. Elasticsearch is the reason; see
   [decisions.md](decisions.md#rastro-may-send-a-get-to-a-service-already-running-on-the-box).
+  redis widens it to a second protocol, a fixed list of read-only commands; see
+  [decisions.md](decisions.md#the-boundary-widens-to-redis-read-commands-over-its-own-protocol).
 
 ## Verification
 
@@ -403,6 +427,11 @@ unannotated volatile fields at CI time instead of on a production box.
   root through the namespace join; each node's own answer to compare against, no index changed
   by a read, two reads identical, the secured node never sent plaintext according to its own
   log, and an unprivileged run naming on each node what it could not read (`live-search.yml`).
+- The `redis` facet against a live server it starts in its own scratch tree, compared
+  with the server's own client (`redis_conformance`). Run after the suite rather than in
+  it, in `ci.yml` and the container suite, because a server coming and going while
+  nextest runs binaries side by side would land between the two runs of the determinism
+  harness.
 - `fmt`, `clippy` as errors, `cargo doc` for intra-doc links, and an assertion that
   the shipped musl binary really is static. There is no MSRV job and no declared
   floor; `mise.toml` pins the toolchain and CI reads it.

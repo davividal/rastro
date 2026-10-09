@@ -13,3 +13,7 @@
 
 rastro-ssh text eol=lf
 *.sh text eol=lf
+
+# The captured redis cells are the bytes real servers sent, and RESP ends every line with CRLF:
+# normalised to LF, a reply would no longer parse as the server's.
+crates/rastro/tests/fixtures/redis/cells/** -text

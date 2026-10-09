@@ -69,7 +69,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # `setns`, to read an Elasticsearch node in a container from inside its network namespace, and
 # `openat2`, to read its files inside its own root. Safe and pure Rust on Linux, which keeps
 # `unsafe_code = "forbid"` true of the workspace's own code.
-rustix = { version = "1", default-features = false, features = ["fs", "std", "thread"] }
+rustix = { version = "1", default-features = false, features = ["fs", "net", "std", "thread"] }
+# The redis wire protocol: only its reply parser and command encoder, never its client. rastro
+# holds the socket, the timeouts, the reply bound and every command sent. Chosen over a smaller
+# framing crate whose decoder recursed without a depth limit, measured to abort the run on a
+# deeply nested reply; this parser caps nesting and is watched by many more people than rastro's
+# own code would be. No default features, so no async runtime, TLS or cluster support.
+redis = { version = "1", default-features = false }
 
 [profile.release]
 strip = true

@@ -1,0 +1,30 @@
+$708
+# Server
+redis_version:7.2.4
+server_name:valkey
+valkey_version:8.0.11
+redis_git_sha1:00000000
+redis_git_dirty:1
+redis_build_id:5292dfe800fc14be
+server_mode:standalone
+os:Linux 6.1.0-47-arm64 aarch64
+arch_bits:64
+monotonic_clock:POSIX clock_gettime
+multiplexing_api:epoll
+gcc_version:12.2.0
+process_id:241153
+process_supervised:no
+run_id:10c12e9f7b6dc1e5f09cbc50ae355d4a4e009256
+tcp_port:0
+server_time_usec:1791299752524009
+uptime_in_seconds:1
+uptime_in_days:0
+hz:10
+configured_hz:10
+lru_clock:12914856
+executable:/opt/valkey-8.0.11/bin/valkey-server
+config_file:/etc/valkey/valkey-29.conf
+io_threads_active:0
+availability_zone:
+listener1:name=unix,bind=/run/valkey-29/valkey.sock
+

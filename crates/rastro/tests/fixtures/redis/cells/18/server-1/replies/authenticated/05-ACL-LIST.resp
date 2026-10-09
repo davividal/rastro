@@ -1,0 +1,5 @@
+*2
+$106
+user app on sanitize-payload #bbd652f886d26bf25374cbb5255ee6761cab5670e5552dda368e2040439acb4e ~* &* +@all
+$53
+user default off sanitize-payload resetchannels -@all

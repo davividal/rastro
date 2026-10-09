@@ -1,0 +1,22 @@
+425 329 0:49 / / rw,relatime master:172 - overlay overlay rw,lowerdir=/var/lib/docker/overlay2/l/AV5ZHZZLOMI74B3KXZTDVJLHNE:/var/lib/docker/overlay2/l/GIBSHCUFAOGSDMMDQJQNF7HK6I:/var/lib/docker/overlay2/l/HVIBWA7XCGBZAA5RLAZKRPNBXD:/var/lib/docker/overlay2/l/4SLBZNTLFKMNDTIGL4NJTDGEIE:/var/lib/docker/overlay2/l/SBFNASHSJPRCTYJBVGO6XOEDLD:/var/lib/docker/overlay2/l/XUZO2ZYA2T67THI2ZQVBJS4Q3G:/var/lib/docker/overlay2/l/443UGHBZWRJS2B7PT26ZZNS6AG:/var/lib/docker/overlay2/l/IPSUFVWCV6LLA4EGMHHJBFMLCW,upperdir=/var/lib/docker/overlay2/6543f9f6e7788ca7e480a1d36c1af31307203fa7ff586f89e3d561fc67f6d1a4/diff,workdir=/var/lib/docker/overlay2/6543f9f6e7788ca7e480a1d36c1af31307203fa7ff586f89e3d561fc67f6d1a4/work
+426 425 0:52 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+427 425 0:53 / /dev rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+428 427 0:54 / /dev/pts rw,nosuid,noexec,relatime - devpts devpts rw,gid=5,mode=620,ptmxmode=666
+429 425 0:55 / /sys ro,nosuid,nodev,noexec,relatime - sysfs sysfs ro
+430 429 0:27 /system.slice/docker-26882b15a33cb2913a95b90dec4e1cebe091b77d1267282ee25fa002133c8694.scope /sys/fs/cgroup ro,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw,nsdelegate,memory_recursiveprot
+431 427 0:51 / /dev/mqueue rw,nosuid,nodev,noexec,relatime - mqueue mqueue rw
+432 427 0:56 / /dev/shm rw,nosuid,nodev,noexec,relatime - tmpfs shm rw,size=65536k,inode64
+433 425 8:1 /var/lib/docker/volumes/redis24data/_data /data rw,relatime master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro
+434 425 8:1 /var/lib/docker/containers/26882b15a33cb2913a95b90dec4e1cebe091b77d1267282ee25fa002133c8694/resolv.conf /etc/resolv.conf rw,relatime - ext4 /dev/sda1 rw,discard,errors=remount-ro
+435 425 8:1 /var/lib/docker/containers/26882b15a33cb2913a95b90dec4e1cebe091b77d1267282ee25fa002133c8694/hostname /etc/hostname rw,relatime - ext4 /dev/sda1 rw,discard,errors=remount-ro
+436 425 8:1 /var/lib/docker/containers/26882b15a33cb2913a95b90dec4e1cebe091b77d1267282ee25fa002133c8694/hosts /etc/hosts rw,relatime - ext4 /dev/sda1 rw,discard,errors=remount-ro
+330 426 0:52 /bus /proc/bus ro,nosuid,nodev,noexec,relatime - proc proc rw
+331 426 0:52 /fs /proc/fs ro,nosuid,nodev,noexec,relatime - proc proc rw
+332 426 0:52 /irq /proc/irq ro,nosuid,nodev,noexec,relatime - proc proc rw
+333 426 0:52 /sys /proc/sys ro,nosuid,nodev,noexec,relatime - proc proc rw
+334 426 0:52 /sysrq-trigger /proc/sysrq-trigger ro,nosuid,nodev,noexec,relatime - proc proc rw
+335 426 0:57 / /proc/acpi ro,relatime - tmpfs tmpfs ro,inode64
+336 426 0:53 /null /proc/kcore rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+337 426 0:53 /null /proc/keys rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+338 426 0:53 /null /proc/timer_list rw,nosuid - tmpfs tmpfs rw,size=65536k,mode=755,inode64
+339 429 0:58 / /sys/firmware ro,relatime - tmpfs tmpfs ro,inode64
