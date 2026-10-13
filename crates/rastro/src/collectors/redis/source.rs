@@ -21,7 +21,7 @@ mod server_unit;
 pub use acl_list::AclList;
 pub use config_get::ConfigGet;
 pub use config_password::{PasswordDirectives, default_user_in_acl_file, password_directives_in};
-pub use data_directory::data_directories_of;
+pub use data_directory::server_files_of;
 pub use default_account::password_for_default_account;
 pub use info_fields::info_fields;
 pub use info_replication::InfoReplication;

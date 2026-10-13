@@ -100,6 +100,37 @@ fn a_server_working_in_the_root_seals_its_files_and_not_the_walk() {
 }
 
 #[test]
+fn a_bind_mount_of_the_append_only_directory_is_sealed_at_its_own_root() {
+    // Arrange: the host binds only the server's `appendonlydir` at a second path, so that path
+    // is the live append-only tree itself, not a data directory holding one.
+    let data = scratch_tree(
+        "redis-claims-aof-bound",
+        &["data/appendonlydir", "elsewhere"],
+    );
+    let directory = data.join("data");
+    let alias = data.join("elsewhere");
+    let proc = with_working_directory("redis-claims-aof-bound-proc", &directory);
+    write(
+        &proc,
+        "self/mountinfo",
+        &format!(
+            "1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 8:1 {}/appendonlydir {} rw - ext4 /dev/sda1 rw\n",
+            directory.display(),
+            alias.display()
+        ),
+    );
+
+    // Act
+    let claims = trees_of(&claims_of(&proc));
+
+    // Assert: the alias sealed whole, and no claim on paths under it that do not exist.
+    let mut expected = own_files_in(&directory);
+    expected.push(alias.to_str().expect("a UTF-8 path").to_owned());
+    expected.sort();
+    assert_eq!(claims, expected);
+}
+
+#[test]
 fn a_server_whose_directory_cannot_be_read_claims_nothing() {
     // Arrange: an unprivileged run, which may not follow another account's `cwd`.
     let proc = proc_holding("redis-claims-unreadable", Path::new(SOCKET));

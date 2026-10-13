@@ -6840,7 +6840,10 @@ itself, so the snapshot, `dump.rdb`, and the append-only directory, `appendonlyd
 and nothing beside them. The names are redis's defaults: claims are gathered before any server is
 asked, so a renamed `dbfilename` is walked like any other file. A save in progress leaves a
 `temp-<pid>.rdb` beside the dump for its duration, which the walk then shows; a save means the data
-changed, so the box was not unchanged. A server working in `/` needs no exception any more.
+changed, so the box was not unchanged. A server working in `/` needs no exception any more. A
+host bind of part of the directory is that part, found by review: binding only `appendonlydir`
+at a second path shows the live append-only tree there, so the shared lookup now says which part
+of the path each host path shows, and that alias is sealed at its own root.
 
 **The host's directory behind the path, by identity rather than by namespace**, found by the
 matrix. A review had sealed only a server in rastro's own mount namespace, so a container's `/data`

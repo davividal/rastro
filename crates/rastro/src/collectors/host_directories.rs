@@ -9,7 +9,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use crate::collectors::inside_root::{Opening, open_inside};
-use crate::collectors::mount_table::{host_aliases_of, host_paths_of};
+use crate::collectors::mount_table::{HostView, host_alias_views_of, host_views_of};
 
 /// Which file a path leads to: the device and the inode, which two paths share only if they are
 /// one file.
@@ -39,30 +39,50 @@ struct FileIdentity {
 /// **Every host path that shows it**, found by review: the host can bind the same directory, or a
 /// part of it, at a second path, and a walk sealed at one went through the live store at the other.
 pub fn host_directories_of(proc: &Path, process_id: u32, path: &Path) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = host_directory_views_of(proc, process_id, path)
+        .into_iter()
+        .map(|view| view.path)
+        .collect();
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
+/// [`host_directories_of`], saying which part of `path` each host directory shows, for a caller
+/// that seals less than the whole directory: a bind of a subtree shows that subtree alone.
+pub fn host_directory_views_of(proc: &Path, process_id: u32, path: &Path) -> Vec<HostView> {
     let process = proc.join(process_id.to_string());
     let host_table = fs::read(proc.join("self").join("mountinfo")).ok();
     let seen = match same_directory(&process.join("root"), path) {
         true => {
             let mut seen = host_table
-                .map(|table| host_aliases_of(&table, path))
+                .map(|table| host_alias_views_of(&table, path))
                 .unwrap_or_default();
-            seen.push(path.to_path_buf());
+            seen.push(HostView {
+                path: path.to_path_buf(),
+                part: PathBuf::new(),
+            });
             seen
         }
         false => match (fs::read(process.join("mountinfo")), host_table) {
-            (Ok(node_table), Some(host_table)) => host_paths_of(&node_table, &host_table, path),
+            (Ok(node_table), Some(host_table)) => host_views_of(&node_table, &host_table, path),
             _ => Vec::new(),
         },
     };
 
-    let mut directories: Vec<PathBuf> = seen
-        .iter()
-        .filter(|directory| fs::metadata(directory).is_ok_and(|metadata| metadata.is_dir()))
-        .filter_map(|directory| fs::canonicalize(directory).ok())
+    let mut views: Vec<HostView> = seen
+        .into_iter()
+        .filter(|view| fs::metadata(&view.path).is_ok_and(|metadata| metadata.is_dir()))
+        .filter_map(|view| {
+            Some(HostView {
+                path: fs::canonicalize(&view.path).ok()?,
+                part: view.part,
+            })
+        })
         .collect();
-    directories.sort();
-    directories.dedup();
-    directories
+    views.sort_by(|left, right| (&left.path, &left.part).cmp(&(&right.path, &right.part)));
+    views.dedup();
+    views
 }
 
 /// Whether `path` inside `root` is the same directory as `path` on rastro's own filesystem.
