@@ -30,13 +30,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           # `mise.jdx.dev/VERSION` advertised 2026.9.3 hours before that release existed, so
           # every job here 404'd; the release list only ever names releases that are published.
           minimum_release_age: 24h
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           # nextest runs each test in its own process, which is what keeps tests that
           # invoke the real binary from interfering through the filesystem. Measured at
@@ -78,7 +78,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends redis-server
           sudo systemctl stop redis-server
           cargo test --locked --test redis_conformance
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lcov
           path: target/llvm-cov/lcov.info
@@ -104,7 +104,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           minimum_release_age: 24h
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -149,7 +149,7 @@ jobs:
           fetch-depth: 0  # Blame data: Sonar attributes new code by commit date.
       # SonarCloud never computes Rust coverage itself, it only imports a report, so the
       # scan depends on the one `check` produced rather than measuring anything here.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: lcov
           path: target/llvm-cov
@@ -195,7 +195,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           minimum_release_age: 24h
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -229,7 +229,7 @@ jobs:
           ./target/${{ matrix.target }}/release/rastro --version | grep -q "+${GITHUB_SHA::7}\$"
       # Keeps the binary downloadable from the run that built it, which is what a
       # pull request gets: `rolling-build` publishes master only.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           # The artifact name is the published asset name, so `rolling-build` needs no
           # target list of its own and cannot drift from this matrix.
@@ -285,7 +285,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: rastro-*-unknown-linux-musl
           path: builds
