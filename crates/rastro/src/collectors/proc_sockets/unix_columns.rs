@@ -34,8 +34,10 @@ pub fn unix_columns(line: &str) -> Option<UnixColumns<'_>> {
         rest = &rest[end..];
     }
 
+    // Exactly the one space the kernel writes before a path: a relative path may begin with
+    // whitespace of its own, found by review, and trimming it names another socket.
     Some(UnixColumns {
         fields,
-        path: rest.trim_start(),
+        path: rest.strip_prefix(' ').unwrap_or(rest),
     })
 }

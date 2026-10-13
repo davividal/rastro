@@ -248,3 +248,21 @@ fn a_unix_socket_path_keeps_trailing_whitespace() {
     // Assert
     assert_eq!(listeners[0].path, "/run/odd.sock ");
 }
+
+#[test]
+fn a_unix_socket_path_keeps_leading_whitespace() {
+    // Arrange: the kernel writes one space between the inode and the path, and a relative path
+    // may itself begin with whitespace; dropping it names a socket the server does not hold.
+    let net = scratch_tree("proc-sockets-leading-space", &["net"]).join("net");
+    write(
+        &net,
+        "unix",
+        "Num       RefCount Protocol Flags    Type St Inode Path\n0000000000000000: 00000002 00000000 00010000 0001 01 7002  spaced.sock\n",
+    );
+
+    // Act
+    let listeners = unix_listeners(&net).expect("a readable table");
+
+    // Assert
+    assert_eq!(listeners[0].path, " spaced.sock");
+}
