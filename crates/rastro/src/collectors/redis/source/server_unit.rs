@@ -35,6 +35,9 @@ const OPTION_PREFIX: &str = "--";
 /// The option that sets the password on redis's command line.
 const REQUIREPASS_OPTION: &str = "--requirepass";
 
+/// What starts a variable systemd expands in a start command, `$NAME` or `${NAME}`.
+const VARIABLE_SIGIL: char = '$';
+
 /// The command-line options that change the default account other than by `requirepass`, which
 /// rastro does not replay: redis applies them after the file, so their presence is a refusal.
 const ACCOUNT_OPTIONS: [&str; 3] = ["--aclfile", "--user", "--include"];
@@ -165,6 +168,14 @@ pub fn start_of(
 /// start with `-`, so the file is believed only where the word after it is an option or nothing.
 fn start_from(argv: &str) -> Result<ServerStart, CollectionError> {
     let words: Vec<&str> = argv.split_whitespace().collect();
+
+    // systemd shows `$OPTIONS` as the unit wrote it, and the variable can hold any option.
+    if let Some(variable) = words.iter().find(|word| word.contains(VARIABLE_SIGIL)) {
+        return Err(CollectionError::new(format!(
+            "the unit starts the server with {variable}, which systemd expands only when it \
+             starts it, so the options it holds cannot be told"
+        )));
+    }
 
     if let Some(option) = words
         .iter()

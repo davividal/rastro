@@ -582,3 +582,24 @@ fn a_command_line_password_is_found_whatever_its_case() {
     // Assert: the file's stale password would be a wrong `AUTH`, an `ACL LOG` entry.
     assert_eq!(auths(&server), [["AUTH", "actual"]]);
 }
+
+#[test]
+fn a_start_command_systemd_has_not_expanded_is_not_read() {
+    // Arrange: `systemctl show` prints `$OPTIONS` as the unit wrote it, and the variable can hold
+    // any option, `--requirepass` among them, which would outrank the file's password.
+    let server = FakeRedis::stock_with_password("auth-argv-variable", "actual", &[]);
+    let auth_box = auth_box(
+        "redis-auth-argv-variable",
+        &server,
+        "--supervised systemd $OPTIONS",
+    )
+    .configured("requirepass stale\n");
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let error = text(&field(&instance(&observation, &server), "not_read"));
+    assert!(error.contains("$OPTIONS"), "{error}");
+    assert!(auths(&server).is_empty());
+}
