@@ -3,23 +3,26 @@
 //! The server names its working directory in its own mount namespace; the walk is the host's. Its
 //! `mountinfo` says which device that path is on and where inside it, and the host's says where
 //! that device is mounted here. One case per cell of `docs/redis-matrix.md` that seals something.
+//!
+//! The mount tables' half of what decides a claim, which is the half a capture carries: the other
+//! checks the host paths on this box, which the cells' are not, and `redis_claims` tests it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rastro::collectors::mount_table::host_paths_of;
+use rastro::collectors::mount_table::{HostView, host_views_of};
 
 mod support;
 
 use support::captured_redis_cell::{cell_directory, servers_of};
 
-fn host_paths_in(cell: &str) -> Vec<PathBuf> {
+fn host_views_in(cell: &str) -> Vec<HostView> {
     let server = &servers_of(cell)[0];
     let directory = fs::read_to_string(server.join("process/cwd.link")).expect("a captured cwd");
     let server_table = fs::read(server.join("process/mountinfo")).expect("a captured table");
     let host_table = fs::read(cell_directory(cell).join("host-mountinfo")).expect("a host table");
 
-    host_paths_of(&server_table, &host_table, Path::new(directory.trim_end()))
+    host_views_of(&server_table, &host_table, Path::new(directory.trim_end()))
 }
 
 macro_rules! cell {
@@ -27,10 +30,16 @@ macro_rules! cell {
         #[test]
         fn $name() {
             // Act
-            let host_paths = host_paths_in($cell);
+            let host_views = host_views_in($cell);
 
-            // Assert
-            assert_eq!(host_paths, [PathBuf::from($host)]);
+            // Assert: the whole directory, at one host path.
+            assert_eq!(
+                host_views,
+                [HostView {
+                    path: PathBuf::from($host),
+                    part: PathBuf::new(),
+                }]
+            );
         }
     };
 }
@@ -54,8 +63,8 @@ cell!(
 #[test]
 fn cell_23_a_directory_in_the_containers_own_image_is_not_claimed() {
     // Act: measured, redis 8.10's image declares no volume, so `/data` is on its overlay root.
-    let host_paths = host_paths_in("23");
+    let host_views = host_views_in("23");
 
     // Assert: the image is the containers facet's to account for, not the walk's to seal.
-    assert!(host_paths.is_empty(), "{host_paths:?}");
+    assert!(host_views.is_empty(), "{host_views:?}");
 }
