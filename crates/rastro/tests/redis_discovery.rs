@@ -715,3 +715,51 @@ fn a_child_a_server_forked_to_save_is_not_another_server() {
     // Assert
     assert_eq!(keys, ["6379"]);
 }
+
+#[test]
+fn a_unix_row_naming_a_tcp_sockets_inode_is_not_the_servers() {
+    // Arrange: the table prints a path raw, newline included, so any account can bind a name that
+    // forges a row. The kernel gives no two sockets one inode, so a unix row repeating the TCP
+    // listener's inode is the forgery, and the TCP row, which holds no free text, is the socket.
+    let proc = proc_with(
+        "redis-discovery-forged-unix",
+        &[server("412", &[1001])],
+        &tcp_row(LOOPBACK_6379, 1001),
+        "",
+        &unix_row("/tmp/forged.sock", 1001),
+    );
+
+    // Act
+    let discovered = only(&proc);
+
+    // Assert
+    assert_eq!(listeners_of(&discovered), ["127.0.0.1:6379"]);
+    assert_eq!(
+        discovered.reach,
+        Ok(DialTarget::Tcp(
+            "127.0.0.1:6379".parse().expect("an address")
+        ))
+    );
+}
+
+#[test]
+fn two_unix_rows_sharing_an_inode_are_neither_the_servers() {
+    // Arrange: a forged row repeating the server's own unix socket's inode, under another path.
+    let proc = proc_with(
+        "redis-discovery-forged-twin",
+        &[server("412", &[1001, 1003])],
+        &tcp_row(LOOPBACK_6379, 1001),
+        "",
+        &format!(
+            "{}{}",
+            unix_row("/run/redis/redis.sock", 1003),
+            unix_row("/tmp/forged.sock", 1003)
+        ),
+    );
+
+    // Act
+    let discovered = only(&proc);
+
+    // Assert: which path is the server's cannot be told, so neither is listed or dialled.
+    assert_eq!(listeners_of(&discovered), ["127.0.0.1:6379"]);
+}

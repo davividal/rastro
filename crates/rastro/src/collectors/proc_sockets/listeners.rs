@@ -19,6 +19,7 @@
 //! which process to talk to, and one odd row elsewhere in the table says nothing about that. The
 //! `sockets` facet, which reports every row, is the reader that refuses a malformed one.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
@@ -100,13 +101,40 @@ pub fn inet_listeners(net: &Path) -> Option<Vec<InetListener>> {
 
 /// Every unix stream socket accepting connections under a name, or nothing where the table
 /// could not be read.
+///
+/// **Only a row whose inode no other row in the namespace's tables repeats**, found by review: the
+/// table prints a path raw, newline included, so any account can bind a name that forges a row,
+/// and a forged row naming a server's inode would be taken for a socket the server holds. The
+/// kernel gives no two sockets one inode, and an inet row holds no free text to forge, so a repeat
+/// means a forgery, and which of two unix rows is genuine cannot be told.
 pub fn unix_listeners(net: &Path) -> Option<Vec<UnixListener>> {
     let text = fs::read_to_string(net.join(UNIX_TABLE)).ok()?;
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.contains(UNIX_HEADER))
+        .collect();
+
+    let mut rows_per_inode = BTreeMap::<u64, usize>::new();
+    let inet_rows: Vec<String> = INET_TABLES
+        .iter()
+        .filter_map(|(table, _)| fs::read_to_string(net.join(table)).ok())
+        .collect();
+    let inet_inodes = inet_rows
+        .iter()
+        .flat_map(|text| text.lines())
+        .filter(|line| !line.contains(INET_HEADER))
+        .filter_map(|line| line.split_whitespace().nth(INODE)?.parse::<u64>().ok());
+    let unix_inodes = rows
+        .iter()
+        .filter_map(|line| unix_columns(line)?.fields[UNIX_INODE].parse::<u64>().ok());
+    for inode in inet_inodes.chain(unix_inodes) {
+        *rows_per_inode.entry(inode).or_default() += 1;
+    }
 
     Some(
-        text.lines()
-            .filter(|line| !line.contains(UNIX_HEADER))
+        rows.into_iter()
             .filter_map(unix_listener_of)
+            .filter(|listener| rows_per_inode.get(&listener.inode) == Some(&1))
             .collect(),
     )
 }
