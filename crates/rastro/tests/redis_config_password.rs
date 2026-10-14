@@ -137,25 +137,75 @@ fn a_file_that_includes_itself_is_refused() {
     assert!(error.contains("including itself"), "{error}");
 }
 
-#[test]
-fn a_pattern_include_is_read_in_byte_order() {
-    // Arrange: two drop-ins, the later of which the server reads last.
-    let root = scratch_tree("redis-pass-glob", &["conf.d"]);
-    write(&root, "conf.d/10-base.conf", "requirepass first\n");
-    write(&root, "conf.d/20-local.conf", "requirepass second\n");
+/// A configuration including every `conf.d/*.conf`, each drop-in holding the text given.
+fn with_drop_ins(name: &str, drop_ins: &[(&str, &str)]) -> PathBuf {
+    let root = scratch_tree(name, &["conf.d"]);
+    for (file, contents) in drop_ins {
+        write(&root, &format!("conf.d/{file}"), contents);
+    }
     write(
         &root,
         "redis.conf",
-        &format!("include {}/conf.d/*.conf\n", root.display()),
+        &format!(
+            "include {}/conf.d/*.conf\nrequirepass base\n",
+            root.display()
+        ),
     );
 
-    // Act & Assert
+    root.join("redis.conf")
+}
+
+#[test]
+fn a_pattern_include_whose_drop_ins_set_different_passwords_is_refused() {
+    // Arrange: the server reads the matches in `glob`'s order, which its locale collates, and
+    // `redis.conf` against `redis-extra.conf` sorts one way in C and the other in en_US.UTF-8.
+    let file = with_drop_ins(
+        "redis-pass-glob-ambiguous",
+        &[
+            ("10-base.conf", "requirepass first\n"),
+            ("20-local.conf", "requirepass second\n"),
+        ],
+    );
+
+    // Act
+    let result = password_directives_in(&host_root(), &file);
+
+    // Assert
+    let error = result.expect_err("an order rastro cannot know").to_string();
+    assert!(error.contains("locale"), "{error}");
+}
+
+#[test]
+fn a_pattern_include_whose_drop_ins_agree_is_read() {
+    // Arrange: whichever the server read last, the password is the same.
+    let file = with_drop_ins(
+        "redis-pass-glob-agreeing",
+        &[
+            ("10-base.conf", "requirepass same\n"),
+            ("20-local.conf", "requirepass same\n"),
+        ],
+    );
+
+    // Act & Assert: and a password after the include still outranks both.
     assert_eq!(
-        password_directives_in(&host_root(), &root.join("redis.conf"))
+        password_directives_in(&host_root(), &file)
             .expect("a readable file")
             .requirepass,
-        Some("second".to_owned())
+        Some("base".to_owned())
     );
+}
+
+#[test]
+fn a_backslash_in_an_include_pattern_is_refused_rather_than_resolved() {
+    // Arrange: `glob` reads a backslash as an escape, which rastro's matching does not.
+    let file = file_with("redis-pass-glob-escape", "include /etc/redis/a\\*.conf\n");
+
+    // Act
+    let result = password_directives_in(&host_root(), &file);
+
+    // Assert
+    let error = result.expect_err("an unresolved pattern").to_string();
+    assert!(error.contains("does not resolve"), "{error}");
 }
 
 #[test]

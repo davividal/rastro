@@ -111,12 +111,27 @@ pub fn default_user_in_acl_file(
     Ok(default_user)
 }
 
+/// What one file, its includes with it, last set the password and the ACL file to.
+#[derive(Default)]
+struct LastSet {
+    requirepass: Option<String>,
+    acl_file: Option<PathBuf>,
+}
+
+impl LastSet {
+    fn then(&mut self, later: LastSet) {
+        self.requirepass = later.requirepass.or(self.requirepass.take());
+        self.acl_file = later.acl_file.or(self.acl_file.take());
+    }
+}
+
+/// Reads `file` into `directives`, saying what it set.
 fn read_into(
     root: &ProcessRoot,
     file: &Path,
     files_read: &mut usize,
     directives: &mut PasswordDirectives,
-) -> Result<(), CollectionError> {
+) -> Result<LastSet, CollectionError> {
     *files_read += 1;
     if *files_read > MOST_FILES {
         return Err(CollectionError::new(format!(
@@ -127,6 +142,7 @@ fn read_into(
     }
 
     let bytes = read_bounded(root, file)?;
+    let mut set = LastSet::default();
 
     for line in bytes.split(|byte| *byte == b'\n') {
         let Some(words) = words_of(file, line)? else {
@@ -141,18 +157,64 @@ fn read_into(
         }
 
         match (words[0].to_ascii_lowercase().as_str(), words.len()) {
-            (REQUIREPASS, 2) => directives.requirepass = Some(words[1].clone()),
-            (ACLFILE, 2) => directives.acl_file = Some(PathBuf::from(&words[1])),
+            (REQUIREPASS, 2) => {
+                directives.requirepass = Some(words[1].clone());
+                set.requirepass = Some(words[1].clone());
+            }
+            (ACLFILE, 2) => {
+                directives.acl_file = Some(PathBuf::from(&words[1]));
+                set.acl_file = Some(PathBuf::from(&words[1]));
+            }
             (INCLUDE, 2) => {
+                let mut matches = Vec::new();
                 for included in included_files(root, file, &words[1])? {
-                    read_into(root, &included, files_read, directives)?;
+                    matches.push(read_into(root, &included, files_read, directives)?);
+                }
+                if disagree(&matches) {
+                    return Err(CollectionError::new(format!(
+                        "{} includes {:?}, whose files set different passwords, and which the \
+                         server read last depends on the locale it collated their names in",
+                        file.display(),
+                        words[1]
+                    )));
+                }
+                for included in matches {
+                    set.then(included);
                 }
             }
             _ => {}
         }
     }
 
-    Ok(())
+    Ok(set)
+}
+
+/// Whether the files one `include` matched set the password or the ACL file to more than one
+/// value, so that the one that wins depends on the order they were read in.
+///
+/// Found by review: the server reads a pattern's matches in `glob`'s order, which its locale
+/// collates, and `redis.conf` against `redis-extra.conf` sorts one way in C and the other in
+/// en_US.UTF-8. rastro reads them in byte order, which only agreement makes safe.
+fn disagree(matches: &[LastSet]) -> bool {
+    let distinct = |values: Vec<String>| {
+        values
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            > 1
+    };
+
+    distinct(
+        matches
+            .iter()
+            .filter_map(|set| set.requirepass.clone())
+            .collect(),
+    ) || distinct(
+        matches
+            .iter()
+            .filter_map(|set| set.acl_file.as_ref().map(|path| path.display().to_string()))
+            .collect(),
+    )
 }
 
 /// A file's bytes, read bounded and only where it is a regular file.
@@ -285,7 +347,7 @@ fn included_files(
     ) else {
         return Err(unresolved_pattern(from, argument));
     };
-    if file_glob::is_pattern(directory) || pattern.contains('[') {
+    if file_glob::is_pattern(directory) || pattern.contains(['[', '\\']) {
         return Err(unresolved_pattern(from, argument));
     }
 
@@ -320,7 +382,7 @@ fn included_files(
 fn unresolved_pattern(from: &Path, argument: &str) -> CollectionError {
     CollectionError::new(format!(
         "{} includes {argument:?}, a pattern rastro does not resolve: a wildcard outside the last \
-         component, or a bracket expression",
+         component, a bracket expression or an escape",
         from.display()
     ))
 }
