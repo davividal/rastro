@@ -461,6 +461,18 @@ fn servers_sharing_a_port_are_keyed_by_address_whichever_started_first() {
 
 /// Two containers each listening on `0.0.0.0:6379` in a namespace of its own, the older first.
 fn keys_of_two_containers(name: &str, older: &str, younger: &str) -> Vec<(String, Vec<String>)> {
+    keys_of_two_containers_in(name, older, younger, |scope| {
+        format!("0::/system.slice/{scope}\n")
+    })
+}
+
+/// The same, each container's cgroup file written from its scope.
+fn keys_of_two_containers_in(
+    name: &str,
+    older: &str,
+    younger: &str,
+    cgroup_of: fn(&str) -> String,
+) -> Vec<(String, Vec<String>)> {
     let wildcard = tcp_row(WILDCARD_6379, 1001);
     let proc = proc_with(
         name,
@@ -490,11 +502,7 @@ fn keys_of_two_containers(name: &str, older: &str, younger: &str) -> Vec<(String
         );
         write(&proc.join(pid), "net/tcp6", TCP_HEADER);
         write(&proc.join(pid), "net/unix", UNIX_HEADER);
-        write(
-            &proc.join(pid),
-            "cgroup",
-            &format!("0::/system.slice/{scope}\n"),
-        );
+        write(&proc.join(pid), "cgroup", &cgroup_of(scope));
         fs::remove_file(proc.join(pid).join("ns/net")).expect("a removable fixture");
         symlink(namespace, proc.join(pid).join("ns/net")).expect("a writable scratch symlink");
     }
@@ -790,4 +798,29 @@ fn a_server_that_exits_before_its_namespace_is_read_is_said_to_have_exited() {
     // Assert
     assert!(refusal.reason.contains("exited"), "{refusal}");
     assert!(!refusal.withheld);
+}
+
+#[test]
+fn a_containers_scope_is_read_from_the_systemd_hierarchy_of_a_hybrid_layout() {
+    // Arrange: cgroup v1 beside v2, where a controller's line comes first and names the engine's
+    // own path, `/docker/<id>`, rather than the scope systemd gave the container.
+    let keys = keys_of_two_containers_in(
+        "redis-discovery-scope-hybrid",
+        "docker-aaa.scope",
+        "docker-bbb.scope",
+        |scope| {
+            format!(
+                "12:cpuset:/docker/{scope}-engine\n1:name=systemd:/system.slice/{scope}\n0::/system.slice/{scope}\n"
+            )
+        },
+    );
+
+    // Assert
+    assert_eq!(
+        keys.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>(),
+        [
+            "0.0.0.0:6379 in docker-aaa.scope",
+            "0.0.0.0:6379 in docker-bbb.scope"
+        ]
+    );
 }

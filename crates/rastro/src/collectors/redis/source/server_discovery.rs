@@ -21,6 +21,7 @@ use crate::collectors::proc_sockets::{
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 use super::resident_servers::{ResidentServer, resident_servers};
+use super::server_unit::systemd_cgroup_of;
 
 /// Where the kernel publishes its socket tables under the process table.
 const NET: &str = "net";
@@ -171,8 +172,7 @@ fn colliding(discovered: &mut [DiscoveredServer]) -> impl Iterator<Item = &mut D
 
 /// The last component of the process's cgroup, the unit or scope it runs in.
 fn scope_of(proc: &Path, process_id: u32) -> Option<String> {
-    let cgroup = fs::read_to_string(proc.join(process_id.to_string()).join("cgroup")).ok()?;
-    let path = cgroup.lines().find_map(|line| line.splitn(3, ':').nth(2))?;
+    let path = systemd_cgroup_of(proc, process_id).ok()??;
 
     path.rsplit('/')
         .next()

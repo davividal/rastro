@@ -83,28 +83,52 @@ pub struct ServerCgroup {
 /// **Refused unless it is a plain service name**, since it becomes an argument to `systemctl`
 /// and every other argument rastro passes is a literal an author wrote.
 pub fn unit_of(proc: &Path, process_id: u32) -> Result<ServerCgroup, String> {
-    let cgroup = fs::read_to_string(proc.join(process_id.to_string()).join("cgroup"))
-        .map_err(|error| format!("its cgroup could not be read ({error})"))?;
-
-    // `hierarchy:controllers:path`, and the path may hold a colon of its own.
-    let (unit, path) = cgroup
-        .lines()
-        .filter_map(|line| line.splitn(3, ':').nth(2))
-        .find_map(|path| {
-            let unit = path.rsplit('/').next()?;
-            unit.ends_with(SERVICE).then_some((unit, path))
-        })
+    let path = systemd_cgroup_of(proc, process_id)
+        .map_err(|error| format!("its cgroup could not be read ({error})"))?
+        .ok_or_else(|| "it does not run in a systemd service unit".to_owned())?;
+    let unit = path
+        .rsplit('/')
+        .next()
+        .filter(|unit| unit.ends_with(SERVICE))
         .ok_or_else(|| "it does not run in a systemd service unit".to_owned())?;
 
     match is_plain_unit_name(unit) {
         true => Ok(ServerCgroup {
             unit: unit.to_owned(),
-            path: path.to_owned(),
+            path: path.clone(),
         }),
         false => Err(format!(
             "its cgroup names {unit:?}, which is not a unit name rastro will pass to systemctl"
         )),
     }
+}
+
+/// The path of the cgroup systemd keeps a process in: the unified hierarchy's, `0::`, else the
+/// `name=systemd` one of a cgroup v1 layout, and none where the file names neither.
+///
+/// **Not the first line**, found by review: on a hybrid layout a controller's line can come first
+/// and name the engine's own path, `/docker/<id>`, rather than the scope systemd gave a container.
+pub fn systemd_cgroup_of(proc: &Path, process_id: u32) -> std::io::Result<Option<String>> {
+    let cgroup = fs::read_to_string(proc.join(process_id.to_string()).join("cgroup"))?;
+    // `hierarchy:controllers:path`, and the path may hold a colon of its own.
+    let lines: Vec<[&str; 3]> = cgroup
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, ':');
+            Some([fields.next()?, fields.next()?, fields.next()?])
+        })
+        .collect();
+    let path_where = |wanted: fn(&[&str; 3]) -> bool| {
+        lines
+            .iter()
+            .find(|fields| wanted(fields))
+            .map(|fields| fields[2].to_owned())
+    };
+
+    Ok(
+        path_where(|[hierarchy, controllers, _]| *hierarchy == "0" && controllers.is_empty())
+            .or_else(|| path_where(|[_, controllers, _]| *controllers == "name=systemd")),
+    )
 }
 
 /// How `unit` starts the server, as systemd resolved it.
