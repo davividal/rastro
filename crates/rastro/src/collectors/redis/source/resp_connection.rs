@@ -39,10 +39,11 @@ const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
 /// The largest reply read before refusing it.
 ///
-/// `CONFIG GET *` from a redis 8 build carrying every module is a few tens of kilobytes, and
-/// `ACL LIST` grows with the accounts. Megabytes are headroom; the bound is against a server, or
-/// something impersonating one on its port, that never stops.
-const REPLY_BOUND: usize = 4 * 1024 * 1024;
+/// The largest captured reply, `CONFIG GET *` from a redis 8 build carrying every module, is 11
+/// KiB, and `ACL LIST` grows with the accounts. A mebibyte is headroom; the bound is against a
+/// server that never stops, and it is kept that low because the parser holds a few dozen bytes per
+/// three it reads before rastro refuses a reply in a protocol it did not ask for, found by review.
+const REPLY_BOUND: usize = 1024 * 1024;
 
 /// How long a TCP connection gets to be accepted.
 ///
