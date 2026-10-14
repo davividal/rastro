@@ -16,6 +16,9 @@ const MASTER_HOST: &str = "master_host";
 const MASTER_PORT: &str = "master_port";
 const MASTER_LINK_STATUS: &str = "master_link_status";
 
+/// What a connected replica's line is named before its number.
+const REPLICA: &str = "slave";
+
 /// The reader of `INFO replication`.
 pub struct InfoReplication;
 
@@ -32,11 +35,15 @@ impl InfoReplication {
             _ => None,
         };
 
-        // A connected replica's line, `slave<N>`, is the only one carrying an address, so the
-        // address is what picks them out; `slave_repl_offset` and its siblings carry none.
+        // A connected replica's line is `slave<N>`; `slave_repl_offset` and its siblings are not.
         let replicas: Vec<String> = fields
-            .values()
-            .filter_map(|value| replica_address(value))
+            .iter()
+            .filter(|(name, _)| {
+                name.strip_prefix(REPLICA).is_some_and(|number| {
+                    !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                })
+            })
+            .filter_map(|(_, value)| replica_address(value))
             .collect();
 
         Ok(Replication {

@@ -95,3 +95,20 @@ fn an_ipv6_address_is_bracketed_so_its_port_stays_readable() {
         .collect();
     assert_eq!(replicas, ["[fd00::2]:6379"]);
 }
+
+#[test]
+fn only_a_replicas_own_line_names_a_replica() {
+    // Arrange: a field of the same `ip=…,port=…` shape under another name, as a later release
+    // could add one, is not a connected replica.
+    let replication = replication(
+        "# Replication\r\nrole:master\r\nslave0:ip=10.0.0.2,port=6379,state=online,offset=1,lag=0\r\n\
+         peer_hint:ip=10.0.0.9,port=6379\r\n",
+    );
+
+    // Assert
+    let replicas: Vec<String> = items_of(&field(&replication, "replicas"))
+        .iter()
+        .map(text)
+        .collect();
+    assert_eq!(replicas, ["10.0.0.2:6379"]);
+}
