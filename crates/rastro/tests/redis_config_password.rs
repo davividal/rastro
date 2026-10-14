@@ -500,3 +500,21 @@ fn a_vertical_tab_or_form_feed_inside_a_word_stays_in_it() {
         Some("a\u{b}b\u{c}c".to_owned())
     );
 }
+
+/// Linux alone, whose `/proc` this is.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_the_kernel_serves_is_refused_rather_than_read() {
+    // Arrange: `/proc/kmsg` is a regular file, and reading it takes the kernel's messages from
+    // whoever reads them next; `/proc/version` stands for it, being as regular and harmless.
+
+    // Act
+    let result = password_directives_in(
+        Path::new(HOST_ROOT),
+        &file_with("redis-pass-procfs", "include /proc/version\n"),
+    );
+
+    // Assert
+    let error = result.expect_err("a kernel file").to_string();
+    assert!(error.contains("kernel"), "{error}");
+}
