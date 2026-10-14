@@ -771,3 +771,23 @@ fn two_unix_rows_sharing_an_inode_are_neither_the_servers() {
     // Assert: which path is the server's cannot be told, so neither is listed or dialled.
     assert_eq!(listeners_of(&discovered), ["127.0.0.1:6379"]);
 }
+
+#[test]
+fn a_server_that_exits_before_its_namespace_is_read_is_said_to_have_exited() {
+    // Arrange: its descriptors were read, and its `/proc` entry is gone by the namespace's turn.
+    let proc = proc_with(
+        "redis-discovery-exited-namespace",
+        &[server("412", &[1001])],
+        &tcp_row(LOOPBACK_6379, 1001),
+        "",
+        "",
+    );
+    fs::remove_file(proc.join("412/ns/net")).expect("a removable fixture");
+
+    // Act
+    let refusal = only(&proc).reach.expect_err("an exited server");
+
+    // Assert
+    assert!(refusal.reason.contains("exited"), "{refusal}");
+    assert!(!refusal.withheld);
+}

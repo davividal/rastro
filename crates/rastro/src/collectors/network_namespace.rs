@@ -51,9 +51,14 @@ impl ProcessNamespace {
     /// A process's namespace through a process table the caller names, compared with its `self`.
     pub fn of_in(proc: &Path, process_id: u32) -> Result<Self, NamespaceRefusal> {
         let path = proc.join(process_id.to_string()).join(NETWORK_NAMESPACE);
-        let theirs = fs::read_link(&path).map_err(|error| NamespaceRefusal {
-            reason: format!("the process's {NETWORK_NAMESPACE} could not be read: {error}"),
-            refused: error.kind() == std::io::ErrorKind::PermissionDenied,
+        let theirs = fs::read_link(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                NamespaceRefusal::failed("the process exited while it was being read".to_owned())
+            }
+            kind => NamespaceRefusal {
+                reason: format!("the process's {NETWORK_NAMESPACE} could not be read: {error}"),
+                refused: kind == std::io::ErrorKind::PermissionDenied,
+            },
         })?;
         let ours = fs::read_link(proc.join("self").join(NETWORK_NAMESPACE)).map_err(|error| {
             NamespaceRefusal::failed(format!(
