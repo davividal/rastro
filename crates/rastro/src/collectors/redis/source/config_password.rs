@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use rastro_collector::CollectionError;
 
 use crate::collectors::file_glob;
-use crate::collectors::inside_root::{names_inside, read_inside};
+use crate::collectors::inside_root::{names_inside, read_bytes_inside};
 
 const REQUIREPASS: &str = "requirepass";
 const INCLUDE: &str = "include";
@@ -94,10 +94,10 @@ pub fn default_user_in_acl_file(
     root: &Path,
     file: &Path,
 ) -> Result<Option<Vec<String>>, CollectionError> {
-    let text = read_bounded(root, file)?;
+    let bytes = read_bounded(root, file)?;
 
     let mut default_user = None;
-    for line in text.lines() {
+    for line in bytes.split(|byte| *byte == b'\n') {
         let Some(words) = words_of(file, line)? else {
             continue;
         };
@@ -126,9 +126,9 @@ fn read_into(
         )));
     }
 
-    let text = read_bounded(root, file)?;
+    let bytes = read_bounded(root, file)?;
 
-    for line in text.lines() {
+    for line in bytes.split(|byte| *byte == b'\n') {
         let Some(words) = words_of(file, line)? else {
             continue;
         };
@@ -155,12 +155,15 @@ fn read_into(
     Ok(())
 }
 
-/// A file's text, read bounded and only where it is a regular file.
+/// A file's bytes, read bounded and only where it is a regular file.
 ///
 /// The file is the redis account's, Debian's `redis.conf` among them, so what is at the path is
 /// that account's choice: a FIFO there blocked the run and `/dev/zero` grew without end, the
 /// finding the elasticsearch collector met first.
-fn read_bounded(root: &Path, file: &Path) -> Result<String, CollectionError> {
+///
+/// **Bytes, not text**, found by review: redis reads the file as bytes, and one Latin-1 comment
+/// would otherwise refuse every password in it.
+fn read_bounded(root: &Path, file: &Path) -> Result<Vec<u8>, CollectionError> {
     let relative = file.strip_prefix("/").map_err(|_| {
         CollectionError::new(format!(
             "{} is a relative path, which the server resolved against a working directory \
@@ -169,18 +172,43 @@ fn read_bounded(root: &Path, file: &Path) -> Result<String, CollectionError> {
         ))
     })?;
 
-    read_inside(root, relative).map_err(|error| {
+    read_bytes_inside(root, relative).map_err(|error| {
         CollectionError::new(format!("{} could not be read: {error}", file.display()))
     })
 }
 
-/// A line's arguments, nothing for a blank line or a comment, or a failure where it will not
-/// split the way the server splits it.
-fn words_of(file: &Path, line: &str) -> Result<Option<Vec<String>>, CollectionError> {
-    let line = line.trim_matches([' ', '\t', '\r', '\n']);
-    if line.is_empty() || line.starts_with('#') {
+/// A line's arguments, nothing for a blank line, a comment or a line that is not UTF-8 and is none
+/// of the directives read, or a failure where it will not split the way the server splits it.
+///
+/// **Only a line the password may depend on has to be UTF-8**: its arguments are sent as text, and
+/// a raw byte redis would send as itself would go out as two. A quoted first word may be any
+/// directive, so it is not skipped.
+fn words_of(file: &Path, line: &[u8]) -> Result<Option<Vec<String>>, CollectionError> {
+    // redis trims these four alone, `sdstrim(line, " \t\r\n")`.
+    let trimmed = |byte: &u8| matches!(byte, b' ' | b'\t' | b'\r' | b'\n');
+    let start = line
+        .iter()
+        .position(|byte| !trimmed(byte))
+        .unwrap_or(line.len());
+    let end = line
+        .iter()
+        .rposition(|byte| !trimmed(byte))
+        .map_or(start, |last| last + 1);
+    let line = &line[start..end];
+    if line.is_empty() || line.starts_with(b"#") {
         return Ok(None);
     }
+    let line = match std::str::from_utf8(line) {
+        Ok(line) => line,
+        Err(_) if !may_be_read(line) => return Ok(None),
+        Err(_) => {
+            return Err(CollectionError::new(format!(
+                "{} has a line the password may depend on that is not UTF-8, so it cannot be \
+                 sent as the server would send it",
+                file.display()
+            )));
+        }
+    };
 
     split_arguments(line).map(Some).ok_or_else(|| {
         CollectionError::new(format!(
@@ -189,6 +217,21 @@ fn words_of(file: &Path, line: &str) -> Result<Option<Vec<String>>, CollectionEr
             file.display()
         ))
     })
+}
+
+/// Whether a line's first word may be one of the directives read, compared as bytes.
+fn may_be_read(line: &[u8]) -> bool {
+    let directive = line
+        .split(u8::is_ascii_whitespace)
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    directive.contains(&b'"')
+        || directive.contains(&b'\'')
+        || [REQUIREPASS, INCLUDE, USER, ACLFILE]
+            .iter()
+            .any(|read| read.as_bytes() == directive.as_slice())
 }
 
 /// The rules of a `user default …` line; the directive is matched in any case, the account name

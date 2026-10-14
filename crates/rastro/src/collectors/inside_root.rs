@@ -27,14 +27,24 @@ const MOST_READ: u64 = 1024 * 1024;
 /// one: opening some devices acts on the host, a watchdog being armed by it. So the path is
 /// pinned without being opened, its type checked on the pin, and only a regular file reopened.
 pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
+    String::from_utf8(read_bytes_inside(root, relative)?).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+    })
+}
+
+/// The same file's bytes, for a reader that decodes it a part at a time.
+pub fn read_bytes_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<u8>> {
     let file = open_inside(root, relative, Opening::Read)?;
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::other("it is not a regular file"));
     }
-    let mut text = String::new();
-    file.take(MOST_READ + 1).read_to_string(&mut text)?;
-    match u64::try_from(text.len()).is_ok_and(|length| length <= MOST_READ) {
-        true => Ok(text),
+    let mut bytes = Vec::new();
+    file.take(MOST_READ + 1).read_to_end(&mut bytes)?;
+    match u64::try_from(bytes.len()).is_ok_and(|length| length <= MOST_READ) {
+        true => Ok(bytes),
         false => Err(std::io::Error::other(format!(
             "it is larger than {MOST_READ} bytes"
         ))),

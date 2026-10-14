@@ -450,3 +450,41 @@ fn the_directives_never_print_their_password() {
     assert!(!printed.contains("printed-nowhere"), "{printed}");
     assert!(!printed.contains("also-nowhere"), "{printed}");
 }
+
+/// A file holding `contents` byte for byte, which need not be UTF-8.
+fn file_with_bytes(name: &str, contents: &[u8]) -> PathBuf {
+    let root = scratch_tree(name, &[]);
+    std::fs::write(root.join("redis.conf"), contents).expect("a writable fixture");
+
+    root.join("redis.conf")
+}
+
+#[test]
+fn a_line_that_is_not_utf8_elsewhere_in_the_file_costs_nothing() {
+    // Arrange: a Latin-1 comment, and a `logfile` naming a Latin-1 path, neither of which the
+    // password depends on; redis itself reads the file as bytes.
+    let file = file_with_bytes(
+        "redis-pass-latin1-elsewhere",
+        b"# caf\xe9\nlogfile /var/log/caf\xe9.log\nrequirepass hunter2\n",
+    );
+
+    // Act
+    let directives = password_directives_in(Path::new(HOST_ROOT), &file).expect("a readable file");
+
+    // Assert
+    assert_eq!(directives.requirepass, Some("hunter2".to_owned()));
+}
+
+#[test]
+fn a_password_line_that_is_not_utf8_is_refused() {
+    // Arrange: redis sends the raw byte, and rastro's UTF-8 would go out as a different password.
+    let file = file_with_bytes("redis-pass-latin1-password", b"requirepass caf\xe9\n");
+
+    // Act
+    let refusal = password_directives_in(Path::new(HOST_ROOT), &file)
+        .expect_err("a password rastro cannot send as redis would")
+        .to_string();
+
+    // Assert
+    assert!(refusal.contains("UTF-8"), "{refusal}");
+}
