@@ -41,6 +41,7 @@ const FIELDS: &str = " ; ";
 
 const PATH_FIELD: &str = "path=";
 const ARGV_FIELD: &str = "argv[]=";
+const PID_FIELD: &str = "pid=";
 
 /// Reads the dump into the commands each unit starts.
 ///
@@ -296,9 +297,9 @@ fn hex_escape(characters: &mut std::str::Chars<'_>) -> Result<char, CollectionEr
 /// One `{ path=… ; argv[]=… ; … }` group.
 ///
 /// The fields after `argv[]` are systemd's runtime bookkeeping — a pid, an exit status, the
-/// times it last ran — rather than configuration, which is why two of nine are read. They
-/// are also the volatile ones, so leaving them out is what keeps this facet stable across
-/// two runs of an unchanged box.
+/// times it last ran — rather than configuration, which is why only the pid is read besides,
+/// and kept out of what renders. They are the volatile ones, so leaving them out is what keeps
+/// this facet stable across two runs of an unchanged box.
 fn parse_command(command: &str) -> Result<ExecStart, CollectionError> {
     let inside = command
         .trim()
@@ -311,7 +312,16 @@ fn parse_command(command: &str) -> Result<ExecStart, CollectionError> {
             ))
         })?;
 
-    ExecStart::new(field(inside, PATH_FIELD)?, field(inside, ARGV_FIELD)?)
+    // `pid=0` for a command that has not run, and no field at all from an older systemd.
+    let process_id = field(inside, PID_FIELD)
+        .ok()
+        .and_then(|pid| pid.parse::<u32>().ok())
+        .filter(|pid| *pid != 0);
+
+    Ok(
+        ExecStart::new(field(inside, PATH_FIELD)?, field(inside, ARGV_FIELD)?)?
+            .started_as(process_id),
+    )
 }
 
 fn field<'a>(fields: &'a str, name: &str) -> Result<&'a str, CollectionError> {

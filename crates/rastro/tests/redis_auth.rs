@@ -49,10 +49,16 @@ impl AuthBox {
         self.with_unit_running("/usr/bin/redis-server", arguments)
     }
 
-    /// A unit whose start command runs `program`, which need not be a redis server.
+    /// A unit whose start command runs `program`, which need not be a redis server, and started
+    /// the server.
     fn with_unit_running(self, program: &str, arguments: &str) -> Self {
+        self.with_unit_starting(program, arguments, &server_pid())
+    }
+
+    /// A unit whose start command last started `process_id`.
+    fn with_unit_starting(self, program: &str, arguments: &str, process_id: &str) -> Self {
         let dump = format!(
-            "ExecStartEx={{ path={program} ; argv[]={program} {arguments} ; flags= ; pid=0 }}\nId=redis-server.service\n"
+            "ExecStartEx={{ path={program} ; argv[]={program} {arguments} ; flags= ; pid={process_id} }}\nId=redis-server.service\n"
         );
         fs::write(self.bin.join("dump"), dump).expect("a writable fixture");
 
@@ -601,5 +607,25 @@ fn a_start_command_systemd_has_not_expanded_is_not_read() {
     // Assert
     let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("$OPTIONS"), "{error}");
+    assert!(auths(&server).is_empty());
+}
+
+#[test]
+fn a_server_its_unit_did_not_start_is_not_given_the_units_password() {
+    // Arrange: a unit starting a second server from `ExecStartPost=` puts both in its cgroup, and
+    // its `ExecStart=` names the first server's file, whose password is not the second's.
+    let server = FakeRedis::stock_with_password("auth-unit-other-pid", "hunter2", &[]);
+    let auth_box = auth_box("redis-auth-unit-other-pid", &server, "");
+    let arguments = auth_box.config.display().to_string();
+    let auth_box = auth_box
+        .with_unit_starting("/usr/bin/redis-server", &arguments, "1")
+        .configured("requirepass hunter2\n");
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let error = text(&field(&instance(&observation, &server), "not_read"));
+    assert!(error.contains("did not start"), "{error}");
     assert!(auths(&server).is_empty());
 }

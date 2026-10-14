@@ -113,9 +113,14 @@ pub fn unit_of(proc: &Path, process_id: u32) -> Result<ServerCgroup, String> {
 /// cgroup path is a name anybody's user manager can also give a unit:
 /// `user@1000.service/app.slice/redis-server.service` names the system unit too, whose file holds
 /// the system server's password.
+///
+/// **Only for the process the start command started**, found by review: every process a unit
+/// starts shares its cgroup, and a second server started from `ExecStartPost=` would be sent the
+/// first one's password. Measured: in every captured unit the command's `pid=` is the server's.
 pub fn start_of(
     systemctl: &CanonicalTool,
     cgroup: &ServerCgroup,
+    process_id: u32,
 ) -> Result<ServerStart, CollectionError> {
     let unit = cgroup.unit.as_str();
     let group = systemctl.run(&[
@@ -154,6 +159,13 @@ pub fn start_of(
             "{unit} encloses the server, but its start command runs {}, which does not start a \
              redis server, so it is not the unit that started this one",
             command.executable.as_str()
+        )));
+    }
+
+    if command.process_id != Some(process_id) {
+        return Err(CollectionError::new(format!(
+            "{unit} encloses the server, but its start command did not start this process, so \
+             the file it names may be another server's"
         )));
     }
 

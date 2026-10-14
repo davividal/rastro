@@ -49,7 +49,7 @@ pub fn password_for(
             cgroup.unit
         )
     })?;
-    let start = start_of(systemctl, &cgroup)
+    let start = start_of(systemctl, &cgroup, process_id)
         .map_err(|error| format!("the server requires a password, and {error}"))?;
     let unit = cgroup.unit.as_str();
 
