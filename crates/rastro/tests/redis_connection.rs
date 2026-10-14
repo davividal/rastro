@@ -411,3 +411,57 @@ fn a_reply_in_a_newer_protocol_is_refused() {
     let error = answer.expect_err("a newer protocol");
     assert!(error.contains("newer than the RESP2"), "{error}");
 }
+
+#[test]
+fn a_command_after_a_failed_one_is_refused_rather_than_read_from_its_leftovers() {
+    // Arrange: a reply refused at the bound leaves the rest of it on the socket, where the next
+    // command's read would find it and take it for that command's reply.
+    // The far end is kept open, so the leftover is what the next read meets.
+    let (client, mut far_end) = UnixStream::pair().expect("a socket pair");
+    let mut connection = RespConnection::over(client)
+        .expect("a connection")
+        .bounded_by(16);
+    let reply = format!("${}\r\n{}\r\n", 64, "x".repeat(64));
+    far_end
+        .write_all(reply.as_bytes())
+        .expect("a writable socket");
+    connection
+        .ask(&["PING"])
+        .expect_err("a reply past the bound");
+
+    // Act
+    let answer = connection.ask(&["PING"]);
+    drop(far_end);
+
+    // Assert
+    let error = answer.expect_err("a desynchronised connection").to_string();
+    assert!(error.contains("earlier"), "{error}");
+}
+
+/// Linux alone, where rastro runs and where rustix is a dependency.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_connection_reset_is_named_as_one_rather_than_as_a_protocol_error() {
+    // Arrange: a peer closing with zero linger resets the connection rather than ending it.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let address = listener.local_addr().expect("a bound address");
+    let resetter = thread::spawn(move || {
+        let (peer, _) = listener.accept().expect("a connection");
+        let mut request = vec![0; PING.len()];
+        (&peer).read_exact(&mut request).expect("the whole request");
+        rustix::net::sockopt::set_socket_linger(&peer, Some(Duration::ZERO))
+            .expect("a settable linger");
+    });
+    let mut connection =
+        RespConnection::over(std::net::TcpStream::connect(address).expect("a loopback connection"))
+            .expect("a connection");
+
+    // Act
+    let answer = connection.ask(&["PING"]);
+    resetter.join().expect("the resetter finished");
+
+    // Assert
+    let error = answer.expect_err("a reset connection").to_string();
+    assert!(!error.contains("not the redis protocol"), "{error}");
+    assert!(error.contains("reset"), "{error}");
+}

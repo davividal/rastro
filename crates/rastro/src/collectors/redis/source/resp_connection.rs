@@ -135,11 +135,15 @@ fn held_by(_socket: &UnixStream, _server: u32) -> bool {
 ///
 /// One parser for the life of the connection, so bytes past one reply are kept for the next
 /// rather than lost or read as part of it.
+///
+/// **Broken by the first exchange that fails**, found by review: a reply abandoned part way leaves
+/// the rest of it on the socket, where the next command would read it as its own reply.
 pub struct RespConnection {
     stream: ServerStream,
     parser: Parser,
     bound: usize,
     within: Duration,
+    broken: bool,
 }
 
 impl RespConnection {
@@ -150,6 +154,7 @@ impl RespConnection {
             parser: Parser::new(),
             bound: REPLY_BOUND,
             within: ANSWER_WITHIN,
+            broken: false,
         }
         .timing_out_after(ANSWER_WITHIN)
     }
@@ -209,10 +214,20 @@ impl RespConnection {
     /// spaces, and a password holding one would arrive as two arguments.
     pub fn ask(&mut self, arguments: &[&str]) -> Result<Reply, CollectionError> {
         let command = arguments.first().copied().unwrap_or_default();
+        if self.broken {
+            return Err(CollectionError::new(format!(
+                "{command} was not sent: an earlier command failed part way, so what is left on \
+                 the connection is no reply to it"
+            )));
+        }
         let deadline = Instant::now() + self.within;
 
-        self.send(command, arguments, deadline)?;
-        self.receive(command, deadline)
+        // An error reply, or one refused once whole, leaves the stream at the next reply.
+        let exchanged = self
+            .send(command, arguments, deadline)
+            .and_then(|()| self.receive(command, deadline));
+        self.broken = exchanged.is_err();
+        exchanged?
     }
 
     fn send(
@@ -255,7 +270,12 @@ impl RespConnection {
         Ok(())
     }
 
-    fn receive(&mut self, command: &str, deadline: Instant) -> Result<Reply, CollectionError> {
+    /// The reply, or why the stream broke; inside, why a whole reply was refused.
+    fn receive(
+        &mut self,
+        command: &str,
+        deadline: Instant,
+    ) -> Result<Result<Reply, CollectionError>, CollectionError> {
         let mut exchange = Exchange {
             stream: &mut self.stream,
             deadline,
@@ -265,7 +285,7 @@ impl RespConnection {
         };
 
         match self.parser.parse_value(&mut exchange) {
-            Ok(value) => Reply::try_from(value),
+            Ok(value) => Ok(Reply::try_from(value)),
             Err(error) => Err(match exchange.interrupted {
                 Some(Interrupted::PastBound) => CollectionError::new(format!(
                     "the server's reply to {command} ran past {bound} bytes, so it was refused \
@@ -278,6 +298,9 @@ impl RespConnection {
                 )),
                 Some(Interrupted::Closed) => CollectionError::new(format!(
                     "the server closed the connection before its reply to {command} was complete"
+                )),
+                Some(Interrupted::Failed(failure)) => CollectionError::new(format!(
+                    "the connection failed while the reply to {command} was read: {failure}"
                 )),
                 None => CollectionError::new(format!(
                     "the server's reply to {command} is not the redis protocol: {}",
@@ -350,6 +373,7 @@ enum Interrupted {
     PastBound,
     PastDeadline,
     Closed,
+    Failed(ErrorKind),
 }
 
 /// The socket, as one command's reply is read from it.
@@ -373,7 +397,11 @@ impl Read for Exchange<'_> {
         }
         self.stream.set_read_timeout(remaining.max(SHORTEST_WAIT))?;
 
-        let room = (self.bound + 1).saturating_sub(self.read).min(buffer.len());
+        let room = self
+            .bound
+            .saturating_add(1)
+            .saturating_sub(self.read)
+            .min(buffer.len());
         match self.stream.read(&mut buffer[..room]) {
             Ok(0) => {
                 self.interrupted = Some(Interrupted::Closed);
@@ -391,7 +419,11 @@ impl Read for Exchange<'_> {
                 self.interrupted = Some(Interrupted::PastDeadline);
                 Err(error)
             }
-            Err(error) => Err(error),
+            Err(error) if error.kind() == ErrorKind::Interrupted => Err(error),
+            Err(error) => {
+                self.interrupted = Some(Interrupted::Failed(error.kind()));
+                Err(error)
+            }
         }
     }
 }
