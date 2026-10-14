@@ -81,14 +81,6 @@ impl fmt::Display for Unreached {
     }
 }
 
-impl std::ops::Deref for Unreached {
-    type Target = str;
-
-    fn deref(&self) -> &str {
-        &self.reason
-    }
-}
-
 /// One server process, before anything has been asked of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredServer {

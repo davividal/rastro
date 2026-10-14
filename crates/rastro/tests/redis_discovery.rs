@@ -312,7 +312,7 @@ fn a_server_whose_descriptors_are_unreadable_is_keyed_by_its_title_and_not_reach
     assert_eq!(discovered.key, "/usr/bin/redis-server 127.0.0.1:6379");
     assert!(discovered.listeners.is_empty());
     let refusal = discovered.reach.expect_err("an unreachable server");
-    assert!(refusal.contains("descriptors"), "{refusal}");
+    assert!(refusal.reason.contains("descriptors"), "{refusal}");
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn a_server_is_not_reached_where_the_socket_tables_are_unreadable() {
     let refusal = only(&proc).reach.expect_err("an unreachable server");
 
     // Assert
-    assert!(refusal.contains("socket tables"), "{refusal}");
+    assert!(refusal.reason.contains("socket tables"), "{refusal}");
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn a_server_listening_on_nothing_says_so() {
     // Assert
     assert_eq!(discovered.key, "/usr/bin/redis-server 127.0.0.1:6379");
     let refusal = discovered.reach.expect_err("an unreachable server");
-    assert!(refusal.contains("listens on nothing"), "{refusal}");
+    assert!(refusal.reason.contains("listens on nothing"), "{refusal}");
 }
 
 #[test]
