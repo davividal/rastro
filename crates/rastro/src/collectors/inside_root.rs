@@ -16,7 +16,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// The most of a node's file that is read. The largest file in the matrix is under 5 KiB.
+/// The most of a file that is read. The largest in either matrix is under 5 KiB.
 const MOST_READ: u64 = 1024 * 1024;
 
 /// A file's text, every component of `relative` resolved inside `root`.
@@ -54,18 +54,18 @@ fn bounded_bytes(file: File) -> std::io::Result<Vec<u8>> {
     }
 }
 
-/// The most entries a directory inside a node's root is listed to: an install's `lib/` holds a few
-/// hundred, and the directory is its owner's to fill, found by the sweep.
+/// The most entries a directory inside a process's root is listed to: an install's `lib/` holds a
+/// few hundred, and the directory is its owner's to fill, found by the sweep.
 const MOST_LISTED: usize = 10_000;
 
-/// The names in a directory inside a node's root, resolved there as [`read_inside`] resolves a file,
-/// and refused past [`MOST_LISTED`].
+/// The names in a directory inside a process's root, resolved there as [`read_inside`] resolves a
+/// file, and refused past [`MOST_LISTED`].
 #[cfg(target_os = "linux")]
 pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
     names_in_pinned_root(&pinned_root(root)?, relative)
 }
 
-/// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
+/// The same on a workstation build, which reads no real service: rastro ships for Linux alone.
 #[cfg(not(target_os = "linux"))]
 pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
     bounded(
@@ -256,9 +256,11 @@ fn names_in_pinned_root(
     relative: &Path,
 ) -> std::io::Result<Vec<String>> {
     let directory = open_under(root, relative, Opening::List)?;
+    // `.` and `..` too, which `read_dir` and so the workstation build leave out.
     bounded(
         rustix::fs::Dir::read_from(&directory)?
-            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned())),
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .filter(|name| !matches!(name.as_deref(), Ok("." | ".."))),
     )
 }
 
@@ -364,7 +366,7 @@ fn open_under(
         // Before Linux 5.6 there is no safe way to walk another root, and reading past it is
         // the defect this exists to prevent, so the read is refused rather than approximated.
         Errno::NOSYS => std::io::Error::other(
-            "this kernel has no openat2, so the path cannot be resolved inside the node's root",
+            "this kernel has no openat2, so the path cannot be resolved inside the process's root",
         ),
         other => std::io::Error::from(other),
     })?;
@@ -427,7 +429,7 @@ fn reopened_if_regular(pinned: &rustix::fd::OwnedFd) -> std::io::Result<File> {
         .open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))
 }
 
-/// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
+/// The same on a workstation build, which reads no real service: rastro ships for Linux alone.
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn open_inside(
     root: &Path,

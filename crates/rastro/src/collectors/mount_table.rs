@@ -1,4 +1,4 @@
-//! Which host directory a node's path is, read from the kernel's mount tables.
+//! Which host directory a process's path is, read from the kernel's mount tables.
 //!
 //! Found by the second domain review, measured: a node in a container with its data on a named
 //! volume was read fine and the walk went through 41 entries under the volume, because the path
@@ -40,15 +40,15 @@ pub struct HostView {
 ///
 /// Nothing where the path is on the process's own root mount, which is a container's image and the
 /// container facet's to account for, or where the host does not mount the device.
-pub fn host_views_of(node_table: &[u8], host_table: &[u8], path: &Path) -> Vec<HostView> {
-    let Some(node_mount) = containing(&mounts_in(node_table), path) else {
+pub fn host_views_of(process_table: &[u8], host_table: &[u8], path: &Path) -> Vec<HostView> {
+    let Some(process_mount) = containing(&mounts_in(process_table), path) else {
         return Vec::new();
     };
-    if node_mount.point == Path::new("/") {
+    if process_mount.point == Path::new("/") {
         return Vec::new();
     }
-    match on_device(&node_mount, path) {
-        Some(inside) => seen_at(&mounts_in(host_table), &node_mount.device, &inside),
+    match on_device(&process_mount, path) {
+        Some(inside) => seen_at(&mounts_in(host_table), &process_mount.device, &inside),
         None => Vec::new(),
     }
 }
