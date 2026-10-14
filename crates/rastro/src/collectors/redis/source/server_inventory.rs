@@ -1,6 +1,7 @@
 //! Every server on the box, each asked what discovery says it may be asked.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use rastro_collector::CollectionError;
 
@@ -32,11 +33,18 @@ const NOAUTH: &str = "NOAUTH";
 ///
 /// **Never fails as a whole.** Each server's failure is its own `error`, so one wedged or
 /// password-protected instance costs its own entry and not its neighbours'.
+///
+/// **Within `budget` as a whole**, found by review: every wait on one server is bounded, but any
+/// account can start many genuine servers that answer slowly. A server reached once it is spent is
+/// sent nothing, and its instance says so.
 pub fn read_installation(
     proc: &Path,
     installed: &InstalledServers,
     systemctl: Option<&CanonicalTool>,
+    budget: Duration,
 ) -> Installation {
+    let started = Instant::now();
+
     Installation {
         uninspected_processes: resident_census(proc).some_processes_unseen,
         installed: installed.kinds().clone(),
@@ -44,9 +52,35 @@ pub fn read_installation(
             .into_iter()
             .map(|server| {
                 let key = server.key.clone();
-                (key, read_instance(proc, server, systemctl))
+                let instance = match started.elapsed() < budget {
+                    true => read_instance(proc, server, systemctl),
+                    false => {
+                        let mut unread = unasked(&server);
+                        unread.record(Shortfall::Failed(format!(
+                            "not read: the facet's time budget of {budget:?} was spent on the \
+                             servers before it"
+                        )));
+                        unread
+                    }
+                };
+                (key, instance)
             })
             .collect(),
+    }
+}
+
+/// A server's instance before anything is asked of it.
+fn unasked(server: &DiscoveredServer) -> Instance {
+    Instance {
+        process_kind: server.kind,
+        listening: server.listeners.clone(),
+        identity: None,
+        settings: None,
+        replication: None,
+        acl: None,
+        modules: None,
+        not_read: Vec::new(),
+        errors: Vec::new(),
     }
 }
 
@@ -56,17 +90,7 @@ fn read_instance(
     systemctl: Option<&CanonicalTool>,
 ) -> Instance {
     let process_id = server.process_id;
-    let mut instance = Instance {
-        process_kind: server.kind,
-        listening: server.listeners,
-        identity: None,
-        settings: None,
-        replication: None,
-        acl: None,
-        modules: None,
-        not_read: Vec::new(),
-        errors: Vec::new(),
-    };
+    let mut instance = unasked(&server);
 
     let target = match &server.reach {
         Ok(target) => target,

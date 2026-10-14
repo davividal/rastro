@@ -640,3 +640,25 @@ fn a_unix_socket_inside_the_servers_own_root_is_reached_there() {
     assert!(is_null(&field(&instance, "error")), "{instance:?}");
     assert!(!is_null(&field(&instance, "version")));
 }
+
+#[test]
+fn a_server_past_the_facets_time_budget_is_sent_nothing_and_says_so() {
+    // Arrange: every wait on one server is bounded, but any account can start many genuine
+    // servers that answer slowly, so the facet as a whole has a budget too.
+    let server = FakeRedis::stock("facet-budget", &[]);
+    let proc = server.proc("redis-facet-budget");
+
+    // Act
+    let observation = collector(&[], &proc)
+        .within(std::time::Duration::ZERO)
+        .collect()
+        .expect("a readable box");
+
+    // Assert
+    let instance = field(&field(&observation, "instances"), &key_of(&server));
+    assert!(
+        text(&field(&instance, "error")).contains("budget"),
+        "{instance:?}"
+    );
+    assert!(server.received().is_empty());
+}

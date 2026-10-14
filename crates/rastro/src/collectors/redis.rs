@@ -21,6 +21,7 @@ pub use source::{
 pub use value_objects::{Listener, ServerKind, SettingName};
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::collectors::canonical_tool::CanonicalTool;
 
@@ -36,6 +37,10 @@ const PROC: &str = "/proc";
 /// The tool that says how a unit starts its server.
 const SYSTEMCTL: &str = "systemctl";
 
+/// How long the servers on a box get between them: a minute, past the most one wedged server can
+/// take, a second to connect and five for each of its commands.
+const FACET_BUDGET: Duration = Duration::from_secs(60);
+
 pub struct RedisCollector {
     name: FacetName,
     identity: CollectorIdentity,
@@ -45,6 +50,9 @@ pub struct RedisCollector {
     /// Asked only about a server that refused to answer without a password, for the command
     /// that started it; see [`password_for`].
     systemctl: Option<CanonicalTool>,
+
+    /// How long the servers on the box get between them; see [`read_installation`].
+    budget: Duration,
 }
 
 impl RedisCollector {
@@ -68,7 +76,14 @@ impl RedisCollector {
             installed,
             proc: proc.to_path_buf(),
             systemctl: None,
+            budget: FACET_BUDGET,
         }
+    }
+
+    /// The same, giving the servers on the box a time budget other than the default.
+    pub fn within(mut self, budget: Duration) -> Self {
+        self.budget = budget;
+        self
     }
 
     /// The same, able to ask systemd how a password-protected server was started.
@@ -159,6 +174,7 @@ impl Collector for RedisCollector {
             &self.proc,
             &self.installed,
             self.systemctl.as_ref(),
+            self.budget,
         )))
     }
 }
