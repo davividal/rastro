@@ -17,6 +17,7 @@ use std::thread;
 
 use redis::{Parser, Value};
 
+use super::account::status_of_runner;
 use super::captured_redis_cell::captured_reply;
 use super::fs_tree::{scratch_tree, write};
 
@@ -159,8 +160,10 @@ pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
         proc.join(pid).join("fd/3"),
     )
     .expect("a writable scratch symlink");
-    // Arrange: the server in rastro's own root, so its paths mean the same on both sides.
+    // Arrange: the server in rastro's own root, so its paths mean the same on both sides, and
+    // running as the test does, so its files are the server's own.
     symlink("/", proc.join(pid).join("root")).expect("a writable scratch symlink");
+    write(&proc, &format!("{pid}/status"), &status_of_runner());
     // Arrange: the server and rastro in one mount and one network namespace, as on the host.
     for process in [pid, "self"] {
         fs::create_dir_all(proc.join(process).join("ns")).expect("a writable scratch directory");

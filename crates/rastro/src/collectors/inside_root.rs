@@ -14,7 +14,7 @@
 
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The most of a node's file that is read. The largest file in the matrix is under 5 KiB.
 const MOST_READ: u64 = 1024 * 1024;
@@ -37,7 +37,10 @@ pub fn read_inside(root: &Path, relative: &Path) -> std::io::Result<String> {
 
 /// The same file's bytes, for a reader that decodes it a part at a time.
 pub fn read_bytes_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<u8>> {
-    let file = open_inside(root, relative, Opening::Read)?;
+    bounded_bytes(open_inside(root, relative, Opening::Read)?)
+}
+
+fn bounded_bytes(file: File) -> std::io::Result<Vec<u8>> {
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::other("it is not a regular file"));
     }
@@ -59,11 +62,7 @@ const MOST_LISTED: usize = 10_000;
 /// and refused past [`MOST_LISTED`].
 #[cfg(target_os = "linux")]
 pub fn names_inside(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
-    let directory = open_inside(root, relative, Opening::List)?;
-    bounded(
-        rustix::fs::Dir::read_from(&directory)?
-            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned())),
-    )
+    names_in_pinned_root(&pinned_root(root)?, relative)
 }
 
 /// The same on a workstation build, which reads no real node: rastro ships for Linux alone.
@@ -87,6 +86,187 @@ fn bounded(names: impl Iterator<Item = std::io::Result<String>>) -> std::io::Res
     }
 }
 
+/// The filesystem identity a read is made with: a process's own, as `/proc/<pid>/status` gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadingAccount {
+    user: u32,
+    group: u32,
+    groups: Vec<u32>,
+}
+
+impl ReadingAccount {
+    pub fn new(user: u32, group: u32, groups: Vec<u32>) -> Self {
+        Self {
+            user,
+            group,
+            groups,
+        }
+    }
+
+    /// The filesystem user, group and supplementary groups the process opens files with.
+    pub fn of_process(proc: &Path, process_id: u32) -> std::io::Result<Self> {
+        let status = fs::read_to_string(proc.join(process_id.to_string()).join("status"))?;
+        let line = |name: &str| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .ok_or_else(|| std::io::Error::other(format!("its status has no {name:?} line")))
+        };
+        // `Uid:` and `Gid:` list the real, effective, saved and filesystem ids, in that order.
+        let filesystem_id = |name: &str| -> std::io::Result<u32> {
+            line(name)?
+                .split_whitespace()
+                .nth(3)
+                .and_then(|id| id.parse().ok())
+                .ok_or_else(|| {
+                    std::io::Error::other(format!("its status {name:?} line is malformed"))
+                })
+        };
+        let groups = line("Groups:")?
+            .split_whitespace()
+            .map(|group| {
+                group
+                    .parse()
+                    .map_err(|_| std::io::Error::other("its status \"Groups:\" line is malformed"))
+            })
+            .collect::<std::io::Result<Vec<u32>>>()?;
+
+        Ok(Self::new(
+            filesystem_id("Uid:")?,
+            filesystem_id("Gid:")?,
+            groups,
+        ))
+    }
+
+    pub fn user(&self) -> u32 {
+        self.user
+    }
+
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+}
+
+/// A process's root, read with the process's own permission.
+///
+/// **Its permission, not rastro's**, found by review: a service's account may edit its own
+/// configuration, Debian's `/etc/redis` among it, and an include of a file only root may read
+/// would have root-run rastro read it on that account's behalf. The kernel makes every check, of
+/// each directory on the way, the file's mode and its ACL, because the read is made in a thread
+/// holding the process's effective ids and groups, which ends with the read. Only the effective
+/// ids change: the real and saved ones stay root's, so the account cannot signal that thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessRoot {
+    path: PathBuf,
+    account: ReadingAccount,
+}
+
+impl ProcessRoot {
+    pub fn new(path: impl Into<PathBuf>, account: ReadingAccount) -> Self {
+        Self {
+            path: path.into(),
+            account,
+        }
+    }
+
+    /// The root of a process on the box, read as that process.
+    pub fn of_process(proc: &Path, process_id: u32) -> std::io::Result<Self> {
+        Ok(Self::new(
+            proc.join(process_id.to_string()).join("root"),
+            ReadingAccount::of_process(proc, process_id)?,
+        ))
+    }
+
+    /// A file's bytes, as [`read_bytes_inside`] reads them, where the process may read it.
+    pub fn read_bytes(&self, relative: &Path) -> std::io::Result<Vec<u8>> {
+        self.as_account(|root| read_pinned_root(root, relative))
+    }
+
+    /// A directory's names, as [`names_inside`] lists them, where the process may list it.
+    pub fn names(&self, relative: &Path) -> std::io::Result<Vec<String>> {
+        self.as_account(|root| names_in_pinned_root(root, relative))
+    }
+
+    /// `work` done on the root, pinned as rastro, with the process's permission.
+    #[cfg(target_os = "linux")]
+    fn as_account<T: Send>(
+        &self,
+        work: impl FnOnce(&rustix::fd::OwnedFd) -> std::io::Result<T> + Send,
+    ) -> std::io::Result<T> {
+        let root = pinned_root(&self.path)?;
+        let ours = rustix::process::geteuid().as_raw();
+        match (ours, self.account.user) {
+            (_, theirs) if theirs == ours => work(&root),
+            (0, _) => std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        taken_on(&self.account)?;
+                        work(&root)
+                    })
+                    .join()
+                    .unwrap_or_else(|_| Err(std::io::Error::other("the read panicked")))
+            }),
+            _ => Err(std::io::Error::other(
+                "rastro runs unprivileged, so it cannot read the file with the permission of the \
+                 account that owns the process",
+            )),
+        }
+    }
+
+    /// The same on a workstation build, which reads no real server: rastro ships for Linux alone.
+    #[cfg(not(target_os = "linux"))]
+    fn as_account<T>(&self, work: impl FnOnce(&Path) -> std::io::Result<T>) -> std::io::Result<T> {
+        work(&self.path)
+    }
+}
+
+/// This thread's effective ids and groups made the account's, for the rest of its life.
+///
+/// Groups first, while the thread still has the capability to set them, and the user last, which
+/// gives up the rest.
+#[cfg(target_os = "linux")]
+fn taken_on(account: &ReadingAccount) -> std::io::Result<()> {
+    use rustix::process::{Gid, Uid};
+    use rustix::thread::{set_thread_groups, set_thread_res_gid, set_thread_res_uid};
+
+    let groups: Vec<Gid> = account
+        .groups
+        .iter()
+        .map(|group| Gid::from_raw(*group))
+        .collect();
+    set_thread_groups(&groups)?;
+    set_thread_res_gid(None, Gid::from_raw(account.group), None)?;
+    set_thread_res_uid(None, Uid::from_raw(account.user), None)?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_pinned_root(root: &rustix::fd::OwnedFd, relative: &Path) -> std::io::Result<Vec<u8>> {
+    bounded_bytes(open_under(root, relative, Opening::Read)?)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_pinned_root(root: &Path, relative: &Path) -> std::io::Result<Vec<u8>> {
+    read_bytes_inside(root, relative)
+}
+
+#[cfg(target_os = "linux")]
+fn names_in_pinned_root(
+    root: &rustix::fd::OwnedFd,
+    relative: &Path,
+) -> std::io::Result<Vec<String>> {
+    let directory = open_under(root, relative, Opening::List)?;
+    bounded(
+        rustix::fs::Dir::read_from(&directory)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned())),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn names_in_pinned_root(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
+    names_inside(root, relative)
+}
+
 /// What a file is opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Opening {
@@ -103,14 +283,30 @@ pub(crate) enum Opening {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std::io::Result<File> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, open, openat2};
-    use rustix::io::Errno;
+    open_under(&pinned_root(root)?, relative, opening)
+}
 
-    let root = open(
+/// The root, pinned without being opened.
+#[cfg(target_os = "linux")]
+fn pinned_root(root: &Path) -> std::io::Result<rustix::fd::OwnedFd> {
+    use rustix::fs::{Mode, OFlags, open};
+
+    Ok(open(
         root,
         OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-    )?;
+    )?)
+}
+
+#[cfg(target_os = "linux")]
+fn open_under(
+    root: &rustix::fd::OwnedFd,
+    relative: &Path,
+    opening: Opening,
+) -> std::io::Result<File> {
+    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::io::Errno;
+
     let flags = match opening {
         // Pinned, not opened: an `O_PATH` descriptor reads nothing and opens no device.
         Opening::Read => OFlags::PATH | OFlags::CLOEXEC,
@@ -123,7 +319,7 @@ pub(crate) fn open_inside(root: &Path, relative: &Path, opening: Opening) -> std
         false => relative,
     };
     let file = openat2(
-        &root,
+        root,
         relative,
         flags,
         Mode::empty(),

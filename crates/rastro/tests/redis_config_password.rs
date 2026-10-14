@@ -9,9 +9,7 @@ use rastro::collectors::redis::{default_user_in_acl_file, password_directives_in
 
 mod support;
 
-/// A server in rastro's own root, whose paths mean the same on both sides.
-const HOST_ROOT: &str = "/";
-
+use support::account::host_root;
 use support::fs_tree::{scratch_tree, write};
 
 fn file_with(name: &str, contents: &str) -> PathBuf {
@@ -22,7 +20,7 @@ fn file_with(name: &str, contents: &str) -> PathBuf {
 }
 
 fn password_in(name: &str, contents: &str) -> Option<String> {
-    password_directives_in(Path::new(HOST_ROOT), &file_with(name, contents))
+    password_directives_in(&host_root(), &file_with(name, contents))
         .expect("a readable file")
         .requirepass
 }
@@ -88,7 +86,7 @@ fn a_file_without_the_directive_sets_no_password() {
 fn unbalanced_quotes_are_refused() {
     // Act
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with("redis-pass-unbalanced", "requirepass \"hunter2\n"),
     );
 
@@ -100,7 +98,7 @@ fn unbalanced_quotes_are_refused() {
 fn a_byte_escape_outside_ascii_is_refused_rather_than_approximated() {
     // Act
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with("redis-pass-byte", "requirepass \"\\xff\"\n"),
     );
 
@@ -112,7 +110,7 @@ fn a_byte_escape_outside_ascii_is_refused_rather_than_approximated() {
 fn a_relative_include_is_refused() {
     // Act
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with("redis-pass-relative", "include local.conf\n"),
     );
 
@@ -132,7 +130,7 @@ fn a_file_that_includes_itself_is_refused() {
     );
 
     // Act
-    let result = password_directives_in(Path::new(HOST_ROOT), &file);
+    let result = password_directives_in(&host_root(), &file);
 
     // Assert
     let error = result.expect_err("a cycle").to_string();
@@ -153,7 +151,7 @@ fn a_pattern_include_is_read_in_byte_order() {
 
     // Act & Assert
     assert_eq!(
-        password_directives_in(Path::new(HOST_ROOT), &root.join("redis.conf"))
+        password_directives_in(&host_root(), &root.join("redis.conf"))
             .expect("a readable file")
             .requirepass,
         Some("second".to_owned())
@@ -169,7 +167,7 @@ fn the_default_accounts_line_is_read_with_its_rules_in_order() {
     );
 
     // Act
-    let directives = password_directives_in(Path::new(HOST_ROOT), &file).expect("a readable file");
+    let directives = password_directives_in(&host_root(), &file).expect("a readable file");
 
     // Assert: quoted as the server splits it, and the directive matched whatever its case.
     assert_eq!(
@@ -189,7 +187,7 @@ fn the_default_accounts_line_is_read_with_its_rules_in_order() {
 fn the_default_account_declared_twice_is_refused() {
     // Act: measured, the server refuses to start on such a file.
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with(
             "redis-pass-user-twice",
             "user default on >one\nuser default on >two\n",
@@ -204,7 +202,7 @@ fn the_default_account_declared_twice_is_refused() {
 fn an_acl_file_is_named() {
     // Act
     let directives = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with(
             "redis-pass-aclfile",
             "requirepass ignored\naclfile /etc/redis/users.acl\n",
@@ -231,8 +229,7 @@ fn the_default_account_is_read_out_of_an_acl_file() {
 
     // Act & Assert
     assert_eq!(
-        default_user_in_acl_file(Path::new(HOST_ROOT), &root.join("users.acl"))
-            .expect("a readable file"),
+        default_user_in_acl_file(&host_root(), &root.join("users.acl")).expect("a readable file"),
         Some(
             ["on", ">fromfile", "~*", "&*", "+@all"]
                 .map(str::to_owned)
@@ -249,8 +246,7 @@ fn an_acl_file_without_the_default_account_says_so() {
 
     // Act & Assert: measured, the server then leaves the default account without a password.
     assert_eq!(
-        default_user_in_acl_file(Path::new(HOST_ROOT), &root.join("users.acl"))
-            .expect("a readable file"),
+        default_user_in_acl_file(&host_root(), &root.join("users.acl")).expect("a readable file"),
         None
     );
 }
@@ -266,7 +262,7 @@ fn an_acl_file_declaring_the_default_account_twice_is_refused() {
     );
 
     // Act
-    let result = default_user_in_acl_file(Path::new(HOST_ROOT), &root.join("users.acl"));
+    let result = default_user_in_acl_file(&host_root(), &root.join("users.acl"));
 
     // Assert
     assert!(result.is_err(), "{result:?}");
@@ -285,7 +281,7 @@ fn a_fifo_where_the_file_should_be_is_refused_rather_than_waited_on() {
     assert!(made.success());
 
     // Act
-    let result = password_directives_in(Path::new(HOST_ROOT), &fifo);
+    let result = password_directives_in(&host_root(), &fifo);
 
     // Assert
     let error = result.expect_err("a FIFO").to_string();
@@ -296,7 +292,7 @@ fn a_fifo_where_the_file_should_be_is_refused_rather_than_waited_on() {
 fn a_device_where_an_include_should_be_is_refused() {
     // Act: `/dev/zero` never ends, and read whole it grows without end.
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with(
             "redis-pass-device",
             "include /dev/zero\nrequirepass hunter2\n",
@@ -312,7 +308,7 @@ fn a_device_where_an_include_should_be_is_refused() {
 fn a_file_past_the_size_bound_is_refused() {
     // Act
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with("redis-pass-huge", &"# padding\n".repeat(120_000)),
     );
 
@@ -338,7 +334,7 @@ fn includes_that_fan_out_stop_at_a_total_budget() {
 
     // Act
     let started = std::time::Instant::now();
-    let result = password_directives_in(Path::new(HOST_ROOT), &root.join("level-0.conf"));
+    let result = password_directives_in(&host_root(), &root.join("level-0.conf"));
 
     // Assert: refused, and quickly.
     let error = result.expect_err("a fan-out").to_string();
@@ -360,7 +356,7 @@ fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_fu
     );
 
     // Act
-    let result = password_directives_in(Path::new(HOST_ROOT), &file);
+    let result = password_directives_in(&host_root(), &file);
 
     // Assert
     let error = result.expect_err("a huge directory").to_string();
@@ -385,7 +381,7 @@ fn an_included_name_that_is_not_utf8_is_refused_rather_than_read_as_another() {
     );
 
     // Act
-    let result = password_directives_in(Path::new(HOST_ROOT), &file);
+    let result = password_directives_in(&host_root(), &file);
 
     // Assert
     let error = result.expect_err("an unreadable name").to_string();
@@ -398,7 +394,7 @@ fn a_wildcard_outside_the_last_component_is_refused_rather_than_resolved() {
     let file = file_with("redis-pass-directory-glob", "include /etc/*/redis.conf\n");
 
     // Act
-    let result = password_directives_in(Path::new(HOST_ROOT), &file);
+    let result = password_directives_in(&host_root(), &file);
 
     // Assert
     let error = result.expect_err("an unresolved pattern").to_string();
@@ -408,7 +404,7 @@ fn a_wildcard_outside_the_last_component_is_refused_rather_than_resolved() {
 #[test]
 fn a_relative_configuration_file_is_refused_rather_than_read_from_rastros_directory() {
     // Act: the server resolved it against the unit's working directory, which nothing records.
-    let result = password_directives_in(Path::new(HOST_ROOT), Path::new("conf/redis.conf"));
+    let result = password_directives_in(&host_root(), Path::new("conf/redis.conf"));
 
     // Assert
     let error = result.expect_err("a relative file").to_string();
@@ -437,7 +433,7 @@ fn only_ascii_whitespace_separates_words() {
 fn the_directives_never_print_their_password() {
     // Act
     let directives = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with(
             "redis-pass-debug",
             "requirepass printed-nowhere\nuser default on >also-nowhere\n",
@@ -469,7 +465,7 @@ fn a_line_that_is_not_utf8_elsewhere_in_the_file_costs_nothing() {
     );
 
     // Act
-    let directives = password_directives_in(Path::new(HOST_ROOT), &file).expect("a readable file");
+    let directives = password_directives_in(&host_root(), &file).expect("a readable file");
 
     // Assert
     assert_eq!(directives.requirepass, Some("hunter2".to_owned()));
@@ -481,7 +477,7 @@ fn a_password_line_that_is_not_utf8_is_refused() {
     let file = file_with_bytes("redis-pass-latin1-password", b"requirepass caf\xe9\n");
 
     // Act
-    let refusal = password_directives_in(Path::new(HOST_ROOT), &file)
+    let refusal = password_directives_in(&host_root(), &file)
         .expect_err("a password rastro cannot send as redis would")
         .to_string();
 
@@ -510,11 +506,87 @@ fn a_file_the_kernel_serves_is_refused_rather_than_read() {
 
     // Act
     let result = password_directives_in(
-        Path::new(HOST_ROOT),
+        &host_root(),
         &file_with("redis-pass-procfs", "include /proc/version\n"),
     );
 
     // Assert
     let error = result.expect_err("a kernel file").to_string();
     assert!(error.contains("kernel"), "{error}");
+}
+
+/// A configuration only the account it is read as may read: `0644` in directories `0755`, so the
+/// account that reads it need not be the test's.
+#[cfg(target_os = "linux")]
+fn world_readable(name: &str, contents: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch_tree(name, &[]);
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).expect("a chmod");
+    write(&root, "redis.conf", contents);
+    let file = root.join("redis.conf");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).expect("a chmod");
+
+    file
+}
+
+/// An account no fixture file belongs to: `nobody`.
+#[cfg(target_os = "linux")]
+fn nobody() -> rastro::collectors::inside_root::ProcessRoot {
+    rastro::collectors::inside_root::ProcessRoot::new(
+        "/",
+        rastro::collectors::inside_root::ReadingAccount::new(65534, 65534, Vec::new()),
+    )
+}
+
+/// Linux alone, where rastro takes on a server's permission.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_the_servers_account_cannot_read_is_never_read_for_it() {
+    // Arrange: the redis account may edit its own `redis.conf` on Debian, and an include of a file
+    // only root may read would have root-run rastro read it and send its password to that
+    // account's server.
+    use std::os::unix::fs::PermissionsExt;
+    let directory = scratch_tree("redis-pass-not-the-servers", &[]);
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).expect("a chmod");
+    let secret = directory.join("secret.conf");
+    std::fs::write(&secret, "requirepass rootonly\n").expect("a writable fixture");
+    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).expect("a chmod");
+    let file = world_readable(
+        "redis-pass-not-the-servers-conf",
+        &format!("include {}\n", secret.display()),
+    );
+
+    // Act
+    let result = password_directives_in(&nobody(), &file);
+
+    // Assert: refused as root by the kernel's own check, and unprivileged since rastro cannot
+    // take on another account there.
+    let error = result
+        .expect_err("a file the account cannot read")
+        .to_string();
+    assert!(!error.contains("rootonly"), "{error}");
+}
+
+/// Linux alone, where rastro takes on a server's permission.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_the_servers_account_can_read_is_read_with_its_permission() {
+    // Arrange
+    let file = world_readable("redis-pass-the-servers", "requirepass hunter2\n");
+
+    // Act
+    let result = password_directives_in(&nobody(), &file);
+
+    // Assert: root takes on the account; an unprivileged run cannot, and says so.
+    match support::account::running_as_root() {
+        true => assert_eq!(
+            result.expect("a file the account can read").requirepass,
+            Some("hunter2".to_owned())
+        ),
+        false => {
+            let error = result.expect_err("not root").to_string();
+            assert!(error.contains("unprivileged"), "{error}");
+        }
+    }
 }

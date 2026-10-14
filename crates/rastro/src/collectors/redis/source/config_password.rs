@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use rastro_collector::CollectionError;
 
 use crate::collectors::file_glob;
-use crate::collectors::inside_root::{names_inside, read_bytes_inside};
+use crate::collectors::inside_root::ProcessRoot;
 
 const REQUIREPASS: &str = "requirepass";
 const INCLUDE: &str = "include";
@@ -74,7 +74,7 @@ impl fmt::Debug for PasswordDirectives {
 /// because that is the order the server applies them in. **A second `user default` is refused**:
 /// measured, the server will not start on such a file, so it is not the file of a running one.
 pub fn password_directives_in(
-    root: &Path,
+    root: &ProcessRoot,
     file: &Path,
 ) -> Result<PasswordDirectives, CollectionError> {
     let mut directives = PasswordDirectives::default();
@@ -91,7 +91,7 @@ pub fn password_directives_in(
 /// Nothing is an answer, not a failure: measured, a server whose ACL file declares no `default`
 /// leaves that account without a password, whatever `requirepass` says.
 pub fn default_user_in_acl_file(
-    root: &Path,
+    root: &ProcessRoot,
     file: &Path,
 ) -> Result<Option<Vec<String>>, CollectionError> {
     let bytes = read_bounded(root, file)?;
@@ -112,7 +112,7 @@ pub fn default_user_in_acl_file(
 }
 
 fn read_into(
-    root: &Path,
+    root: &ProcessRoot,
     file: &Path,
     files_read: &mut usize,
     directives: &mut PasswordDirectives,
@@ -163,7 +163,7 @@ fn read_into(
 ///
 /// **Bytes, not text**, found by review: redis reads the file as bytes, and one Latin-1 comment
 /// would otherwise refuse every password in it.
-fn read_bounded(root: &Path, file: &Path) -> Result<Vec<u8>, CollectionError> {
+fn read_bounded(root: &ProcessRoot, file: &Path) -> Result<Vec<u8>, CollectionError> {
     let relative = file.strip_prefix("/").map_err(|_| {
         CollectionError::new(format!(
             "{} is a relative path, which the server resolved against a working directory \
@@ -172,7 +172,7 @@ fn read_bounded(root: &Path, file: &Path) -> Result<Vec<u8>, CollectionError> {
         ))
     })?;
 
-    read_bytes_inside(root, relative).map_err(|error| {
+    root.read_bytes(relative).map_err(|error| {
         CollectionError::new(format!("{} could not be read: {error}", file.display()))
     })
 }
@@ -259,7 +259,7 @@ fn declared_twice(file: &Path) -> CollectionError {
 /// A relative path is refused rather than resolved: the server resolves it against its working
 /// directory at start, which nothing on the box still records.
 fn included_files(
-    root: &Path,
+    root: &ProcessRoot,
     from: &Path,
     argument: &str,
 ) -> Result<Vec<PathBuf>, CollectionError> {
@@ -287,7 +287,7 @@ fn included_files(
     }
 
     let relative = directory.strip_prefix("/").unwrap_or(directory);
-    let mut names = names_inside(root, relative).map_err(|error| {
+    let mut names = root.names(relative).map_err(|error| {
         CollectionError::new(format!(
             "{} includes {argument:?}, and {} could not be listed: {error}",
             from.display(),

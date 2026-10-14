@@ -1,3 +1,4 @@
+pub mod account;
 pub mod captured_cell;
 pub mod captured_redis_cell;
 pub mod es_node;

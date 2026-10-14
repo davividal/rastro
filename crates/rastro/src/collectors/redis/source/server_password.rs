@@ -8,10 +8,7 @@ use super::config_password::{
 use super::default_account::password_for_default_account;
 use super::server_unit::{start_of, unit_of};
 use crate::collectors::canonical_tool::CanonicalTool;
-
-/// Where a process's root is linked from, relative to its `/proc` entry: every path the server
-/// was started with means what it meant to the server only there.
-const ROOT: &str = "root";
+use crate::collectors::inside_root::ProcessRoot;
 
 /// The rules an ACL file without a `default` line leaves that account with, measured.
 const SWITCHED_ON: &str = "on";
@@ -60,7 +57,14 @@ pub fn password_for(
         ));
     }
 
-    let root = proc.join(process_id.to_string()).join(ROOT);
+    // Every path the server was started with means what it meant to the server only in its own
+    // root, and is read only where the server's own account could read it.
+    let root = ProcessRoot::of_process(proc, process_id).map_err(|error| {
+        format!(
+            "the server requires a password, and which account it reads its files as could not \
+             be read ({error})"
+        )
+    })?;
     let directives = match &file {
         Some(file) => password_directives_in(&root, file)
             .map_err(|error| format!("the server requires a password, and {error}"))?,
