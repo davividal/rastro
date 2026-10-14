@@ -633,3 +633,30 @@ fn a_server_its_unit_did_not_start_is_not_given_the_units_password() {
     assert!(error.contains("did not start"), "{error}");
     assert!(auths(&server).is_empty());
 }
+
+#[test]
+fn a_password_refused_for_another_reason_is_not_said_to_have_changed() {
+    // Arrange: measured wording, an `AUTH` the server answers with an error other than
+    // `WRONGPASS`, its account having no password after all.
+    let server = FakeRedis::answering(
+        "auth-other-refusal",
+        &[
+            ("INFO server", "-NOAUTH Authentication required.\r\n"),
+            (
+                "AUTH hunter2",
+                "-ERR AUTH <password> called without any password configured for the default \
+                 user. Are you sure your configuration is correct?\r\n",
+            ),
+        ],
+    );
+    let auth_box =
+        auth_box("redis-auth-other-refusal", &server, "").configured("requirepass hunter2\n");
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let reason = text(&field(&instance(&observation, &server), "not_read"));
+    assert!(!reason.contains("changed since"), "{reason}");
+    assert!(!reason.contains("hunter2"), "{reason}");
+}

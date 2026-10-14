@@ -248,6 +248,9 @@ fn untried_note(target: &DialTarget, listening: &[Listener]) -> String {
     }
 }
 
+/// The code a server refuses a wrong password with.
+const WRONG_PASSWORD: &str = "WRONGPASS";
+
 /// One `AUTH`, never repeated.
 ///
 /// **A refusal is not retried with anything else.** Each is an entry in the server's `ACL LOG`,
@@ -256,10 +259,22 @@ fn untried_note(target: &DialTarget, listening: &[Listener]) -> String {
 fn authenticate(connection: &mut RespConnection, credential: &Credential) -> Result<(), Shortfall> {
     match connection.ask(&["AUTH", credential.password.as_str()])? {
         Reply::Simple(ok) if ok == "OK" => Ok(()),
-        _ => Err(Shortfall::Withheld(format!(
-            "the server refused the password {} gives the default account, so it has been \
-             changed since the server started",
-            credential.origin
+        Reply::Error(refusal) if refusal.starts_with(WRONG_PASSWORD) => {
+            Err(Shortfall::Withheld(format!(
+                "the server refused the password {} gives the default account, so it has been \
+                 changed since the server started",
+                credential.origin
+            )))
+        }
+        // Its text is not quoted: an `AUTH` error can echo what was sent.
+        other => Err(Shortfall::Withheld(format!(
+            "the server answered the password {} gives the default account with {} rather than \
+             accepting or refusing it",
+            credential.origin,
+            match &other {
+                Reply::Error(refusal) => refusal.split(' ').next().unwrap_or_default().to_owned(),
+                _ => other.kind().to_owned(),
+            }
         ))),
     }
 }

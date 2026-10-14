@@ -67,7 +67,10 @@ fn run_refuses_a_namespace_it_cannot_open_and_does_not_do_the_work() {
 fn of_in_refuses_a_namespace_link_it_cannot_read() {
     // Arrange: an unprivileged run looking at another user's process cannot read the link; a
     // directory where it should be refuses the read without depending on who runs the suite.
-    let proc = scratch_tree("elasticsearch-namespace-refused", &["self/ns", "600/ns/net"]);
+    let proc = scratch_tree(
+        "elasticsearch-namespace-refused",
+        &["self/ns", "600/ns/net"],
+    );
     symlink("net:[4026531840]", proc.join("self/ns/net")).expect("a fixture");
 
     // Act
