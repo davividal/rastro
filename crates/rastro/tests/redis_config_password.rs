@@ -590,3 +590,13 @@ fn a_file_the_servers_account_can_read_is_read_with_its_permission() {
         }
     }
 }
+
+#[test]
+fn a_line_of_only_form_feeds_is_skipped_as_the_server_skips_it() {
+    // Act & Assert: `sdstrim` leaves a form feed, and `sdssplitargs` finds no word, which redis
+    // passes over.
+    assert_eq!(
+        password_in("redis-pass-form-feed-line", "\u{c}\nrequirepass hunter2\n"),
+        Some("hunter2".to_owned())
+    );
+}

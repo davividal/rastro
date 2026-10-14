@@ -210,7 +210,10 @@ fn words_of(file: &Path, line: &[u8]) -> Result<Option<Vec<String>>, CollectionE
         }
     };
 
-    split_arguments(line).map(Some).ok_or_else(|| {
+    // No word at all, a line of form feeds, is one the server passes over.
+    split_arguments(line)
+        .map(|words| (!words.is_empty()).then_some(words))
+        .ok_or_else(|| {
         CollectionError::new(format!(
             "{} has a line rastro cannot split the way the server does: unbalanced quotes, or a \
              byte escape outside ASCII",
@@ -322,8 +325,8 @@ fn unresolved_pattern(from: &Path, argument: &str) -> CollectionError {
     ))
 }
 
-/// Splits a line into its arguments as redis's `sdssplitargs` does, or nothing where the quotes
-/// do not balance.
+/// Splits a line into its arguments as redis's `sdssplitargs` does, none for a line holding no
+/// word, or nothing where the quotes do not balance.
 ///
 /// A double-quoted argument takes `\xHH`, `\n`, `\r`, `\t`, `\b`, `\a` and a backslash before any
 /// other character as that character; a single-quoted one takes `\'` and nothing else. A quote
@@ -339,7 +342,7 @@ fn split_arguments(line: &str) -> Option<Vec<String>> {
             .is_some()
         {}
         if characters.peek().is_none() {
-            return (!arguments.is_empty()).then_some(arguments);
+            return Some(arguments);
         }
 
         let mut argument = String::new();
