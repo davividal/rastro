@@ -247,6 +247,7 @@ fn a_live_servers_own_files_are_the_ones_claimed() {
     assert_eq!(
         trees,
         [
+            format!("{directory}/appendonly.aof"),
             format!("{directory}/appendonlydir"),
             format!("{directory}/dump.rdb")
         ]

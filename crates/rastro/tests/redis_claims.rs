@@ -45,13 +45,15 @@ fn trees_of(claims: &[FilesystemClaim]) -> Vec<String> {
     trees
 }
 
-/// The server's own files in `directory`: its snapshot and its append-only directory.
+/// The server's own files in `directory`: its snapshot, its append-only directory, and the single
+/// append-only file redis kept there before 7.0.
 fn own_files_in(directory: &Path) -> Vec<String> {
     let directory = directory
         .to_str()
         .expect("a UTF-8 path")
         .trim_end_matches('/');
     vec![
+        format!("{directory}/appendonly.aof"),
         format!("{directory}/appendonlydir"),
         format!("{directory}/dump.rdb"),
     ]
@@ -156,7 +158,7 @@ fn a_servers_files_are_still_sealed_when_its_instance_cannot_name_the_claim() {
     let claims = claims_of(&proc);
 
     // Assert: losing which instance asked costs a label; losing the claim costs the seal.
-    assert_eq!(claims.len(), 2, "{claims:?}");
+    assert_eq!(trees_of(&claims), own_files_in(&data));
     assert!(claims.iter().all(|claim| claim.qualifier().is_none()));
 }
 

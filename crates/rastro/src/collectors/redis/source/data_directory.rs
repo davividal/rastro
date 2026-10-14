@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 
 use crate::collectors::host_directories::host_directory_views_of;
 
-/// The files a server writes in its directory, under redis's default names: the snapshot, and
-/// the directory of append-only files.
+/// The files a server writes in its directory, under redis's default names: the snapshot, the
+/// directory of append-only files, and the single append-only file it kept there before 7.0.
 ///
 /// **Its files, not its directory**, decided by the maintainer: a server started by hand from
 /// `/root` with `dir ./` keeps its dump in root's home, and sealing the directory would hide the
 /// home's keys and scripts to hide one file. Claims are gathered before any server is asked, so a
 /// renamed `dbfilename` is not known, and that file is walked like any other.
-const SERVER_FILES: [&str; 2] = ["dump.rdb", "appendonlydir"];
+const SERVER_FILES: [&str; 3] = ["dump.rdb", "appendonlydir", "appendonly.aof"];
 
 /// The host paths of a server's own files, or none where that cannot be told.
 ///
