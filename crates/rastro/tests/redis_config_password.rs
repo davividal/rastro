@@ -488,3 +488,15 @@ fn a_password_line_that_is_not_utf8_is_refused() {
     // Assert
     assert!(refusal.contains("UTF-8"), "{refusal}");
 }
+
+#[test]
+fn a_vertical_tab_or_form_feed_inside_a_word_stays_in_it() {
+    // Arrange: `sdssplitargs` skips any `isspace` between words, but ends an unquoted word only
+    // at a space, `\n`, `\r` or `\t`.
+
+    // Act & Assert
+    assert_eq!(
+        password_in("redis-pass-vertical-tab", "requirepass a\u{b}b\u{c}c\n"),
+        Some("a\u{b}b\u{c}c".to_owned())
+    );
+}

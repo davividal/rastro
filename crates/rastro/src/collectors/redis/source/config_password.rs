@@ -346,7 +346,7 @@ fn split_arguments(line: &str) -> Option<Vec<String>> {
         loop {
             match characters.next() {
                 None => break,
-                Some(character) if is_c_space(character) => break,
+                Some(character) if ends_a_word(character) => break,
                 Some('"') => {
                     double_quoted(&mut characters, &mut argument)?;
                     if characters.peek().is_some_and(|next| !is_c_space(*next)) {
@@ -367,10 +367,16 @@ fn split_arguments(line: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Whether a character separates words, as C's `isspace` decides it in redis: ASCII only, so a
-/// non-breaking space inside a password stays inside it.
+/// Whether a character is skipped between words, as C's `isspace` decides it in redis: ASCII only,
+/// so a non-breaking space inside a password stays inside it.
 fn is_c_space(character: char) -> bool {
     matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}')
+}
+
+/// Whether a character ends an unquoted word, which `sdssplitargs` lists apart from `isspace`: a
+/// vertical tab or a form feed stays in the word.
+fn ends_a_word(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\r' | '\0')
 }
 
 fn double_quoted(
