@@ -662,3 +662,38 @@ fn a_server_past_the_facets_time_budget_is_sent_nothing_and_says_so() {
     );
     assert!(server.received().is_empty());
 }
+
+#[test]
+fn a_unix_socket_named_by_a_relative_path_is_not_dialled() {
+    // Arrange: redis takes `unixsocket` relative to its working directory, and the kernel's table
+    // keeps the spelling it was bound with.
+    let proc = proc_holding("redis-facet-relative-socket", Path::new("redis.sock"));
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = field(&field(&observation, "instances"), "redis.sock");
+    assert!(
+        text(&field(&instance, "error")).contains("relative"),
+        "{instance:?}"
+    );
+}
+
+#[test]
+fn a_unix_socket_path_that_is_no_socket_is_not_dialled() {
+    // Arrange: inside the server's root, the path the table names is a regular file.
+    let directory = scratch_tree("redis-facet-not-a-socket-root", &[]);
+    write(&directory, "redis.sock", "");
+    let proc = proc_holding("redis-facet-not-a-socket", Path::new("/redis.sock"));
+    let root = proc.join(support::fake_redis::server_pid()).join("root");
+    fs::remove_file(&root).expect("a removable fixture");
+    symlink(&directory, &root).expect("a writable scratch symlink");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert: refused before any connection, a socket being the one thing it may be.
+    let instance = field(&field(&observation, "instances"), "/redis.sock");
+    assert!(!is_null(&field(&instance, "error")), "{instance:?}");
+}

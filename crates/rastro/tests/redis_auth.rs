@@ -660,3 +660,41 @@ fn a_password_refused_for_another_reason_is_not_said_to_have_changed() {
     assert!(!reason.contains("changed since"), "{reason}");
     assert!(!reason.contains("hunter2"), "{reason}");
 }
+
+#[test]
+fn an_acl_file_named_by_a_relative_path_is_not_read() {
+    // Arrange: the server resolved it against the working directory it started in.
+    let server = FakeRedis::stock_with_password("auth-aclfile-relative", "fromacl", &[]);
+    let auth_box = auth_box("redis-auth-aclfile-relative", &server, "")
+        .configured("requirepass fromconf\naclfile users.acl\n");
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let reason = text(&field(&instance(&observation, &server), "not_read"));
+    assert!(reason.contains("relative"), "{reason}");
+    assert!(auths(&server).is_empty());
+}
+
+#[test]
+fn a_server_whose_account_cannot_be_read_is_sent_no_password() {
+    // Arrange: a `status` whose ids do not parse, so whose permission its files are read with
+    // cannot be told.
+    let server = FakeRedis::stock_with_password("auth-status-malformed", "hunter2", &[]);
+    let auth_box =
+        auth_box("redis-auth-status-malformed", &server, "").configured("requirepass hunter2\n");
+    write(
+        &auth_box.proc,
+        &format!("{}/status", server_pid()),
+        "Uid:\tx\tx\tx\tx\nGid:\t0\t0\t0\t0\nGroups:\t\n",
+    );
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let reason = text(&field(&instance(&observation, &server), "not_read"));
+    assert!(reason.contains("which account"), "{reason}");
+    assert!(auths(&server).is_empty());
+}
