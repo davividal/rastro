@@ -103,3 +103,24 @@ fn a_line_that_is_not_text_is_refused() {
     // Assert
     assert!(result.is_err(), "{result:?}");
 }
+
+#[test]
+fn the_accounts_never_print_a_verifier() {
+    // Arrange
+    let verifier = "#e7cf3ef4f17c3999a94f2c6f612e8a888e5b1026878e4e19398b23bd38ec221a";
+    let accounts = rastro::collectors::redis::Accounts {
+        users: [(
+            "default".to_owned(),
+            vec!["on".to_owned(), verifier.to_owned(), "~*".to_owned()],
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    // Act
+    let printed = format!("{accounts:?}");
+
+    // Assert
+    assert!(!printed.contains(verifier), "{printed}");
+    assert!(printed.contains("~*"), "{printed}");
+}

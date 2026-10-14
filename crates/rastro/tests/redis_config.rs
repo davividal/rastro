@@ -138,3 +138,26 @@ fn a_reply_of_the_wrong_shape_is_not_echoed_into_the_refusal() {
     assert!(!error.contains("leaked"), "{error}");
     assert!(error.len() < 300, "{}", error.len());
 }
+
+#[test]
+fn the_settings_never_print_a_credential() {
+    // Arrange
+    let settings = rastro::collectors::redis::Settings {
+        values: [("requirepass", "hunter2"), ("maxmemory", "1073741824")]
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    rastro::collectors::redis::SettingName::new(name).expect("a setting name"),
+                    value.to_owned(),
+                )
+            })
+            .collect(),
+    };
+
+    // Act
+    let printed = format!("{settings:?}");
+
+    // Assert: a `{:?}` in some later message would otherwise carry the password.
+    assert!(!printed.contains("hunter2"), "{printed}");
+    assert!(printed.contains("1073741824"), "{printed}");
+}

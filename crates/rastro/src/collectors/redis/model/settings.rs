@@ -1,6 +1,7 @@
 //! What a server is running with.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use rastro_collector::Observation;
 
@@ -20,9 +21,27 @@ use crate::collectors::redis::value_objects::SettingName;
 /// changes when the password does and `--raw` shows the password. A digest of an unsalted
 /// password proves a rotation and does not hide a guessable one, which `SECURITY.md` says of
 /// redaction everywhere.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Settings {
     pub values: BTreeMap<SettingName, String>,
+}
+
+/// Every setting but a credential's value, so a `{:?}` in some later message cannot carry one.
+impl fmt::Debug for Settings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_map()
+            .entries(self.values.iter().map(|(name, value)| {
+                (
+                    name.as_str(),
+                    match name.holds_credential() {
+                        true => "<withheld>",
+                        false => value.as_str(),
+                    },
+                )
+            }))
+            .finish()
+    }
 }
 
 impl From<&Settings> for Observation {

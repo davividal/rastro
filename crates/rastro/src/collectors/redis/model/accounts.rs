@@ -1,6 +1,7 @@
 //! Who may connect to a server, and what each account may do.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use rastro_collector::Observation;
 
@@ -18,9 +19,28 @@ const VERIFIER: char = '#';
 /// behind it, the same bargain `requirepass` already makes in the settings, and for the default
 /// account it is the same secret. Withholding one while carrying the other would protect
 /// nothing; carrying both lets a rotation show.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Accounts {
     pub users: BTreeMap<String, Vec<String>>,
+}
+
+/// Every rule but a verifier, so a `{:?}` in some later message cannot carry one.
+impl fmt::Debug for Accounts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_map()
+            .entries(self.users.iter().map(|(name, rules)| {
+                let shown: Vec<&str> = rules
+                    .iter()
+                    .map(|rule| match rule.starts_with(VERIFIER) {
+                        true => "<withheld>",
+                        false => rule.as_str(),
+                    })
+                    .collect();
+                (name, shown)
+            }))
+            .finish()
+    }
 }
 
 impl From<&Accounts> for Observation {
