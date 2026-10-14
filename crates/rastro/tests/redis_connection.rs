@@ -332,7 +332,10 @@ fn a_socket_whose_queue_is_full_is_given_up_on_at_the_deadline() {
     // Act
     let started = std::time::Instant::now();
     let result = RespConnection::dial(
-        &rastro::collectors::redis::DialTarget::Unix(path.clone()),
+        &rastro::collectors::redis::DialTarget::Unix {
+            root: std::path::PathBuf::from("/"),
+            path: path.clone(),
+        },
         std::process::id(),
     );
 

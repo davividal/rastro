@@ -178,7 +178,10 @@ fn a_unix_socket_is_reached_before_any_tcp_one() {
     );
     assert_eq!(
         discovered.reach,
-        Ok(DialTarget::Unix(PathBuf::from("/run/redis/redis.sock")))
+        Ok(DialTarget::Unix {
+            root: proc.join("412/root"),
+            path: PathBuf::from("/run/redis/redis.sock"),
+        })
     );
 }
 
@@ -334,7 +337,7 @@ fn a_server_is_not_reached_where_the_socket_tables_are_unreadable() {
 }
 
 #[test]
-fn a_unix_socket_in_another_namespace_is_not_dialled_from_the_host() {
+fn a_unix_socket_in_another_namespace_is_dialled_inside_the_servers_root() {
     // Arrange: a server in a container of its own, holding a unix socket and nothing else; its
     // path is its own root's, and the host's at that spelling is another socket or none.
     let proc = proc_with(
@@ -358,10 +361,15 @@ fn a_unix_socket_in_another_namespace_is_not_dialled_from_the_host() {
     // Act
     let discovered = only(&proc);
 
-    // Assert: listed, and not reached.
+    // Assert
     assert_eq!(listeners_of(&discovered), ["/run/redis/redis.sock"]);
-    let refusal = discovered.reach.expect_err("an unreached server");
-    assert!(refusal.contains("in its own namespace"), "{refusal}");
+    assert_eq!(
+        discovered.reach,
+        Ok(DialTarget::Unix {
+            root: proc.join("412/root"),
+            path: PathBuf::from("/run/redis/redis.sock"),
+        })
+    );
 }
 
 #[test]

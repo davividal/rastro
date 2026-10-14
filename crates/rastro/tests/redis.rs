@@ -618,3 +618,25 @@ fn a_long_refusal_from_the_server_is_shortened() {
     assert!(error.len() < 400, "{}", error.len());
     assert!(error.contains('…'), "{error}");
 }
+
+#[test]
+fn a_unix_socket_inside_the_servers_own_root_is_reached_there() {
+    // Arrange: a server whose socket is in its own `/tmp`, as `PrivateTmp=yes` makes it, or in a
+    // container's root: the path the kernel's table prints means something only there.
+    let server = FakeRedis::stock("facet-own-root-socket", &[]);
+    let directory = server.socket.parent().expect("a parent");
+    let name = server.socket.file_name().expect("a name").to_string_lossy();
+    let path = format!("/{name}");
+    let proc = proc_holding("redis-facet-own-root-socket", Path::new(&path));
+    let root = proc.join(support::fake_redis::server_pid()).join("root");
+    fs::remove_file(&root).expect("a removable fixture");
+    symlink(directory, &root).expect("a writable scratch symlink");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = field(&field(&observation, "instances"), &path);
+    assert!(is_null(&field(&instance, "error")), "{instance:?}");
+    assert!(!is_null(&field(&instance, "version")));
+}

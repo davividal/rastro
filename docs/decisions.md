@@ -6807,8 +6807,11 @@ server's descriptors are refused first, as for every other server. Measured on c
 30 and 31, each read in full as root; on cell 24, docker-proxy's socket on the host's port is not
 the server's and is not taken for it.
 
-**Only its TCP sockets are dialled.** A unix socket's path is the container's own root's, which a
-connection from the host would resolve on the host; such a socket is listed and not reached.
+**A unix socket is dialled inside the server's own root**, found by review, for every server and
+not only one in a container: its path is the root's, which a connection from the host would
+resolve on the host, and `PrivateTmp=yes` gives a host server a `/tmp` of its own too. The path is
+resolved under `/proc/<pid>/root` as the server's files are, and connected through the pinned
+socket's descriptor; the kernel still has to name the server as the socket's holder.
 
 **It has no route to its password.** No unit started it, its title names no file, and nothing on
 the host records the container's start command but the engine, which rastro does not ask: cell 25,

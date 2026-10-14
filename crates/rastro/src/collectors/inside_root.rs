@@ -267,6 +267,35 @@ fn names_in_pinned_root(root: &Path, relative: &Path) -> std::io::Result<Vec<Str
     names_inside(root, relative)
 }
 
+/// `connect` given a path that reaches the unix socket at `relative` inside `root`, resolved there
+/// as [`read_inside`] resolves a file, and only where it is a socket.
+///
+/// **Through the pinned socket's own descriptor**, `/proc/self/fd/<n>`, which `connect` follows to
+/// the inode: the path inside the root is resolved by `openat2` rather than by `connect`, which
+/// would resolve an absolute symlink against rastro's root, and a long path inside a deep root
+/// stays under the hundred or so bytes a socket address holds.
+#[cfg(target_os = "linux")]
+pub fn connect_inside<T>(
+    root: &Path,
+    relative: &Path,
+    connect: impl FnOnce(&Path) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    use std::os::fd::AsRawFd;
+
+    let socket = open_under(&pinned_root(root)?, relative, Opening::Socket)?;
+    connect(Path::new(&format!("/proc/self/fd/{}", socket.as_raw_fd())))
+}
+
+/// The same on a workstation build, which reads no real server: rastro ships for Linux alone.
+#[cfg(not(target_os = "linux"))]
+pub fn connect_inside<T>(
+    root: &Path,
+    relative: &Path,
+    connect: impl FnOnce(&Path) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    connect(&fs::canonicalize(root)?.join(relative))
+}
+
 /// What a file is opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Opening {
@@ -279,6 +308,10 @@ pub(crate) enum Opening {
 
     /// Only which directory it is, which reads nothing in it.
     Directory,
+
+    /// Only which socket it is, for a connection through its descriptor.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Socket,
 }
 
 #[cfg(target_os = "linux")]
@@ -312,6 +345,7 @@ fn open_under(
         Opening::Read => OFlags::PATH | OFlags::CLOEXEC,
         Opening::List => OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Opening::Directory => OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Opening::Socket => OFlags::PATH | OFlags::CLOEXEC,
     };
     // The root itself is `.`: `openat2` refuses an empty path with `ENOENT`, found on `/`.
     let relative = match relative.as_os_str().is_empty() {
@@ -337,6 +371,13 @@ fn open_under(
 
     match opening {
         Opening::Read => reopened_if_regular(&file),
+        Opening::Socket => {
+            let kind = rustix::fs::FileType::from_raw_mode(rustix::fs::fstat(&file)?.st_mode);
+            match kind == rustix::fs::FileType::Socket {
+                true => Ok(File::from(file)),
+                false => Err(std::io::Error::other("it is not a socket")),
+            }
+        }
         Opening::List | Opening::Directory => Ok(File::from(file)),
     }
 }

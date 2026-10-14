@@ -132,6 +132,6 @@ tables, and one `CONFIG GET *` per release and shape.
   values come from the server.
 - redis-stack: superseded by redis 8's bundled modules.
 - Kubernetes: the docker cells are its namespace shape.
-- A unix socket inside a container: its path is the container's, and only its TCP sockets are
-  dialled from the host. No cell found one in the wild.
+- A unix socket inside a container: dialled inside the server's own root, as every unix socket
+  is, and no cell found one in the wild.
 - Sentinel and cluster topology reads: one box, not many.

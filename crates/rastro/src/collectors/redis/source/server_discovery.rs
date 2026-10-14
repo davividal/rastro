@@ -25,17 +25,25 @@ use super::resident_servers::{ResidentServer, resident_servers};
 /// Where the kernel publishes its socket tables under the process table.
 const NET: &str = "net";
 
+/// Where a process's root is linked from, relative to its `/proc` entry.
+const ROOT: &str = "root";
+
 /// Where a server can be connected to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialTarget {
-    Unix(PathBuf),
+    /// A unix socket, at the path the server bound, which means that path only inside its own
+    /// root: `PrivateTmp=yes` gives a server a `/tmp` of its own, and a container its own tree.
+    Unix {
+        root: PathBuf,
+        path: PathBuf,
+    },
     Tcp(SocketAddr),
 }
 
 impl fmt::Display for DialTarget {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DialTarget::Unix(path) => write!(formatter, "{}", path.display()),
+            DialTarget::Unix { path, .. } => write!(formatter, "{}", path.display()),
             DialTarget::Tcp(address) => write!(formatter, "{address}"),
         }
     }
@@ -259,21 +267,9 @@ fn discovered(
     paths.sort_unstable();
     paths.dedup();
 
-    // A unix socket's path is the server's own root's, which a connection from the host would
-    // resolve on the host's: inside another namespace, only its TCP sockets are reached.
-    let reachable_paths = match namespace.is_ours() {
-        true => paths.as_slice(),
-        false => &[],
-    };
-    let reach = reach_of(&addresses, reachable_paths, titled_port(&title)).ok_or_else(|| {
-        Unreached::failed(match paths.is_empty() {
-            true => "it listens on nothing rastro could connect to",
-            false => {
-                "it listens only on a unix socket in its own namespace, whose path a \
-                     connection from the host would resolve on the host"
-            }
-        })
-    });
+    let root = proc.join(server.process_id.to_string()).join(ROOT);
+    let reach = reach_of(&addresses, &paths, &root, titled_port(&title))
+        .ok_or_else(|| Unreached::failed("it listens on nothing rastro could connect to"));
 
     let lowest_port = addresses.iter().map(SocketAddr::port).min();
     let key = match (lowest_port, paths.first()) {
@@ -323,10 +319,14 @@ fn discovered(
 fn reach_of(
     addresses: &[SocketAddr],
     paths: &[String],
+    root: &Path,
     titled_port: Option<u16>,
 ) -> Option<DialTarget> {
     if let Some(path) = paths.first() {
-        return Some(DialTarget::Unix(PathBuf::from(path)));
+        return Some(DialTarget::Unix {
+            root: root.to_path_buf(),
+            path: PathBuf::from(path),
+        });
     }
 
     let on_titled_port: Vec<SocketAddr> = addresses

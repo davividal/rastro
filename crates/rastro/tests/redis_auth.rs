@@ -101,12 +101,16 @@ impl AuthBox {
         self
     }
 
-    /// The server in a root of its own, holding its own file at the path the unit names.
-    fn rooted_with(self, contents: &str) -> Self {
+    /// The server in a root of its own, holding its own file at the path the unit names, and its
+    /// socket at the path it bound, linked to the same socket.
+    fn rooted_with(self, server: &FakeRedis, contents: &str) -> Self {
         let root = self.config.parent().expect("a parent").join("server-root");
         let inside = root.join(self.config.strip_prefix("/").expect("an absolute path"));
         fs::create_dir_all(inside.parent().expect("a parent")).expect("a scratch directory");
         fs::write(&inside, contents).expect("a writable fixture");
+        let socket = root.join(server.socket.strip_prefix("/").expect("an absolute path"));
+        fs::create_dir_all(socket.parent().expect("a parent")).expect("a scratch directory");
+        fs::hard_link(&server.socket, &socket).expect("a linkable socket");
 
         let link = self.proc.join(server_pid()).join("root");
         fs::remove_file(&link).expect("a removable fixture");
@@ -172,7 +176,7 @@ fn a_server_in_its_own_root_is_read_there_rather_than_from_the_hosts_files() {
     let server = FakeRedis::stock_with_password("auth-own-root", "hunter2", &[]);
     let auth_box = auth_box("redis-auth-own-root", &server, "")
         .configured("requirepass not-the-servers\n")
-        .rooted_with("requirepass hunter2\n");
+        .rooted_with(&server, "requirepass hunter2\n");
 
     // Act
     let observation = read(&auth_box);

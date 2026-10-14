@@ -29,6 +29,7 @@ use redis::Parser;
 
 use super::reply::{Reply, shortened};
 use super::server_discovery::DialTarget;
+use crate::collectors::inside_root::connect_inside;
 
 /// How long a server gets to accept a request or finish a reply.
 ///
@@ -168,9 +169,17 @@ impl RespConnection {
     /// row has no free text to forge.
     pub fn dial(target: &DialTarget, server: u32) -> Result<Self, CollectionError> {
         let stream: io::Result<ServerStream> = match target {
-            DialTarget::Unix(path) => {
-                unix_connect_within(path, CONNECT_WITHIN).map(ServerStream::from)
-            }
+            DialTarget::Unix { root, path } => path
+                .strip_prefix("/")
+                .map_err(|_| {
+                    io::Error::other("the path is relative, to a directory nothing records")
+                })
+                .and_then(|relative| {
+                    connect_inside(root, relative, |reachable| {
+                        unix_connect_within(reachable, CONNECT_WITHIN)
+                    })
+                })
+                .map(ServerStream::from),
             DialTarget::Tcp(address) => {
                 TcpStream::connect_timeout(address, CONNECT_WITHIN).map(ServerStream::from)
             }
