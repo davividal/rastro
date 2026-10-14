@@ -6682,7 +6682,10 @@ and nothing more is read. **Nor is the unit believed unless systemd keeps it in 
 cgroup**, found by the security review: the last component of a cgroup path is a name a user's
 manager can also give a unit, so `user@1000.service/app.slice/redis-server.service` named the
 system unit, whose file holds the system server's password. systemd's `ControlGroup` for the unit
-has to equal the server's cgroup path.
+has to equal the server's cgroup path. **Nor for any process but the one its start command
+started**, found by the second review: a unit starting a second server from `ExecStartPost=` puts
+both in its cgroup, and the second would be sent the first one's password. The command's `pid=`
+has to be the server's, which it is in every captured unit.
 
 **The files are read bounded, a regular file only, and within a budget.** The configuration is
 the redis account's, Debian's `redis.conf` among them, so a FIFO there blocked the run, `/dev/zero`
@@ -6690,7 +6693,23 @@ grew without end, and fifteen files each including the next three times took 35 
 Every read goes through the reader the elasticsearch collector already had for the same finding,
 now shared: the path pinned without being opened, its type checked on the pin, a megabyte at most.
 A configuration is read to sixty-four files at most, includes and theirs together, which also
-stops a file including itself.
+stops a file including itself. **Nor a file the kernel serves**, found by the second review:
+`/proc/kmsg` is a regular file, and reading it takes the kernel's messages from whoever reads next,
+so a file on proc, sysfs, debugfs, tracefs or their kin is refused in the shared reader.
+
+**Each file is read with the server's own permission**, found by the second security review: the
+redis account may edit `/etc/redis` on Debian, and an `include` of a file only root may read had
+root-run rastro read it and send its password to that account's server. The reads are made in a
+thread holding the server's effective user, group and supplementary groups from
+`/proc/<pid>/status`, through rustix's per-thread calls, and the thread ends with the read; the
+kernel then makes every check, the directories on the way, the file's mode and its ACL. Only the
+effective ids change, so the real and saved ones stay root's and the account cannot signal that
+thread. An unprivileged run cannot take on another account and refuses rather than reading as
+itself.
+
+**Bytes, not text.** redis reads its file as bytes, so one Latin-1 comment refused every password
+in a file; now only a line the password may depend on has to be UTF-8, since its words are sent
+as text.
 
 **Every file is read inside the server's own root**, found by the matrix. A review had the
 password route refuse a server in another mount namespace, so that a unit with `RootDirectory=`
@@ -6701,13 +6720,19 @@ namespace of its own and the refusal stopped the most common install there is, c
 the elasticsearch collector reads a node's files by, so the file, its `include`s and its ACL file
 are resolved there, symlinks included. An `include` pattern is listed there too, with a wildcard
 in its last component only, which is the drop-in directory every packaged layout uses, and its
-directory is listed to the 10 000 entries the shared reader allows.
+directory is listed to the 10 000 entries the shared reader allows. The matches are read in byte
+order, which is not always the server's: it reads them in `glob`'s order under its locale's
+collation, so where two of them set the password or the ACL file to different values, which one
+won cannot be told and the route is refused. A bracket expression or a backslash escape is refused
+as a pattern rastro does not resolve.
 
 **What the command line hides from the replay is refused.** systemd shows the start command
 without its quoting, so `--requirepass two words` cannot be told from a password and a word; it is
 believed only where the word after it starts another option or ends the command. `--aclfile`,
 `--user` and `--include` there would change the account in ways the replay does not follow, so
-their presence is a refusal.
+their presence is a refusal, and so is a `$` anywhere in the command, found by the second review:
+systemd shows `$OPTIONS` as the unit wrote it and expands it only when it starts the server, so
+any of those options could be inside it.
 
 ## Credentials are carried and marked sensitive, the verifier included
 
@@ -6751,6 +6776,15 @@ known nothing further is sent, and the instance says why.
 Once a server has answered, its own `server_name` outranks `comm`: Debian's valkey compatibility
 package installs a `redis-server` symlink, and the kernel records the name a process was started
 under.
+
+**A read that fails part way ends the connection**, found by the second review: a reply abandoned
+at the deadline or the bound leaves the rest of it on the socket, where the next command would
+read it as its own, so every later read on that server is refused with the earlier failure named.
+
+**The servers on a box get a minute between them**, found by the second security review: every
+wait on one server is bounded, but any account can start many genuine servers that answer
+slowly. A server reached once the minute is spent is sent nothing, and its instance's `error` says
+the facet's budget ran out.
 
 
 ## What the box withholds is `not_read`, beside `error`
