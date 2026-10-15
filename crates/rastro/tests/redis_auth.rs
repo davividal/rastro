@@ -610,7 +610,26 @@ fn a_start_command_systemd_has_not_expanded_is_not_read() {
 
     // Assert
     let error = text(&field(&instance(&observation, &server), "not_read"));
-    assert!(error.contains("$OPTIONS"), "{error}");
+    assert!(error.contains("variable"), "{error}");
+    assert!(auths(&server).is_empty());
+}
+
+#[test]
+fn a_password_holding_a_dollar_is_not_quoted_in_the_refusal() {
+    // Arrange: systemd would expand `$$` to `$` at start; the word refused is the password itself.
+    let server = FakeRedis::stock_with_password("auth-argv-dollar", "pa$hunter2", &[]);
+    let auth_box = auth_box(
+        "redis-auth-argv-dollar",
+        &server,
+        "--requirepass pa$$hunter2",
+    );
+
+    // Act
+    let observation = read(&auth_box);
+
+    // Assert
+    let error = text(&field(&instance(&observation, &server), "not_read"));
+    assert!(!error.contains("hunter2"), "{error}");
     assert!(auths(&server).is_empty());
 }
 

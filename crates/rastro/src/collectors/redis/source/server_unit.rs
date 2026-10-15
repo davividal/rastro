@@ -205,12 +205,13 @@ pub fn start_of(
 fn start_from(argv: &str) -> Result<ServerStart, CollectionError> {
     let words: Vec<&str> = argv.split_whitespace().collect();
 
-    // systemd shows `$OPTIONS` as the unit wrote it, and the variable can hold any option.
-    if let Some(variable) = words.iter().find(|word| word.contains(VARIABLE_SIGIL)) {
-        return Err(CollectionError::new(format!(
-            "the unit starts the server with {variable}, which systemd expands only when it \
-             starts it, so the options it holds cannot be told"
-        )));
+    // systemd shows `$OPTIONS` as the unit wrote it, and the variable can hold any option. The
+    // word is not quoted, found by review: it can be a password, `--requirepass pa$$word`.
+    if words.iter().any(|word| word.contains(VARIABLE_SIGIL)) {
+        return Err(CollectionError::new(
+            "the unit starts the server with a variable, which systemd expands only when it \
+             starts it, so the options it holds cannot be told",
+        ));
     }
 
     if let Some(option) = words
