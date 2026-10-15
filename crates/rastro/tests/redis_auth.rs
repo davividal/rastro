@@ -650,6 +650,9 @@ fn a_server_its_unit_did_not_start_is_not_given_the_units_password() {
     // Assert
     let error = text(&field(&instance(&observation, &server), "not_read"));
     assert!(error.contains("did not start"), "{error}");
+    // Found by review: `Type=forking` with `daemonize yes` meets the same refusal, and an
+    // administrator reading it has to be told that is a cause.
+    assert!(error.contains("forks"), "{error}");
     assert!(auths(&server).is_empty());
 }
 

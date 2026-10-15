@@ -188,8 +188,10 @@ pub fn start_of(
 
     if command.process_id != Some(process_id) {
         return Err(CollectionError::new(format!(
-            "{unit} encloses the server, but its start command did not start this process, so \
-             the file it names may be another server's"
+            "{unit} encloses the server, but systemd records that its start command did not \
+             start this process: the server forks away from it, `Type=forking` with `daemonize \
+             yes`, the unit starts a second server, or systemd is too old to record it; so the \
+             file it names may be another server's"
         )));
     }
 
