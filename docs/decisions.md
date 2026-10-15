@@ -6564,13 +6564,17 @@ refused one is an entry in the server's `ACL LOG`.
 
 The socket is chosen by locality: a unix socket first, then loopback, then a wildcard reached
 on its family's loopback address, then an address of the box's own, which the kernel delivers
-without it reaching a wire.
+without it reaching a wire. A unix socket named by a relative path is passed over for a port
+beside it, found by the third review: the path is relative to a working directory nothing records.
 
 **A unix socket is spoken to only once the kernel names the server as its peer.** The socket
 table prints a path raw, newline included, measured, so another account can bind a path that
 forges a row naming the server's inode, and the first version would have dialled it and sent the
 password after `NOAUTH`. `SO_PEERCRED` on the connected socket is the kernel's own answer, and a
-peer that is not the server's pid is sent nothing. A TCP row has no free text to forge.
+peer that is not the server's pid is sent nothing. A TCP row has no free text to forge. A unix row
+repeating a TCP row's inode is the forgery and is dropped; two unix rows sharing the inode of a
+socket the server holds are refused by name, found by the third review, since which path is bound
+cannot be told and dropping both reported a server on that socket alone as listening on nothing.
 
 **Protected mode trips on a server bound only to an address of the box's own.** redis treats
 `127.0.0.1`, `::1` and a unix peer as local and nothing else, measured on 8.10: a server with
@@ -6692,8 +6696,12 @@ the redis account's, Debian's `redis.conf` among them, so a FIFO there blocked t
 grew without end, and fifteen files each including the next three times took 35 s, all measured.
 Every read goes through the reader the elasticsearch collector already had for the same finding,
 now shared: the path pinned without being opened, its type checked on the pin, a megabyte at most.
-A configuration is read to sixty-four files at most, includes and theirs together, which also
-stops a file including itself. **Nor a file the kernel serves**, found by the second review:
+A configuration is read to sixty-four files and `include` lines at most, includes and theirs
+together, which also stops a file including itself. **Include lines count, not only files read**,
+found by the third review: a wildcard matching nothing reads no file, and a mebibyte of them over
+a directory of ten thousand names took 172 s. So the names its patterns are matched against are
+bounded too, 10 000 together, and a pattern longer than the 255 bytes a name can be is refused,
+since it can match nothing and one of a megabyte took 92 s. **Nor a file the kernel serves**, found by the second review:
 `/proc/kmsg` is a regular file, and reading it takes the kernel's messages from whoever reads next,
 so a file on proc, sysfs, debugfs, tracefs or their kin is refused in the shared reader.
 
@@ -6705,7 +6713,18 @@ thread holding the server's effective user, group and supplementary groups from
 kernel then makes every check, the directories on the way, the file's mode and its ACL. Only the
 effective ids change, so the real and saved ones stay root's and the account cannot signal that
 thread. An unprivileged run cannot take on another account and refuses rather than reading as
-itself.
+itself. **A unix socket is connected to the same way**, found by the third review: the account can
+replace its socket with a link to `/run/docker.sock` or a socket-activated unit's, and a connection
+from root is already a change there before `SO_PEERCRED` is asked who holds the other end. As the
+account, the kernel refuses a socket it may not write to.
+
+**Accepted: a FUSE mount that never answers hangs the facet**, found by the third review. No read
+of a file has a deadline, and a FUSE daemon can stall the lookup, the `fstat` and the `read`
+alike, so a check of the filesystem's type cannot come first: asking it is itself a request to the
+daemon. The account's own mount is refused by the kernel, which lets nobody but its owner in unless
+it was mounted `allow_other`; the thread's real uid stays root's, so it is not the owner. An
+`allow_other` mount by an account needs `user_allow_other` in `/etc/fuse.conf`, which only root
+sets, and a read abandoned on a thread of its own is owed for that host rather than built.
 
 **Bytes, not text.** redis reads its file as bytes, so one Latin-1 comment refused every password
 in a file; now only a line the password may depend on has to be UTF-8, since its words are sent
@@ -6732,7 +6751,8 @@ believed only where the word after it starts another option or ends the command.
 `--user` and `--include` there would change the account in ways the replay does not follow, so
 their presence is a refusal, and so is a `$` anywhere in the command, found by the second review:
 systemd shows `$OPTIONS` as the unit wrote it and expands it only when it starts the server, so
-any of those options could be inside it.
+any of those options could be inside it. The refusal does not quote the word, found by the third:
+`--requirepass pa$$word` is a password.
 
 ## Credentials are carried and marked sensitive, the verifier included
 
@@ -6784,7 +6804,10 @@ read it as its own, so every later read on that server is refused with the earli
 **The servers on a box get a minute between them**, found by the second security review: every
 wait on one server is bounded, but any account can start many genuine servers that answer
 slowly. A server reached once the minute is spent is sent nothing, and its instance's `error` says
-the facet's budget ran out.
+the facet's budget ran out. **The minute is when the last server may begin, not when the facet
+ends**, as the third review put it: a server begun inside it runs to its own deadlines, a second
+to connect and five for each of nine commands at most, and the password route's two `systemctl`
+calls and bounded file reads, so the facet ends within about a minute and three quarters.
 
 
 ## What the box withholds is `not_read`, beside `error`

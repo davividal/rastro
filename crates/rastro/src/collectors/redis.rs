@@ -37,8 +37,8 @@ const PROC: &str = "/proc";
 /// The tool that says how a unit starts its server.
 const SYSTEMCTL: &str = "systemctl";
 
-/// How long the servers on a box get between them: a minute, past the most one wedged server can
-/// take, a second to connect and five for each of its commands.
+/// How long the servers on a box get between them before the next is begun: a minute. A server
+/// begun inside it runs to its own deadlines, a second to connect and five for each command.
 const FACET_BUDGET: Duration = Duration::from_secs(60);
 
 pub struct RedisCollector {
