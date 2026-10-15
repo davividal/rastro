@@ -8,7 +8,11 @@ use std::os::unix::net::UnixStream;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+use rastro::collectors::redis::DialTarget;
 use rastro::collectors::redis::{Reply, RespConnection};
+
+mod support;
 
 /// A server that reads exactly the request it expects, then writes each chunk in turn.
 ///
@@ -332,8 +336,8 @@ fn a_socket_whose_queue_is_full_is_given_up_on_at_the_deadline() {
     // Act
     let started = std::time::Instant::now();
     let result = RespConnection::dial(
-        &rastro::collectors::redis::DialTarget::Unix {
-            root: std::path::PathBuf::from("/"),
+        &DialTarget::Unix {
+            root: support::account::host_root(),
             path: path.clone(),
         },
         std::process::id(),
@@ -348,6 +352,50 @@ fn a_socket_whose_queue_is_full_is_given_up_on_at_the_deadline() {
     );
     drop(listener);
     let _ = std::fs::remove_file(&path);
+}
+
+/// Linux alone: the connection is made with the server's account only where rastro ships.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_socket_the_servers_account_may_not_reach_is_not_connected_to() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+
+    use rastro::collectors::inside_root::{ProcessRoot, ReadingAccount};
+
+    // Arrange: the server's account replaced its socket with a link to one only rastro's account
+    // may write to, `/run/docker.sock` on a real box; connecting as root is already a change there.
+    let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("foreign-socket-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("run")).expect("a writable scratch directory");
+    let foreign = base.join("docker.sock");
+    let listener = UnixListener::bind(&foreign).expect("a bindable socket path");
+    listener
+        .set_nonblocking(true)
+        .expect("a non-blocking listener");
+    std::fs::set_permissions(&foreign, std::fs::Permissions::from_mode(0o600))
+        .expect("a socket rastro owns");
+    std::os::unix::fs::symlink(&foreign, base.join("run/redis.sock"))
+        .expect("a writable scratch symlink");
+    let nobody = ReadingAccount::new(65534, 65534, Vec::new());
+
+    // Act
+    let dialled = RespConnection::dial(
+        &DialTarget::Unix {
+            root: ProcessRoot::new("/", nobody),
+            path: base.join("run/redis.sock"),
+        },
+        std::process::id(),
+    );
+
+    // Assert
+    assert!(dialled.is_err());
+    assert!(
+        listener.accept().is_err(),
+        "the foreign socket was connected to"
+    );
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]

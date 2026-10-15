@@ -698,8 +698,8 @@ fn an_acl_file_named_by_a_relative_path_is_not_read() {
 
 #[test]
 fn a_server_whose_account_cannot_be_read_is_sent_no_password() {
-    // Arrange: a `status` whose ids do not parse, so whose permission its files are read with
-    // cannot be told.
+    // Arrange: a `status` whose ids do not parse, so whose permission its socket is connected to
+    // and its files read with cannot be told.
     let server = FakeRedis::stock_with_password("auth-status-malformed", "hunter2", &[]);
     let auth_box =
         auth_box("redis-auth-status-malformed", &server, "").configured("requirepass hunter2\n");
@@ -713,7 +713,7 @@ fn a_server_whose_account_cannot_be_read_is_sent_no_password() {
     let observation = read(&auth_box);
 
     // Assert
-    let reason = text(&field(&instance(&observation, &server), "not_read"));
-    assert!(reason.contains("which account"), "{reason}");
+    let reason = text(&field(&instance(&observation, &server), "error"));
+    assert!(reason.contains("status"), "{reason}");
     assert!(auths(&server).is_empty());
 }

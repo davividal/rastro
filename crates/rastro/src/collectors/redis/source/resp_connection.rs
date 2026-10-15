@@ -29,7 +29,6 @@ use redis::Parser;
 
 use super::reply::{Reply, shortened};
 use super::server_discovery::DialTarget;
-use crate::collectors::inside_root::connect_inside;
 
 /// How long a server gets to accept a request or finish a reply.
 ///
@@ -176,7 +175,7 @@ impl RespConnection {
                     io::Error::other("the path is relative, to a directory nothing records")
                 })
                 .and_then(|relative| {
-                    connect_inside(root, relative, |reachable| {
+                    root.connect(relative, |reachable| {
                         unix_connect_within(reachable, CONNECT_WITHIN)
                     })
                 })

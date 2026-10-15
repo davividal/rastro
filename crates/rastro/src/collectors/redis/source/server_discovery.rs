@@ -14,6 +14,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use crate::collectors::inet::{InetHost, PortNumber};
+use crate::collectors::inside_root::ProcessRoot;
 use crate::collectors::network_namespace::ProcessNamespace;
 use crate::collectors::proc_sockets::{
     InetListener, UnixListener, inet_listeners, sockets_held_by, unix_listeners,
@@ -26,16 +27,13 @@ use super::server_unit::systemd_cgroup_of;
 /// Where the kernel publishes its socket tables under the process table.
 const NET: &str = "net";
 
-/// Where a process's root is linked from, relative to its `/proc` entry.
-const ROOT: &str = "root";
-
 /// Where a server can be connected to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialTarget {
     /// A unix socket, at the path the server bound, which means that path only inside its own
     /// root: `PrivateTmp=yes` gives a server a `/tmp` of its own, and a container its own tree.
     Unix {
-        root: PathBuf,
+        root: ProcessRoot,
         path: PathBuf,
     },
     Tcp(SocketAddr),
@@ -259,9 +257,21 @@ fn discovered(
     paths.sort_unstable();
     paths.dedup();
 
-    let root = proc.join(server.process_id.to_string()).join(ROOT);
-    let reach = reach_of(&addresses, &paths, &root, titled_port(&title))
-        .ok_or_else(|| Unreached::failed("it listens on nothing rastro could connect to"));
+    let reach = match paths.first() {
+        Some(path) => ProcessRoot::of_process(proc, server.process_id)
+            .map(|root| DialTarget::Unix {
+                root,
+                path: PathBuf::from(path),
+            })
+            .map_err(|error| {
+                Unreached::failed(format!(
+                    "its status could not be read ({error}), so its socket cannot be connected to \
+                     with its account's permission"
+                ))
+            }),
+        None => tcp_reach_of(&addresses, titled_port(&title))
+            .ok_or_else(|| Unreached::failed("it listens on nothing rastro could connect to")),
+    };
 
     let lowest_port = addresses.iter().map(SocketAddr::port).min();
     let key = match (lowest_port, paths.first()) {
@@ -297,10 +307,10 @@ fn discovered(
     }
 }
 
-/// The one socket to connect to, in order of how local it is.
+/// The one TCP socket to connect to where there is no unix one, in order of how local it is.
 ///
-/// A unix socket first, since it involves no network stack at all, and redis serves no TLS on
-/// one; then loopback; then a wildcard, reached on the loopback address of its own family; then
+/// A unix socket comes first, since it involves no network stack at all, and redis serves no TLS
+/// on one. Then loopback; then a wildcard, reached on the loopback address of its own family; then
 /// an address of the box's own, which the kernel delivers locally without it ever reaching a
 /// wire. Each list arrives sorted, so the choice is the same on every run.
 ///
@@ -308,19 +318,7 @@ fn discovered(
 /// look the same in the kernel's tables, measured, and a plain client on the TLS one is a line in
 /// the server's log at its default level, also measured, so trying one and then the other would
 /// write to the box. redis's title shows the plain port whenever there is one.
-fn reach_of(
-    addresses: &[SocketAddr],
-    paths: &[String],
-    root: &Path,
-    titled_port: Option<u16>,
-) -> Option<DialTarget> {
-    if let Some(path) = paths.first() {
-        return Some(DialTarget::Unix {
-            root: root.to_path_buf(),
-            path: PathBuf::from(path),
-        });
-    }
-
+fn tcp_reach_of(addresses: &[SocketAddr], titled_port: Option<u16>) -> Option<DialTarget> {
     let on_titled_port: Vec<SocketAddr> = addresses
         .iter()
         .filter(|address| Some(address.port()) == titled_port)

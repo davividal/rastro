@@ -187,6 +187,26 @@ impl ProcessRoot {
         self.as_account(|root| names_in_pinned_root(root, relative))
     }
 
+    /// `connect` given a path that reaches the unix socket at `relative`, resolved as
+    /// [`read_inside`] resolves a file, only where it is a socket, and called with the process's
+    /// permission.
+    ///
+    /// **Through the pinned socket's own descriptor**, `/proc/self/fd/<n>`, which `connect` follows
+    /// to the inode: the path is resolved by `openat2` rather than by `connect`, which would resolve
+    /// an absolute symlink against rastro's root, and a long path inside a deep root stays under
+    /// the hundred or so bytes a socket address holds.
+    ///
+    /// **Connected as the process**, found by review: its account can replace its socket with a
+    /// link to `/run/docker.sock`, and a connection from root is already a change there, before
+    /// any check of the peer. The kernel asks for write permission on the socket of the account.
+    pub fn connect<T: Send>(
+        &self,
+        relative: &Path,
+        connect: impl FnOnce(&Path) -> std::io::Result<T> + Send,
+    ) -> std::io::Result<T> {
+        self.as_account(|root| connect_pinned_root(root, relative, connect))
+    }
+
     /// `work` done on the root, pinned as rastro, with the process's permission.
     #[cfg(target_os = "linux")]
     fn as_account<T: Send>(
@@ -269,28 +289,20 @@ fn names_in_pinned_root(root: &Path, relative: &Path) -> std::io::Result<Vec<Str
     names_inside(root, relative)
 }
 
-/// `connect` given a path that reaches the unix socket at `relative` inside `root`, resolved there
-/// as [`read_inside`] resolves a file, and only where it is a socket.
-///
-/// **Through the pinned socket's own descriptor**, `/proc/self/fd/<n>`, which `connect` follows to
-/// the inode: the path inside the root is resolved by `openat2` rather than by `connect`, which
-/// would resolve an absolute symlink against rastro's root, and a long path inside a deep root
-/// stays under the hundred or so bytes a socket address holds.
 #[cfg(target_os = "linux")]
-pub fn connect_inside<T>(
-    root: &Path,
+fn connect_pinned_root<T>(
+    root: &rustix::fd::OwnedFd,
     relative: &Path,
     connect: impl FnOnce(&Path) -> std::io::Result<T>,
 ) -> std::io::Result<T> {
     use std::os::fd::AsRawFd;
 
-    let socket = open_under(&pinned_root(root)?, relative, Opening::Socket)?;
+    let socket = open_under(root, relative, Opening::Socket)?;
     connect(Path::new(&format!("/proc/self/fd/{}", socket.as_raw_fd())))
 }
 
-/// The same on a workstation build, which reads no real server: rastro ships for Linux alone.
 #[cfg(not(target_os = "linux"))]
-pub fn connect_inside<T>(
+fn connect_pinned_root<T>(
     root: &Path,
     relative: &Path,
     connect: impl FnOnce(&Path) -> std::io::Result<T>,

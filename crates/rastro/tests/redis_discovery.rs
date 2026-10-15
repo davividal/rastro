@@ -7,10 +7,12 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
+use rastro::collectors::inside_root::ProcessRoot;
 use rastro::collectors::redis::{DialTarget, DiscoveredServer, ServerKind, discover};
 
 mod support;
 
+use support::account::{runner, status_of_runner};
 use support::fake_redis::HOST_NETWORK_NAMESPACE;
 use support::fs_tree::{scratch_tree, write};
 
@@ -83,6 +85,7 @@ fn proc_with(name: &str, processes: &[Process], tcp: &str, tcp6: &str, unix: &st
             .expect("a writable scratch symlink");
         write(&directory, "comm", &format!("{}\n", process.comm));
         write(&directory, "cmdline", process.title);
+        write(&directory, "status", &status_of_runner());
         write(
             &directory,
             "stat",
@@ -179,7 +182,7 @@ fn a_unix_socket_is_reached_before_any_tcp_one() {
     assert_eq!(
         discovered.reach,
         Ok(DialTarget::Unix {
-            root: proc.join("412/root"),
+            root: ProcessRoot::new(proc.join("412/root"), runner()),
             path: PathBuf::from("/run/redis/redis.sock"),
         })
     );
@@ -366,7 +369,7 @@ fn a_unix_socket_in_another_namespace_is_dialled_inside_the_servers_root() {
     assert_eq!(
         discovered.reach,
         Ok(DialTarget::Unix {
-            root: proc.join("412/root"),
+            root: ProcessRoot::new(proc.join("412/root"), runner()),
             path: PathBuf::from("/run/redis/redis.sock"),
         })
     );
