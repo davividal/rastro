@@ -27,12 +27,23 @@ const ACLFILE: &str = "aclfile";
 /// The account `requirepass` sets, and the only one whose password rastro ever needs.
 const DEFAULT_USER: &str = "default";
 
-/// The most files one configuration is read to, includes and their includes together.
+/// The most files and `include` lines one configuration is read to, includes and their includes
+/// together.
 ///
 /// A budget of work rather than a depth: depth alone bounds nesting, and fifteen files each
 /// including the next three times took 35 s, measured. It also stops a file that includes itself,
 /// directly or round a loop, without a set of open files. A real configuration names a handful.
+/// **Include lines count too**, found by review: a wildcard matching nothing reads no file, and a
+/// mebibyte of them over a wide directory took 172 s.
 const MOST_FILES: usize = 64;
+
+/// The most names one configuration's wildcard includes are matched against, together: each
+/// listing is bounded on its own, and a real drop-in directory holds a handful.
+const MOST_NAMES: usize = 10_000;
+
+/// The longest pattern matched, `NAME_MAX`: no name is longer, so no longer pattern matches one,
+/// and a pattern of a megabyte took 92 s, found by review.
+const LONGEST_PATTERN: usize = 255;
 
 /// What a configuration file says about the default account's password.
 #[derive(Clone, PartialEq, Eq, Default)]
@@ -78,7 +89,7 @@ pub fn password_directives_in(
     file: &Path,
 ) -> Result<PasswordDirectives, CollectionError> {
     let mut directives = PasswordDirectives::default();
-    read_into(root, file, &mut 0, &mut directives)?;
+    read_into(root, file, &mut Budget::default(), &mut directives)?;
     directives.requirepass = directives
         .requirepass
         .filter(|password: &String| !password.is_empty());
@@ -125,21 +136,50 @@ impl LastSet {
     }
 }
 
+/// What reading one configuration has spent so far.
+#[derive(Default)]
+struct Budget {
+    /// Files read and `include` lines met.
+    steps: usize,
+
+    /// Names wildcard includes were matched against.
+    names: usize,
+}
+
+impl Budget {
+    fn step(&mut self, file: &Path) -> Result<(), CollectionError> {
+        self.steps += 1;
+        match self.steps > MOST_FILES {
+            true => Err(CollectionError::new(format!(
+                "{} is past the {MOST_FILES} files and includes a configuration is read to, which \
+                 is a file including itself or an include tree wider than any real one",
+                file.display()
+            ))),
+            false => Ok(()),
+        }
+    }
+
+    fn match_names(&mut self, count: usize, from: &Path) -> Result<(), CollectionError> {
+        self.names += count;
+        match self.names > MOST_NAMES {
+            true => Err(CollectionError::new(format!(
+                "{} includes patterns matched against more than {MOST_NAMES} names together, \
+                 more than any real drop-in directory holds",
+                from.display()
+            ))),
+            false => Ok(()),
+        }
+    }
+}
+
 /// Reads `file` into `directives`, saying what it set.
 fn read_into(
     root: &ProcessRoot,
     file: &Path,
-    files_read: &mut usize,
+    budget: &mut Budget,
     directives: &mut PasswordDirectives,
 ) -> Result<LastSet, CollectionError> {
-    *files_read += 1;
-    if *files_read > MOST_FILES {
-        return Err(CollectionError::new(format!(
-            "{} is past the {MOST_FILES} files a configuration is read to, which is a file \
-             including itself or an include tree wider than any real one",
-            file.display()
-        )));
-    }
+    budget.step(file)?;
 
     let bytes = read_bounded(root, file)?;
     let mut set = LastSet::default();
@@ -166,9 +206,10 @@ fn read_into(
                 set.acl_file = Some(PathBuf::from(&words[1]));
             }
             (INCLUDE, 2) => {
+                budget.step(file)?;
                 let mut matches = Vec::new();
-                for included in included_files(root, file, &words[1])? {
-                    matches.push(read_into(root, &included, files_read, directives)?);
+                for included in included_files(root, file, &words[1], budget)? {
+                    matches.push(read_into(root, &included, budget, directives)?);
                 }
                 if disagree(&matches) {
                     return Err(CollectionError::new(format!(
@@ -327,6 +368,7 @@ fn included_files(
     root: &ProcessRoot,
     from: &Path,
     argument: &str,
+    budget: &mut Budget,
 ) -> Result<Vec<PathBuf>, CollectionError> {
     let path = Path::new(argument);
     if path.is_relative() {
@@ -350,6 +392,13 @@ fn included_files(
     if file_glob::is_pattern(directory) || pattern.contains(['[', '\\']) {
         return Err(unresolved_pattern(from, argument));
     }
+    if pattern.len() > LONGEST_PATTERN {
+        return Err(CollectionError::new(format!(
+            "{} includes a pattern longer than any file name can be, which matches nothing the \
+             server could have read",
+            from.display()
+        )));
+    }
 
     let relative = directory.strip_prefix("/").unwrap_or(directory);
     let mut names = root.names(relative).map_err(|error| {
@@ -359,6 +408,7 @@ fn included_files(
             directory.display()
         ))
     })?;
+    budget.match_names(names.len(), from)?;
     names.retain(|name| file_glob::name_matches(name, pattern));
     // Found by review: the listing spells a name that is not UTF-8 lossily, which can collide with
     // a real file's, so the file the server read would be read as another.

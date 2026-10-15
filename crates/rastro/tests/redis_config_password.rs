@@ -414,6 +414,64 @@ fn a_wildcard_include_over_a_huge_directory_is_refused_before_it_is_listed_in_fu
 }
 
 #[test]
+fn include_lines_that_read_no_file_still_spend_the_budget() {
+    // Arrange: found by review, a mebibyte of wildcard includes matching nothing reads no file, so
+    // a budget of files read never stopped it, and each line lists the directory again.
+    let root = scratch_tree("redis-pass-include-lines", &["empty"]);
+    let line = format!("include {}/*.conf\n", root.join("empty").display());
+    let file = file_with("redis-pass-include-lines-file", &line.repeat(100));
+
+    // Act
+    let result = password_directives_in(&host_root(), &file);
+
+    // Assert
+    let error = result.expect_err("too many includes").to_string();
+    assert!(error.contains("includes"), "{error}");
+}
+
+#[test]
+fn names_matched_across_includes_stop_at_a_total_budget() {
+    // Arrange: found by review, each listing is bounded but their sum was not; sixty includes of a
+    // directory of two hundred names is twelve thousand matches, and none of them a file read.
+    let root = scratch_tree("redis-pass-names-total", &["owned"]);
+    for entry in 0..200 {
+        write(&root.join("owned"), &format!("{entry}.txt"), "");
+    }
+    let line = format!("include {}/*.conf\n", root.join("owned").display());
+    let file = file_with("redis-pass-names-total-file", &line.repeat(60));
+
+    // Act
+    let result = password_directives_in(&host_root(), &file);
+
+    // Assert
+    let error = result.expect_err("too many names").to_string();
+    assert!(error.contains("names"), "{error}");
+}
+
+#[test]
+fn a_pattern_longer_than_any_file_name_is_refused_rather_than_matched() {
+    // Arrange: found by review, a pattern of a megabyte matched against every name took 92 s; no
+    // name is longer than 255 bytes, so no longer pattern can match one.
+    let root = scratch_tree("redis-pass-long-pattern", &["owned"]);
+    write(&root.join("owned"), "a.conf", "requirepass hunter2\n");
+    let file = file_with(
+        "redis-pass-long-pattern-file",
+        &format!(
+            "include {}/{}*\n",
+            root.join("owned").display(),
+            "a".repeat(256)
+        ),
+    );
+
+    // Act
+    let result = password_directives_in(&host_root(), &file);
+
+    // Assert
+    let error = result.expect_err("a pattern too long").to_string();
+    assert!(error.contains("longer"), "{error}");
+}
+
+#[test]
 fn an_included_name_that_is_not_utf8_is_refused_rather_than_read_as_another() {
     // Arrange: a drop-in whose name is not UTF-8 beside one spelled as its lossy reading, so a
     // reader that took names as text would open the second twice and never read the first, whose
