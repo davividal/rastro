@@ -19,7 +19,7 @@
 //! which process to talk to, and one odd row elsewhere in the table says nothing about that. The
 //! `sockets` facet, which reports every row, is the reader that refuses a malformed one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
@@ -71,6 +71,9 @@ pub struct InetListener {
 pub struct UnixListener {
     pub path: String,
     pub inode: u64,
+
+    /// Whether another unix row names the same inode, so that which path is bound cannot be told.
+    pub ambiguous: bool,
 }
 
 /// Every TCP socket being offered, or nothing where neither table could be read.
@@ -102,11 +105,12 @@ pub fn inet_listeners(net: &Path) -> Option<Vec<InetListener>> {
 /// Every unix stream socket accepting connections under a name, or nothing where the table
 /// could not be read.
 ///
-/// **Only a row whose inode no other row in the namespace's tables repeats**, found by review: the
-/// table prints a path raw, newline included, so any account can bind a name that forges a row,
-/// and a forged row naming a server's inode would be taken for a socket the server holds. The
-/// kernel gives no two sockets one inode, and an inet row holds no free text to forge, so a repeat
-/// means a forgery, and which of two unix rows is genuine cannot be told.
+/// **A row repeating an inet row's inode is left out, and one repeating another unix row's is
+/// marked ambiguous**, found by review: the table prints a path raw, newline included, so any
+/// account can bind a name that forges a row, and a forged row naming a server's inode would be
+/// taken for a socket the server holds. The kernel gives no two sockets one inode, and an inet row
+/// holds no free text to forge, so a repeat means a forgery; which of two unix rows is genuine
+/// cannot be told, and the caller has to say so rather than drop both.
 pub fn unix_listeners(net: &Path) -> Option<Vec<UnixListener>> {
     let text = fs::read_to_string(net.join(UNIX_TABLE)).ok()?;
     let rows: Vec<&str> = text
@@ -114,27 +118,32 @@ pub fn unix_listeners(net: &Path) -> Option<Vec<UnixListener>> {
         .filter(|line| !line.contains(UNIX_HEADER))
         .collect();
 
-    let mut rows_per_inode = BTreeMap::<u64, usize>::new();
     let inet_rows: Vec<String> = INET_TABLES
         .iter()
         .filter_map(|(table, _)| fs::read_to_string(net.join(table)).ok())
         .collect();
-    let inet_inodes = inet_rows
+    let inet_inodes: BTreeSet<u64> = inet_rows
         .iter()
         .flat_map(|text| text.lines())
         .filter(|line| !line.contains(INET_HEADER))
-        .filter_map(|line| line.split_whitespace().nth(INODE)?.parse::<u64>().ok());
-    let unix_inodes = rows
+        .filter_map(|line| line.split_whitespace().nth(INODE)?.parse::<u64>().ok())
+        .collect();
+    let mut unix_rows_per_inode = BTreeMap::<u64, usize>::new();
+    for inode in rows
         .iter()
-        .filter_map(|line| unix_columns(line)?.fields[UNIX_INODE].parse::<u64>().ok());
-    for inode in inet_inodes.chain(unix_inodes) {
-        *rows_per_inode.entry(inode).or_default() += 1;
+        .filter_map(|line| unix_columns(line)?.fields[UNIX_INODE].parse::<u64>().ok())
+    {
+        *unix_rows_per_inode.entry(inode).or_default() += 1;
     }
 
     Some(
         rows.into_iter()
             .filter_map(unix_listener_of)
-            .filter(|listener| rows_per_inode.get(&listener.inode) == Some(&1))
+            .filter(|listener| !inet_inodes.contains(&listener.inode))
+            .map(|listener| UnixListener {
+                ambiguous: unix_rows_per_inode.get(&listener.inode) != Some(&1),
+                ..listener
+            })
             .collect(),
     )
 }
@@ -172,5 +181,6 @@ fn unix_listener_of(line: &str) -> Option<UnixListener> {
     Some(UnixListener {
         path: row.path.to_owned(),
         inode: row.fields[UNIX_INODE].parse().ok()?,
+        ambiguous: false,
     })
 }

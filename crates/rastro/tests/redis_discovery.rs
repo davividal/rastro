@@ -779,8 +779,33 @@ fn two_unix_rows_sharing_an_inode_are_neither_the_servers() {
     // Act
     let discovered = only(&proc);
 
-    // Assert: which path is the server's cannot be told, so neither is listed or dialled.
-    assert_eq!(listeners_of(&discovered), ["127.0.0.1:6379"]);
+    // Assert: which path is the server's cannot be told, and leaving its socket out would be a
+    // wrong list reported as right.
+    let refusal = discovered.reach.expect_err("an ambiguous socket");
+    assert!(refusal.reason.contains("repeats"), "{refusal}");
+}
+
+#[test]
+fn a_server_on_a_unix_socket_alone_is_not_said_to_listen_on_nothing_when_a_row_is_forged() {
+    // Arrange: found by review, a forged row repeating the inode of the server's only socket.
+    let proc = proc_with(
+        "redis-discovery-forged-only",
+        &[server("412", &[1003])],
+        "",
+        "",
+        &format!(
+            "{}{}",
+            unix_row("/run/redis/redis.sock", 1003),
+            unix_row("/tmp/forged.sock", 1003)
+        ),
+    );
+
+    // Act
+    let refusal = only(&proc).reach.expect_err("an ambiguous socket");
+
+    // Assert
+    assert!(!refusal.reason.contains("nothing"), "{refusal}");
+    assert!(refusal.reason.contains("repeats"), "{refusal}");
 }
 
 #[test]

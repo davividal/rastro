@@ -246,10 +246,20 @@ fn discovered(
         .filter(|listener| held.contains(&listener.inode))
         .map(|listener| listener.address)
         .collect();
-    let mut paths: Vec<String> = unix
+    let held_unix: Vec<&UnixListener> = unix
         .unwrap_or_default()
         .iter()
         .filter(|listener| held.contains(&listener.inode))
+        .collect();
+    if held_unix.iter().any(|listener| listener.ambiguous) {
+        return unreached(Unreached::failed(
+            "the kernel's socket table repeats the inode of a unix socket it holds under two \
+             paths, which another account can do by binding a forged name, so which path the \
+             socket is bound to cannot be told",
+        ));
+    }
+    let mut paths: Vec<String> = held_unix
+        .iter()
         .map(|listener| listener.path.clone())
         .collect();
     addresses.sort_unstable();
