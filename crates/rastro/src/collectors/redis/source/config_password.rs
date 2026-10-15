@@ -326,10 +326,13 @@ fn words_of(file: &Path, line: &[u8]) -> Result<Option<Vec<String>>, CollectionE
 }
 
 /// Whether a line's first word may be one of the directives read, compared as bytes.
+///
+/// The word is found as `sdssplitargs` finds it, found by review: past any C `isspace`, a vertical
+/// tab or form feed among them, which Rust's ASCII whitespace leaves out or keeps.
 fn may_be_read(line: &[u8]) -> bool {
     let directive = line
-        .split(u8::is_ascii_whitespace)
-        .next()
+        .split(|byte| is_c_space(char::from(*byte)))
+        .find(|word| !word.is_empty())
         .unwrap_or_default()
         .to_ascii_lowercase();
 

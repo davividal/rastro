@@ -594,6 +594,24 @@ fn a_password_line_that_is_not_utf8_is_refused() {
 }
 
 #[test]
+fn a_password_line_behind_a_form_feed_that_is_not_utf8_is_refused() {
+    // Arrange: found by review, redis trims only spaces, tabs and line ends, then `sdssplitargs`
+    // skips a vertical tab or form feed before the first word, so this line sets the password.
+    let file = file_with_bytes(
+        "redis-pass-latin1-form-feed",
+        b"\x0b\x0crequirepass caf\xe9\n",
+    );
+
+    // Act
+    let refusal = password_directives_in(&host_root(), &file)
+        .expect_err("a password rastro cannot send as redis would")
+        .to_string();
+
+    // Assert
+    assert!(refusal.contains("UTF-8"), "{refusal}");
+}
+
+#[test]
 fn a_vertical_tab_or_form_feed_inside_a_word_stays_in_it() {
     // Arrange: `sdssplitargs` skips any `isspace` between words, but ends an unquoted word only
     // at a space, `\n`, `\r` or `\t`.
