@@ -399,6 +399,24 @@ fn a_socket_the_servers_account_may_not_reach_is_not_connected_to() {
 }
 
 #[test]
+fn a_relative_socket_path_is_refused_rather_than_dialled() {
+    // Arrange: discovery dials a port instead; a caller naming one directly is refused as well.
+    let target = rastro::collectors::redis::DialTarget::Unix {
+        root: support::account::host_root(),
+        path: std::path::PathBuf::from("redis.sock"),
+    };
+
+    // Act
+    let error = RespConnection::dial(&target, std::process::id())
+        .err()
+        .expect("a refusal")
+        .to_string();
+
+    // Assert
+    assert!(error.contains("relative"), "{error}");
+}
+
+#[test]
 fn two_replies_arriving_together_are_answered_in_order() {
     // Arrange: a reply's surplus is the next reply, never lost and never misread.
     let (client, handle) = server(PING.len(), vec![b"+first\r\n+second\r\n".to_vec()]);

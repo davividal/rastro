@@ -204,6 +204,30 @@ fn a_server_on_a_unix_socket_alone_is_keyed_by_its_path() {
 }
 
 #[test]
+fn a_relative_unix_socket_leaves_the_server_reached_on_its_port() {
+    // Arrange: found by review, redis takes `unixsocket` relative to a working directory nothing
+    // records, so that socket cannot be dialled, and the port beside it can.
+    let proc = proc_with(
+        "redis-discovery-relative-unix",
+        &[server("412", &[1001, 1003])],
+        &tcp_row(LOOPBACK_6379, 1001),
+        "",
+        &unix_row("redis.sock", 1003),
+    );
+
+    // Act
+    let discovered = only(&proc);
+
+    // Assert
+    assert_eq!(
+        discovered.reach,
+        Ok(DialTarget::Tcp(
+            "127.0.0.1:6379".parse().expect("an address")
+        ))
+    );
+}
+
+#[test]
 fn a_wildcard_listener_is_reached_on_loopback() {
     // Arrange: the field host's `bind 0.0.0.0`.
     let proc = proc_with(

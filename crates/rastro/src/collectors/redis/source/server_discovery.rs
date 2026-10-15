@@ -267,8 +267,13 @@ fn discovered(
     paths.sort_unstable();
     paths.dedup();
 
-    let reach = match paths.first() {
-        Some(path) => ProcessRoot::of_process(proc, server.process_id)
+    // A relative `unixsocket` is relative to a working directory nothing records, found by review,
+    // so a port beside it is dialled instead.
+    let reach = match (
+        paths.iter().find(|path| path.starts_with('/')),
+        tcp_reach_of(&addresses, titled_port(&title)),
+    ) {
+        (Some(path), _) => ProcessRoot::of_process(proc, server.process_id)
             .map(|root| DialTarget::Unix {
                 root,
                 path: PathBuf::from(path),
@@ -279,8 +284,14 @@ fn discovered(
                      with its account's permission"
                 ))
             }),
-        None => tcp_reach_of(&addresses, titled_port(&title))
-            .ok_or_else(|| Unreached::failed("it listens on nothing rastro could connect to")),
+        (None, Some(tcp)) => Ok(tcp),
+        (None, None) if !paths.is_empty() => Err(Unreached::failed(
+            "it listens only on a unix socket named by a relative path, to a working directory \
+             nothing records",
+        )),
+        (None, None) => Err(Unreached::failed(
+            "it listens on nothing rastro could connect to",
+        )),
     };
 
     let lowest_port = addresses.iter().map(SocketAddr::port).min();
