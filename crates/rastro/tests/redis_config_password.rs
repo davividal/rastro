@@ -612,6 +612,26 @@ fn a_password_line_behind_a_form_feed_that_is_not_utf8_is_refused() {
 }
 
 #[test]
+fn a_password_line_holding_a_nul_is_refused() {
+    // Arrange: found by review, redis's config reader stops a line at a NUL, where splitting
+    // reads on past it; no real file holds one, so it is refused rather than modelled.
+    for (name, line) in [
+        ("redis-pass-nul", &b"requirepass hunter2\0 extra\n"[..]),
+        ("redis-pass-nul-directive", &b"requirepass\0hunter2\n"[..]),
+    ] {
+        let file = file_with_bytes(name, line);
+
+        // Act
+        let refusal = password_directives_in(&host_root(), &file)
+            .expect_err("a line rastro does not read as redis would")
+            .to_string();
+
+        // Assert
+        assert!(refusal.contains("NUL"), "{refusal}");
+    }
+}
+
+#[test]
 fn a_vertical_tab_or_form_feed_inside_a_word_stays_in_it() {
     // Arrange: `sdssplitargs` skips any `isspace` between words, but ends an unquoted word only
     // at a space, `\n`, `\r` or `\t`.

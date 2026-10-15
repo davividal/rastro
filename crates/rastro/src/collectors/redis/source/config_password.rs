@@ -301,6 +301,14 @@ fn words_of(file: &Path, line: &[u8]) -> Result<Option<Vec<String>>, CollectionE
     if line.is_empty() || line.starts_with(b"#") {
         return Ok(None);
     }
+    // redis's reader stops a line at a NUL, where splitting reads on past it, found by review.
+    if line.contains(&0) && may_be_read(line) {
+        return Err(CollectionError::new(format!(
+            "{} has a line the password may depend on that holds a NUL, which the server reads \
+             differently from any splitting of the line",
+            file.display()
+        )));
+    }
     let line = match std::str::from_utf8(line) {
         Ok(line) => line,
         Err(_) if !may_be_read(line) => return Ok(None),
@@ -331,7 +339,7 @@ fn words_of(file: &Path, line: &[u8]) -> Result<Option<Vec<String>>, CollectionE
 /// tab or form feed among them, which Rust's ASCII whitespace leaves out or keeps.
 fn may_be_read(line: &[u8]) -> bool {
     let directive = line
-        .split(|byte| is_c_space(char::from(*byte)))
+        .split(|byte| *byte == 0 || is_c_space(char::from(*byte)))
         .find(|word| !word.is_empty())
         .unwrap_or_default()
         .to_ascii_lowercase();
