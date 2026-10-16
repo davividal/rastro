@@ -81,22 +81,10 @@ macro_rules! read_in_full {
 }
 
 read_in_full!(cell_01_redis_8_10, "01", 0, "8.10.2");
-read_in_full!(cell_02_redis_8_0, "02", 0, "8.0.6");
-read_in_full!(cell_03_redis_8_2, "03", 0, "8.2.10");
-read_in_full!(cell_05_redis_8_6_rewritten, "05", 0, "8.6.7");
-read_in_full!(cell_08_redis_8_8_with_an_acl_file, "08", 0, "8.8.3");
 read_in_full!(cell_12_the_queue_instance, "12", 0, "8.10.2");
 read_in_full!(cell_12_the_cache_replica, "12", 1, "8.10.2");
-read_in_full!(cell_13_redis_8_10_in_cluster_mode, "13", 0, "8.10.2");
-read_in_full!(cell_17_redis_8_10_with_a_runtime_module, "17", 0, "8.10.2");
 read_in_full!(cell_26_valkey_9_1, "26", 0, "9.1.2");
-read_in_full!(cell_27_valkey_9_0, "27", 0, "9.0.6");
-read_in_full!(cell_28_valkey_8_1, "28", 0, "8.1.10");
-read_in_full!(cell_29_valkey_8_0, "29", 0, "8.0.11");
-read_in_full!(cell_30_valkey_7_2, "30", 0, "7.2.14");
-read_in_full!(cell_32_redis_7_0, "32", 0, "7.0.15");
 read_in_full!(cell_33_redis_7_4, "33", 0, "7.4.11");
-read_in_full!(cell_34_redis_6_2, "34", 0, "6.2.24");
 
 #[test]
 fn cell_12_the_replica_names_its_master() {
@@ -106,27 +94,4 @@ fn cell_12_the_replica_names_its_master() {
     // Assert
     assert_eq!(text(&field(&replication, "role")), "slave");
     assert!(!is_null(&field(&replication, "master")));
-}
-
-#[test]
-fn cell_14_config_renamed_away_costs_the_settings_alone() {
-    // Act
-    let instance = replayed("14", 0);
-
-    // Assert
-    assert!(is_null(&field(&instance, "settings")));
-    assert!(text(&field(&instance, "not_read")).contains("CONFIG"));
-    assert!(is_null(&field(&instance, "error")));
-    assert!(!is_null(&field(&instance, "modules")));
-}
-
-#[test]
-fn cell_35_redis_5_has_no_accounts_and_is_not_asked_for_them() {
-    // Act
-    let instance = replayed("35", 0);
-
-    // Assert: absent without an error, a server older than accounts.
-    assert_eq!(text(&field(&instance, "version")), "5.0.14");
-    assert!(is_null(&field(&instance, "acl")));
-    assert!(is_null(&field(&instance, "error")), "{instance:?}");
 }

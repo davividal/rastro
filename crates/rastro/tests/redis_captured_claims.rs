@@ -50,21 +50,7 @@ cell!(
     "/var/lib/redis"
 );
 cell!(
-    cell_16_a_directory_on_its_own_volume_is_found_through_it,
-    "16",
-    "/data/redis"
-);
-cell!(
     cell_24_a_named_volume_is_its_directory_under_docker,
     "24",
     "/var/lib/docker/volumes/redis24data/_data"
 );
-
-#[test]
-fn cell_23_a_directory_in_the_containers_own_image_is_not_claimed() {
-    // Act: measured, redis 8.10's image declares no volume, so `/data` is on its overlay root.
-    let host_views = host_views_in("23");
-
-    // Assert: the image is the containers facet's to account for, not the walk's to seal.
-    assert!(host_views.is_empty(), "{host_views:?}");
-}

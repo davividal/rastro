@@ -16,8 +16,8 @@ fn info_of(cell: &str) -> String {
         .to_owned()
 }
 
-/// Debian 12's own package, captured as cell 32 of the matrix.
-const DEBIAN_12: &str = "32";
+/// The redis.io package, captured as cell 01 of the matrix.
+const PACKAGED: &str = "01";
 
 /// The official valkey image, captured as cell 26: a `redis_version` frozen at the release valkey
 /// forked from, and the real version beside it.
@@ -32,11 +32,11 @@ config_file:/etc/redis/redis.conf\r\n";
 #[test]
 fn a_redis_server_reports_its_version_mode_and_where_it_came_from() {
     // Act
-    let info = InfoServer::parse(&info_of(DEBIAN_12)).expect("a real reply");
+    let info = InfoServer::parse(&info_of(PACKAGED)).expect("a real reply");
 
     // Assert
     assert_eq!(info.kind, ServerKind::Redis);
-    assert_eq!(info.version, "7.0.15");
+    assert_eq!(info.version, "8.10.2");
     assert_eq!(info.mode.as_deref(), Some("standalone"));
     assert_eq!(info.executable.as_deref(), Some("/usr/bin/redis-server"));
     assert_eq!(info.config_file.as_deref(), Some("/etc/redis/redis.conf"));

@@ -1,2 +1,0 @@
-user default on >cell-twenty-nine-default ~* &* +@all
-user reader on >cell-twenty-nine-reader ~* +@read
