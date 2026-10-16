@@ -207,25 +207,20 @@ half somebody declared, `export_definitions`, whose credential-bearing values ar
 withheld by default. See [decisions.md](decisions.md#a-cli-invocation-starts-epmd-so-nothing-is-asked-speculatively).
 
 **Layer 3, redis.** One `redis` facet for redis and valkey, which Debian 13 and Alpine
-package side by side, keyed by the instance's TCP port, else its unix socket's path. The
-releases it supports and the shapes it was measured on are
-[`redis-matrix.md`](redis-matrix.md): redis 8.0 to 8.10 and valkey 7.2 to 9.1, every other
-release read on a best-effort basis and marked `unsupported`.
+package side by side, keyed by the instance's TCP port. The releases it supports and the
+shapes it was measured on are [`redis-matrix.md`](redis-matrix.md): redis 8.0 to 8.10 and
+valkey 7.2 to 9.1, every other release read on a best-effort basis and marked `unsupported`.
 The server is the only honest account of itself, because on the estate this was written
 for `maxmemory` and `save` are applied with `CONFIG SET` and written to no file. It is
-asked over its own protocol rather than through `redis-cli`, whose only ways to carry a
-password are argv, the environment and stdin, and whose text output cannot tell an empty
-value from a missing one; the `redis` crate parses the replies, its client unused, and
-rastro holds the socket, the timeouts, a reply bound and every byte sent. Only a socket the server was
-seen holding is dialled. A server that answers `NOAUTH` is sent at most one `AUTH`, with
-a password the files its own unit names give the `default` account, replayed the way the
-server builds it and checked against its hashes first, because a refused one is an entry in
-the server's `ACL LOG`; the files are read inside the server's own root, and a password set only
-at runtime is unreachable and the instance says so. A server in a container is reached through
-its network namespace, as an elasticsearch node is. `INFO server` is the gate, and every read after it
-fails alone. Credentials, the unsalted `ACL` verifier included, are carried `sensitive`.
-The server's own files, `dump.rdb` and `appendonlydir`, are sealed in the process's
-working directory, since `dir` is a `chdir`, as the host directory behind it.
+asked over its own protocol rather than through `redis-cli`, whose text output cannot tell
+an empty value from a missing one; the `redis` crate parses the replies, its client unused,
+and rastro holds the socket, the timeouts, a reply bound and every byte sent. Only a TCP
+socket the server was seen holding is dialled, and a server in a container is reached
+through its network namespace, as an elasticsearch node is. `INFO server` is the gate: a
+server that answers `NOAUTH` is sent nothing more, and every read after it fails alone.
+Credentials, the unsalted `ACL` verifier included, are carried `sensitive`. The server's
+own files, `dump.rdb` and `appendonlydir`, are sealed in the process's working directory,
+since `dir` is a `chdir`, as the host directory behind it.
 
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
