@@ -16,6 +16,8 @@
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -34,6 +36,23 @@ const CLIENT: &str = "redis-cli";
 /// How long a server gets to start listening.
 const START_WITHIN: Duration = Duration::from_secs(10);
 
+/// The first port this binary's servers take, one the kernel handed out; each server takes the
+/// next, so two tests running side by side never pick the same one.
+static FIRST_PORT: OnceLock<u16> = OnceLock::new();
+static PORTS_TAKEN: AtomicU16 = AtomicU16::new(0);
+
+fn next_port() -> u16 {
+    let first = *FIRST_PORT.get_or_init(|| {
+        TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a loopback port")
+            .port()
+            .min(60_000)
+    });
+
+    first + PORTS_TAKEN.fetch_add(1, Ordering::Relaxed)
+}
+
 /// A server this test started, stopped when the test ends whatever the outcome.
 struct LiveServer {
     child: Child,
@@ -44,11 +63,7 @@ struct LiveServer {
 impl LiveServer {
     fn start(name: &str, extra: &[&str]) -> Self {
         let directory = scratch_tree(name, &["data"]).join("data");
-        // A port the kernel just handed out and took back, which nothing else is likely to take.
-        let port = TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .expect("a loopback port")
-            .port();
+        let port = next_port();
         let port_text = port.to_string();
 
         let mut arguments = vec![
@@ -85,10 +100,16 @@ impl LiveServer {
         };
 
         let deadline = Instant::now() + START_WITHIN;
+        let mut server = server;
         while TcpStream::connect(("127.0.0.1", port)).is_err() {
             assert!(Instant::now() < deadline, "{SERVER} never listened");
             thread::sleep(Duration::from_millis(20));
         }
+        // Whatever answered, it was this server only if this server is still running.
+        assert!(
+            matches!(server.child.try_wait(), Ok(None)),
+            "{SERVER} exited instead of listening on {port}"
+        );
 
         server
     }
