@@ -14,7 +14,7 @@
 //! suite, so the unprivileged half of the container suite reads a server it owns.
 
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -32,6 +32,9 @@ use support::observation::{field, is_null, keys_of, text};
 
 const SERVER: &str = "redis-server";
 const CLIENT: &str = "redis-cli";
+
+/// How many ports a server tries before the check gives up.
+const MOST_PORTS_TRIED: u16 = 20;
 
 /// How long a server gets to start listening.
 const START_WITHIN: Duration = Duration::from_secs(10);
@@ -61,11 +64,19 @@ struct LiveServer {
 }
 
 impl LiveServer {
+    /// A server on the first free port from [`next_port`]: one held by something outside this
+    /// binary makes the server exit, measured on CI, and the next port is tried.
     fn start(name: &str, extra: &[&str]) -> Self {
         let directory = scratch_tree(name, &["data"]).join("data");
-        let port = next_port();
-        let port_text = port.to_string();
 
+        (0..MOST_PORTS_TRIED)
+            .find_map(|_| Self::started_on(next_port(), &directory, extra))
+            .unwrap_or_else(|| panic!("{SERVER} found no free port in {MOST_PORTS_TRIED} tries"))
+    }
+
+    /// The server listening on `port`, or nothing where it exited instead.
+    fn started_on(port: u16, directory: &Path, extra: &[&str]) -> Option<Self> {
+        let port_text = port.to_string();
         let mut arguments = vec![
             "--port",
             &port_text,
@@ -93,25 +104,24 @@ impl LiveServer {
                      skipping, so install redis to run the suite"
                 )
             });
-        let server = Self {
+        let mut server = Self {
             child,
             port,
-            directory,
+            directory: directory.to_path_buf(),
         };
 
         let deadline = Instant::now() + START_WITHIN;
-        let mut server = server;
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
+        loop {
+            // Whatever answers, it is this server only while this server is still running.
+            if !matches!(server.child.try_wait(), Ok(None)) {
+                return None;
+            }
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return Some(server);
+            }
             assert!(Instant::now() < deadline, "{SERVER} never listened");
             thread::sleep(Duration::from_millis(20));
         }
-        // Whatever answered, it was this server only if this server is still running.
-        assert!(
-            matches!(server.child.try_wait(), Ok(None)),
-            "{SERVER} exited instead of listening on {port}"
-        );
-
-        server
     }
 
     fn key(&self) -> String {
