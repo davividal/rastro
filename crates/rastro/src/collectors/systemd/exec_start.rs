@@ -24,9 +24,6 @@ pub struct ExecStart {
     /// The whole vector including `argv[0]`, which a unit may set to something other than
     /// the executable.
     pub argv: NonEmptyText,
-    /// The process systemd last started it as, none where it has not run. Volatile, so read for
-    /// matching a process to its unit and never rendered.
-    pub process_id: Option<u32>,
 }
 
 impl ExecStart {
@@ -37,14 +34,7 @@ impl ExecStart {
         Ok(Self {
             executable: ExecutablePath::new(executable)?,
             argv: NonEmptyText::new(argv, "unit argument vector")?,
-            process_id: None,
         })
-    }
-
-    /// The same command, last started as `process_id`.
-    #[must_use]
-    pub fn started_as(self, process_id: Option<u32>) -> Self {
-        Self { process_id, ..self }
     }
 }
 

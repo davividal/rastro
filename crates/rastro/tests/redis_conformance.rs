@@ -123,10 +123,7 @@ impl Drop for LiveServer {
     }
 }
 
-/// The collector as a run builds it, `systemctl` included where the box has one.
-///
-/// Measured on GitHub's runner: a server this test starts runs in the job agent's own unit, and
-/// only a collector that asks systemd sees that unit is not the server's.
+/// The collector as a run builds it.
 fn collector() -> RedisCollector {
     RedisCollector::new()
 }
@@ -206,9 +203,8 @@ fn a_live_server_reads_the_same_twice() {
 }
 
 #[test]
-fn a_live_server_wanting_a_password_rastro_cannot_reach_is_said_so() {
-    // Arrange: a password on the command line of a server no systemd unit started, which is
-    // every server in a container.
+fn a_live_server_wanting_a_password_is_said_so() {
+    // Arrange
     let server = LiveServer::start(
         "redis-live-noauth",
         &["--requirepass", "unreached-password"],
@@ -219,7 +215,7 @@ fn a_live_server_wanting_a_password_rastro_cannot_reach_is_said_so() {
 
     // Assert
     let reason = text(&field(&instance, "not_read"));
-    assert!(reason.contains("unit"), "{reason}");
+    assert!(reason.contains("requires a password"), "{reason}");
     assert!(!reason.contains("unreached-password"), "{reason}");
 }
 

@@ -15,8 +15,6 @@ use super::reply::{Reply, shortened};
 use super::resident_servers::resident_census;
 use super::resp_connection::RespConnection;
 use super::server_discovery::{DialTarget, DiscoveredServer, discover};
-use super::server_password::{Credential, password_for};
-use crate::collectors::canonical_tool::CanonicalTool;
 use crate::collectors::redis::model::{Installation, Instance, ServerIdentity};
 use crate::collectors::redis::value_objects::Listener;
 
@@ -40,7 +38,6 @@ const NOAUTH: &str = "NOAUTH";
 pub fn read_installation(
     proc: &Path,
     installed: &InstalledServers,
-    systemctl: Option<&CanonicalTool>,
     budget: Duration,
 ) -> Installation {
     let started = Instant::now();
@@ -53,7 +50,7 @@ pub fn read_installation(
             .map(|server| {
                 let key = server.key.clone();
                 let instance = match started.elapsed() < budget {
-                    true => read_instance(proc, server, systemctl),
+                    true => read_instance(server),
                     false => {
                         let mut unread = unasked(&server);
                         unread.record(Shortfall::Failed(format!(
@@ -84,11 +81,7 @@ fn unasked(server: &DiscoveredServer) -> Instance {
     }
 }
 
-fn read_instance(
-    proc: &Path,
-    server: DiscoveredServer,
-    systemctl: Option<&CanonicalTool>,
-) -> Instance {
+fn read_instance(server: DiscoveredServer) -> Instance {
     let process_id = server.process_id;
     let mut instance = unasked(&server);
 
@@ -133,7 +126,7 @@ fn read_instance(
         }
     };
 
-    match identify(first, &mut connection, proc, process_id, systemctl) {
+    match identify(first) {
         Ok(identity) => instance.identity = Some(identity),
         Err(shortfall) => {
             instance.record(shortfall);
@@ -218,30 +211,12 @@ impl Instance {
     }
 }
 
-/// What the server says it is, authenticating first where it will say nothing without it.
+/// What the server says it is, from its answer to `INFO server`.
 ///
-/// **`INFO server` first, and it doubles as the probe.** A server wanting a password answers it
-/// `NOAUTH` just as it would `PING`, so nothing is sent merely to find out, and a password is
-/// only ever sent to a server that asked for one. Sending it to one that did not is an error the
-/// server logs.
-fn identify(
-    first: Reply,
-    connection: &mut RespConnection,
-    proc: &Path,
-    process_id: u32,
-    systemctl: Option<&CanonicalTool>,
-) -> Result<ServerIdentity, Shortfall> {
-    let answered = match &first {
-        Reply::Error(message) if message.starts_with(NOAUTH) => {
-            let credential =
-                password_for(proc, process_id, systemctl).map_err(Shortfall::Withheld)?;
-            authenticate(connection, &credential)?;
-            connection.ask(&INFO_SERVER)?
-        }
-        _ => first,
-    };
-
-    Ok(InfoServer::parse(&text_of(&INFO_SERVER, answered)?)?)
+/// **It doubles as the probe for a password.** A server wanting one answers `NOAUTH` and is sent
+/// nothing more: rastro does not look for the password, by the maintainer's choice.
+fn identify(first: Reply) -> Result<ServerIdentity, Shortfall> {
+    Ok(InfoServer::parse(&text_of(&INFO_SERVER, first)?)?)
 }
 
 /// The TCP sockets on other ports that were not tried after the chosen one failed, and why not.
@@ -272,37 +247,6 @@ fn untried_note(target: &DialTarget, listening: &[Listener]) -> String {
     }
 }
 
-/// The code a server refuses a wrong password with.
-const WRONG_PASSWORD: &str = "WRONGPASS";
-
-/// One `AUTH`, never repeated.
-///
-/// **A refusal is not retried with anything else.** Each is an entry in the server's `ACL LOG`,
-/// and the only password rastro has is the one the server was started with; a refusal means the
-/// running server and its start disagree, which is itself the finding.
-fn authenticate(connection: &mut RespConnection, credential: &Credential) -> Result<(), Shortfall> {
-    match connection.ask(&["AUTH", credential.password.as_str()])? {
-        Reply::Simple(ok) if ok == "OK" => Ok(()),
-        Reply::Error(refusal) if refusal.starts_with(WRONG_PASSWORD) => {
-            Err(Shortfall::Withheld(format!(
-                "the server refused the password {} gives the default account, so it has been \
-                 changed since the server started",
-                credential.origin
-            )))
-        }
-        // Its text is not quoted: an `AUTH` error can echo what was sent.
-        other => Err(Shortfall::Withheld(format!(
-            "the server answered the password {} gives the default account with {} rather than \
-             accepting or refusing it",
-            credential.origin,
-            match &other {
-                Reply::Error(refusal) => refusal.split(' ').next().unwrap_or_default().to_owned(),
-                _ => other.kind().to_owned(),
-            }
-        ))),
-    }
-}
-
 /// A command's answer, with the server's refusals said in words.
 fn reply_to(connection: &mut RespConnection, command: &[&str]) -> Result<Reply, Shortfall> {
     let reply = connection.ask(command)?;
@@ -316,7 +260,7 @@ fn refusal_of(command: &[&str], reply: Reply) -> Result<Reply, Shortfall> {
 
     match reply {
         Reply::Error(message) if message.starts_with(NOAUTH) => Err(Shortfall::Withheld(
-            "the server requires a password, and none was given".to_owned(),
+            "the server requires a password, which rastro does not look for".to_owned(),
         )),
         Reply::Error(message) => Err(Shortfall::Withheld(format!(
             "the server refused {name}: {}",

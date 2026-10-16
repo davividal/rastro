@@ -583,6 +583,25 @@ fn a_socket_the_kernel_says_another_process_holds_is_sent_nothing() {
 }
 
 #[test]
+fn a_server_that_wants_a_password_is_sent_nothing_more() {
+    // Arrange: `requirepass` set; rastro does not look for the password, by the maintainer's
+    // choice, so the server says what it is only to a client that has it.
+    let server = FakeRedis::stock_with_password("facet-password", "hunter2", &[]);
+    let proc = server.proc("redis-facet-password");
+
+    // Act
+    let observation = collector(&[], &proc).collect().expect("a readable box");
+
+    // Assert
+    let instance = instance_of(&observation, &key_of(&server));
+    assert_eq!(
+        text(&field(&instance, "not_read")),
+        "the server requires a password, which rastro does not look for"
+    );
+    assert_eq!(server.received(), [["INFO", "server"]]);
+}
+
+#[test]
 fn a_sentinel_is_named_and_asked_nothing_more() {
     // Arrange: `redis-server --sentinel` keeps `comm`, and measured on redis 8.10 it rejects
     // `CONFIG GET *` and `MODULE LIST`; each rejection is one more error the server counts.

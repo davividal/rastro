@@ -12,18 +12,14 @@ pub use model::{
     Accounts, Installation, Instance, Module, Modules, Replication, ServerIdentity, Settings,
 };
 pub use source::{
-    AclList, ConfigGet, Credential, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
-    InstalledServers, ModuleList, PasswordDirectives, Reply, ResidentCensus, ResidentServer,
-    RespConnection, ServerCgroup, ServerStart, ServerStream, default_user_in_acl_file, discover,
-    password_directives_in, password_for, password_for_default_account, read_installation,
-    resident_census, resident_servers, server_files_of, start_of, unit_of,
+    AclList, ConfigGet, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
+    InstalledServers, ModuleList, Reply, ResidentCensus, ResidentServer, RespConnection,
+    ServerStream, discover, read_installation, resident_census, resident_servers, server_files_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
-use crate::collectors::canonical_tool::CanonicalTool;
 
 // One import, because `rastro-collector` re-exports what an author needs.
 use rastro_collector::{
@@ -33,9 +29,6 @@ use rastro_collector::{
 
 /// Where the kernel publishes its process table.
 const PROC: &str = "/proc";
-
-/// The tool that says how a unit starts its server.
-const SYSTEMCTL: &str = "systemctl";
 
 /// How long the servers on a box get between them before the next is begun: a minute. A server
 /// begun inside it runs to its own deadlines, a second to connect and five for each command.
@@ -47,22 +40,13 @@ pub struct RedisCollector {
     installed: InstalledServers,
     proc: PathBuf,
 
-    /// Asked only about a server that refused to answer without a password, for the command
-    /// that started it; see [`password_for`].
-    systemctl: Option<CanonicalTool>,
-
     /// How long the servers on the box get between them; see [`read_installation`].
     budget: Duration,
 }
 
 impl RedisCollector {
     pub fn new() -> Self {
-        let collector = Self::reading(InstalledServers::located(), Path::new(PROC));
-
-        match CanonicalTool::located(SYSTEMCTL) {
-            Some(systemctl) => collector.asking_systemd(systemctl),
-            None => collector,
-        }
+        Self::reading(InstalledServers::located(), Path::new(PROC))
     }
 
     /// The same collector over sources the caller chose.
@@ -75,7 +59,6 @@ impl RedisCollector {
             ),
             installed,
             proc: proc.to_path_buf(),
-            systemctl: None,
             budget: FACET_BUDGET,
         }
     }
@@ -83,12 +66,6 @@ impl RedisCollector {
     /// The same, giving the servers on the box a time budget other than the default.
     pub fn within(mut self, budget: Duration) -> Self {
         self.budget = budget;
-        self
-    }
-
-    /// The same, able to ask systemd how a password-protected server was started.
-    pub fn asking_systemd(mut self, systemctl: CanonicalTool) -> Self {
-        self.systemctl = Some(systemctl);
         self
     }
 }
@@ -173,7 +150,6 @@ impl Collector for RedisCollector {
         Ok(Observation::from(&read_installation(
             &self.proc,
             &self.installed,
-            self.systemctl.as_ref(),
             self.budget,
         )))
     }

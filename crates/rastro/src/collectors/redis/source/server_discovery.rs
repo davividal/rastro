@@ -22,7 +22,6 @@ use crate::collectors::proc_sockets::{
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 use super::resident_servers::{ResidentServer, resident_servers};
-use super::server_unit::systemd_cgroup_of;
 
 /// Where the kernel publishes its socket tables under the process table.
 const NET: &str = "net";
@@ -176,6 +175,34 @@ fn scope_of(proc: &Path, process_id: u32) -> Option<String> {
         .next()
         .filter(|scope| !scope.is_empty())
         .map(str::to_owned)
+}
+
+/// The path of the cgroup systemd keeps a process in: the unified hierarchy's, `0::`, else the
+/// `name=systemd` one of a cgroup v1 layout, and none where the file names neither.
+///
+/// **Not the first line**, found by review: on a hybrid layout a controller's line can come first
+/// and name the engine's own path, `/docker/<id>`, rather than the scope systemd gave a container.
+fn systemd_cgroup_of(proc: &Path, process_id: u32) -> std::io::Result<Option<String>> {
+    let cgroup = fs::read_to_string(proc.join(process_id.to_string()).join("cgroup"))?;
+    // `hierarchy:controllers:path`, and the path may hold a colon of its own.
+    let lines: Vec<[&str; 3]> = cgroup
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, ':');
+            Some([fields.next()?, fields.next()?, fields.next()?])
+        })
+        .collect();
+    let path_where = |wanted: fn(&[&str; 3]) -> bool| {
+        lines
+            .iter()
+            .find(|fields| wanted(fields))
+            .map(|fields| fields[2].to_owned())
+    };
+
+    Ok(
+        path_where(|[hierarchy, controllers, _]| *hierarchy == "0" && controllers.is_empty())
+            .or_else(|| path_where(|[_, controllers, _]| *controllers == "name=systemd")),
+    )
 }
 
 fn discovered(

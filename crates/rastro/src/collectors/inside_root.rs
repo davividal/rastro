@@ -177,16 +177,6 @@ impl ProcessRoot {
         ))
     }
 
-    /// A file's bytes, as [`read_bytes_inside`] reads them, where the process may read it.
-    pub fn read_bytes(&self, relative: &Path) -> std::io::Result<Vec<u8>> {
-        self.as_account(|root| read_pinned_root(root, relative))
-    }
-
-    /// A directory's names, as [`names_inside`] lists them, where the process may list it.
-    pub fn names(&self, relative: &Path) -> std::io::Result<Vec<String>> {
-        self.as_account(|root| names_in_pinned_root(root, relative))
-    }
-
     /// `connect` given a path that reaches the unix socket at `relative`, resolved as
     /// [`read_inside`] resolves a file, only where it is a socket, and called with the process's
     /// permission.
@@ -261,16 +251,6 @@ fn taken_on(account: &ReadingAccount) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_pinned_root(root: &rustix::fd::OwnedFd, relative: &Path) -> std::io::Result<Vec<u8>> {
-    bounded_bytes(open_under(root, relative, Opening::Read)?)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_pinned_root(root: &Path, relative: &Path) -> std::io::Result<Vec<u8>> {
-    read_bytes_inside(root, relative)
-}
-
-#[cfg(target_os = "linux")]
 fn names_in_pinned_root(
     root: &rustix::fd::OwnedFd,
     relative: &Path,
@@ -282,11 +262,6 @@ fn names_in_pinned_root(
             .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
             .filter(|name| !matches!(name.as_deref(), Ok("." | ".."))),
     )
-}
-
-#[cfg(not(target_os = "linux"))]
-fn names_in_pinned_root(root: &Path, relative: &Path) -> std::io::Result<Vec<String>> {
-    names_inside(root, relative)
 }
 
 #[cfg(target_os = "linux")]
