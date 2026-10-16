@@ -1,4 +1,4 @@
-//! Which host directory a node's path is, read from the kernel's mount tables.
+//! Which host directory a process's path is, read from the kernel's mount tables.
 //!
 //! Found by the second domain review, measured: a node in a container with its data on a named
 //! volume was read fine and the walk went through 41 entries under the volume, because the path
@@ -24,28 +24,40 @@ struct Mount {
     point: PathBuf,
 }
 
-/// Every host path of `path` as the node sees it, where `path` is on a mount of its own, a volume
-/// or a bind, and the host mounts the same device somewhere that holds it.
+/// A host path that shows a path, and which part of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostView {
+    pub path: PathBuf,
+
+    /// The part of the path it shows, relative to the path: empty where it shows the whole of
+    /// it, and the subtree a bind of something inside it shows otherwise.
+    pub part: PathBuf,
+}
+
+/// Every host path of `path` as the process sees it, and which part of it each shows, where `path`
+/// is on a mount of its own, a volume or a bind, and the host mounts the same device somewhere that
+/// holds it or a part of it.
 ///
-/// Nothing where the path is on the node's own root mount, which is a container's image and the
+/// Nothing where the path is on the process's own root mount, which is a container's image and the
 /// container facet's to account for, or where the host does not mount the device.
-pub fn host_paths_of(node_table: &[u8], host_table: &[u8], path: &Path) -> Vec<PathBuf> {
-    let Some(node_mount) = containing(&mounts_in(node_table), path) else {
+pub fn host_views_of(process_table: &[u8], host_table: &[u8], path: &Path) -> Vec<HostView> {
+    let Some(process_mount) = containing(&mounts_in(process_table), path) else {
         return Vec::new();
     };
-    if node_mount.point == Path::new("/") {
+    if process_mount.point == Path::new("/") {
         return Vec::new();
     }
-    match on_device(&node_mount, path) {
-        Some(inside) => seen_at(&mounts_in(host_table), &node_mount.device, &inside),
+    match on_device(&process_mount, path) {
+        Some(inside) => seen_at(&mounts_in(host_table), &process_mount.device, &inside),
         None => Vec::new(),
     }
 }
 
-/// Every host path that shows `path`, a host path, or a part of it: the host can bind a directory
-/// at a second path, and found by review, a walk sealed at one went through the live store at the
-/// other. `path` itself among them, where the table holds the mount it is on.
-pub fn host_aliases_of(host_table: &[u8], path: &Path) -> Vec<PathBuf> {
+/// Every host path that shows `path`, a host path, or a part of it, and which part each shows: the
+/// host can bind a directory at a second path, and found by review, a walk sealed at one went
+/// through the live store at the other. `path` itself among them, where the table holds the mount
+/// it is on.
+pub fn host_alias_views_of(host_table: &[u8], path: &Path) -> Vec<HostView> {
     let mounts = mounts_in(host_table);
     containing(&mounts, path)
         .and_then(|mount| Some((on_device(&mount, path)?, mount.device)))
@@ -70,13 +82,19 @@ fn on_device(mount: &Mount, path: &Path) -> Option<PathBuf> {
 /// Where the mounts of `device` show `inside` or a part of it: through a mount of something
 /// holding it, `inside` under that mount's point; through a mount of something inside it, the
 /// whole of that mount.
-fn seen_at(mounts: &[Mount], device: &str, inside: &Path) -> Vec<PathBuf> {
+fn seen_at(mounts: &[Mount], device: &str, inside: &Path) -> Vec<HostView> {
     mounts
         .iter()
         .filter(|mount| mount.device == device)
         .filter_map(|mount| match inside.strip_prefix(&mount.root) {
-            Ok(below) => Some(mount.point.join(below)),
-            Err(_) => mount.root.starts_with(inside).then(|| mount.point.clone()),
+            Ok(below) => Some(HostView {
+                path: mount.point.join(below),
+                part: PathBuf::new(),
+            }),
+            Err(_) => Some(HostView {
+                path: mount.point.clone(),
+                part: mount.root.strip_prefix(inside).ok()?.to_path_buf(),
+            }),
         })
         .collect()
 }

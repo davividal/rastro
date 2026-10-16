@@ -75,7 +75,7 @@ fn parse_group(group: &str) -> Result<(UnitName, ShownUnit), CollectionError> {
         .ok_or_else(|| {
             CollectionError::new(format!(
                 "`systemctl show` printed a group with no {ID:?} line, so what it describes \
-                 cannot be named: {group:?}"
+                 cannot be named"
             ))
         })?;
 
@@ -215,7 +215,7 @@ fn entries_of(line: &str) -> Result<Vec<String>, CollectionError> {
                 }
             }
             '\\' => {
-                entry.push(unescaped(&mut characters, line)?);
+                entry.push(unescaped(&mut characters)?);
                 started = true;
             }
             _ => {
@@ -226,10 +226,10 @@ fn entries_of(line: &str) -> Result<Vec<String>, CollectionError> {
     }
 
     if quoted {
-        return Err(CollectionError::new(format!(
+        return Err(CollectionError::new(
             "`systemctl show` printed an `Environment=` line whose quoting does not close, so \
-             where one variable ends cannot be told: {line:?}"
-        )));
+             where one variable ends cannot be told",
+        ));
     }
 
     if started {
@@ -245,12 +245,11 @@ fn entries_of(line: &str) -> Result<Vec<String>, CollectionError> {
 /// not mistaken for a specifier. Anything outside it is refused rather than guessed: an
 /// unknown escape means this table has fallen behind systemd's, and inventing a character
 /// would put one in the document that is not in the process.
-fn unescaped(characters: &mut std::str::Chars<'_>, line: &str) -> Result<char, CollectionError> {
+fn unescaped(characters: &mut std::str::Chars<'_>) -> Result<char, CollectionError> {
     let escaped = characters.next().ok_or_else(|| {
-        CollectionError::new(format!(
-            "`systemctl show` printed an `Environment=` line ending in a lone backslash: \
-             {line:?}"
-        ))
+        CollectionError::new(
+            "`systemctl show` printed an `Environment=` line ending in a lone backslash",
+        )
     })?;
 
     match escaped {
@@ -262,10 +261,10 @@ fn unescaped(characters: &mut std::str::Chars<'_>, line: &str) -> Result<char, C
         't' => Ok('\t'),
         'v' => Ok('\u{b}'),
         '\\' | '"' | '\'' | '$' => Ok(escaped),
-        'x' => hex_escape(characters, line),
+        'x' => hex_escape(characters),
         other => Err(CollectionError::new(format!(
             "`systemctl show` printed the escape {other:?} in an `Environment=` line, which \
-             rastro cannot read: {line:?}"
+             rastro cannot read"
         ))),
     }
 }
@@ -276,12 +275,12 @@ fn unescaped(characters: &mut std::str::Chars<'_>, line: &str) -> Result<char, C
 /// multi-byte encoding, and the value it belongs to is a Rust `String`. systemd leaves valid
 /// UTF-8 alone — `héllo` came back unescaped — so a high byte here means the value was never
 /// text, and a lossy stand-in would be a value the box does not have.
-fn hex_escape(characters: &mut std::str::Chars<'_>, line: &str) -> Result<char, CollectionError> {
+fn hex_escape(characters: &mut std::str::Chars<'_>) -> Result<char, CollectionError> {
     let digits: String = characters.by_ref().take(2).collect();
     let byte = u8::from_str_radix(&digits, 16).map_err(|_| {
         CollectionError::new(format!(
             "`systemctl show` printed the escape \"\\x{digits}\" in an `Environment=` line, \
-             which is not two hex digits: {line:?}"
+             which is not two hex digits"
         ))
     })?;
 
@@ -289,7 +288,7 @@ fn hex_escape(characters: &mut std::str::Chars<'_>, line: &str) -> Result<char, 
         true => Ok(char::from(byte)),
         false => Err(CollectionError::new(format!(
             "`systemctl show` escaped the byte 0x{byte:02x} in an `Environment=` line, so that \
-             value is not text and rastro will not guess at one: {line:?}"
+             value is not text and rastro will not guess at one"
         ))),
     }
 }
@@ -308,7 +307,7 @@ fn parse_command(command: &str) -> Result<ExecStart, CollectionError> {
         .ok_or_else(|| {
             CollectionError::new(format!(
                 "`systemctl show` printed an {EXEC_START:?} value that is not a braced \
-                 group: {command:?}"
+                 group"
             ))
         })?;
 
@@ -321,7 +320,7 @@ fn field<'a>(fields: &'a str, name: &str) -> Result<&'a str, CollectionError> {
         .find_map(|field| field.trim().strip_prefix(name))
         .ok_or_else(|| {
             CollectionError::new(format!(
-                "`systemctl show` reported an ExecStart with no {name:?} field: {fields:?}"
+                "`systemctl show` reported an ExecStart with no {name:?} field"
             ))
         })
 }

@@ -1,0 +1,41 @@
+475 346 8:1 / / ro,nosuid,relatime shared:177 master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro
+481 475 0:24 / /run rw,nosuid,nodev,noexec,relatime shared:251 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+482 481 0:26 / /run/lock rw,nosuid,nodev,noexec,relatime shared:252 master:6 - tmpfs tmpfs rw,size=5120k,inode64
+488 475 0:21 / /sys ro,nosuid,nodev,noexec,relatime shared:257 master:7 - sysfs sysfs rw
+489 488 0:6 / /sys/kernel/security ro,nosuid,nodev,noexec,relatime shared:258 master:8 - securityfs securityfs rw
+490 488 0:27 / /sys/fs/cgroup ro,nosuid,nodev,noexec,relatime shared:259 master:9 - cgroup2 cgroup2 rw,nsdelegate,memory_recursiveprot
+491 488 0:28 / /sys/fs/pstore ro,nosuid,nodev,noexec,relatime shared:260 master:10 - pstore pstore rw
+492 488 0:29 / /sys/firmware/efi/efivars ro,nosuid,nodev,noexec,relatime shared:261 master:11 - efivarfs efivarfs rw
+493 488 0:30 / /sys/fs/bpf ro,nosuid,nodev,noexec,relatime shared:262 master:12 - bpf bpf rw,mode=700
+494 488 0:7 / /sys/kernel/debug ro,nosuid,nodev,noexec,relatime shared:263 master:17 - debugfs debugfs rw
+495 488 0:11 / /sys/kernel/tracing ro,nosuid,nodev,noexec,relatime shared:264 master:18 - tracefs tracefs rw
+496 488 0:34 / /sys/fs/fuse/connections ro,nosuid,nodev,noexec,relatime shared:265 master:19 - fusectl fusectl rw
+497 488 0:35 / /sys/kernel/config ro,nosuid,nodev,noexec,relatime shared:266 master:20 - configfs configfs rw
+501 475 8:15 / /boot/efi ro,nosuid,relatime shared:267 master:33 - vfat /dev/sda15 rw,fmask=0022,dmask=0022,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro
+502 475 254:0 / /data ro,nosuid,relatime shared:268 master:65 - ext4 /dev/mapper/vgdata-data rw
+506 475 0:51 / /dev ro,nosuid,noexec shared:269 - tmpfs tmpfs rw,size=4096k,nr_inodes=65536,mode=755,inode64
+507 506 0:23 / /dev/pts rw,nosuid,noexec,relatime shared:270 master:3 - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+508 506 0:25 / /dev/shm rw,nosuid,nodev shared:271 master:4 - tmpfs tmpfs rw,inode64
+509 506 0:20 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:272 master:16 - mqueue mqueue rw
+510 506 0:32 / /dev/hugepages rw,nosuid,relatime shared:273 master:15 - hugetlbfs hugetlbfs rw,pagesize=2M
+476 475 8:1 /etc/redis /etc/redis rw,nosuid,relatime shared:274 master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro
+479 475 0:24 /systemd/inaccessible/dir /home ro,nosuid,nodev,noexec,relatime shared:275 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+480 475 0:52 / /proc rw,nosuid,nodev,noexec,relatime shared:276 - proc proc rw
+498 480 0:52 /acpi /proc/acpi ro,nosuid,nodev,noexec,relatime shared:277 - proc proc rw
+499 480 0:52 /bus /proc/bus ro,nosuid,nodev,noexec,relatime shared:278 - proc proc rw
+500 480 0:52 /fs /proc/fs ro,nosuid,nodev,noexec,relatime shared:279 - proc proc rw
+514 480 0:52 /irq /proc/irq ro,nosuid,nodev,noexec,relatime shared:280 - proc proc rw
+515 480 0:24 /systemd/inaccessible/reg /proc/kallsyms ro,nosuid,nodev,noexec,relatime shared:281 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+516 480 0:24 /systemd/inaccessible/reg /proc/kcore ro,nosuid,nodev,noexec,relatime shared:282 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+517 480 0:52 /sys /proc/sys ro,nosuid,nodev,noexec,relatime shared:283 - proc proc rw
+518 480 0:52 /sysrq-trigger /proc/sysrq-trigger ro,nosuid,nodev,noexec,relatime shared:284 - proc proc rw
+519 475 0:24 /systemd/inaccessible/dir /root ro,nosuid,nodev,noexec,relatime shared:285 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+483 481 0:24 /systemd/inaccessible/dir /run/credentials ro,nosuid,nodev,noexec,relatime shared:253 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+484 481 0:24 /redis-cache /run/redis-cache rw,nosuid,nodev,noexec,relatime shared:254 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+485 481 0:24 /systemd/propagate/redis-server@cache.service /run/systemd/incoming ro,nosuid,nodev,noexec,relatime master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+486 481 0:24 /systemd/inaccessible/dir /run/user ro,nosuid,nodev,noexec,relatime shared:256 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+487 475 8:1 /tmp/systemd-private-509b7179ad954ade808b0d901a970ccb-redis-server@cache.service-2Igh5l/tmp /tmp rw,nosuid,relatime shared:286 master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro
+520 475 0:24 /systemd/inaccessible/dir /usr/lib/modules ro,nosuid,nodev,noexec,relatime shared:287 master:5 - tmpfs tmpfs rw,size=4808872k,mode=755,inode64
+521 475 8:1 /var/lib/redis /var/lib/redis rw,nosuid,relatime shared:288 master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro
+522 475 8:1 /var/log/redis /var/log/redis rw,nosuid,relatime shared:289 master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro
+523 475 8:1 /var/tmp/systemd-private-509b7179ad954ade808b0d901a970ccb-redis-server@cache.service-A5puTR/tmp /var/tmp rw,nosuid,relatime shared:290 master:1 - ext4 /dev/sda1 rw,discard,errors=remount-ro

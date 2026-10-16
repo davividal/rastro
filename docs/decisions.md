@@ -6518,3 +6518,292 @@ surface that carries settings, found by review one surface at a time: an index's
 the `settings` of an index template or a component template. So every value under a `settings`
 object, in any answer, is withheld on its own, and every key stays readable; a template's
 patterns, priority and composition, and an ILM policy, are still structure and still read.
+
+# redis: the server is the only account of itself
+
+Dated 2026-09-27. On the estate this facet was written for, `maxmemory 30GB` and `save ""` are
+applied with `CONFIG SET` through ansible and written to no file, so the file on disk and the
+running server disagree by design and no walk can see it. A field host ran redis 5.0 on
+`bind 0.0.0.0` with `requirepass` set, answering every command `NOAUTH`. Both shaped this.
+
+Measured before a line was written, in containers: Debian 12 (redis 7.0.15), Debian 13 (redis
+8.0.2 and valkey 8.1.1, packaged side by side), Alpine (redis 8.8.0, valkey 9.0.4), and the
+official redis 5, redis 8 and valkey images. Container caveats as for RabbitMQ: root there
+cannot follow another account's `/proc/<pid>/exe`, so nothing below depends on it.
+
+## What the measurements settled
+
+- **`comm` names the server; `cmdline` does not.** redis overwrites its argument vector with a
+  process title, `/usr/bin/redis-server 127.0.0.1:6379` on Debian, on every build measured, so
+  the configuration file's path is not in `/proc` at all.
+- **Debian ships the unix socket off** and binds loopback; Alpine enables one at mode 770. A
+  collector that spoke only to a unix socket would read no Debian box, the field host included.
+- **A read changes nothing on disk**: no file under `/` moved across `CONFIG GET *`, `INFO`,
+  `ACL LIST` and `MODULE LIST`, and ten idle seconds moved nothing either. It does count itself
+  in `INFO stats`, which this facet does not read.
+- **A failed `AUTH` writes an `ACL LOG` entry**, so a password is a question about changing the
+  host, not only about disclosure.
+- **`CONFIG GET *` has no order**: two restarts of one binary on one file moved 849 of 872
+  lines. The facet sorts.
+- **`rename-command CONFIG ""`** answers `ERR unknown command` and leaves `INFO` answering.
+
+## The boundary widens to redis read commands over its own protocol
+
+[The Elasticsearch entry](#rastro-may-send-a-get-to-a-service-already-running-on-the-box) drew
+the line at an HTTP `GET`. redis speaks RESP, not HTTP, so this widens that rule rather than
+falling under it, and keeps every one of its conditions: **a request goes only to a socket the
+kernel shows a process holding, a process already identified as a redis or valkey server, on
+the address it bound.** No name is resolved, no default port is assumed, nothing is dialled to
+find out whether redis is there.
+
+What may be sent is a fixed list, and the read-only half of it is the point: `INFO server`,
+`INFO replication`, `CONFIG GET *`, `ACL LIST` and `MODULE LIST`, none of which a server
+persists or replicates. `AUTH` is never sent; see the entry below.
+
+The socket is chosen by locality: loopback, then a wildcard reached on its family's loopback
+address, then an address of the box's own, which the kernel delivers without it reaching a wire.
+
+**Protected mode trips on a server bound only to an address of the box's own.** redis treats
+`127.0.0.1`, `::1` and a unix peer as local and nothing else, measured on 8.10: a server with
+`bind <the box's address>`, `protected-mode yes` and no password answers `DENIED`. The facet
+records that refusal as the server words it; a loopback listener avoids it, and a server without
+one cannot be read without a password.
+
+**Not through `redis-cli`.** Every alternative there was worse, measured: `-a` puts the password
+in argv, which the `processes` facet records; `REDISCLI_AUTH` and a piped `AUTH` each need a hole
+in the canonical tool's cleared environment or its immediate end of input; `--raw` prints
+`save ""` and a missing value as the same blank line and splits a value holding a newline;
+`--json` does not exist on 5.0 or 7.0; and the tool exits 0 on `NOAUTH`. Going through the tool
+would also have put a child process in the run for `processes` and `sockets` to catch.
+
+**Through the `redis` crate's parser, never its client.** Its client owns the connect handshake
+and sends a `CLIENT SETINFO` of its own, so rastro keeps the socket, the connect timeout, a
+deadline over each command and its whole reply, a byte bound refused rather than truncated, and
+every byte sent; `redis::Parser` reads one reply from what rastro hands it, and `redis::cmd` encodes
+a command. The first version used `redis-protocol`, a smaller framing crate, until the review
+measured its decoder recursing without a depth limit: a 40 KB reply of ten thousand nested arrays
+overflowed the stack and aborted the whole run. The `redis` parser caps nesting at a hundred, with
+tests for it, as `serde_json` caps it at 128. Its tree is larger, a URL parser and ICU's Unicode
+tables among it, and the maintainer chose that over writing a reader in rastro: code in a widely
+used crate has many more people watching it than code in this repository does. The licence,
+BSD-3-Clause, was already allowed, for `subtle`.
+
+## A TLS port is told apart by the title, and never tried blind
+
+A plain `port` and a `tls-port` are identical in the kernel's socket tables, so choosing by
+locality and sort order alone could pick the TLS one and report a readable server as
+unreachable. Trying one and falling back to the other is not the answer, measured on redis
+8.0.2: a plain client on the TLS port is reset at once and leaves
+`Error accepting a client connection: ... wrong version number` in the server's log **at its
+default level**, so every run would write to the box it describes.
+
+**The process title names the plain port.** Its `{listen-addr}` shows the plain port whenever
+the server has one, and the TLS port only where it has no other, measured both ways, so among a
+server's TCP sockets the port the title names is dialled first, loopback before the box's own
+address within it. A custom `proc-title-template` that leaves the address out falls back to the
+order above. Where the chosen socket still hangs up, nothing else is tried and the instance's
+error names the sockets on other ports that were left, so a reader can tell a TLS port from a
+dead server. A server listening only on its TLS port is spoken to in plain text once and
+reported as a failed read, at the cost of that one log line.
+
+## An instance is keyed by its port
+
+The TCP port, else the process title for a server whose sockets cannot be attributed. A port rather than an address, so a change of `bind`, the field host's
+finding, reads as a change to one instance rather than one vanishing and another appearing.
+Two servers sharing a port, on different addresses, are keyed by the lowest address each holds on
+it, found by review: numbered in pid order, a restart of the older one would swap them. Two that
+share the address too, two containers each on `0.0.0.0:6379` in a namespace of its own, are told
+apart by the unit or scope their cgroup names, `0.0.0.0:6379 in docker-<id>.scope`, found by the
+next review: a container's scope survives its restart and its pid does not.
+
+**A server's forked child is the server.** A background save, an AOF rewrite or a replica's full
+sync forks a child that keeps `comm`, retitles itself `redis-rdb-bgsave *:6379`, and closes the
+listeners, measured on redis 5 to 8.10 and valkey 7.2 to 9.1. Counted, it would be a second,
+unreadable instance that comes and goes with the save, so a process whose parent is itself a
+server is left out.
+
+## No password is looked for, and only TCP is dialled
+
+Decided by the maintainer on 2026-10-16, after three rounds of review. A server that answers
+`INFO server` with `NOAUTH` is sent nothing more, and its instance's `not_read` says it requires a
+password. Finding the password meant asking systemd how the server was started, reading the file
+its start command names and every `include` under it inside the server's root and with its
+account's permission, and replaying the default account's rules so that only a password the
+server would accept was sent. Each of those steps exists because a review found the simpler one
+reading a file as root that another account chose, sending one server's password to another, or
+writing an `ACL LOG` entry. It came to 1 300 lines and twice that in tests, for a shape no default
+install has, so it was cut rather than shrunk: a smaller route would bring those findings back.
+
+**Nor is a unix socket dialled.** No packaged default listens only on one; Debian ships it off,
+and Alpine enables one beside the loopback port. Dialling it safely took a defence against forged
+rows in `/proc/net/unix`, a peer check, and a connection inside the server's root made as its
+account. A server listening on no TCP port is named, with that reason, and not read.
+
+## Credentials are carried and marked sensitive, the verifier included
+
+`requirepass`, `masterauth`, valkey's `primaryauth` (its name for `masterauth` from 8.1,
+answered beside it, found by the domain review) and the two TLS key passphrases arrive in plain text from
+`CONFIG GET`, and an account's `#<hex>` verifier from `ACL LIST` is `sha256` of the password with
+no salt at all, computed and matched on three builds. That is weaker than the md5 verifier the
+PostgreSQL entry withholds, and it is carried anyway, for two reasons. For the default account
+the verifier *is* `requirepass`, so withholding one while carrying the other protects nothing.
+And the redaction stand-in of a plain-text password is exactly as guessable as the stand-in of
+its unsalted hash, a bargain `SECURITY.md` already states for every redacted value. What carrying
+buys is that a rotation shows in a diff. `--raw` discloses both.
+
+**A module's load arguments are sensitive whole.** A module can take a password as one,
+RediSearch documents it, and no value is judged by its name, as with a container's environment.
+
+**An empty credential is carried as it stands.** `masterauth` is `""` on every server that is no
+replica, measured on a systemd-managed redis 8.0.2, and a digest of nothing would tell a reader a
+secret exists where none does.
+
+## A refused read costs itself
+
+`INFO server` goes first and is the gate: it doubles as the probe for `NOAUTH`, and a server that
+will not say what it is has nothing else worth asking. After it, `CONFIG GET *`,
+`INFO replication`, `ACL LIST` and `MODULE LIST` each fail alone, null in the document with the
+reason added to the instance's `error`, because a server hardened against one of them is
+hardened against one of them. The instance is marked incomplete for the summary on stderr.
+
+**Every refusal costs what the server records, and that is accepted.** A default account
+restricted against a command answers `NOPERM` and adds an `ACL LOG` entry for it, measured; there
+is no asking whether a command is allowed without the same entry, so each refused read costs one,
+by the maintainer's choice, rather than reading less on every hardened server. The counters a
+server keeps of errors, `errorstat_NOAUTH` for the probe and `errorstat_ERR` for a renamed command,
+are a metric reset on restart like the connection counters every read moves, not a record of an
+event, and are not counted as changing the host.
+
+**A sentinel is named and asked nothing more.** `redis-server --sentinel` keeps `comm`, answers
+`INFO server` with `redis_mode:sentinel`, and rejects the rest, measured on 8.10; once the mode is
+known nothing further is sent, and the instance says why.
+
+Once a server has answered, its own `server_name` outranks `comm`: Debian's valkey compatibility
+package installs a `redis-server` symlink, and the kernel records the name a process was started
+under.
+
+**A read that fails part way ends the connection**, found by the second review: a reply abandoned
+at the deadline or the bound leaves the rest of it on the socket, where the next command would
+read it as its own, so every later read on that server is refused with the earlier failure named.
+
+**The servers on a box get a minute between them**, found by the second security review: every
+wait on one server is bounded, but any account can start many genuine servers that answer
+slowly. A server reached once the minute is spent is sent nothing, and its instance's `error` says
+the facet's budget ran out. **The minute is when the last server may begin, not when the facet
+ends**, as the third review put it: a server begun inside it runs to its own deadlines, a second
+to connect and five for each of five commands, so the facet ends within about a minute and a half.
+
+
+## What the box withholds is `not_read`, beside `error`
+
+The rule [elasticsearch set](#not-read-is-not-an-error), applied from the facet's first release
+rather than later: what the box's own state keeps rastro from reading is an instance's `not_read`,
+and `error` is left for a read rastro supports that failed. `not_read` covers descriptors or a
+network namespace an unprivileged run is refused; a server that requires a password; a command
+the server refuses,
+`CONFIG` renamed away or `NOPERM`; and a sentinel, named and not read beyond its identity.
+`error` keeps a connection refused or hung up, a reply that is not the protocol or not the shape
+asked for, socket tables that cannot be read, a server that exited mid-read, and one listening on
+no TCP port. Both mark the instance incomplete, so the run's summary on stderr
+counts either; what changes is that an operator looking for faults finds only faults.
+## redis 8.0 to 8.10 and valkey 7.2 to 9.1 are supported, every other release best effort
+
+Not because the replies differ: `INFO` and `CONFIG GET` have kept their shape, measured on every
+cell from 5.0 to 9.1, and every release is read by the same rules. Support says which releases
+rastro has measured and keeps measuring. From endoflife.date's API, rastro's source of
+truth for what to support, with one override by the maintainer: redis 8.0, 8.2, 8.4, 8.6, 8.8 and
+8.10, where endoflife.date also lists 7.4, 7.2 and 6.2 as maintained; valkey 7.2, 8.0, 8.1, 9.0 and
+9.1, every line it lists.
+
+Any other release is read with the same rules, so what the collector can handle appears and what
+it cannot is a refused item with its reason, and the instance is marked `unsupported`, carrying
+`Fidelity::Approximate` as an unsupported elasticsearch node does, which the run's summary on
+stderr counts. Nothing about an older release is an error. `ACL` is still asked only of 6.0 and
+later; on 5.0 the facet reports `acl: null` with no error and sends nothing to find out, measured
+on cell 35. The release is valkey's own `valkey_version` where `server_name` says valkey.
+
+## The redis matrix
+
+[`redis-matrix.md`](redis-matrix.md): five cells, decided by the maintainer on 2026-10-16 after a
+first matrix of 35. The matrix is for running rastro against: a cell that reads right needs no
+test of its own, and one that reads wrong gets a test for that defect alone. The cells kept are
+captured as fixtures (`crates/rastro/tests/fixtures/redis/cells`) because they stand for the
+shapes every box has: the redis.io package's 8.10, valkey 9.1, a container with a published port
+and a volume, two instances of one template, and one release past support, 7.4. The stock fake
+server the facet's tests use is cell 1. Each `.resp` is kept byte for byte, `-text` in
+`.gitattributes`, since RESP ends every line with CRLF. Entries here that cite a cell other than
+these five cite the first matrix, whose measurements stand; its captures are in the history of
+rastro-research.
+
+## A server in a container is read through its network namespace
+
+Decided by the maintainer: as elasticsearch reads a node. A server in a container listens only in
+its own network namespace, so its sockets are in that namespace's tables, read from
+`/proc/<pid>/net`, and not the host's. It is reached from a thread that joins the namespace, now a
+module both collectors share, and only for the connection, since a socket keeps the namespace it
+was made in. The join needs `CAP_SYS_ADMIN`, so an unprivileged run does not get that far: the
+server's descriptors are refused first, as for every other server. Measured on cells 24 and 26,
+each read in full as root; on cell 24, docker-proxy's socket on the host's port is not the
+server's and is not taken for it.
+
+**Two servers sharing a port across namespaces** are keyed by the lowest address each holds on it,
+the rule for two on one box, so a host redis is `127.0.0.1:6379` and a valkey container beside it
+`0.0.0.0:6379`, an address in the container's own namespace, measured on the first matrix.
+
+## What is not read, and what moves
+
+`INFO persistence` repeats what `appendonly`, `save` and `dir` already say, and the rest of it is
+health that changes on its own. `INFO keyspace` is workload, for the reason RabbitMQ reports no
+message counts. From `INFO replication`, the role and a replica's master are state, and the
+master link status and the list of connected replicas are volatile: both change with nobody
+touching this box.
+
+## The server's own files are sealed, in its working directory
+
+redis applies `dir` with `chdir` and answers `CONFIG GET dir` with `getcwd`, so `/proc/<pid>/cwd`
+is the directory without a connection, which matters in the claim phase. Sealed for the reason
+the PostgreSQL and RabbitMQ stores are: every attribute of them moves when the server saves.
+
+**Its files, not its directory**, decided by the maintainer on cell 19, a server started by hand
+from `/root` with `dir ./`. Sealing the directory hid root's home, its keys and scripts, to hide
+one dump file, and deciding which directories are too important to seal would be the wrong fix
+for a misconfigured server. A claim's tree is any path, and the walk applies it to the path
+itself, so the snapshot, `dump.rdb`, and the append-only directory, `appendonlydir`, are claimed
+and nothing beside them. The names are redis's defaults: claims are gathered before any server is
+asked, so a renamed `dbfilename` is walked like any other file. A save in progress leaves a
+`temp-<pid>.rdb` beside the dump for its duration, which the walk then shows; a save means the data
+changed, so the box was not unchanged. A server working in `/` needs no exception any more. A
+host bind of part of the directory is that part, found by review: binding only `appendonlydir`
+at a second path shows the live append-only tree there, so the shared lookup now says which part
+of the path each host path shows, and that alias is sealed at its own root.
+
+**The host's directory behind the path, by identity rather than by namespace**, found by the
+matrix. A review had sealed only a server in rastro's own mount namespace, so a container's `/data`
+would not seal the host's; the first capture showed every packaged server has a namespace of its
+own and so sealed none of them, elasticsearch's finding exactly. Its rule is now shared: the path
+inside the server's root and the host's are one directory, by device and inode, or the mount
+tables name the host directory of the volume or bind it is on. Measured: the package's
+`/var/lib/redis`, cell 16's `/data/redis` on its own volume, and cell 24's named volume under
+`/var/lib/docker/volumes`. A directory in a container's own image, cell 23's `/data` since redis
+8.10's image declares no volume, is the containers facet's to account for and is not claimed.
+
+## The live check runs after the suite, not in it
+
+`redis_conformance` starts a server of its own in its scratch tree, on a loopback port with
+persistence off, and compares rastro's reading with the server's own client. Outside the ordinary
+suite because nextest runs binaries side by side and a server appearing between the two runs of
+the determinism harness would fail it for nothing rastro did. `ci.yml` and `container-suite.sh`
+run it straight after; on the runner the package's own daemon is stopped first, and in the
+containers it never starts, which the Debian image's `policy-rc.d` was measured to deny.
+
+## What v1 of the facet does not model
+
+- **Cluster and Sentinel topology.** `mode` is recorded; `CLUSTER NODES` and `SENTINEL MASTERS`
+  are reads of many boxes, and a `redis-server --sentinel` is named and not read.
+- **A server with a password**, and **one listening only on a unix socket**: see above.
+- **A `redis-sentinel` process is not an instance.** Discovery matches `redis-server` and
+  `valkey-server`, so a sentinel is not recognised at all, rather than recognised and left
+  unwalked. Measured on cell 22, the sentinel package installs the server too, so the facet is
+  present with the server installed and no instances.
+- **TLS.** No socket is spoken to in TLS; a server reachable only on its TLS port is a failed read.
+- **Module-specific settings** beyond what `CONFIG GET *` returns for them.

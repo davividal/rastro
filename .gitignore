@@ -17,3 +17,6 @@ review-results.md
 # `target/llvm-cov/`, which `/target` already covers; this is the stderr beside it, and one
 # copy reached a commit before this line existed.
 /cov.err
+
+# Vagrant's machine-local state beside a Vagrantfile.
+.vagrant/
