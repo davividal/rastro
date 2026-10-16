@@ -9,11 +9,11 @@
 //! `nginx_conformance` rule and for its reason: a check that quietly passes on a box without the
 //! service is how three earlier defects hid. `scripts/container-suite.sh` installs it.
 //!
-//! The server is contained: a unix socket and no TCP port, persistence off, its directory inside
-//! this test's own scratch tree, and killed when the test ends. It runs as whoever runs the
+//! The server is contained: a loopback port nothing else holds, persistence off, its directory
+//! inside this test's own scratch tree, and killed when the test ends. It runs as whoever runs the
 //! suite, so the unprivileged half of the container suite reads a server it owns.
 
-use std::fs;
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::thread;
@@ -31,28 +31,31 @@ use support::observation::{field, is_null, keys_of, text};
 const SERVER: &str = "redis-server";
 const CLIENT: &str = "redis-cli";
 
-/// How long a server gets to create its socket.
+/// How long a server gets to start listening.
 const START_WITHIN: Duration = Duration::from_secs(10);
 
 /// A server this test started, stopped when the test ends whatever the outcome.
 struct LiveServer {
     child: Child,
-    socket: PathBuf,
+    port: u16,
     directory: PathBuf,
 }
 
 impl LiveServer {
     fn start(name: &str, extra: &[&str]) -> Self {
         let directory = scratch_tree(name, &["data"]).join("data");
-        // Short, for the unix socket path limit; the scratch tree is too deep for it.
-        let socket = std::env::temp_dir().join(format!("rastro-live-{name}.sock"));
-        let _ = fs::remove_file(&socket);
+        // A port the kernel just handed out and took back, which nothing else is likely to take.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a loopback port")
+            .port();
+        let port_text = port.to_string();
 
         let mut arguments = vec![
             "--port",
-            "0",
-            "--unixsocket",
-            socket.to_str().expect("a UTF-8 path"),
+            &port_text,
+            "--bind",
+            "127.0.0.1",
             "--dir",
             directory.to_str().expect("a UTF-8 path"),
             "--save",
@@ -77,16 +80,13 @@ impl LiveServer {
             });
         let server = Self {
             child,
-            socket,
+            port,
             directory,
         };
 
         let deadline = Instant::now() + START_WITHIN;
-        while !server.socket.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "{SERVER} never created its socket"
-            );
+        while TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "{SERVER} never listened");
             thread::sleep(Duration::from_millis(20));
         }
 
@@ -94,14 +94,14 @@ impl LiveServer {
     }
 
     fn key(&self) -> String {
-        self.socket.display().to_string()
+        self.port.to_string()
     }
 
     /// What the server's own client prints for a command, one line per reply element.
     fn client(&self, command: &[&str]) -> Vec<String> {
         let output = Command::new(CLIENT)
-            .arg("-s")
-            .arg(&self.socket)
+            .args(["-h", "127.0.0.1", "-p"])
+            .arg(self.port.to_string())
             .args(command)
             .output()
             .expect("the server's own client");
@@ -119,7 +119,6 @@ impl Drop for LiveServer {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = fs::remove_file(&self.socket);
     }
 }
 

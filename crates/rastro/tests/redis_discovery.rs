@@ -7,12 +7,10 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use rastro::collectors::inside_root::ProcessRoot;
-use rastro::collectors::redis::{DialTarget, DiscoveredServer, ServerKind, discover};
+use rastro::collectors::redis::{DiscoveredServer, ServerKind, discover};
 
 mod support;
 
-use support::account::{runner, status_of_runner};
 use support::fake_redis::HOST_NETWORK_NAMESPACE;
 use support::fs_tree::{scratch_tree, write};
 
@@ -85,7 +83,6 @@ fn proc_with(name: &str, processes: &[Process], tcp: &str, tcp6: &str, unix: &st
             .expect("a writable scratch symlink");
         write(&directory, "comm", &format!("{}\n", process.comm));
         write(&directory, "cmdline", process.title);
-        write(&directory, "status", &status_of_runner());
         write(
             &directory,
             "stat",
@@ -152,45 +149,14 @@ fn a_server_is_keyed_by_its_port_and_lists_every_socket_it_holds() {
     assert_eq!(listeners_of(&discovered), ["127.0.0.1:6379", "[::1]:6379"]);
     assert_eq!(
         discovered.reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
+        Ok("127.0.0.1:6379".parse().expect("an address"))
     );
 }
 
 #[test]
-fn a_unix_socket_is_reached_before_any_tcp_one() {
-    // Arrange: Alpine's shipped configuration, which enables both.
-    let proc = proc_with(
-        "redis-discovery-unix-first",
-        &[server("412", &[1001, 1003])],
-        &tcp_row(LOOPBACK_6379, 1001),
-        "",
-        &unix_row("/run/redis/redis.sock", 1003),
-    );
-
-    // Act
-    let discovered = only(&proc);
-
-    // Assert: the key stays the port, so enabling the socket is a change to the instance
-    // rather than one instance disappearing and another appearing.
-    assert_eq!(discovered.key, "6379");
-    assert_eq!(
-        listeners_of(&discovered),
-        ["127.0.0.1:6379", "/run/redis/redis.sock"]
-    );
-    assert_eq!(
-        discovered.reach,
-        Ok(DialTarget::Unix {
-            root: ProcessRoot::new(proc.join("412/root"), runner()),
-            path: PathBuf::from("/run/redis/redis.sock"),
-        })
-    );
-}
-
-#[test]
-fn a_server_on_a_unix_socket_alone_is_keyed_by_its_path() {
-    // Arrange
+fn a_server_on_a_unix_socket_alone_is_not_dialled() {
+    // Arrange: no packaged default listens on one, so rastro dials TCP alone, by the maintainer's
+    // choice.
     let proc = proc_with(
         "redis-discovery-unix-only",
         &[server("412", &[1003])],
@@ -199,32 +165,11 @@ fn a_server_on_a_unix_socket_alone_is_keyed_by_its_path() {
         &unix_row("/run/redis/redis.sock", 1003),
     );
 
-    // Act & Assert
-    assert_eq!(only(&proc).key, "/run/redis/redis.sock");
-}
-
-#[test]
-fn a_relative_unix_socket_leaves_the_server_reached_on_its_port() {
-    // Arrange: found by review, redis takes `unixsocket` relative to a working directory nothing
-    // records, so that socket cannot be dialled, and the port beside it can.
-    let proc = proc_with(
-        "redis-discovery-relative-unix",
-        &[server("412", &[1001, 1003])],
-        &tcp_row(LOOPBACK_6379, 1001),
-        "",
-        &unix_row("redis.sock", 1003),
-    );
-
     // Act
-    let discovered = only(&proc);
+    let refusal = only(&proc).reach.expect_err("a server with no TCP port");
 
     // Assert
-    assert_eq!(
-        discovered.reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
-    );
+    assert!(refusal.reason.contains("no TCP port"), "{refusal}");
 }
 
 #[test]
@@ -245,9 +190,7 @@ fn a_wildcard_listener_is_reached_on_loopback() {
     assert_eq!(listeners_of(&discovered), ["0.0.0.0:6379"]);
     assert_eq!(
         discovered.reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
+        Ok("127.0.0.1:6379".parse().expect("an address"))
     );
 }
 
@@ -265,7 +208,7 @@ fn an_ipv6_wildcard_listener_is_reached_on_ipv6_loopback() {
     // Act & Assert
     assert_eq!(
         only(&proc).reach,
-        Ok(DialTarget::Tcp("[::1]:6379".parse().expect("an address")))
+        Ok("[::1]:6379".parse().expect("an address"))
     );
 }
 
@@ -284,9 +227,7 @@ fn an_address_of_the_box_is_reached_as_it_is_bound() {
     // Act & Assert
     assert_eq!(
         only(&proc).reach,
-        Ok(DialTarget::Tcp(
-            "10.0.0.5:6379".parse().expect("an address")
-        ))
+        Ok("10.0.0.5:6379".parse().expect("an address"))
     );
 }
 
@@ -364,42 +305,6 @@ fn a_server_is_not_reached_where_the_socket_tables_are_unreadable() {
 }
 
 #[test]
-fn a_unix_socket_in_another_namespace_is_dialled_inside_the_servers_root() {
-    // Arrange: a server in a container of its own, holding a unix socket and nothing else; its
-    // path is its own root's, and the host's at that spelling is another socket or none.
-    let proc = proc_with(
-        "redis-discovery-container-unix",
-        &[server("412", &[1003])],
-        "",
-        "",
-        &unix_row("/run/redis/redis.sock", 1003),
-    );
-    fs::create_dir_all(proc.join("412/net")).expect("a writable scratch directory");
-    for table in ["tcp", "tcp6", "unix"] {
-        fs::copy(
-            proc.join("net").join(table),
-            proc.join("412/net").join(table),
-        )
-        .expect("a copied table");
-    }
-    fs::remove_file(proc.join("412/ns/net")).expect("a removable fixture");
-    symlink("net:[4026532777]", proc.join("412/ns/net")).expect("a writable scratch symlink");
-
-    // Act
-    let discovered = only(&proc);
-
-    // Assert
-    assert_eq!(listeners_of(&discovered), ["/run/redis/redis.sock"]);
-    assert_eq!(
-        discovered.reach,
-        Ok(DialTarget::Unix {
-            root: ProcessRoot::new(proc.join("412/root"), runner()),
-            path: PathBuf::from("/run/redis/redis.sock"),
-        })
-    );
-}
-
-#[test]
 fn a_server_listening_on_nothing_says_so() {
     // Arrange: `port 0` and no `unixsocket`, which redis accepts.
     let proc = proc_with("redis-discovery-silent", &[server("412", &[])], "", "", "");
@@ -410,7 +315,7 @@ fn a_server_listening_on_nothing_says_so() {
     // Assert
     assert_eq!(discovered.key, "/usr/bin/redis-server 127.0.0.1:6379");
     let refusal = discovered.reach.expect_err("an unreachable server");
-    assert!(refusal.reason.contains("listens on nothing"), "{refusal}");
+    assert!(refusal.reason.contains("no TCP port"), "{refusal}");
 }
 
 #[test]
@@ -634,9 +539,7 @@ fn loopback_is_reached_before_an_address_of_the_box() {
     // Act & Assert
     assert_eq!(
         only(&proc).reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
+        Ok("127.0.0.1:6379".parse().expect("an address"))
     );
 }
 
@@ -666,9 +569,7 @@ fn the_port_the_process_title_names_is_reached_before_one_that_sorts_first() {
     // Act & Assert
     assert_eq!(
         only(&proc).reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6380".parse().expect("an address")
-        ))
+        Ok("127.0.0.1:6380".parse().expect("an address"))
     );
 }
 
@@ -695,9 +596,7 @@ fn within_the_titled_port_loopback_is_still_reached_first() {
     // Act & Assert
     assert_eq!(
         only(&proc).reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
+        Ok("127.0.0.1:6379".parse().expect("an address"))
     );
 }
 
@@ -723,9 +622,7 @@ fn a_title_naming_no_port_leaves_the_usual_order() {
     // Act & Assert
     assert_eq!(
         only(&proc).reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
+        Ok("127.0.0.1:6379".parse().expect("an address"))
     );
 }
 
@@ -757,79 +654,6 @@ fn a_child_a_server_forked_to_save_is_not_another_server() {
 
     // Assert
     assert_eq!(keys, ["6379"]);
-}
-
-#[test]
-fn a_unix_row_naming_a_tcp_sockets_inode_is_not_the_servers() {
-    // Arrange: the table prints a path raw, newline included, so any account can bind a name that
-    // forges a row. The kernel gives no two sockets one inode, so a unix row repeating the TCP
-    // listener's inode is the forgery, and the TCP row, which holds no free text, is the socket.
-    let proc = proc_with(
-        "redis-discovery-forged-unix",
-        &[server("412", &[1001])],
-        &tcp_row(LOOPBACK_6379, 1001),
-        "",
-        &unix_row("/tmp/forged.sock", 1001),
-    );
-
-    // Act
-    let discovered = only(&proc);
-
-    // Assert
-    assert_eq!(listeners_of(&discovered), ["127.0.0.1:6379"]);
-    assert_eq!(
-        discovered.reach,
-        Ok(DialTarget::Tcp(
-            "127.0.0.1:6379".parse().expect("an address")
-        ))
-    );
-}
-
-#[test]
-fn two_unix_rows_sharing_an_inode_are_neither_the_servers() {
-    // Arrange: a forged row repeating the server's own unix socket's inode, under another path.
-    let proc = proc_with(
-        "redis-discovery-forged-twin",
-        &[server("412", &[1001, 1003])],
-        &tcp_row(LOOPBACK_6379, 1001),
-        "",
-        &format!(
-            "{}{}",
-            unix_row("/run/redis/redis.sock", 1003),
-            unix_row("/tmp/forged.sock", 1003)
-        ),
-    );
-
-    // Act
-    let discovered = only(&proc);
-
-    // Assert: which path is the server's cannot be told, and leaving its socket out would be a
-    // wrong list reported as right.
-    let refusal = discovered.reach.expect_err("an ambiguous socket");
-    assert!(refusal.reason.contains("repeats"), "{refusal}");
-}
-
-#[test]
-fn a_server_on_a_unix_socket_alone_is_not_said_to_listen_on_nothing_when_a_row_is_forged() {
-    // Arrange: found by review, a forged row repeating the inode of the server's only socket.
-    let proc = proc_with(
-        "redis-discovery-forged-only",
-        &[server("412", &[1003])],
-        "",
-        "",
-        &format!(
-            "{}{}",
-            unix_row("/run/redis/redis.sock", 1003),
-            unix_row("/tmp/forged.sock", 1003)
-        ),
-    );
-
-    // Act
-    let refusal = only(&proc).reach.expect_err("an ambiguous socket");
-
-    // Assert
-    assert!(!refusal.reason.contains("nothing"), "{refusal}");
-    assert!(refusal.reason.contains("repeats"), "{refusal}");
 }
 
 #[test]

@@ -15,8 +15,8 @@ mod support;
 use support::fake_redis::{proc_holding, server_pid};
 use support::fs_tree::{scratch_tree, write};
 
-/// A socket path standing for the server's key; nothing listens on it, because nothing asks.
-const SOCKET: &str = "/run/redis/redis-server.sock";
+/// The port standing for the server's key; nothing listens on it, because nothing asks.
+const PORT: u16 = 6379;
 
 fn claims_of(proc: &Path) -> Vec<FilesystemClaim> {
     RedisCollector::reading(InstalledServers::new([]), proc).filesystem_claims()
@@ -29,7 +29,7 @@ fn in_own_mount_namespace(proc: &Path) {
 }
 
 fn with_working_directory(name: &str, directory: &Path) -> PathBuf {
-    let proc = proc_holding(name, Path::new(SOCKET));
+    let proc = proc_holding(name, PORT);
     symlink(directory, proc.join(server_pid()).join("cwd")).expect("a writable scratch symlink");
 
     proc
@@ -75,7 +75,7 @@ fn a_servers_own_files_are_sealed_for_its_instance() {
         assert_eq!(claim.reading(), ClaimedReading::Sealed);
         assert_eq!(
             claim.qualifier().map(|qualifier| qualifier.as_str()),
-            Some(SOCKET)
+            Some(PORT.to_string().as_str())
         );
     }
 }
@@ -135,7 +135,7 @@ fn a_bind_mount_of_the_append_only_directory_is_sealed_at_its_own_root() {
 #[test]
 fn a_server_whose_directory_cannot_be_read_claims_nothing() {
     // Arrange: an unprivileged run, which may not follow another account's `cwd`.
-    let proc = proc_holding("redis-claims-unreadable", Path::new(SOCKET));
+    let proc = proc_holding("redis-claims-unreadable", PORT);
 
     // Act & Assert: the walk's default is the safe direction to be wrong in.
     assert!(claims_of(&proc).is_empty());

@@ -12,9 +12,9 @@ pub use model::{
     Accounts, Installation, Instance, Module, Modules, Replication, ServerIdentity, Settings,
 };
 pub use source::{
-    AclList, ConfigGet, DialTarget, DiscoveredServer, InfoReplication, InfoServer,
-    InstalledServers, ModuleList, Reply, ResidentCensus, ResidentServer, RespConnection,
-    ServerStream, discover, read_installation, resident_census, resident_servers, server_files_of,
+    AclList, ConfigGet, DiscoveredServer, InfoReplication, InfoServer, InstalledServers,
+    ModuleList, Reply, ResidentCensus, ResidentServer, RespConnection, discover, read_installation,
+    resident_census, resident_servers, server_files_of,
 };
 pub use value_objects::{Listener, ServerKind, SettingName};
 

@@ -14,24 +14,19 @@ use crate::collectors::inet::{InetHost, PortNumber};
 /// it was the finding.
 ///
 /// Renders as one string in the form a redis operator writes it, `127.0.0.1:6379`,
-/// `[::1]:6379` or a socket path, rather than as an object: a list of these is read at a glance.
+/// `[::1]:6379`, rather than as an object: a list of these is read at a glance.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Listener {
-    Inet { host: InetHost, port: PortNumber },
-    Local { path: String },
+pub struct Listener {
+    pub host: InetHost,
+    pub port: PortNumber,
 }
 
 impl fmt::Display for Listener {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            // The one family whose address holds colons, so the only one that needs brackets.
-            Listener::Inet { host, port } if host.as_str().contains(':') => {
-                write!(formatter, "[{}]:{}", host.as_str(), port.as_u16())
-            }
-            Listener::Inet { host, port } => {
-                write!(formatter, "{}:{}", host.as_str(), port.as_u16())
-            }
-            Listener::Local { path } => formatter.write_str(path),
+        // The one family whose address holds colons, so the only one that needs brackets.
+        match self.host.as_str().contains(':') {
+            true => write!(formatter, "[{}]:{}", self.host.as_str(), self.port.as_u16()),
+            false => write!(formatter, "{}:{}", self.host.as_str(), self.port.as_u16()),
         }
     }
 }

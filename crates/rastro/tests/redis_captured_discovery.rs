@@ -60,15 +60,6 @@ cell!(
     [("6379", "127.0.0.1:6379", true)]
 );
 cell!(
-    cell_09_a_unix_socket_alone,
-    "09",
-    [(
-        "/run/redis/redis-server.sock",
-        "/run/redis/redis-server.sock",
-        true
-    )]
-);
-cell!(
     cell_10_the_plain_port_the_title_names_beside_tls,
     "10",
     [("6379", "127.0.0.1:6380", true)]
@@ -117,15 +108,6 @@ cell!(
     cell_27_valkey_under_its_own_unit,
     "27",
     [("6379", "127.0.0.1:6379", true)]
-);
-cell!(
-    cell_29_valkey_on_a_unix_socket,
-    "29",
-    [(
-        "/run/valkey-29/valkey.sock",
-        "/run/valkey-29/valkey.sock",
-        true
-    )]
 );
 cell!(
     cell_30_a_valkey_container_with_tls_beside_plain,

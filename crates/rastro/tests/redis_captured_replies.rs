@@ -7,7 +7,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rastro::collectors::redis::{InstalledServers, RedisCollector};
 use rastro_collector::{Collector, Observation};
@@ -17,9 +16,6 @@ mod support;
 use support::captured_redis_cell::servers_of;
 use support::fake_redis::{FakeRedis, key_of};
 use support::observation::{field, is_null, keys_of, text};
-
-/// How many servers this binary has replayed, which numbers each one's socket.
-static REPLAYED: AtomicUsize = AtomicUsize::new(0);
 
 /// The command each captured reply file answers, from its name.
 fn command_of(reply: &Path) -> String {
@@ -55,9 +51,7 @@ fn replayed(cell: &str, index: usize) -> Observation {
         .name()
         .unwrap_or("unnamed")
         .replace("::", "-");
-    // The socket's own name short: a unix socket path is capped at about a hundred bytes.
-    let socket = REPLAYED.fetch_add(1, Ordering::Relaxed);
-    let fake = FakeRedis::answering(&format!("rp-{}-{socket}", std::process::id()), &borrowed);
+    let fake = FakeRedis::answering(&borrowed);
     let proc = fake.proc(&format!("redis-replayed-{cell}-{index}-{test}"));
     let observation = RedisCollector::reading(InstalledServers::new([]), &proc)
         .collect()

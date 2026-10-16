@@ -19,16 +19,13 @@
 //!   because what follows `AUTH` is a password.
 
 use std::io::{self, ErrorKind, Read, Write};
-use std::net::TcpStream;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use rastro_collector::CollectionError;
 use redis::Parser;
 
 use super::reply::{Reply, shortened};
-use super::server_discovery::DialTarget;
 
 /// How long a server gets to accept a request or finish a reply.
 ///
@@ -54,84 +51,6 @@ const CONNECT_WITHIN: Duration = Duration::from_secs(1);
 /// pass is the read's own business to notice.
 const SHORTEST_WAIT: Duration = Duration::from_millis(1);
 
-/// A socket to a server, over either of the two ways a server listens locally.
-#[derive(Debug)]
-pub enum ServerStream {
-    Unix(UnixStream),
-    Tcp(TcpStream),
-}
-
-impl ServerStream {
-    fn set_timeouts(&self, within: Duration) -> io::Result<()> {
-        self.set_read_timeout(within)?;
-        self.set_write_timeout(within)
-    }
-
-    fn set_read_timeout(&self, within: Duration) -> io::Result<()> {
-        match self {
-            ServerStream::Unix(stream) => stream.set_read_timeout(Some(within)),
-            ServerStream::Tcp(stream) => stream.set_read_timeout(Some(within)),
-        }
-    }
-
-    fn set_write_timeout(&self, within: Duration) -> io::Result<()> {
-        match self {
-            ServerStream::Unix(stream) => stream.set_write_timeout(Some(within)),
-            ServerStream::Tcp(stream) => stream.set_write_timeout(Some(within)),
-        }
-    }
-}
-
-impl From<UnixStream> for ServerStream {
-    fn from(stream: UnixStream) -> Self {
-        ServerStream::Unix(stream)
-    }
-}
-
-impl From<TcpStream> for ServerStream {
-    fn from(stream: TcpStream) -> Self {
-        ServerStream::Tcp(stream)
-    }
-}
-
-impl Read for ServerStream {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        match self {
-            ServerStream::Unix(stream) => stream.read(buffer),
-            ServerStream::Tcp(stream) => stream.read(buffer),
-        }
-    }
-}
-
-impl Write for ServerStream {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        match self {
-            ServerStream::Unix(stream) => stream.write(buffer),
-            ServerStream::Tcp(stream) => stream.write(buffer),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match self {
-            ServerStream::Unix(stream) => stream.flush(),
-            ServerStream::Tcp(stream) => stream.flush(),
-        }
-    }
-}
-
-/// Whether the kernel names `server` as the process at the other end of a connected unix socket.
-#[cfg(target_os = "linux")]
-fn held_by(socket: &UnixStream, server: u32) -> bool {
-    rustix::net::sockopt::socket_peercred(socket)
-        .is_ok_and(|peer| u32::try_from(peer.pid.as_raw_pid()).is_ok_and(|pid| pid == server))
-}
-
-/// rastro reads Linux hosts; elsewhere, where only its tests run, there is no `SO_PEERCRED`.
-#[cfg(not(target_os = "linux"))]
-fn held_by(_socket: &UnixStream, _server: u32) -> bool {
-    true
-}
-
 /// A connection to one server, asked one command at a time.
 ///
 /// One parser for the life of the connection, so bytes past one reply are kept for the next
@@ -140,7 +59,7 @@ fn held_by(_socket: &UnixStream, _server: u32) -> bool {
 /// **Broken by the first exchange that fails**, found by review: a reply abandoned part way leaves
 /// the rest of it on the socket, where the next command would read it as its own reply.
 pub struct RespConnection {
-    stream: ServerStream,
+    stream: TcpStream,
     parser: Parser,
     bound: usize,
     within: Duration,
@@ -149,9 +68,9 @@ pub struct RespConnection {
 
 impl RespConnection {
     /// A connection over a socket already open, bounded the way every read here is.
-    pub fn over(stream: impl Into<ServerStream>) -> Result<Self, CollectionError> {
+    pub fn over(stream: TcpStream) -> Result<Self, CollectionError> {
         Self {
-            stream: stream.into(),
+            stream,
             parser: Parser::new(),
             bound: REPLY_BOUND,
             within: ANSWER_WITHIN,
@@ -161,51 +80,22 @@ impl RespConnection {
     }
 
     /// A connection to the socket discovery chose.
-    ///
-    /// **A unix socket is spoken to only once the kernel names the server as its peer.** The socket
-    /// table that led here prints a path raw, newline included, measured, so another account can
-    /// bind a path that forges a row naming the server's inode. `SO_PEERCRED` on the connected
-    /// socket is the kernel's own answer, and anything but the server's pid is sent nothing. A TCP
-    /// row has no free text to forge.
-    pub fn dial(target: &DialTarget, server: u32) -> Result<Self, CollectionError> {
-        let stream: io::Result<ServerStream> = match target {
-            DialTarget::Unix { root, path } => path
-                .strip_prefix("/")
-                .map_err(|_| {
-                    io::Error::other("the path is relative, to a directory nothing records")
-                })
-                .and_then(|relative| {
-                    root.connect(relative, |reachable| {
-                        unix_connect_within(reachable, CONNECT_WITHIN)
-                    })
-                })
-                .map(ServerStream::from),
-            DialTarget::Tcp(address) => {
-                TcpStream::connect_timeout(address, CONNECT_WITHIN).map(ServerStream::from)
-            }
-        };
-
-        let stream = stream.map_err(|error| {
-            CollectionError::new(format!("could not connect to {target}: {error}"))
+    pub fn dial(address: &SocketAddr) -> Result<Self, CollectionError> {
+        let stream = TcpStream::connect_timeout(address, CONNECT_WITHIN).map_err(|error| {
+            CollectionError::new(format!("could not connect to {address}: {error}"))
         })?;
-
-        if let ServerStream::Unix(socket) = &stream
-            && !held_by(socket, server)
-        {
-            return Err(CollectionError::new(format!(
-                "the socket at {target} is not the server's own: the kernel names another process \
-                 as its holder, so nothing was sent"
-            )));
-        }
 
         Self::over(stream)
     }
 
     /// The same, giving up on a server sooner or later than the default.
     pub fn timing_out_after(mut self, within: Duration) -> Result<Self, CollectionError> {
-        self.stream.set_timeouts(within).map_err(|error| {
-            CollectionError::new(format!("the server's socket refused a timeout: {error}"))
-        })?;
+        self.stream
+            .set_read_timeout(Some(within))
+            .and_then(|()| self.stream.set_write_timeout(Some(within)))
+            .map_err(|error| {
+                CollectionError::new(format!("the server's socket refused a timeout: {error}"))
+            })?;
         self.within = within;
 
         Ok(self)
@@ -267,7 +157,7 @@ impl RespConnection {
                 return Err(io::Error::from(ErrorKind::TimedOut));
             }
             self.stream
-                .set_write_timeout(remaining.max(SHORTEST_WAIT))?;
+                .set_write_timeout(Some(remaining.max(SHORTEST_WAIT)))?;
             let end = bytes.len().min(written + MOST_WRITTEN_AT_ONCE);
             match self.stream.write(&bytes[written..end]) {
                 Ok(0) => return Err(io::Error::from(ErrorKind::WriteZero)),
@@ -330,49 +220,6 @@ impl RespConnection {
     }
 }
 
-/// A unix socket connected within `within`, found by review: a blocking connect waits for room in
-/// a full accept queue, which another account with access to the socket can keep full, and the
-/// socket's timeouts are set only once it is connected. Non-blocking, a full queue is `EAGAIN`,
-/// retried until the deadline.
-#[cfg(target_os = "linux")]
-fn unix_connect_within(path: &Path, within: Duration) -> io::Result<UnixStream> {
-    use rustix::io::Errno;
-    use rustix::net::{
-        AddressFamily, SocketAddrUnix, SocketFlags, SocketType, connect, socket_with,
-    };
-
-    let deadline = Instant::now() + within;
-    let address = SocketAddrUnix::new(path)?;
-    loop {
-        let socket = socket_with(
-            AddressFamily::UNIX,
-            SocketType::STREAM,
-            SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
-            None,
-        )?;
-        match connect(&socket, &address) {
-            Ok(()) => {
-                let stream = UnixStream::from(socket);
-                stream.set_nonblocking(false)?;
-                return Ok(stream);
-            }
-            Err(Errno::AGAIN) if Instant::now() < deadline => std::thread::sleep(QUEUE_RETRY),
-            Err(Errno::AGAIN) => return Err(io::Error::from(ErrorKind::TimedOut)),
-            Err(error) => return Err(error.into()),
-        }
-    }
-}
-
-/// The same on a workstation build, which reads no real server: rastro ships for Linux alone.
-#[cfg(not(target_os = "linux"))]
-fn unix_connect_within(path: &Path, _within: Duration) -> io::Result<UnixStream> {
-    UnixStream::connect(path)
-}
-
-/// How long a connection waits before asking a full accept queue again.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const QUEUE_RETRY: Duration = Duration::from_millis(10);
-
 /// The most one write is handed, so the deadline is checked between writes of a long command.
 const MOST_WRITTEN_AT_ONCE: usize = 64 * 1024;
 
@@ -390,7 +237,7 @@ enum Interrupted {
 /// **Each read gets what is left of the command's deadline, and at most what is left of the bound
 /// plus one byte**, which is how a breach of either is noticed without reading past it.
 struct Exchange<'a> {
-    stream: &'a mut ServerStream,
+    stream: &'a mut TcpStream,
     deadline: Instant,
     read: usize,
     bound: usize,
@@ -404,7 +251,8 @@ impl Read for Exchange<'_> {
             self.interrupted = Some(Interrupted::PastDeadline);
             return Err(io::Error::from(ErrorKind::TimedOut));
         }
-        self.stream.set_read_timeout(remaining.max(SHORTEST_WAIT))?;
+        self.stream
+            .set_read_timeout(Some(remaining.max(SHORTEST_WAIT)))?;
 
         let room = self
             .bound

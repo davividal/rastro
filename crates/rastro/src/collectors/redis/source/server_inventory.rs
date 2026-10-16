@@ -1,5 +1,6 @@
 //! Every server on the box, each asked what discovery says it may be asked.
 
+use std::net::SocketAddr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use super::module_list::ModuleList;
 use super::reply::{Reply, shortened};
 use super::resident_servers::resident_census;
 use super::resp_connection::RespConnection;
-use super::server_discovery::{DialTarget, DiscoveredServer, discover};
+use super::server_discovery::{DiscoveredServer, discover};
 use crate::collectors::redis::model::{Installation, Instance, ServerIdentity};
 use crate::collectors::redis::value_objects::Listener;
 
@@ -82,7 +83,6 @@ fn unasked(server: &DiscoveredServer) -> Instance {
 }
 
 fn read_instance(server: DiscoveredServer) -> Instance {
-    let process_id = server.process_id;
     let mut instance = unasked(&server);
 
     let target = match &server.reach {
@@ -97,10 +97,7 @@ fn read_instance(server: DiscoveredServer) -> Instance {
     };
 
     // A socket keeps the namespace it was made in, so only the connection joins the server's.
-    let dialled = match server
-        .namespace
-        .run(|| RespConnection::dial(target, process_id))
-    {
+    let dialled = match server.namespace.run(|| RespConnection::dial(target)) {
         Ok(dialled) => dialled,
         Err(refusal) => {
             instance.record(match refusal.refused {
@@ -224,16 +221,10 @@ fn identify(first: Reply) -> Result<ServerIdentity, Shortfall> {
 /// Measured, a plain client on a TLS port is a line in the server's log at its default level, and
 /// the kernel's tables cannot say which port is which, so nothing else is tried; the document says
 /// what was left instead, so a reader can tell a TLS port from a dead server.
-fn untried_note(target: &DialTarget, listening: &[Listener]) -> String {
-    let DialTarget::Tcp(address) = target else {
-        return String::new();
-    };
-
+fn untried_note(address: &SocketAddr, listening: &[Listener]) -> String {
     let untried: Vec<String> = listening
         .iter()
-        .filter(|listener| {
-            matches!(listener, Listener::Inet { port, .. } if port.as_u16() != address.port())
-        })
+        .filter(|listener| listener.port.as_u16() != address.port())
         .map(Listener::to_string)
         .collect();
 

@@ -19,19 +19,14 @@
 //! which process to talk to, and one odd row elsewhere in the table says nothing about that. The
 //! `sockets` facet, which reports every row, is the reader that refuses a malformed one.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
 use super::kernel_address::{ipv4_of, ipv6_of};
-use super::unix_columns::unix_columns;
 
 /// The two tables a TCP port can be offered in, and whether each writes IPv6 addresses.
 const INET_TABLES: [(&str, bool); 2] = [("tcp", false), ("tcp6", true)];
-
-/// The table unix sockets are published in.
-const UNIX_TABLE: &str = "unix";
 
 /// The state a TCP socket the box is offering is in, as the table spells it.
 const LISTENING: &str = "0A";
@@ -44,36 +39,14 @@ const LOCAL_ADDRESS: usize = 1;
 const STATE: usize = 3;
 const INODE: usize = 9;
 
-/// Which unix columns hold the flags, the socket type, the state and the inode.
-const UNIX_FLAGS: usize = 3;
-const UNIX_KIND: usize = 4;
-const UNIX_STATE: usize = 5;
-const UNIX_INODE: usize = 6;
-
-/// A unix socket that accepts connections: `SO_ACCEPTCON` set, a stream, and unconnected.
-const ACCEPT_CONNECTIONS: u32 = 0x0001_0000;
-const STREAM: &str = "0001";
-const UNCONNECTED: &str = "01";
-
-/// Words of the two headers, used to tell them from a row rather than counting lines.
+/// A word of the header, used to tell it from a row rather than counting lines.
 const INET_HEADER: &str = "local_address";
-const UNIX_HEADER: &str = "RefCount";
 
 /// A TCP socket the box is offering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InetListener {
     pub address: SocketAddr,
     pub inode: u64,
-}
-
-/// A unix stream socket the box is offering, under the name it is bound to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnixListener {
-    pub path: String,
-    pub inode: u64,
-
-    /// Whether another unix row names the same inode, so that which path is bound cannot be told.
-    pub ambiguous: bool,
 }
 
 /// Every TCP socket being offered, or nothing where neither table could be read.
@@ -102,52 +75,6 @@ pub fn inet_listeners(net: &Path) -> Option<Vec<InetListener>> {
     read_a_table.then_some(listeners)
 }
 
-/// Every unix stream socket accepting connections under a name, or nothing where the table
-/// could not be read.
-///
-/// **A row repeating an inet row's inode is left out, and one repeating another unix row's is
-/// marked ambiguous**, found by review: the table prints a path raw, newline included, so any
-/// account can bind a name that forges a row, and a forged row naming a server's inode would be
-/// taken for a socket the server holds. The kernel gives no two sockets one inode, and an inet row
-/// holds no free text to forge, so a repeat means a forgery; which of two unix rows is genuine
-/// cannot be told, and the caller has to say so rather than drop both.
-pub fn unix_listeners(net: &Path) -> Option<Vec<UnixListener>> {
-    let text = fs::read_to_string(net.join(UNIX_TABLE)).ok()?;
-    let rows: Vec<&str> = text
-        .lines()
-        .filter(|line| !line.contains(UNIX_HEADER))
-        .collect();
-
-    let inet_rows: Vec<String> = INET_TABLES
-        .iter()
-        .filter_map(|(table, _)| fs::read_to_string(net.join(table)).ok())
-        .collect();
-    let inet_inodes: BTreeSet<u64> = inet_rows
-        .iter()
-        .flat_map(|text| text.lines())
-        .filter(|line| !line.contains(INET_HEADER))
-        .filter_map(|line| line.split_whitespace().nth(INODE)?.parse::<u64>().ok())
-        .collect();
-    let mut unix_rows_per_inode = BTreeMap::<u64, usize>::new();
-    for inode in rows
-        .iter()
-        .filter_map(|line| unix_columns(line)?.fields[UNIX_INODE].parse::<u64>().ok())
-    {
-        *unix_rows_per_inode.entry(inode).or_default() += 1;
-    }
-
-    Some(
-        rows.into_iter()
-            .filter_map(unix_listener_of)
-            .filter(|listener| !inet_inodes.contains(&listener.inode))
-            .map(|listener| UnixListener {
-                ambiguous: unix_rows_per_inode.get(&listener.inode) != Some(&1),
-                ..listener
-            })
-            .collect(),
-    )
-}
-
 fn inet_listener_of(line: &str, is_ipv6: bool) -> Option<InetListener> {
     let columns: Vec<&str> = line.split_whitespace().collect();
     if columns.len() < LEADING_COLUMNS || columns[STATE] != LISTENING {
@@ -163,24 +90,5 @@ fn inet_listener_of(line: &str, is_ipv6: bool) -> Option<InetListener> {
     Some(InetListener {
         address: SocketAddr::new(host, u16::from_str_radix(port, 16).ok()?),
         inode: columns[INODE].parse().ok()?,
-    })
-}
-
-fn unix_listener_of(line: &str) -> Option<UnixListener> {
-    // `lines` has already taken the terminator; a path may itself end in a space.
-    let row = unix_columns(line)?;
-    let flags = u32::from_str_radix(row.fields[UNIX_FLAGS], 16).ok()?;
-
-    let accepts = flags & ACCEPT_CONNECTIONS != 0
-        && row.fields[UNIX_KIND] == STREAM
-        && row.fields[UNIX_STATE] == UNCONNECTED;
-    if !accepts || row.path.is_empty() {
-        return None;
-    }
-
-    Some(UnixListener {
-        path: row.path.to_owned(),
-        inode: row.fields[UNIX_INODE].parse().ok()?,
-        ambiguous: false,
     })
 }

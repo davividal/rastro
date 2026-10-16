@@ -11,41 +11,17 @@ use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::collectors::inet::{InetHost, PortNumber};
-use crate::collectors::inside_root::ProcessRoot;
 use crate::collectors::network_namespace::ProcessNamespace;
-use crate::collectors::proc_sockets::{
-    InetListener, UnixListener, inet_listeners, sockets_held_by, unix_listeners,
-};
+use crate::collectors::proc_sockets::{InetListener, inet_listeners, sockets_held_by};
 use crate::collectors::redis::value_objects::{Listener, ServerKind};
 
 use super::resident_servers::{ResidentServer, resident_servers};
 
 /// Where the kernel publishes its socket tables under the process table.
 const NET: &str = "net";
-
-/// Where a server can be connected to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DialTarget {
-    /// A unix socket, at the path the server bound, which means that path only inside its own
-    /// root: `PrivateTmp=yes` gives a server a `/tmp` of its own, and a container its own tree.
-    Unix {
-        root: ProcessRoot,
-        path: PathBuf,
-    },
-    Tcp(SocketAddr),
-}
-
-impl fmt::Display for DialTarget {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DialTarget::Unix { path, .. } => write!(formatter, "{}", path.display()),
-            DialTarget::Tcp(address) => write!(formatter, "{address}"),
-        }
-    }
-}
 
 /// Why a server will not be dialled.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +60,7 @@ impl fmt::Display for Unreached {
 pub struct DiscoveredServer {
     /// What the facet keys the instance by.
     ///
-    /// **The TCP port, else the unix socket's path, else the process title**, and the lowest
+    /// **The TCP port, else the process title**, and the lowest
     /// address on the port where two servers share it. A port rather
     /// than an address, so a change of `bind`, which is exactly what the field host needed seeing,
     /// is a change to one instance rather than one vanishing and another appearing. The title is
@@ -102,7 +78,7 @@ pub struct DiscoveredServer {
     pub listeners: Vec<Listener>,
 
     /// The socket rastro would connect to, or why there is none.
-    pub reach: Result<DialTarget, Unreached>,
+    pub reach: Result<SocketAddr, Unreached>,
 
     /// The network namespace `reach` is in: the server's own, where it listens in a container.
     pub namespace: ProcessNamespace,
@@ -119,11 +95,10 @@ pub struct DiscoveredServer {
 pub fn discover(proc: &Path) -> Vec<DiscoveredServer> {
     let net = proc.join(NET);
     let inet = inet_listeners(&net);
-    let unix = unix_listeners(&net);
 
     let mut discovered: Vec<DiscoveredServer> = resident_servers(proc)
         .into_iter()
-        .map(|server| discovered(proc, &server, inet.as_deref(), unix.as_deref()))
+        .map(|server| discovered(proc, &server, inet.as_deref()))
         .collect();
 
     for server in colliding(&mut discovered) {
@@ -209,7 +184,6 @@ fn discovered(
     proc: &Path,
     server: &ResidentServer,
     inet: Option<&[InetListener]>,
-    unix: Option<&[UnixListener]>,
 ) -> DiscoveredServer {
     let title = title_of(proc, server);
     let unreached = |reason: Unreached| DiscoveredServer {
@@ -249,83 +223,39 @@ fn discovered(
     };
 
     // A server in a container listens only in its own namespace, whose tables the host's lack.
-    let (own_inet, own_unix);
-    let (inet, unix) = match namespace.is_ours() {
-        true => (inet, unix),
+    let own_inet;
+    let inet = match namespace.is_ours() {
+        true => inet,
         false => {
-            let net = proc.join(server.process_id.to_string()).join(NET);
-            own_inet = inet_listeners(&net);
-            own_unix = unix_listeners(&net);
-            (own_inet.as_deref(), own_unix.as_deref())
+            own_inet = inet_listeners(&proc.join(server.process_id.to_string()).join(NET));
+            own_inet.as_deref()
         }
     };
 
-    if inet.is_none() && unix.is_none() {
+    let Some(inet) = inet else {
         return unreached(Unreached::failed(
             "the kernel's socket tables could not be read, so which sockets it listens on is \
              unknown",
         ));
-    }
+    };
 
     let mut addresses: Vec<SocketAddr> = inet
-        .unwrap_or_default()
         .iter()
         .filter(|listener| held.contains(&listener.inode))
         .map(|listener| listener.address)
         .collect();
-    let held_unix: Vec<&UnixListener> = unix
-        .unwrap_or_default()
-        .iter()
-        .filter(|listener| held.contains(&listener.inode))
-        .collect();
-    if held_unix.iter().any(|listener| listener.ambiguous) {
-        return unreached(Unreached::failed(
-            "the kernel's socket table repeats the inode of a unix socket it holds under two \
-             paths, which another account can do by binding a forged name, so which path the \
-             socket is bound to cannot be told",
-        ));
-    }
-    let mut paths: Vec<String> = held_unix
-        .iter()
-        .map(|listener| listener.path.clone())
-        .collect();
     addresses.sort_unstable();
     addresses.dedup();
-    paths.sort_unstable();
-    paths.dedup();
 
-    // A relative `unixsocket` is relative to a working directory nothing records, found by review,
-    // so a port beside it is dialled instead.
-    let reach = match (
-        paths.iter().find(|path| path.starts_with('/')),
-        tcp_reach_of(&addresses, titled_port(&title)),
-    ) {
-        (Some(path), _) => ProcessRoot::of_process(proc, server.process_id)
-            .map(|root| DialTarget::Unix {
-                root,
-                path: PathBuf::from(path),
-            })
-            .map_err(|error| {
-                Unreached::failed(format!(
-                    "its status could not be read ({error}), so its socket cannot be connected to \
-                     with its account's permission"
-                ))
-            }),
-        (None, Some(tcp)) => Ok(tcp),
-        (None, None) if !paths.is_empty() => Err(Unreached::failed(
-            "it listens only on a unix socket named by a relative path, to a working directory \
-             nothing records",
-        )),
-        (None, None) => Err(Unreached::failed(
-            "it listens on nothing rastro could connect to",
-        )),
-    };
+    // No packaged default listens on a unix socket, so none is dialled, by the maintainer's choice.
+    let reach = tcp_reach_of(&addresses, titled_port(&title)).ok_or_else(|| {
+        Unreached::failed("it listens on no TCP port, and rastro dials nothing else")
+    });
 
     let lowest_port = addresses.iter().map(SocketAddr::port).min();
-    let key = match (lowest_port, paths.first()) {
-        (Some(port), _) => port.to_string(),
-        (None, Some(path)) => path.clone(),
-        (None, None) => title.clone(),
+    let key = match lowest_port {
+        Some(port) => port.to_string(),
+        None => title.clone(),
     };
     let shared_port_key = addresses
         .iter()
@@ -335,12 +265,11 @@ fn discovered(
     let mut listeners: Vec<Listener> = addresses
         .iter()
         .filter_map(|address| {
-            Some(Listener::Inet {
+            Some(Listener {
                 host: InetHost::new(address.ip().to_string()).ok()?,
                 port: PortNumber::from(address.port()),
             })
         })
-        .chain(paths.into_iter().map(|path| Listener::Local { path }))
         .collect();
     listeners.sort_unstable();
 
@@ -355,10 +284,9 @@ fn discovered(
     }
 }
 
-/// The one TCP socket to connect to where there is no unix one, in order of how local it is.
+/// The one socket to connect to, in order of how local it is.
 ///
-/// A unix socket comes first, since it involves no network stack at all, and redis serves no TLS
-/// on one. Then loopback; then a wildcard, reached on the loopback address of its own family; then
+/// Loopback first; then a wildcard, reached on the loopback address of its own family; then
 /// an address of the box's own, which the kernel delivers locally without it ever reaching a
 /// wire. Each list arrives sorted, so the choice is the same on every run.
 ///
@@ -366,7 +294,7 @@ fn discovered(
 /// look the same in the kernel's tables, measured, and a plain client on the TLS one is a line in
 /// the server's log at its default level, also measured, so trying one and then the other would
 /// write to the box. redis's title shows the plain port whenever there is one.
-fn tcp_reach_of(addresses: &[SocketAddr], titled_port: Option<u16>) -> Option<DialTarget> {
+fn tcp_reach_of(addresses: &[SocketAddr], titled_port: Option<u16>) -> Option<SocketAddr> {
     let on_titled_port: Vec<SocketAddr> = addresses
         .iter()
         .filter(|address| Some(address.port()) == titled_port)
@@ -389,7 +317,7 @@ fn tcp_reach_of(addresses: &[SocketAddr], titled_port: Option<u16>) -> Option<Di
         (None, None) => *own?,
     };
 
-    Some(DialTarget::Tcp(chosen))
+    Some(chosen)
 }
 
 /// The port in the title's `{listen-addr}`, `127.0.0.1:6379` or `*:6380` after the program, or

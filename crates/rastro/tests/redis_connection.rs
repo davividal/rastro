@@ -4,21 +4,27 @@
 //! wire and what came back are both asserted rather than reasoned about.
 
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
+use std::net::{TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-#[cfg(target_os = "linux")]
-use rastro::collectors::redis::DialTarget;
 use rastro::collectors::redis::{Reply, RespConnection};
 
-mod support;
+/// Two ends of one loopback connection, the client's first.
+fn pair() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let client =
+        TcpStream::connect(listener.local_addr().expect("a bound address")).expect("a connection");
+    let (far_end, _) = listener.accept().expect("an accepted connection");
+
+    (client, far_end)
+}
 
 /// A server that reads exactly the request it expects, then writes each chunk in turn.
 ///
 /// Returns the client's end and a handle yielding the bytes the server received.
-fn server(request_length: usize, chunks: Vec<Vec<u8>>) -> (UnixStream, JoinHandle<Vec<u8>>) {
-    let (client, mut far_end) = UnixStream::pair().expect("a socket pair");
+fn server(request_length: usize, chunks: Vec<Vec<u8>>) -> (TcpStream, JoinHandle<Vec<u8>>) {
+    let (client, mut far_end) = pair();
 
     let handle = thread::spawn(move || {
         let mut received = vec![0; request_length];
@@ -198,7 +204,7 @@ fn a_reply_that_is_not_the_protocol_is_refused() {
 #[test]
 fn a_server_that_never_answers_is_given_up_on() {
     // Arrange: the far end reads the request and then holds the socket open, saying nothing.
-    let (client, mut far_end) = UnixStream::pair().expect("a socket pair");
+    let (client, mut far_end) = pair();
     let holder = thread::spawn(move || {
         let mut received = vec![0; PING.len()];
         far_end
@@ -275,7 +281,7 @@ fn a_peer_that_trickles_is_given_up_on_at_the_deadline() {
 fn a_peer_that_drains_a_command_slowly_is_given_up_on_at_the_deadline() {
     // Arrange: a command larger than the socket's buffer, to a peer that takes a little of it
     // before each per-write timeout runs out, so every write makes progress and none times out.
-    let (client, mut far_end) = UnixStream::pair().expect("a socket pair");
+    let (client, mut far_end) = pair();
     thread::spawn(move || {
         let mut buffer = [0_u8; 4096];
         while far_end.read(&mut buffer).is_ok_and(|read| read > 0) {
@@ -300,120 +306,6 @@ fn a_peer_that_drains_a_command_slowly_is_given_up_on_at_the_deadline() {
         "{:?}",
         started.elapsed()
     );
-}
-
-/// Linux alone: there a blocking connect waits for room in a full queue, where macOS refuses it.
-#[cfg(target_os = "linux")]
-#[test]
-fn a_socket_whose_queue_is_full_is_given_up_on_at_the_deadline() {
-    // Arrange: a listener nobody accepts on, its queue filled by connections that stay pending,
-    // which another account with access to the socket can hold open; a blocking connect then waits.
-    let path = std::env::temp_dir().join(format!("rastro-full-{}.sock", std::process::id()));
-    let _ = std::fs::remove_file(&path);
-    // A queue of one, so a handful of pending connections fills it on any kernel's defaults.
-    let listener = rustix::net::socket(
-        rustix::net::AddressFamily::UNIX,
-        rustix::net::SocketType::STREAM,
-        None,
-    )
-    .expect("a socket");
-    rustix::net::bind(
-        &listener,
-        &rustix::net::SocketAddrUnix::new(&path).expect("a socket path"),
-    )
-    .expect("a bindable socket path");
-    rustix::net::listen(&listener, 1).expect("a listening socket");
-    for _ in 0..8 {
-        let path = path.clone();
-        thread::spawn(move || {
-            let held = UnixStream::connect(path);
-            thread::sleep(Duration::from_secs(30));
-            drop(held);
-        });
-    }
-    thread::sleep(Duration::from_millis(300));
-
-    // Act
-    let started = std::time::Instant::now();
-    let result = RespConnection::dial(
-        &DialTarget::Unix {
-            root: support::account::host_root(),
-            path: path.clone(),
-        },
-        std::process::id(),
-    );
-
-    // Assert: refused near the connect deadline rather than waiting on the queue.
-    assert!(result.is_err());
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        started.elapsed()
-    );
-    drop(listener);
-    let _ = std::fs::remove_file(&path);
-}
-
-/// Linux alone: the connection is made with the server's account only where rastro ships.
-#[cfg(target_os = "linux")]
-#[test]
-fn a_socket_the_servers_account_may_not_reach_is_not_connected_to() {
-    use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::net::UnixListener;
-
-    use rastro::collectors::inside_root::{ProcessRoot, ReadingAccount};
-
-    // Arrange: the server's account replaced its socket with a link to one only rastro's account
-    // may write to, `/run/docker.sock` on a real box; connecting as root is already a change there.
-    let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("foreign-socket-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
-    std::fs::create_dir_all(base.join("run")).expect("a writable scratch directory");
-    let foreign = base.join("docker.sock");
-    let listener = UnixListener::bind(&foreign).expect("a bindable socket path");
-    listener
-        .set_nonblocking(true)
-        .expect("a non-blocking listener");
-    std::fs::set_permissions(&foreign, std::fs::Permissions::from_mode(0o600))
-        .expect("a socket rastro owns");
-    std::os::unix::fs::symlink(&foreign, base.join("run/redis.sock"))
-        .expect("a writable scratch symlink");
-    let nobody = ReadingAccount::new(65534, 65534, Vec::new());
-
-    // Act
-    let dialled = RespConnection::dial(
-        &DialTarget::Unix {
-            root: ProcessRoot::new("/", nobody),
-            path: base.join("run/redis.sock"),
-        },
-        std::process::id(),
-    );
-
-    // Assert
-    assert!(dialled.is_err());
-    assert!(
-        listener.accept().is_err(),
-        "the foreign socket was connected to"
-    );
-    let _ = std::fs::remove_dir_all(&base);
-}
-
-#[test]
-fn a_relative_socket_path_is_refused_rather_than_dialled() {
-    // Arrange: discovery dials a port instead; a caller naming one directly is refused as well.
-    let target = rastro::collectors::redis::DialTarget::Unix {
-        root: support::account::host_root(),
-        path: std::path::PathBuf::from("redis.sock"),
-    };
-
-    // Act
-    let error = RespConnection::dial(&target, std::process::id())
-        .err()
-        .expect("a refusal")
-        .to_string();
-
-    // Assert
-    assert!(error.contains("relative"), "{error}");
 }
 
 #[test]
@@ -486,7 +378,7 @@ fn a_command_after_a_failed_one_is_refused_rather_than_read_from_its_leftovers()
     // Arrange: a reply refused at the bound leaves the rest of it on the socket, where the next
     // command's read would find it and take it for that command's reply.
     // The far end is kept open, so the leftover is what the next read meets.
-    let (client, mut far_end) = UnixStream::pair().expect("a socket pair");
+    let (client, mut far_end) = pair();
     let mut connection = RespConnection::over(client)
         .expect("a connection")
         .bounded_by(16);

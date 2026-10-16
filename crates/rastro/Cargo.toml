@@ -56,6 +56,10 @@ base64 = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true }
 
+# A test resets a connection with zero linger, which the standard library cannot set.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = { workspace = true, features = ["net"] }
+
 [dev-dependencies]
 rastro-fingerprint = { workspace = true }
 # `serde_json` is deliberately not repeated here. Tests read the rendered document

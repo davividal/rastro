@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 
 use rastro::collectors::canonical_tool::CanonicalTool;
 
-use super::account::status_of_runner;
 use super::fs_tree::scratch_tree;
 use super::shim;
 
@@ -136,9 +135,6 @@ fn rebuild_process(server: &Path, proc: &Path, scratch: &Path) {
         copy_tree(&files, &root);
     }
     symlink(&root, process.join("root")).expect("a writable scratch symlink");
-    // Arrange: not captured, and standing for the real server's account, which owned its files as
-    // the test now owns their copies.
-    fs::write(process.join("status"), status_of_runner()).expect("a writable fixture");
 }
 
 /// A link whose target is the text the real `readlink` gave.

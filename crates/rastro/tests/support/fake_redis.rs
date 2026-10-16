@@ -9,15 +9,14 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
+use std::net::TcpListener;
 use std::os::unix::fs::symlink;
-use std::os::unix::net::UnixListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use redis::{Parser, Value};
 
-use super::account::status_of_runner;
 use super::captured_redis_cell::captured_reply;
 use super::fs_tree::{scratch_tree, write};
 
@@ -25,34 +24,23 @@ use super::fs_tree::{scratch_tree, write};
 const SOCKET_INODE: u64 = 4242;
 
 const TCP_HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
-const UNIX_HEADER: &str = "Num       RefCount Protocol Flags    Type St Inode Path\n";
 
-/// A scripted server, listening on a unix socket.
+/// A scripted server, listening on a loopback port.
 pub struct FakeRedis {
-    pub socket: PathBuf,
+    pub port: u16,
     received: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 impl FakeRedis {
     /// A server answering each command, keyed by its words joined with spaces, with the bytes
     /// given. Anything unscripted is answered the way redis answers a command it lacks.
-    pub fn answering(name: &str, script: &[(&str, &str)]) -> Self {
-        Self::serving(name, owned(script.iter().copied()), None)
+    pub fn answering(script: &[(&str, &str)]) -> Self {
+        Self::serving(owned(script.iter().copied()))
     }
 
-    /// A stock server that wants `password` before it answers anything, as `requirepass` makes
-    /// it: `NOAUTH` to every command until an `AUTH` with the password, `WRONGPASS` to one
-    /// without it. Measured on Debian 12.
-    pub fn stock_with_password(name: &str, password: &str, overrides: &[(&str, &str)]) -> Self {
-        Self::serving(name, stock_script(overrides), Some(password.to_owned()))
-    }
-
-    fn serving(name: &str, script: BTreeMap<String, String>, password: Option<String>) -> Self {
-        // A short path rather than the scratch tree: a unix socket path is capped at about a
-        // hundred bytes, and the target directory of a worktree is most of that already.
-        let socket = std::env::temp_dir().join(format!("rastro-{name}.sock"));
-        let _ = fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket).expect("a bindable socket path");
+    fn serving(script: BTreeMap<String, String>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let port = listener.local_addr().expect("a bound address").port();
 
         let received = Arc::new(Mutex::new(Vec::new()));
         let recorder = Arc::clone(&received);
@@ -60,7 +48,6 @@ impl FakeRedis {
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { return };
-                let mut authenticated = password.is_none();
                 let mut parser = Parser::new();
                 let Ok(mut reading) = stream.try_clone() else {
                     return;
@@ -69,25 +56,10 @@ impl FakeRedis {
                 // One command at a time until the client hangs up, which ends the parse.
                 while let Ok(command) = parser.parse_value(&mut reading) {
                     let words = words_of(command);
-                    let is_auth = words[0].eq_ignore_ascii_case("AUTH");
-                    let reply = match (&password, is_auth) {
-                        (None, true) => "-ERR AUTH <password> called without any password \
-                                         configured for the default user. Are you sure your \
-                                         configuration is correct?\r\n"
-                            .to_owned(),
-                        (Some(expected), true) if words.last() == Some(expected) => {
-                            authenticated = true;
-                            "+OK\r\n".to_owned()
-                        }
-                        (Some(_), true) => "-WRONGPASS invalid username-password pair or \
-                                            user is disabled.\r\n"
-                            .to_owned(),
-                        _ if !authenticated => "-NOAUTH Authentication required.\r\n".to_owned(),
-                        _ => script
-                            .get(&words.join(" "))
-                            .cloned()
-                            .unwrap_or_else(|| format!("-ERR unknown command '{}'\r\n", words[0])),
-                    };
+                    let reply = script
+                        .get(&words.join(" "))
+                        .cloned()
+                        .unwrap_or_else(|| format!("-ERR unknown command '{}'\r\n", words[0]));
                     recorder.lock().expect("an unpoisoned lock").push(words);
                     if stream.write_all(reply.as_bytes()).is_err() {
                         break;
@@ -96,7 +68,7 @@ impl FakeRedis {
             }
         });
 
-        Self { socket, received }
+        Self { port, received }
     }
 
     /// A server answering every read as a stock Debian 12 server would, each override replacing
@@ -104,8 +76,8 @@ impl FakeRedis {
     ///
     /// So a test states only what is peculiar to its box, and a read added to the collector later
     /// does not turn every earlier test into one about a server that refuses it.
-    pub fn stock(name: &str, overrides: &[(&str, &str)]) -> Self {
-        Self::serving(name, stock_script(overrides), None)
+    pub fn stock(overrides: &[(&str, &str)]) -> Self {
+        Self::serving(stock_script(overrides))
     }
 
     /// Every command received so far, as its words.
@@ -115,7 +87,7 @@ impl FakeRedis {
 
     /// A `/proc` in which a redis server holds this socket.
     pub fn proc(&self, name: &str) -> PathBuf {
-        proc_holding(name, &self.socket)
+        proc_holding(name, self.port)
     }
 }
 
@@ -125,24 +97,19 @@ pub fn server_pid() -> String {
     std::process::id().to_string()
 }
 
-/// A `/proc` in which a redis server, this test process, holds a unix socket at `socket`.
-pub fn proc_holding(name: &str, socket: &Path) -> PathBuf {
-    proc_holding_as(name, socket, &server_pid())
-}
-
-/// The same, with the server under a pid the caller names.
-pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
+/// A `/proc` in which a redis server, this test process, listens on `127.0.0.1:<port>`.
+pub fn proc_holding(name: &str, port: u16) -> PathBuf {
+    let pid = server_pid();
+    let pid = pid.as_str();
     let proc = scratch_tree(name, &["proc/net", &format!("proc/{pid}/fd")]).join("proc");
-    write(&proc, "net/tcp", TCP_HEADER);
-    write(&proc, "net/tcp6", TCP_HEADER);
     write(
         &proc,
-        "net/unix",
+        "net/tcp",
         &format!(
-            "{UNIX_HEADER}0000000000000000: 00000002 00000000 00010000 0001 01 {SOCKET_INODE} {}\n",
-            socket.display()
+            "{TCP_HEADER}   0: 0100007F:{port:04X} 00000000:0000 0A 00000000:00000000 00:00000000 00000000   101        0 {SOCKET_INODE} 1 0000000000000000 100 0 0 10 0\n"
         ),
     );
+    write(&proc, "net/tcp6", TCP_HEADER);
     write(&proc, &format!("{pid}/comm"), "redis-server\n");
     // Arrange: the Debian package's unit, as cgroup v2 names it.
     write(
@@ -153,17 +120,15 @@ pub fn proc_holding_as(name: &str, socket: &Path, pid: &str) -> PathBuf {
     write(
         &proc,
         &format!("{pid}/cmdline"),
-        "/usr/bin/redis-server unixsocket\0",
+        &format!("/usr/bin/redis-server 127.0.0.1:{port}\0"),
     );
     symlink(
         format!("socket:[{SOCKET_INODE}]"),
         proc.join(pid).join("fd/3"),
     )
     .expect("a writable scratch symlink");
-    // Arrange: the server in rastro's own root, so its paths mean the same on both sides, and
-    // running as the test does, so its files are the server's own.
+    // Arrange: the server in rastro's own root, so its paths mean the same on both sides.
     symlink("/", proc.join(pid).join("root")).expect("a writable scratch symlink");
-    write(&proc, &format!("{pid}/status"), &status_of_runner());
     // Arrange: the server and rastro in one mount and one network namespace, as on the host.
     for process in [pid, "self"] {
         fs::create_dir_all(proc.join(process).join("ns")).expect("a writable scratch directory");
@@ -213,12 +178,6 @@ fn owned<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> BTreeMap<St
         .collect()
 }
 
-impl Drop for FakeRedis {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.socket);
-    }
-}
-
 fn words_of(command: Value) -> Vec<String> {
     match command {
         Value::Array(frames) => frames
@@ -249,17 +208,15 @@ pub fn unknown_command(command: &str) -> String {
     format!("-ERR unknown command '{command}', with args beginning with: \r\n")
 }
 
-/// The socket path a fixture server's `/proc` names, as the facet keys it.
+/// The port a fixture server listens on, as the facet keys it.
 pub fn key_of(server: &FakeRedis) -> String {
-    server.socket.display().to_string()
+    server.port.to_string()
 }
 
-/// A path nothing listens on, for a server the kernel says holds a socket that refuses.
-pub fn dead_socket(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("rastro-{name}.sock"));
-    let _ = fs::remove_file(&path);
-    let listener = UnixListener::bind(&path).expect("a bindable socket path");
-    drop(listener);
-
-    path
+/// A loopback port nothing listens on, for a server the kernel says holds a socket that refuses.
+pub fn dead_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("a loopback port")
+        .port()
 }

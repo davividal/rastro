@@ -11,8 +11,7 @@ mod support;
 
 use support::captured_redis_cell::captured_reply;
 use support::fake_redis::{
-    FakeRedis, HOST_NETWORK_NAMESPACE, array_of, bulk, dead_socket, key_of, proc_holding,
-    unknown_command,
+    FakeRedis, HOST_NETWORK_NAMESPACE, array_of, bulk, key_of, proc_holding, unknown_command,
 };
 use support::fs_tree::{scratch_tree, write};
 use support::observation::{field, is_null, items_of, keys_of, text};
@@ -162,7 +161,7 @@ fn instance_of(
 #[test]
 fn a_server_that_answers_is_an_instance_with_nothing_missing() {
     // Arrange
-    let server = FakeRedis::stock("facet-answers", &[]);
+    let server = FakeRedis::stock(&[]);
     let proc = server.proc("redis-facet-answers");
 
     // Act
@@ -187,14 +186,14 @@ fn a_server_that_answers_is_an_instance_with_nothing_missing() {
         .iter()
         .map(text)
         .collect();
-    assert_eq!(listening, [key_of(&server)]);
+    assert_eq!(listening, [format!("127.0.0.1:{}", server.port)]);
     assert!(is_null(&field(&instance, "error")));
 }
 
 #[test]
 fn a_supported_server_is_not_marked() {
     // Arrange: redis 8.10, the redis.io package's own reply.
-    let server = FakeRedis::stock("facet-supported", &[]);
+    let server = FakeRedis::stock(&[]);
     let proc = server.proc("redis-facet-supported");
 
     // Act
@@ -210,7 +209,7 @@ fn a_supported_server_is_not_marked() {
 fn an_older_server_is_read_in_full_and_marked_unsupported() {
     // Arrange: redis 7.4, which endoflife.date lists as maintained and the maintainer left out.
     let info = captured_reply("33", "INFO server");
-    let server = FakeRedis::stock("facet-unsupported", &[("INFO server", &info)]);
+    let server = FakeRedis::stock(&[("INFO server", &info)]);
     let proc = server.proc("redis-facet-unsupported");
 
     // Act
@@ -231,10 +230,7 @@ fn an_older_server_is_read_in_full_and_marked_unsupported() {
 #[test]
 fn a_server_that_wants_a_password_is_an_instance_not_read() {
     // Arrange
-    let server = FakeRedis::answering(
-        "facet-noauth",
-        &[("INFO server", "-NOAUTH Authentication required.\r\n")],
-    );
+    let server = FakeRedis::answering(&[("INFO server", "-NOAUTH Authentication required.\r\n")]);
     let proc = server.proc("redis-facet-noauth");
 
     // Act
@@ -242,8 +238,10 @@ fn a_server_that_wants_a_password_is_an_instance_not_read() {
 
     // Assert: the refusal is on the instance, and the facet around it is still a reading.
     let instance = instance_of(&observation, &key_of(&server));
-    let error = text(&field(&instance, "not_read"));
-    assert!(error.contains("password"), "{error}");
+    assert_eq!(
+        text(&field(&instance, "not_read")),
+        "the server requires a password, which rastro does not look for"
+    );
     assert_eq!(observation.incomplete_items(), 1);
     assert!(is_null(&field(
         &instance_of(&observation, &key_of(&server)),
@@ -254,17 +252,16 @@ fn a_server_that_wants_a_password_is_an_instance_not_read() {
 #[test]
 fn a_server_whose_socket_refuses_is_an_instance_with_an_error() {
     // Arrange: the kernel lists the socket and nothing accepts on it.
-    let socket = dead_socket("facet-refuses");
-    let proc = proc_holding("redis-facet-refuses", &socket);
+    let port = support::fake_redis::dead_port();
+    let proc = proc_holding("redis-facet-refuses", port);
 
     // Act
     let observation = collector(&[], &proc).collect().expect("a readable box");
 
     // Assert
-    let instance = instance_of(&observation, &socket.display().to_string());
+    let instance = instance_of(&observation, &port.to_string());
     let error = text(&field(&instance, "error"));
     assert!(error.contains("could not connect"), "{error}");
-    let _ = fs::remove_file(socket);
 }
 
 #[test]
@@ -297,7 +294,7 @@ fn a_valkey_answering_under_the_redis_name_is_reported_as_valkey() {
     let info = bulk(
         "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:8.1.1\r\nserver_mode:standalone\r\n",
     );
-    let server = FakeRedis::stock("facet-valkey", &[("INFO server", &info)]);
+    let server = FakeRedis::stock(&[("INFO server", &info)]);
     let proc = server.proc("redis-facet-valkey");
 
     // Act
@@ -312,10 +309,7 @@ fn a_valkey_answering_under_the_redis_name_is_reported_as_valkey() {
 #[test]
 fn a_server_that_was_not_asked_has_no_version() {
     // Arrange
-    let server = FakeRedis::answering(
-        "facet-unasked",
-        &[("INFO server", "-NOAUTH Authentication required.\r\n")],
-    );
+    let server = FakeRedis::answering(&[("INFO server", "-NOAUTH Authentication required.\r\n")]);
     let proc = server.proc("redis-facet-unasked");
 
     // Act
@@ -339,7 +333,7 @@ fn an_instance_carries_the_settings_the_server_is_running_with() {
         "requirepass",
         "hunter2",
     ]);
-    let server = FakeRedis::stock("facet-settings", &[("CONFIG GET *", &config)]);
+    let server = FakeRedis::stock(&[("CONFIG GET *", &config)]);
     let proc = server.proc("redis-facet-settings");
 
     // Act
@@ -360,7 +354,7 @@ fn a_server_with_config_renamed_away_keeps_everything_else() {
     // Arrange: `rename-command CONFIG ""`, common hardening. Measured: `ERR unknown command`,
     // and `INFO` still answers.
     let refused = unknown_command("CONFIG");
-    let server = FakeRedis::stock("facet-no-config", &[("CONFIG GET *", &refused)]);
+    let server = FakeRedis::stock(&[("CONFIG GET *", &refused)]);
     let proc = server.proc("redis-facet-no-config");
 
     // Act
@@ -377,10 +371,7 @@ fn a_server_with_config_renamed_away_keeps_everything_else() {
 #[test]
 fn a_server_that_wants_a_password_is_asked_nothing_more() {
     // Arrange
-    let server = FakeRedis::stock(
-        "facet-noauth-quiet",
-        &[("INFO server", "-NOAUTH Authentication required.\r\n")],
-    );
+    let server = FakeRedis::stock(&[("INFO server", "-NOAUTH Authentication required.\r\n")]);
     let proc = server.proc("redis-facet-noauth-quiet");
 
     // Act
@@ -396,7 +387,7 @@ fn an_instance_says_what_it_replicates() {
     let replication = bulk(
         "# Replication\r\nrole:slave\r\nmaster_host:10.0.0.1\r\nmaster_port:6379\r\nmaster_link_status:up\r\n",
     );
-    let server = FakeRedis::stock("facet-replica", &[("INFO replication", &replication)]);
+    let server = FakeRedis::stock(&[("INFO replication", &replication)]);
     let proc = server.proc("redis-facet-replica");
 
     // Act
@@ -412,7 +403,7 @@ fn an_instance_says_what_it_replicates() {
 fn a_refused_replication_read_costs_only_itself() {
     // Arrange
     let refused = unknown_command("INFO");
-    let server = FakeRedis::stock("facet-no-replication", &[("INFO replication", &refused)]);
+    let server = FakeRedis::stock(&[("INFO replication", &refused)]);
     let proc = server.proc("redis-facet-no-replication");
 
     // Act
@@ -429,7 +420,7 @@ fn a_refused_replication_read_costs_only_itself() {
 #[test]
 fn an_instance_lists_its_accounts() {
     // Arrange
-    let server = FakeRedis::stock("facet-acl", &[]);
+    let server = FakeRedis::stock(&[]);
     let proc = server.proc("redis-facet-acl");
 
     // Act
@@ -444,7 +435,7 @@ fn an_instance_lists_its_accounts() {
 fn a_server_older_than_accounts_is_not_asked_for_them() {
     // Arrange: the field host's 5.0, where `ACL` does not exist. Measured on 5.0.14.
     let info = bulk("# Server\r\nredis_version:5.0.3\r\nredis_mode:standalone\r\n");
-    let server = FakeRedis::stock("facet-acl-old", &[("INFO server", &info)]);
+    let server = FakeRedis::stock(&[("INFO server", &info)]);
     let proc = server.proc("redis-facet-acl-old");
 
     // Act
@@ -460,13 +451,10 @@ fn a_server_older_than_accounts_is_not_asked_for_them() {
 #[test]
 fn a_refused_account_list_says_so() {
     // Arrange: an account allowed to read everything but its own kind.
-    let server = FakeRedis::stock(
-        "facet-acl-noperm",
-        &[(
-            "ACL LIST",
-            "-NOPERM User default has no permissions to run the 'acl|list' command\r\n",
-        )],
-    );
+    let server = FakeRedis::stock(&[(
+        "ACL LIST",
+        "-NOPERM User default has no permissions to run the 'acl|list' command\r\n",
+    )]);
     let proc = server.proc("redis-facet-acl-noperm");
 
     // Act
@@ -482,7 +470,7 @@ fn a_refused_account_list_says_so() {
 fn an_instance_lists_the_modules_it_loaded() {
     // Arrange
     let modules = "*1\r\n*4\r\n$4\r\nname\r\n$6\r\nReJSON\r\n$3\r\nver\r\n:20609\r\n";
-    let server = FakeRedis::stock("facet-modules", &[("MODULE LIST", modules)]);
+    let server = FakeRedis::stock(&[("MODULE LIST", modules)]);
     let proc = server.proc("redis-facet-modules");
 
     // Act
@@ -497,7 +485,7 @@ fn an_instance_lists_the_modules_it_loaded() {
 fn a_refused_module_list_says_so() {
     // Arrange
     let refused = unknown_command("MODULE");
-    let server = FakeRedis::stock("facet-no-modules", &[("MODULE LIST", &refused)]);
+    let server = FakeRedis::stock(&[("MODULE LIST", &refused)]);
     let proc = server.proc("redis-facet-no-modules");
 
     // Act
@@ -562,51 +550,12 @@ fn a_socket_that_hangs_up_names_the_sockets_not_tried_and_why() {
     assert!(!error.contains(&format!("127.0.0.1:{port}")), "{error}");
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn a_socket_the_kernel_says_another_process_holds_is_sent_nothing() {
-    // Arrange: `/proc/net/unix` prints a socket path raw, newline included, measured, so another
-    // account can bind a path that forges a row naming the server's inode. Here the table says
-    // the server holds the socket, and the kernel, asked about the connected peer, says otherwise.
-    let server = FakeRedis::stock_with_password("facet-not-the-server", "hunter2", &[]);
-    let proc =
-        support::fake_redis::proc_holding_as("redis-facet-not-the-server", &server.socket, "412");
-
-    // Act
-    let observation = collector(&[], &proc).collect().expect("a readable box");
-
-    // Assert: refused before a single byte, so nothing, a password least of all, reaches it.
-    let instance = instance_of(&observation, &key_of(&server));
-    let error = text(&field(&instance, "error"));
-    assert!(error.contains("not the server's own"), "{error}");
-    assert!(server.received().is_empty(), "{:?}", server.received());
-}
-
-#[test]
-fn a_server_that_wants_a_password_is_sent_nothing_more() {
-    // Arrange: `requirepass` set; rastro does not look for the password, by the maintainer's
-    // choice, so the server says what it is only to a client that has it.
-    let server = FakeRedis::stock_with_password("facet-password", "hunter2", &[]);
-    let proc = server.proc("redis-facet-password");
-
-    // Act
-    let observation = collector(&[], &proc).collect().expect("a readable box");
-
-    // Assert
-    let instance = instance_of(&observation, &key_of(&server));
-    assert_eq!(
-        text(&field(&instance, "not_read")),
-        "the server requires a password, which rastro does not look for"
-    );
-    assert_eq!(server.received(), [["INFO", "server"]]);
-}
-
 #[test]
 fn a_sentinel_is_named_and_asked_nothing_more() {
     // Arrange: `redis-server --sentinel` keeps `comm`, and measured on redis 8.10 it rejects
     // `CONFIG GET *` and `MODULE LIST`; each rejection is one more error the server counts.
     let info = bulk("# Server\r\nredis_version:8.10.2\r\nredis_mode:sentinel\r\n");
-    let server = FakeRedis::stock("facet-sentinel", &[("INFO server", &info)]);
+    let server = FakeRedis::stock(&[("INFO server", &info)]);
     let proc = server.proc("redis-facet-sentinel");
 
     // Act
@@ -623,7 +572,7 @@ fn a_sentinel_is_named_and_asked_nothing_more() {
 fn a_long_refusal_from_the_server_is_shortened() {
     // Arrange: the server's own words are the redis account's to choose, at any length.
     let refusal = format!("-ERR {}\r\n", "x".repeat(5_000));
-    let server = FakeRedis::stock("facet-long-refusal", &[("CONFIG GET *", &refusal)]);
+    let server = FakeRedis::stock(&[("CONFIG GET *", &refusal)]);
     let proc = server.proc("redis-facet-long-refusal");
 
     // Act
@@ -639,32 +588,10 @@ fn a_long_refusal_from_the_server_is_shortened() {
 }
 
 #[test]
-fn a_unix_socket_inside_the_servers_own_root_is_reached_there() {
-    // Arrange: a server whose socket is in its own `/tmp`, as `PrivateTmp=yes` makes it, or in a
-    // container's root: the path the kernel's table prints means something only there.
-    let server = FakeRedis::stock("facet-own-root-socket", &[]);
-    let directory = server.socket.parent().expect("a parent");
-    let name = server.socket.file_name().expect("a name").to_string_lossy();
-    let path = format!("/{name}");
-    let proc = proc_holding("redis-facet-own-root-socket", Path::new(&path));
-    let root = proc.join(support::fake_redis::server_pid()).join("root");
-    fs::remove_file(&root).expect("a removable fixture");
-    symlink(directory, &root).expect("a writable scratch symlink");
-
-    // Act
-    let observation = collector(&[], &proc).collect().expect("a readable box");
-
-    // Assert
-    let instance = field(&field(&observation, "instances"), &path);
-    assert!(is_null(&field(&instance, "error")), "{instance:?}");
-    assert!(!is_null(&field(&instance, "version")));
-}
-
-#[test]
 fn a_server_past_the_facets_time_budget_is_sent_nothing_and_says_so() {
     // Arrange: every wait on one server is bounded, but any account can start many genuine
     // servers that answer slowly, so the facet as a whole has a budget too.
-    let server = FakeRedis::stock("facet-budget", &[]);
+    let server = FakeRedis::stock(&[]);
     let proc = server.proc("redis-facet-budget");
 
     // Act
@@ -680,39 +607,4 @@ fn a_server_past_the_facets_time_budget_is_sent_nothing_and_says_so() {
         "{instance:?}"
     );
     assert!(server.received().is_empty());
-}
-
-#[test]
-fn a_unix_socket_named_by_a_relative_path_is_not_dialled() {
-    // Arrange: redis takes `unixsocket` relative to its working directory, and the kernel's table
-    // keeps the spelling it was bound with.
-    let proc = proc_holding("redis-facet-relative-socket", Path::new("redis.sock"));
-
-    // Act
-    let observation = collector(&[], &proc).collect().expect("a readable box");
-
-    // Assert
-    let instance = field(&field(&observation, "instances"), "redis.sock");
-    assert!(
-        text(&field(&instance, "error")).contains("relative"),
-        "{instance:?}"
-    );
-}
-
-#[test]
-fn a_unix_socket_path_that_is_no_socket_is_not_dialled() {
-    // Arrange: inside the server's root, the path the table names is a regular file.
-    let directory = scratch_tree("redis-facet-not-a-socket-root", &[]);
-    write(&directory, "redis.sock", "");
-    let proc = proc_holding("redis-facet-not-a-socket", Path::new("/redis.sock"));
-    let root = proc.join(support::fake_redis::server_pid()).join("root");
-    fs::remove_file(&root).expect("a removable fixture");
-    symlink(&directory, &root).expect("a writable scratch symlink");
-
-    // Act
-    let observation = collector(&[], &proc).collect().expect("a readable box");
-
-    // Assert: refused before any connection, a socket being the one thing it may be.
-    let instance = field(&field(&observation, "instances"), "/redis.sock");
-    assert!(!is_null(&field(&instance, "error")), "{instance:?}");
 }
