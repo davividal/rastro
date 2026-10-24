@@ -142,7 +142,7 @@ jobs:
           sleep 12
           docker logs conformance-7 2>&1 | grep -c '"type": "deprecation' > /tmp/deprecations-before || true
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Compare rastro's answer with the nodes'
         run: |
