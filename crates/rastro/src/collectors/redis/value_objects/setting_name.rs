@@ -18,6 +18,9 @@ const CREDENTIALS: [&str; 5] = [
     "tls-client-key-file-pass",
 ];
 
+/// What separates a module's name from its setting's, in a setting the module API registered.
+const MODULE_SEPARATOR: char = '.';
+
 /// A setting's name, as `CONFIG GET` reports it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SettingName(NonEmptyText);
@@ -33,7 +36,12 @@ impl SettingName {
 
     /// Whether this setting's value is a credential, which the document must not print as it
     /// stands.
+    ///
+    /// **Or may be one: every setting a module registered**, named `<module>.<name>` by the module
+    /// API, found by review: a module can take a credential as a setting, and which of its settings
+    /// do is the module's own business. redis 8's bundled modules name theirs like core settings,
+    /// `search-timeout`, and none of them is a credential, measured.
     pub fn holds_credential(&self) -> bool {
-        CREDENTIALS.contains(&self.as_str())
+        CREDENTIALS.contains(&self.as_str()) || self.as_str().contains(MODULE_SEPARATOR)
     }
 }

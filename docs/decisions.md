@@ -6651,6 +6651,14 @@ And the redaction stand-in of a plain-text password is exactly as guessable as t
 its unsalted hash, a bargain `SECURITY.md` already states for every redacted value. What carrying
 buys is that a rotation shows in a diff. `--raw` discloses both.
 
+**So is every setting a module registered**, decided by the maintainer on 2026-10-26 after a
+review found a module's bind password printed in plain text: the module API names such a setting
+`<module>.<name>`, and which of a module's settings is a credential is the module's own business.
+Core settings stay readable, `maxmemory` and `save` being the point of the facet, and so do redis
+8's bundled modules', named like core settings, `search-timeout`, of which none of the 303 on cell
+1 is a credential. A credential a later core release adds under a new name is shown until it is
+named here. Carrying the five credentials and the verifier as digests was reaffirmed the same day.
+
 **A module's load arguments are sensitive whole.** A module can take a password as one,
 RediSearch documents it, and no value is judged by its name, as with a container's environment.
 

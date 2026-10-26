@@ -83,6 +83,30 @@ fn every_credential_a_server_holds_in_its_settings_is_sensitive() {
 }
 
 #[test]
+fn a_setting_a_module_registered_is_sensitive_whatever_its_name() {
+    // Arrange: the module API names a module's setting `<module>.<name>`, and a module can take a
+    // credential as one, an LDAP module's bind password, found by review; redis 8's bundled
+    // modules name theirs like core settings, and none of the 303 on cell 1 is a credential.
+    let reply = pairs(&[
+        ("ldap.bind_dn_password", "hunter6"),
+        ("search-timeout", "500"),
+    ]);
+
+    // Act
+    let settings = Observation::from(&ConfigGet::parse(reply).expect("a real reply"));
+
+    // Assert
+    assert_eq!(
+        field(&settings, "ldap.bind_dn_password").sensitivity(),
+        Sensitivity::Sensitive
+    );
+    assert_eq!(
+        field(&settings, "search-timeout").sensitivity(),
+        Sensitivity::Public
+    );
+}
+
+#[test]
 fn a_reply_with_a_name_and_no_value_is_refused() {
     // Act
     let result = ConfigGet::parse(Reply::Array(vec![bulk("save")]));
