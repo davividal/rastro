@@ -6795,6 +6795,11 @@ tables name the host directory of the volume or bind it is on. Measured: the pac
 `/var/lib/docker/volumes`. A directory in a container's own image, cell 23's `/data` since redis
 8.10's image declares no volume, is the containers facet's to account for and is not claimed.
 
+**Accepted: a working directory whose path is not UTF-8 is not sealed**, decided by the
+maintainer on 2026-10-26. A claim's tree is text, so such a server's files are walked like any
+other and a save between two runs shows in the second, with nothing in the facet saying why. No
+install is known to put one there, so it is not modelled.
+
 ## The live check runs after the suite, not in it
 
 `redis_conformance` starts a server of its own in its scratch tree, on a loopback port with
