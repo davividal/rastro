@@ -11,15 +11,19 @@ pub mod file_glob;
 pub mod file_metadata;
 pub mod filesystem;
 pub mod firewall;
+pub mod host_directories;
 pub mod inet;
+pub mod inside_root;
 pub mod kernel_residency;
 // Private: the flat re-exports below are the whole outside surface.
 mod host;
 mod invocation;
 pub mod locale;
 pub mod modules;
+pub mod mount_table;
 pub mod mounts;
 pub mod network;
+pub mod network_namespace;
 pub mod nginx;
 pub mod packages;
 pub mod pam;
@@ -27,6 +31,7 @@ pub mod postgresql;
 pub mod proc_sockets;
 pub mod processes;
 pub mod rabbitmq;
+pub mod redis;
 pub mod repositories;
 pub mod sockets;
 pub mod ssh_access;
@@ -56,6 +61,7 @@ pub use pam::PamCollector;
 pub use postgresql::PostgresqlCollector;
 pub use processes::ProcessesCollector;
 pub use rabbitmq::RabbitmqCollector;
+pub use redis::RedisCollector;
 pub use repositories::RepositoriesCollector;
 pub use sockets::SocketsCollector;
 pub use ssh_access::SshAccessCollector;
@@ -263,6 +269,7 @@ fn state_collectors(
         Box::new(PostgresqlCollector::new()),
         Box::new(ProcessesCollector::new()),
         Box::new(RabbitmqCollector::new()),
+        Box::new(RedisCollector::new()),
         Box::new(RepositoriesCollector::new()),
         Box::new(SocketsCollector::new()),
         Box::new(SshAccessCollector::new()),

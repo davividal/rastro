@@ -35,8 +35,8 @@ use yaml_rust2::parser::{Event, Parser};
 use yaml_rust2::{ScanError, Yaml, YamlLoader};
 
 use crate::collectors::elasticsearch::source::ResidentNode;
-use crate::collectors::elasticsearch::source::in_root::read_inside;
 use crate::collectors::elasticsearch::value_objects::Unread;
+use crate::collectors::inside_root::read_inside;
 
 /// The argument vector's separator, and the environment's, which is how the kernel writes both.
 const SEPARATOR: u8 = b'\0';

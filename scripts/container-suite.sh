@@ -34,17 +34,25 @@ echo "==> $distribution, $(uname -srm), $(cargo --version)"
 # checked against the only authority on the question rather than against what somebody
 # wrote down. It runs `nginx -T` inside a prefix it owns; the shipped binary never runs
 # it at all, for the reason in docs/decisions.md.
-echo "==> installing nginx for the include-resolution check"
+#
+# Another starts a redis server in a directory it owns and compares rastro's reading of it
+# with the server's own client. Neither package starts its daemon here: the Debian image's
+# policy-rc.d denies it, measured, and apk never starts one.
+echo "==> installing nginx and redis for the conformance checks"
 if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache nginx >/dev/null
+    apk add --no-cache nginx redis >/dev/null
 else
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends nginx >/dev/null
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        nginx redis-server >/dev/null
 fi
 echo "==> $(nginx -v 2>&1)"
+echo "==> $(redis-server --version)"
 
 echo "==> suite as root"
 cargo test --workspace --locked
+# Alone, after the suite: it starts a server of its own, see Cargo.toml.
+cargo test --locked --test redis_conformance
 
 # busybox has `adduser` and not `useradd`, which is the whole of the difference
 # between Alpine and Debian here.
@@ -72,10 +80,11 @@ echo "==> suite as $UNPRIVILEGED"
 # `su` resets the environment, so everything the run needs is restated on the command
 # line rather than exported above.
 su "$UNPRIVILEGED" -c "cd '$WORKSPACE' \
-    && PATH='$PATH' \
+    && export PATH='$PATH' \
     CARGO_HOME='$CARGO_HOME' \
     CARGO_TARGET_DIR='$CARGO_TARGET_DIR' \
     TMPDIR='$UNPRIVILEGED_TMP' \
-    cargo test --workspace --locked"
+    && cargo test --workspace --locked \
+    && cargo test --locked --test redis_conformance"
 
 echo "==> $distribution: both runs green"

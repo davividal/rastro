@@ -9,7 +9,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use rastro::collectors::proc_sockets::{SocketHolders, listening_inodes};
+use rastro::collectors::proc_sockets::{SocketHolders, ipv6_of, listening_inodes};
 
 mod support;
 
@@ -221,4 +221,13 @@ fn readable() -> fs::Permissions {
     use std::os::unix::fs::PermissionsExt;
 
     fs::Permissions::from_mode(0o700)
+}
+
+#[test]
+fn an_address_that_is_not_ascii_hexadecimal_is_refused_rather_than_panicking() {
+    // Act: 32 bytes, with a character straddling an 8-byte word.
+    let result = ipv6_of(&format!("a{}a", "é".repeat(15)));
+
+    // Assert
+    assert!(result.is_err(), "{result:?}");
 }

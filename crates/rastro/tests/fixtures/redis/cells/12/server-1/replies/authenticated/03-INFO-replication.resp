@@ -1,0 +1,15 @@
+$425
+# Replication
+role:master
+connected_slaves:1
+slave0:ip=127.0.0.1,port=6381,state=wait_bgsave,offset=0,lag=0,io-thread=0
+master_failover_state:no-failover
+master_replid:a1c4b07d5580b54091d62c17fba3ba7306bd5ec9
+master_replid2:0000000000000000000000000000000000000000
+master_repl_offset:0
+second_repl_offset:-1
+repl_backlog_active:1
+repl_backlog_size:1048576
+repl_backlog_first_byte_offset:1
+repl_backlog_histlen:0
+

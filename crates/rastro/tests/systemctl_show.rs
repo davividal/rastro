@@ -606,3 +606,37 @@ Id=probe.service
         ["ALPHA", "ZULU"]
     );
 }
+
+#[test]
+fn a_misread_exec_start_is_refused_without_quoting_the_command() {
+    // Arrange: a start command can carry a password, `--requirepass` on redis's, and a refusal
+    // reaches stderr and the document whatever `--raw` says.
+    let shown = "ExecStartEx={ argv[]=/usr/bin/redis-server --requirepass hunter2 ; flags= }\n\
+                 Id=redis-server.service\n";
+
+    // Act
+    let failure = systemctl_show::parse(shown)
+        .expect_err("a group with no path")
+        .to_string();
+
+    // Assert
+    assert!(!failure.contains("hunter2"), "got: {failure}");
+}
+
+#[test]
+fn a_misread_environment_line_is_refused_without_quoting_its_values() {
+    // Arrange: an `Environment=` value is as likely a secret as anything a unit holds.
+    for line in [
+        "PASSWORD=hunter2\\q",
+        "PASSWORD=hunter2\\xzz",
+        "PASSWORD=hunter2\\xff",
+        "PASSWORD=hunter2\\",
+        "\"PASSWORD=hunter2",
+    ] {
+        // Act
+        let failure = environment_line(line).expect_err("a malformed line");
+
+        // Assert
+        assert!(!failure.contains("hunter2"), "got: {failure}");
+    }
+}
