@@ -65,6 +65,24 @@ fn roots_covers_every_mount_but_the_kernels_own_interfaces() {
 }
 
 #[test]
+fn roots_leaves_out_the_kernels_nfs_interfaces() {
+    // Arrange: an NFS server as Debian mounts it. `nfsd` grows a `clients/<id>` directory per
+    // connected client and `rpc_pipefs` a `clntN` directory per RPC client, so walking either
+    // made two runs of an unchanged box differ whenever a client came or went.
+    let nfs_server = "\
+/dev/sda1 / ext4 rw,relatime 0 0
+nfsd /proc/fs/nfsd nfsd rw,relatime 0 0
+sunrpc /run/rpc_pipefs rpc_pipefs rw,relatime 0 0
+";
+
+    // Act
+    let covered = roots("scope_nfs_interfaces", nfs_server);
+
+    // Assert
+    assert_eq!(covered, vec!["/"]);
+}
+
+#[test]
 fn roots_keeps_a_mount_point_containing_unicode_whitespace() {
     // Arrange: the kernel escapes exactly space, tab, newline and backslash, so U+00A0 from a
     // Windows share name arrives unescaped. Splitting on Unicode whitespace walked `/mnt/My`,

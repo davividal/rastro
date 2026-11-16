@@ -36,7 +36,7 @@ const MOUNTS: &str = "/proc/mounts";
 /// Kept as a list because there is no flag that means this. `nodev` does not: it marks a type
 /// needing no block device, which `nfs` and `zfs` also do not need. A type absent from this
 /// list is walked, which is the safe direction to be wrong in.
-const KERNEL_INTERFACES: [&str; 23] = [
+const KERNEL_INTERFACES: [&str; 25] = [
     "autofs",
     "binfmt_misc",
     "bpf",
@@ -51,10 +51,12 @@ const KERNEL_INTERFACES: [&str; 23] = [
     "fusectl",
     "hugetlbfs",
     "mqueue",
+    "nfsd",
     "nsfs",
     "proc",
     "pstore",
     "ramfs",
+    "rpc_pipefs",
     "securityfs",
     "selinuxfs",
     "sysfs",
