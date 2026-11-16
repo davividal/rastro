@@ -100,6 +100,35 @@ fn presence_is_undetermined_where_the_module_directory_is_missing() {
 }
 
 #[test]
+fn presence_is_undetermined_where_a_process_went_unseen_and_nothing_else_is_here() {
+    // Arrange: no kernel side, and one process whose program could not be read.
+    let host = Host::empty("nfs_presence_unseen");
+    std::fs::create_dir_all(host.path("proc/77/comm")).expect("a scratch dir");
+
+    // Act & Assert: `absent` would rule out a userspace server this run did not see.
+    assert!(matches!(
+        host.collector().presence(),
+        Presence::Undetermined { .. }
+    ));
+}
+
+#[test]
+fn collect_reports_a_process_table_it_could_not_list_as_an_error() {
+    // Arrange
+    let host = Host::empty("nfs_no_proc").with_module("nfs", &[]);
+    std::fs::remove_dir_all(host.path("proc")).expect("a scratch dir");
+
+    // Act
+    let server = field(&host.facet(), "server");
+
+    // Assert
+    assert!(
+        error_of(&server).contains("could not list"),
+        "got {server:?}"
+    );
+}
+
+#[test]
 fn collect_reads_a_started_server() {
     // Arrange
     let host = Host::empty("nfs_server").serving();

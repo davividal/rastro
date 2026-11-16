@@ -175,3 +175,66 @@ fn parameters_of_a_loaded_module_with_none_is_empty() {
     // Assert
     assert!(keys_of(&Observation::from(&parameters)).is_empty());
 }
+
+#[test]
+fn runtime_refuses_a_value_past_its_bound() {
+    // Arrange: more than any setting the kernel writes, so a misread path costs one value.
+    let root = scratch_tree("nfs_runtime_oversized", &[]);
+    write(&root, "portlist", &"tcp 2049\n".repeat(10_000));
+
+    // Act
+    let runtime = Observation::from(&NfsdFilesystem::at(&root).runtime());
+
+    // Assert
+    assert!(text(&field(&field(&runtime, "portlist"), "error")).contains("longer than"));
+}
+
+#[test]
+fn runtime_refuses_a_value_that_is_not_utf8_rather_than_replacing_it() {
+    // Arrange
+    let root = scratch_tree("nfs_runtime_not_utf8", &[]);
+    fs::write(root.join("nfsv4recoverydir"), b"/var/lib/\xff\n").expect("a scratch file");
+
+    // Act
+    let runtime = Observation::from(&NfsdFilesystem::at(&root).runtime());
+
+    // Assert: a replacement character would put a path in the document that is not on the box.
+    assert!(text(&field(&field(&runtime, "nfsv4recoverydir"), "error")).contains("UTF-8"));
+}
+
+#[test]
+fn parameters_of_a_module_whose_directory_cannot_be_listed_is_an_error() {
+    // Arrange: a file where the directory should be, which no account can list.
+    let root = scratch_tree("nfs_parameters_unlisted", &["nfs"]);
+    write(&root, "nfs/parameters", "");
+
+    // Act
+    let parameters = Observation::from(
+        &ModuleParameterDirectory::at(&root)
+            .parameters_of("nfs")
+            .expect("the module is loaded"),
+    );
+
+    // Assert
+    assert!(text(&field(&parameters, "error")).contains("could not list"));
+    assert_eq!(parameters.incomplete_items(), 1);
+}
+
+#[test]
+fn parameters_refuses_a_module_listing_more_than_its_bound() {
+    // Arrange: `nfs` has twelve; a thousand and one is not a module's parameters.
+    let root = scratch_tree("nfs_parameters_too_many", &["nfs/parameters"]);
+    for index in 0..=1_000 {
+        write(&root, &format!("nfs/parameters/p{index}"), "1\n");
+    }
+
+    // Act
+    let parameters = Observation::from(
+        &ModuleParameterDirectory::at(&root)
+            .parameters_of("nfs")
+            .expect("the module is loaded"),
+    );
+
+    // Assert
+    assert!(text(&field(&parameters, "error")).contains("more than"));
+}
