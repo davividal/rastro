@@ -37,7 +37,7 @@ jobs:
       github.event_name != 'pull_request'
       || contains(github.event.pull_request.labels.*.name, 'extended-verification')
     # Pinned: 26.04's docker 29 keeps images in containerd, which the facet does not read yet.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
