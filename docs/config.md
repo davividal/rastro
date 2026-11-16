@@ -50,6 +50,7 @@ exclude = ["mounts"]
 | `modules`       | state    | yes        |
 | `mounts`        | state    | yes        |
 | `network`       | state    | yes        |
+| `nfs`           | state    | yes        |
 | `nginx`         | state    | yes        |
 | `packages`      | state    | yes        |
 | `pam`           | state    | yes        |
@@ -127,7 +128,8 @@ unknown key is an error, so an attempt at one fails rather than quietly doing no
 the host — `postgresql` seals each cluster's data directory, `rabbitmq` seals each node's
 message store, `elasticsearch` seals each host node's data directories, `redis` seals each
 server's data directory, `nginx` seals the caches and
-temp trees it writes into, `packages` churns the package database, `containers` seals every
+temp trees it writes into, `nfs` seals the client-tracking and statd state under
+`/var/lib/nfs`, `packages` churns the package database, `containers` seals every
 tree a container engine keeps under its own root except the one holding your volumes. That is rastro's reckoning about a tree from the outside; the operator knows their
 box, so naming the same tree in a config replaces the claim rather than conflicting with it.
 Naming one tree twice *in the config* is still an error: the operator meant one of them and
