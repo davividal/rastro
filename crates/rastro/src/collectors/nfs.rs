@@ -8,6 +8,6 @@ pub mod model;
 pub mod source;
 pub mod value_objects;
 
-pub use model::{ClientExport, ExportTable, SecurityGroup};
-pub use source::Etab;
-pub use value_objects::{ExportClient, ExportOption, SecurityFlavour};
+pub use model::{ClientExport, ExportTable, ModuleParameters, SecurityGroup, ServerRuntime};
+pub use source::{Etab, ModuleParameterDirectory, NfsdFilesystem};
+pub use value_objects::{ExportClient, ExportOption, KernelValue, ParameterName, SecurityFlavour};
