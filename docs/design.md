@@ -222,6 +222,14 @@ Credentials, the unsalted `ACL` verifier included, are carried `sensitive`. The 
 own files, `dump.rdb` and `appendonlydir`, are sealed in the process's working directory,
 since `dir` is a `chdir`, as the host directory behind it.
 
+**Layer 3, NFS.** One `nfs` facet in two halves, `server` and `client`, each `null` where it is
+not there. The server half is the kernel server, dispatched from its `nfsd` filesystem: what it
+exports, read from `/var/lib/nfs/etab` because `exportfs -v` was measured to write a lock file,
+and how it runs, from that filesystem. nfs-ganesha is refused by name, since it uses none of the
+kernel's interfaces and would read as no server. The client half is the client modules'
+parameters alone, because the mounts are the `mounts` facet's. See
+[decisions.md](decisions.md#the-kernel-nfs-server-is-read-from-etab-and-the-nfsd-filesystem).
+
 **Layer 3, containers.** One `containers` facet in two halves: `engines`, what is
 installed and what each holds of its own, and `containers`, what is running. Both are
 keyed by engine flavour and then by the account that owns the engine — the way `packages`
