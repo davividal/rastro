@@ -1,6 +1,6 @@
 //! `docker inspect --type container`: docker's spelling of one container.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use std::collections::BTreeMap;
 
@@ -55,12 +55,12 @@ pub struct DockerContainerDocument {
     /// have been folded together.
     #[serde(rename = "Path")]
     path: String,
-    #[serde(rename = "Args", default)]
+    #[serde(rename = "Args", default, deserialize_with = "null_as_empty")]
     arguments: Vec<String>,
     #[serde(rename = "State")]
     state: StateHalf,
     /// Volume and bind mounts. **Not tmpfs**, which docker reports nowhere near here.
-    #[serde(rename = "Mounts", default)]
+    #[serde(rename = "Mounts", default, deserialize_with = "null_as_empty")]
     mounts: Vec<MountEntry>,
     #[serde(rename = "NetworkSettings", default)]
     network_settings: NetworkSettingsHalf,
@@ -122,7 +122,7 @@ struct ConfigHalf {
     working_directory: String,
     /// `NAME=value` entries, the image's own environment included, which is honest: it is
     /// the environment the process has.
-    #[serde(rename = "Env", default)]
+    #[serde(rename = "Env", default, deserialize_with = "null_as_empty")]
     environment: Vec<String>,
     /// Null on a container with none, which `default` covers either way.
     #[serde(rename = "Labels", default)]
@@ -134,7 +134,7 @@ struct ConfigHalf {
 
 #[derive(Debug, Clone, Deserialize)]
 struct HealthcheckHalf {
-    #[serde(rename = "Test", default)]
+    #[serde(rename = "Test", default, deserialize_with = "null_as_empty")]
     test: Vec<String>,
     /// Nanoseconds, and zero where the check takes the engine's default.
     #[serde(rename = "Interval", default)]
@@ -199,18 +199,18 @@ struct HostConfigHalf {
     #[serde(rename = "ShmSize", default)]
     shared_memory: i64,
     /// An empty array where there are none, unlike the two maps below.
-    #[serde(rename = "Devices", default)]
+    #[serde(rename = "Devices", default, deserialize_with = "null_as_empty")]
     devices: Vec<DeviceEntry>,
-    #[serde(rename = "Ulimits", default)]
+    #[serde(rename = "Ulimits", default, deserialize_with = "null_as_empty")]
     ulimits: Vec<UlimitEntry>,
     /// Null where there are none, which is docker's other spelling of the same thing.
     #[serde(rename = "Sysctls", default)]
     kernel_parameters: Option<BTreeMap<String, String>>,
-    #[serde(rename = "Dns", default)]
+    #[serde(rename = "Dns", default, deserialize_with = "null_as_empty")]
     resolvers: Vec<String>,
-    #[serde(rename = "DnsSearch", default)]
+    #[serde(rename = "DnsSearch", default, deserialize_with = "null_as_empty")]
     resolver_searches: Vec<String>,
-    #[serde(rename = "DnsOptions", default)]
+    #[serde(rename = "DnsOptions", default, deserialize_with = "null_as_empty")]
     resolver_options: Vec<String>,
     /// `name:address` entries, null where there are none.
     #[serde(rename = "ExtraHosts", default)]
@@ -796,4 +796,17 @@ fn instant(reported: &str) -> Result<Option<EngineInstant>, CollectionError> {
     }
 
     Ok(Some(EngineInstant::new(reported)?))
+}
+
+/// A list docker left unset, which it writes as `null` or `[]` by field and by release.
+///
+/// Both mean none. `default` alone covers only a missing key, so a `null` failed the whole
+/// document: `Tmpfs` on 26.1.5, `Dns` on 29.9.3 (#77). Every plain list here goes through this,
+/// so the next field docker turns to `null` costs nothing.
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
