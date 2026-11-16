@@ -6820,3 +6820,83 @@ containers it never starts, which the Debian image's `policy-rc.d` was measured 
   present with the server installed and no instances.
 - **TLS.** No socket is spoken to in TLS; a server reachable only on its TLS port is a failed read.
 - **Module-specific settings** beyond what `CONFIG GET *` returns for them.
+
+## The kernel NFS server is read from etab and the `nfsd` filesystem
+
+_2026-11-16._ Measured on Debian 12, nfs-utils 2.6.2 and kernel 6.1, with a v4 client mounted
+from the same box.
+
+**The exports come from `/var/lib/nfs/etab`, never from `exportfs -v`.** Both give the same
+table, every default filled in, because `exportfs` prints etab. Asking is a write: with the lock
+files removed, `exportfs -v` recreated `/var/lib/nfs/.etab.lock`. `/proc/fs/nfs/exports` is not
+the table either: the kernel fills it as clients ask, so it holds the exports someone has used.
+`/etc/exports` and `exports.d` say what was asked for, and an edit nobody applied with
+`exportfs -ra` is in them and not in etab. That gap is a change a fingerprint should show, and the
+files are in the walk.
+
+**Options before the first `sec=` hold for every flavour. Each `sec=` starts its own group.**
+nfs-utils lets each flavour carry its own `rw`, `ro` and squashing, and writes them after the
+`sec=` they belong to. An export that is `rw` for `krb5` and `ro` for `sys` is therefore two
+groups. Flattening them would describe one export that is both. Flavours inside a group are a
+sequence, since that is the order a client negotiates in. Options are a set.
+
+**The runtime is a named list of `/proc/fs/nfsd` files**, because most of that filesystem is not
+settings: `clients/` and the `*_stats` files move with traffic, `filehandle`, `unlock_*` and
+`v4_end_grace` are commands, and `exports` is the cache above. Each setting reads as the kernel
+wrote it, less one trailing newline, so `portlist` keeps one line per listener. Reading them left
+the server as it was. Six are `0600`, and an unprivileged run reports each as an `error`.
+
+**The filesystem is not mounted for the server.** Debian's `proc-fs-nfsd.mount` mounts it when
+the server starts. A loaded `nfsd` module without it is an `error` that names the reason, since
+mounting it would change the host.
+
+**Cost:** exports that `exportfs` has not written are invisible here. A path in etab that
+carries an escape, `\040` for a space, fails the export table rather than being decoded, since no
+box this was written for has one. Debian 13 and the supported Ubuntu releases read the same
+files from newer nfs-utils, and have not been measured.
+
+## nfs-ganesha is refused by name, before the kernel is asked
+
+nfs-ganesha serves NFS from userspace and uses none of the kernel's interfaces. Without a check,
+a ganesha box reads as one with no server, which is a wrong answer presented as a right one.
+Its `comm` is `ganesha.nfsd`, measured, and a process with that program makes the server half an
+`error` that names it. The check runs first: on the measured box the `nfsd` module and its
+filesystem were still there from a kernel server that had been stopped, so checking the kernel
+first would have read that stopped server's leftovers instead.
+
+A process whose program could not be read is the same case, as in `redis`: under `hidepid=1`
+ganesha could be among them. With no kernel server to read, that is an `error`, never a `null`.
+
+**Not supported: ganesha itself**, with its own configuration and a D-Bus interface for its
+exports. It is a separate model, and no box this was written for runs it.
+
+## The client half is its modules' parameters, and nothing `mounts` already says
+
+Every NFS mount is in the `mounts` facet, with the options the kernel actually used: `vers=`,
+`rsize`, `addr=`, `clientaddr=`. `/proc/fs/nfsfs/servers` and `volumes` were rejected:
+`servers` carries a reference count that has to be volatile, and the device, `fsid` and `fsc`
+columns of `volumes` repeat what `mounts` keys. What nothing else reads is the `nfs` and
+`nfsv4` module parameters, `nfs4_unique_id` and `recover_lost_locks` among them. The `nfsd`
+parameters go with the server half.
+
+**`lockd` and `sunrpc` are left out**, since their parameters are the `fs.nfs.*` and `sunrpc.*`
+sysctls under another name. Three `nfs` parameters are also sysctls, and are read anyway. Leaving
+them out would need a list of names, and that list would go stale with the next kernel.
+
+A parameter no account may read is a button and is left out by its mode, as `sysctl` decides
+it. A `nfsv4` that is not loaded, as on a box with only v3 mounts, is a `null`.
+
+## nfs-utils' client-tracking and statd state is sealed
+
+Measured with a client mounting and unmounting: `nfsdcld/main.sqlite` and its directory changed
+on the first connect, and statd keeps a file per peer it watches in `sm/`. `nfsdcld`,
+`nfsdcltrack`, `v4recovery`, `sm` and `sm.bak` are sealed, and `rmtab`, mountd's record of v3
+mounts, churns. Each is claimed only where it exists. Two runs with a client reconnecting
+between them were byte-identical.
+
+## `nfsd` and `rpc_pipefs` are kernel interfaces, and the walk leaves them out
+
+Neither was on the walk's list, so both were walked as storage. Measured: a client mount created
+`nfsd/clients/<id>/` on the server and `rpc_pipefs/nfs/clntN/` and `nfsd4_cb/clntN/` on both
+sides, and unmounting moved their parent directories' mtimes. On any NFS box, client or
+server, two runs of an unchanged host differed whenever a client came or went.

@@ -24,6 +24,7 @@ pub mod mount_table;
 pub mod mounts;
 pub mod network;
 pub mod network_namespace;
+pub mod nfs;
 pub mod nginx;
 pub mod packages;
 pub mod pam;
@@ -55,6 +56,7 @@ pub use locale::LocaleCollector;
 pub use modules::ModulesCollector;
 pub use mounts::MountsCollector;
 pub use network::NetworkCollector;
+pub use nfs::NfsCollector;
 pub use nginx::NginxCollector;
 pub use packages::PackagesCollector;
 pub use pam::PamCollector;
@@ -263,6 +265,7 @@ fn state_collectors(
         Box::new(ModulesCollector::new()),
         Box::new(MountsCollector::new()),
         Box::new(NetworkCollector::new()),
+        Box::new(NfsCollector::new()),
         Box::new(NginxCollector::new()),
         Box::new(PamCollector::new()),
         Box::new(PackagesCollector::new()),
