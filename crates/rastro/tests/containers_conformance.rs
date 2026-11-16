@@ -21,7 +21,7 @@ mod support;
 use rastro::collectors::ContainersCollector;
 use rastro_collector::{ClaimedReading, Collector};
 use rastro_fingerprint::{Content, Observation, Scalar};
-use support::observation::{field, keys_of};
+use support::observation::{field, items_of, keys_of};
 
 const PROGRAM: &str = "docker";
 
@@ -106,8 +106,14 @@ fn the_container_names_are_the_ones_docker_lists() {
 
     // Act
     let ours: BTreeSet<String> = keys_of(&containers()).into_iter().collect();
+    let unreadable = items_of(&field(&server(), "unreadable_containers"));
 
-    // Assert
+    // Assert: the reasons first, since a container docker described in a shape rastro refused
+    // is missing from the names without saying why (#77).
+    assert!(
+        unreadable.is_empty(),
+        "docker described containers rastro could not read: {unreadable:?}"
+    );
     assert_eq!(ours, theirs);
 }
 

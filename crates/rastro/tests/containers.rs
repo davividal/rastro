@@ -2920,3 +2920,51 @@ fn every_logging_option_value_is_sensitive_because_some_drivers_take_a_credentia
         );
     }
 }
+
+/// A fixture with the list at `pointer` written as `null`, as docker writes an unset one.
+fn with_null_at(inspect: &str, pointer: &str) -> String {
+    let mut document: serde_json::Value = serde_json::from_str(inspect).expect("a fixture");
+    *document
+        .pointer_mut(pointer)
+        .unwrap_or_else(|| panic!("the fixture carries {pointer}")) = serde_json::Value::Null;
+
+    document.to_string()
+}
+
+#[test]
+fn a_container_whose_unset_lists_are_null_is_read_rather_than_refused() {
+    // Arrange: **docker 29.9.3 writes `"Dns": null` where 29.8 wrote `[]`, measured,** and a
+    // field that only tolerates a list cost every container on the box (#77). `Tmpfs` went the
+    // same way on 26.1.5, so every list in the document is held to it rather than the one seen.
+    let lists = [
+        (WEB_ID, INSPECT_WEB, "/0/Args"),
+        (WEB_ID, INSPECT_WEB, "/0/Config/Env"),
+        (WEB_ID, INSPECT_WEB, "/0/Mounts"),
+        (WEB_ID, INSPECT_WEB, "/0/HostConfig/Devices"),
+        (WEB_ID, INSPECT_WEB, "/0/HostConfig/Ulimits"),
+        (WEB_ID, INSPECT_WEB, "/0/HostConfig/Dns"),
+        (WEB_ID, INSPECT_WEB, "/0/HostConfig/DnsOptions"),
+        (WEB_ID, INSPECT_WEB, "/0/HostConfig/DnsSearch"),
+        (LIMITED_ID, INSPECT_LIMITED, "/0/Config/Healthcheck/Test"),
+    ];
+
+    // Act
+    let refused: Vec<&str> = lists
+        .iter()
+        .filter(|(id, inspect, pointer)| {
+            let nulled = with_null_at(inspect, pointer);
+            let observed = docker_facet(
+                &format!("null-list-{}", pointer.replace('/', "-")),
+                holding(&[(id, Some(&nulled))], &[], &[], &[]),
+            );
+            keys_of(&containers_of(&observed, "docker")).is_empty()
+        })
+        .map(|(_, _, pointer)| *pointer)
+        .collect();
+
+    // Assert
+    assert!(
+        refused.is_empty(),
+        "a null list cost the container: {refused:?}"
+    );
+}
